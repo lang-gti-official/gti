@@ -1,0 +1,12 @@
+// An unchecked element reference blocks growing its vector.
+//@ check-fail
+import std.vector;
+
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2});
+  unsafe {
+    int& first = values.get_unchecked(std::size_t(0));
+    values.push_back(3);  //~ ERROR GTI-S2017
+    return first;
+  }
+}

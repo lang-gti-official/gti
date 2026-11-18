@@ -1,0 +1,4 @@
+// Pack invocation contracts: wrong shape, unsafe, mutable-pack borrow and ambiguous items fail in semantics without impossible F advice.
+int work(int a, int b) { return a + b; }
+int invoke_with<Function, Args...>(Function function, Args... args) { return function(args...); }
+int main() { return invoke_with(work, 1); }  //~ ERROR GTI-S2090

@@ -1,0 +1,4 @@
+
+[targets.second]
+kind = "executable"
+root = "src/main.gti"

@@ -1,0 +1,5 @@
+// Diagnostics: concurrent callback conversion requires the runtime declarations.
+//@ execution-profile: concurrent
+using Entry = (void*) -> int32_t;
+int32_t worker(void* context) { return 0; }
+int main() { Entry entry = worker; return 0; }  //~ ERROR GTI-S2076

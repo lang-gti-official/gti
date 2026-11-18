@@ -1,0 +1,9 @@
+// Field argument order: pure field preparation control is valid.
+//@ check-pass
+class Base { public: Base() {} };
+class Derived : public Base {
+  int field;
+public:
+  Derived(int seed) : Base(), field(7) {}
+};
+int main() { Derived value{3}; return 0; }

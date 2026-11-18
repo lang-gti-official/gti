@@ -1,0 +1,9 @@
+// Full expression cleanup: concrete generic effect closure preserves conditional cleanup rather than flattening moved-owner cleanup into an immediate write.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+struct Wrapper<T> { Cleanup item; T marker; Wrapper(Cleanup source, T value) : item(std::move(source)), marker(value) {} }; int main() { int& borrowed = value; Wrapper<int> held{Cleanup(), 1}; int copied = borrowed; return copied; }

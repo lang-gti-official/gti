@@ -1,0 +1,2 @@
+// Invalid class type packs: invalid class pack must be rejected by semantics: int main() { mut int& local; return 0; }.
+int main() { mut int& local; return 0; }  //~ ERROR GTI-S2017

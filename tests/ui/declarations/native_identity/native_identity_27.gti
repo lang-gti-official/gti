@@ -1,0 +1,7 @@
+// Native identity: rejected with GTI-S2003.
+class Borrow {
+  int& value;
+public:
+  implicit Borrow(int& source) : value(source) {}
+};
+int main() { int seven = 7; Borrow borrow = seven; return 0; }  //~ ERROR GTI-S2003

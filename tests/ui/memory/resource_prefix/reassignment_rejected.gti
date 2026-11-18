@@ -1,0 +1,17 @@
+// A resource prefix cannot be reassigned from another.
+//@ check-fail
+import std.resource_vector;
+import std.resource;
+
+int main() {
+  std::process_resource first{};
+  std::process_resource second{};
+  unsafe {
+    auto first_binding = std::bind_resource(first);
+    auto second_binding = std::bind_resource(second);
+    mut std::resource_vector<int, std::process_resource> left{first_binding};
+    mut std::resource_vector<int, std::process_resource> right{second_binding};
+    left = std::move(right);  //~ ERROR GTI-S2003
+    return left.empty() ? 0 : 1;
+  }
+}

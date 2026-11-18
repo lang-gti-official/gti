@@ -1,0 +1,29 @@
+// Reference payloads: the program is accepted.
+//@ analyze-pass
+import std.panic;
+enum Cell { empty, value(int& owner) };
+class View {
+  mut Cell cell;
+public:
+  View(int& owner) : cell(Cell::value(owner)) {}
+  View() : cell(Cell::empty) {}
+  int& read() {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+  int& take() && {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+};
+
+int main() {
+  int owner = 42;
+  mut auto view = View(owner);
+  int& retained = std::move(view).take();
+  return retained - 42;
+}

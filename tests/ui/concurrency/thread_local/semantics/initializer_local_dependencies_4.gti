@@ -1,0 +1,17 @@
+// Initializer local dependencies: substituted enclosing automatic values remain forbidden TLS dependencies with exact use and declaration spans.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+int main() { int caller = 4; thread_local int state = nested_value!(caller); return state; }  //~ ERROR GTI-S2124

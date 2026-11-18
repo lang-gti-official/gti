@@ -1,0 +1,12 @@
+// std::erase_if rejects a predicate over another element type.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.array;
+import std.map;
+class Once {
+public:
+  Once() = default;
+  bool operator()(int& value) && { return true; }
+};
+int main() { mut std::vector<int> values = {1, 2}; std::erase_if(values, [](double& v) -> bool { return true; }); return 0; }  //~ ERROR GTI-S2029

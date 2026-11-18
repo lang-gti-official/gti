@@ -1,0 +1,41 @@
+// Stored callables: copied closure fields verify.
+//@ check-pass
+import std.string;
+import std.utility;
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+class Holder<F> {
+public:
+  F callback;
+  int value;
+  Holder(F f) : callback(f), value(10) {}
+  int invoke() { return callback(); }
+};
+int use<F>(F f) {
+  Holder<F> h = Holder<F>(f);
+  return h.value + h.invoke();
+}
+class Named<F> {
+public:
+  F callback;
+  std::string name;
+  Named(F f, std::string name) : callback(f), name(std::move(name)) {}
+  int invoke() { return callback(); }
+};
+int named<F>(F f) {
+  std::string label{"ab"};
+  Named<F> n = Named<F>(f, std::move(label));
+  return n.invoke();
+}
+int main() {
+  int k = 3;
+  Offset offset{4};
+  int empty = use([]() -> int { return 1; });
+  int scalar = use([k]() -> int { return k; });
+  int record = use([offset]() -> int { return offset.amount; });
+  int owned = named([k]() -> int { return k; }) +
+              named([offset]() -> int { return offset.amount; });
+  return empty + scalar + record + owned - 45;
+}

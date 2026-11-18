@@ -1,0 +1,184 @@
+// Panic and try formatting failures report the caller site after cleaning up.
+//@ run-pass
+//@ slow
+//@ revisions: success invalid count unsupported append_zero append_spec println_format wrapper
+//@[success] stdout: {raw}{{raw}}
+//@[success] stdout: 1 2 three
+//@[invalid] run-fail
+//@[invalid] exit-code: 70
+//@[invalid] args: x
+//@[invalid] stderr-contains: inner
+//@[invalid] stderr-contains: panic_adoption.gti:78: runtime error[GTI-R0017]: panic: "Formatting failed: invalid format"
+//@[count] run-fail
+//@[count] exit-code: 70
+//@[count] args: x x
+//@[count] stderr-contains: inner
+//@[count] stderr-contains: panic_adoption.gti:81: runtime error[GTI-R0017]: panic: "Formatting failed: argument count mismatch"
+//@[unsupported] run-fail
+//@[unsupported] exit-code: 70
+//@[unsupported] args: x x x
+//@[unsupported] stderr-contains: inner
+//@[unsupported] stderr-contains: panic_adoption.gti:84: runtime error[GTI-R0017]: panic: "Formatting failed: unsupported argument; convert the value to a supported type"
+//@[append_zero] run-fail
+//@[append_zero] exit-code: 70
+//@[append_zero] args: x x x x
+//@[append_zero] stderr-contains: inner
+//@[append_zero] stderr-contains: panic_adoption.gti:88: runtime error[GTI-R0017]: panic: "Formatting failed: invalid format"
+//@[append_spec] run-fail
+//@[append_spec] exit-code: 70
+//@[append_spec] args: x x x x x
+//@[append_spec] stderr-contains: inner
+//@[append_spec] stderr-contains: panic_adoption.gti:92: runtime error[GTI-R0017]: panic: "Formatting failed: invalid format"
+//@[println_format] run-fail
+//@[println_format] exit-code: 70
+//@[println_format] args: x x x x x x
+//@[println_format] stderr-contains: inner
+//@[println_format] stderr-contains: panic_adoption.gti:95: runtime error[GTI-R0017]: panic: "Formatting failed: unsupported argument; convert the value to a supported type"
+//@[wrapper] run-fail
+//@[wrapper] exit-code: 70
+//@[wrapper] args: x x x x x x x
+//@[wrapper] stderr-contains: inner
+//@[wrapper] stderr-contains: panic_adoption.gti:98: runtime error[GTI-R0017]: panic: "Formatting failed: invalid format"
+// --- panic_adoption.gti
+import std.cstdio;
+import std.format;
+import std.string;
+import std.vector;
+
+extern "C" {
+  void gti_test_unbuffer_stdout();
+}
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() {
+    // Keep cleanup observable even when stdout has failed.
+    if (id == 1) {
+      [[discard]] std::try_write_stderr("outer\n");
+    } else {
+      [[discard]] std::try_write_stderr("inner\n");
+    }
+  }
+};
+
+struct Unknown { public: Unknown() = default; };
+class std::formatter<Unknown> {
+public:
+  expected<void, std::format_errc> format(Unknown& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+public:
+  formatter() = default;
+};
+
+struct OutputCleanup {
+  ~OutputCleanup() {
+    std::print("cleanup"); // cleanup-output
+  }
+public:
+  OutputCleanup() = default;
+};
+
+[[track_caller]]
+std::string through_wrapper(std::string_view pattern) {
+  return std::runtime_format(pattern, 1);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  unsafe { gti_test_unbuffer_stdout(); }  //~ WARN GTI-S2100
+  if (argc == 1) {
+    auto plain = std::runtime_format("{{literal}}");
+    if (plain != "{literal}") { return 1; }
+    mut auto text = std::runtime_format("{} {}", std::string("owned"), std::string("second"));
+    std::runtime_format_to(text, " {{suffix}}");
+    std::runtime_format_to(text, " {}", 42);
+    if (text != "owned second {suffix} 42") { return 2; }
+    auto failed = std::try_runtime_format_to(text, "leak {}", Unknown());
+    if (failed || failed.error() != std::format_errc::unsupported_argument ||
+        text != "owned second {suffix} 42") { return 3; }
+    auto raw = std::try_print("{raw}");
+    auto raw_line = std::try_println("{{raw}}");
+    if (!raw || !raw_line) { return 4; }
+    std::runtime_print("{} {}", 1, 2);
+    std::runtime_println(" {}", std::string("three"));
+    auto rejected = std::try_runtime_println("LEAK {}", Unknown());
+    if (rejected || rejected.error() != std::print_errc::unsupported_argument) { return 5; }
+    auto mismatch = std::try_runtime_print("LEAK {} {}", 1);
+    if (mismatch || mismatch.error() != std::print_errc::argument_count_mismatch) { return 6; }
+    auto invalid = std::try_runtime_print("LEAK {", 1);
+    if (invalid || invalid.error() != std::print_errc::invalid_format) { return 7; }
+    auto empty = std::try_runtime_format("{}");
+    if (empty || empty.error() != std::format_errc::argument_count_mismatch) { return 8; }
+    auto success = std::try_runtime_format("{}", 42).expect("formatting failed");
+    return success == "42" ? 0 : 9;
+  }
+  Guard outer{1};
+  Guard inner{2};
+  if (argc == 2) {
+    [[discard]] std::runtime_format("{"); // invalid
+  }
+  if (argc == 3) {
+    [[discard]] std::runtime_format("{} {}", 1); // count
+  }
+  if (argc == 4) {
+    [[discard]] std::runtime_format("{}", Unknown()); // unsupported
+  }
+  if (argc == 5) {
+    mut std::string text{"unchanged"};
+    std::runtime_format_to(text, "{"); // append-zero
+  }
+  if (argc == 6) {
+    mut std::string text{"unchanged"};
+    std::runtime_format_to(text, "{:s}", 1); // append-spec
+  }
+  if (argc == 7) {
+    std::runtime_println("LEAK {}", Unknown()); // println-format
+  }
+  if (argc == 8) {
+    [[discard]] through_wrapper("{"); // wrapper
+  }
+  if (argc == 9) {
+    auto result = std::try_runtime_println("write {}", 1);
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 10;
+  }
+  if (argc == 10) {
+    std::runtime_println("write {}", 1); // println-io
+  }
+  if (argc == 11) {
+    std::runtime_print("write {}", 1); // print-io
+  }
+  if (argc == 12) {
+    std::print("raw"); // raw-io
+  }
+  if (argc == 13) {
+    std::println('x'); // char-io
+  }
+  if (argc == 14) {
+    std::println(42); // integer-io
+  }
+  if (argc == 15) {
+    std::println(std::string("owned")); // string-io
+  }
+  if (argc == 16) {
+    std::println(1.25); // float-io
+  }
+  if (argc == 17) {
+    auto result = std::try_print("raw");
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 11;
+  }
+  if (argc == 18) {
+    OutputCleanup cleanup{};
+    [[discard]] std::runtime_format("{"); // cleanup-primary
+  }
+  return 99;
+}
+// --- panic_adoption_io.cpp
+#include <cstdio>
+
+// Test-only host setup: expose submission errors immediately rather than
+// deferring small buffered writes until process exit.
+extern "C" void gti_test_unbuffer_stdout() {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+}

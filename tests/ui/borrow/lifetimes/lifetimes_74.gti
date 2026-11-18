@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2127.
+int&<b> bad<lifetime a, lifetime b>(int&<a> input)  //~ ERROR GTI-S2127
+  requires outlives<a, b> || outlives<b, a> { return input; }  //~ ERROR GTI-S2127

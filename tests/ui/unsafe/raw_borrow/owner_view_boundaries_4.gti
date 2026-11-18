@@ -1,0 +1,8 @@
+// Owner view boundaries: exclusive bridge prevents a competing checked borrow.
+import std.memory;
+int main() { mut int owner = 7; const int* address = &owner; unsafe {
+  mut int& view = std::assume_mut(&owner, owner);
+  int& other = std::assume_ref(address, owner);  //~ ERROR GTI-S2017
+  view = 8;
+  return other;
+} }

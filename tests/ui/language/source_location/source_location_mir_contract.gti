@@ -1,0 +1,7 @@
+// Source location mir contract: source-location calls should lower to verified MIR.
+//@ check-pass
+import std.source_location;
+int main() {
+  std::source_location location = std::source_location::current();
+  return int32_t(location.line());
+}

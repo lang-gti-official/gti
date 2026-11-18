@@ -1,0 +1,2 @@
+// Temporary owner borrow: escaping or mutable temporary-owner views remain source errors.
+class Owner { mut int value = 3; public: mut int& get() mut { return this.value; }  public: Owner() = default; }; int main() { [[discard]] Owner().get(); return 0; }  //~ ERROR GTI-S2081

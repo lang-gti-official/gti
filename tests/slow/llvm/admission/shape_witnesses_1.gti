@@ -1,0 +1,9 @@
+// Shape witnesses: an exact owned callable argument descriptor reaches admission.
+//@ build-pass
+//@ slow
+import std.memory;
+F retain<F>(F callable) { return std::move(callable); }
+int main() {
+  auto stored = retain([]() -> int { return 0; });
+  return stored();
+}

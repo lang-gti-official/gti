@@ -1,0 +1,49 @@
+// Disjoint field receiver borrows through reference parameters: mutable receiver borrows of disjoint fields through a reference parameter should stay accepted through MIR verification.
+//@ check-pass
+class Box {
+  mut int value;
+
+public:
+  Box(int initial) : value(initial) {}
+  mut int& write() mut { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+public:
+  Boxes() = default;
+};
+
+class Inner {
+public:
+  mut Box first = Box(3);
+  mut Box second = Box(4);
+public:
+  Inner() = default;
+};
+
+class Outer {
+public:
+  mut Inner left = Inner();
+  mut Inner right = Inner();
+public:
+  Outer() = default;
+};
+
+int sum(int& left, int& right) { return left + right; }
+
+int disjoint_writes(mut Boxes& parent) {
+  return sum(parent.left.write(), parent.right.write());
+}
+
+int nested_writes(mut Outer& parent) {
+  return sum(parent.left.first.write(), parent.right.second.write());
+}
+
+int main() {
+  mut Boxes pair = Boxes();
+  mut Outer outer = Outer();
+  return disjoint_writes(pair) + nested_writes(outer) - 10;
+}

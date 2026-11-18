@@ -1,0 +1,2 @@
+// Invalid signatures: invalid signature use must fail in semantics: using A = void(); struct Box { A value; };.
+using A = void(); struct Box { A value; };  //~ ERROR GTI-S2093

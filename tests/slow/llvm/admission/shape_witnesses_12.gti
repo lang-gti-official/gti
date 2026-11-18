@@ -1,0 +1,14 @@
+// Shape witnesses: an enum array aggregate is integral enum array formation.
+//@ build-pass
+//@ slow
+enum class Phase : uint8_t { idle, running };
+struct Track {
+  Phase stops[2];
+  Track(Phase initial[2]) : stops(initial) {}
+  Phase at(uint64_t index) { return this.stops[index]; }
+};
+int main() {
+  Phase first = Phase::running;
+  Track track = Track({first, Phase::idle});
+  return track.at(uint64_t(0)) == Phase::running ? 0 : 1;
+}

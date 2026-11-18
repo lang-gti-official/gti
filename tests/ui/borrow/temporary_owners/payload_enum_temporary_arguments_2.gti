@@ -1,0 +1,3 @@
+// Payload enum temporary arguments: a scalar-backed enum factory supplies one checked readonly temporary.
+//@ check-pass
+enum class code { ok, failed }; code pick() { return code::ok; } bool good(code& c) { return c == code::ok; } int main() { return good(pick()) ? 0 : 1; }

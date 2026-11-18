@@ -386,7 +386,8 @@ int tidy(const fs::path &root) {
       const TestFile owner = parseTestFile(testPath, display);
       if (!hasSnapshot(owner, kind) ||
           (kind == Snapshot::Mir && !owner.checks.empty() &&
-           !hasSnapshot(owner, Snapshot::LlvmIr)))
+           !hasSnapshot(owner, Snapshot::LlvmIr) &&
+           !hasSnapshot(owner, Snapshot::OptimizationReport)))
         problems.push_back(display + ": expected file without `//@ snapshot: " +
                            snapshotName(kind) + "` in its test");
       const std::optional<std::string> text = readFile(file);
@@ -416,9 +417,7 @@ int tidy(const fs::path &root) {
       if (!text || text->rfind("// ", 0) != 0)
         problems.push_back(display + ": the first line must be a `// ` comment "
                                      "saying what the transcript checks");
-      std::vector<std::string> errors;
-      (void)parseProjectTranscript(text.value_or(""), errors);
-      for (const std::string &error : errors)
+      for (const std::string &error : parseTestFile(file, display).errors)
         problems.push_back(display + ": " + error);
       continue;
     }
@@ -450,8 +449,10 @@ int tidy(const fs::path &root) {
       problems.push_back(display + ": runner-fault is not allowed in tests");
     for (const Snapshot kind : test.snapshots) {
       const bool patterns = kind == Snapshot::LlvmIr ||
+                            kind == Snapshot::OptimizationReport ||
                             (kind == Snapshot::Mir && !test.checks.empty() &&
-                             !hasSnapshot(test, Snapshot::LlvmIr));
+                             !hasSnapshot(test, Snapshot::LlvmIr) &&
+                             !hasSnapshot(test, Snapshot::OptimizationReport));
       if (!patterns && !fs::exists(snapshotPath(test, kind)))
         problems.push_back(display + ": no " +
                            snapshotPath(test, kind).filename().string() +
@@ -527,6 +528,11 @@ Outcome decode(const std::string &payload) {
   return outcome;
 }
 
+#ifdef GTI_SOURCE_COVERAGE
+// The profile runtime writes at exit, which _exit skips.
+extern "C" int __llvm_profile_write_file(void);
+#endif
+
 [[noreturn]] void workerMain(int input, int output,
                              const EngineOptions &options,
                              const std::vector<TestFile> &tests) {
@@ -544,6 +550,9 @@ Outcome decode(const std::string &payload) {
       if (count <= 0) {
         if (count < 0 && errno == EINTR)
           continue;
+#ifdef GTI_SOURCE_COVERAGE
+        __llvm_profile_write_file();
+#endif
         _exit(0);
       }
       buffer.append(chunk, static_cast<std::size_t>(count));
@@ -875,6 +884,7 @@ int main(int argc, char **argv) {
   engineOptions.limits.run *= scale;
   engineOptions.limits.slow *= scale;
   engineOptions.limits.lsp *= scale;
+  engineOptions.limits.lspHang *= scale;
   engineOptions.limits.project *= scale;
   engineOptions.limits.coldAllowance *= scale;
   if (options.isolate && !fs::exists(engineOptions.gti)) {
@@ -1032,7 +1042,10 @@ int main(int argc, char **argv) {
 
   const auto backstop = [&](const TestFile &test) {
     const Limits &limits = engineOptions.limits;
-    return 4 * limits.forTest(test) + 2 * limits.coldAllowance;
+    // An LSP test's waits are bounded by its hang guard, not its budget.
+    const bool lsp = test.mode == Mode::Lsp || test.mode == Mode::LspTranscript;
+    return 4 * limits.forTest(test) + 2 * limits.coldAllowance +
+           (lsp ? 2 * limits.lspHang : 0.0);
   };
   const auto reap = [&](Worker &worker, bool killedForTime) {
     if (worker.pid > 0) {
@@ -1171,13 +1184,17 @@ int main(int argc, char **argv) {
       junit << "  <testcase classname=\""
             << xmlEscape(fs::path(test.display).parent_path().generic_string())
             << "\" name=\"" << xmlEscape(test.display) << "\" time=\""
-            << fixed(outcome.wall, 3) << "\"";
+            << fixed(outcome.wall, 3) << "\">";
+      // The CPU the limit judges (the server's, for LSP tests) beside the
+      // wall time in `time`.
+      junit << "<properties><property name=\"cpu\" value=\""
+            << fixed(outcome.cpu, 3) << "\"/></properties>";
       if (outcome.status == Status::Pass) {
-        junit << "/>\n";
+        junit << "</testcase>\n";
       } else if (outcome.status == Status::Skip) {
-        junit << "><skipped/></testcase>\n";
+        junit << "<skipped/></testcase>\n";
       } else {
-        junit << "><failure type=\"" << statusName(outcome.status)
+        junit << "<failure type=\"" << statusName(outcome.status)
               << "\" message=\"" << statusName(outcome.status) << ' '
               << modeName(test.mode) << "\">" << xmlEscape(outcome.detail)
               << "</failure></testcase>\n";

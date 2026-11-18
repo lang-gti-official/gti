@@ -1,0 +1,3 @@
+// Raw arithmetic lifetime: raw arithmetic must not erase known allocation lifetime failure.
+//@ raw-pointer-audit: strict
+int main() { mut const int* pointer = nullptr; { int gone = 3; pointer = &gone; } unsafe { pointer += 1; } return 0; }  //~ ERROR GTI-S2101

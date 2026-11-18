@@ -1,0 +1,14 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+enum Reading { empty, value(int& owner) };
+bool is_ready(Reading& reading) {
+  switch (reading) {
+  case Reading::empty: return false;
+  case Reading::value: return true;
+  }
+}
+int main() {
+  int owner = 7;
+  auto reading = Reading::value(owner);
+  return is_ready(reading) ? 0 : 1;
+}

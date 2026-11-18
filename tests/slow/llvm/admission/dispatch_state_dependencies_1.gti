@@ -1,0 +1,43 @@
+// Dispatch state dependencies: no-call dispatch states retain the exact sealed dependency closure.
+//@ build-pass
+//@ slow
+int selected_helper() { return 7; }
+int unused_helper() { auto call = []() -> int { return 9; }; return call(); }
+class Generated {
+public:
+  virtual int read() { return selected_helper(); }
+  int unused() { return unused_helper(); }
+public:
+  Generated() = default;
+};
+class Source {
+public:
+  Source() {}
+  virtual int read() { return 8; }
+};
+class Base {
+public:
+  Base() {}
+  virtual int phase() { return 1; }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int phase() override { return 2; }
+  ~Derived() {}
+};
+class Dormant { public: virtual int read() { return unused_helper(); }  public: Dormant() = default; };
+class EmptyBase { public: virtual int phase() { return 3; }  public: EmptyBase() = default; };
+class EmptyLeaf : public EmptyBase {
+public:
+  EmptyLeaf() : EmptyBase() {}
+  int phase() override { return 4; }
+};
+void dormant(Dormant& value) {}
+int main() {
+  Generated generated{};
+  Source source{};
+  Derived derived{};
+  EmptyLeaf empty{};
+  return 0;
+}

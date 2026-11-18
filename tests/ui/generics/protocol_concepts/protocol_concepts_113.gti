@@ -1,0 +1,7 @@
+// Protocol concepts: rejected with GTI-S2030.
+concept identity_family<P> { typename value<T>; };
+struct Policy {};
+for concept identity_family<Policy> { using value<U> = U; };
+
+using Ref = identity_family<Policy>::value<int&>;  //~ ERROR GTI-S2030
+int main() { return 0; }

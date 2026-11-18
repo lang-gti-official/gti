@@ -1,0 +1,11 @@
+// Fold cold input effects: a later TLS input may initialize disjoint persistent storage.
+//@ check-pass
+thread_local mut int32_t first = 1;
+thread_local mut int32_t disjoint = 3;
+int32_t initialize_second() { disjoint = 9; return 2; }
+thread_local mut int32_t second = initialize_second();
+void observe<T>(int32_t& earlier, int32_t& later, T& element) {}
+void folded<Args...>(Args... args) {
+  (observe(first, second, args), ...);
+}
+int main() { folded(1, 2); return 0; }

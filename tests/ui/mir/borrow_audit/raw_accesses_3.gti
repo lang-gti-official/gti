@@ -1,0 +1,12 @@
+// Raw accesses: a raw read is compatible with a live shared loan.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int value = 7;
+  unsafe {
+    auto pointer = &value;
+    int& loan = value;
+    int read = *pointer;
+    return read + loan;
+  }
+}

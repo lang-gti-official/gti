@@ -1,0 +1,3 @@
+// Assigning to an immutable class field is rejected.
+//@ check-fail
+struct V{int n=1; public: V() = default; };struct H{V v=V(); public: H() = default; };int main(){H h{};V v{};h.v=v;return 0;}  //~ ERROR GTI-S2000

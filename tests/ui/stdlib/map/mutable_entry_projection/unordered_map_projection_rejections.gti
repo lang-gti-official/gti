@@ -1,0 +1,52 @@
+// std::unordered_map mutable projections reject key writes, owner invalidation, stale advances and view copies or moves.
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.utility;
+
+int case_write_key() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  cursor->key() = 2;  //~ ERROR GTI-S2002
+  return 0;
+}
+
+int case_write_first() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  cursor->first() = 2;  //~ ERROR GTI-S2002
+  return 0;
+}
+
+int case_copy_exclusive_view() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  auto view = *cursor;  //~ ERROR GTI-S2003
+  return 0;
+}
+
+int case_move_projected_view() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut auto view = std::move(*cursor);  //~ ERROR GTI-S2018
+  return 0;
+}
+
+int case_swap_projected_views() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut std::unordered_map<int,int> other{}; [[discard]] other.insert(2,20); mut auto second = other.begin_mut(); std::swap(*cursor,*second);  //~ ERROR GTI-S2029
+  return 0;
+}
+
+int case_exchange_projected_views() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut std::unordered_map<int,int> other{}; [[discard]] other.insert(2,20); mut auto second = other.begin_mut(); [[discard]] std::exchange(*cursor,std::move(*second));  //~ ERROR GTI-S2018
+//~| ERROR GTI-S2029
+  return 0;
+}
+
+int case_move_owning_key() {
+  mut std::unordered_map<std::string,int> values{};
+  [[discard]] values.insert(std::string("one"),10);
+  mut auto cursor = values.begin_mut();
+  std::string moved = std::move(cursor->key());  //~ ERROR GTI-S2018
+  return 0;
+}
+
+int main() { return 0; }

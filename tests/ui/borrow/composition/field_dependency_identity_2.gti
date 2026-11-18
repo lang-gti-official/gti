@@ -1,0 +1,7 @@
+// Field dependency identity: duplicate exclusive fields must be rejected at the source contract.
+struct Duplicate {
+  mut int& first;
+  mut int& second;  //~ ERROR GTI-S2045
+  Duplicate(mut int& value) : first(value), second(value) {}
+};
+int main() { mut int value = 0; Duplicate view{value}; return 0; }

@@ -1,0 +1,14 @@
+// Invalid escapes: local escape and writable use of a shared reference remain invalid.
+enum class errc { missing };
+class Item {
+  mut int32_t value_;
+public:
+  Item(int32_t value) : value_(value) {}
+  int32_t read() { return this.value_; }
+  void set(int32_t value) mut { this.value_ = value; }
+};
+expected<Item&, errc> relay(Item& item) {
+  Item& alias = item;
+  return alias;
+}
+expected<Item&, errc> bad() { Item local{1}; return local; } int main() { return 0; }  //~ ERROR GTI-S2045

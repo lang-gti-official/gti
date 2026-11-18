@@ -1,0 +1,31 @@
+// Temporary cursor retained owner dependencies: temporary cursor comparison retains a two-owner carrier's shell and external dependencies.
+//@ check-pass
+struct Finish { public: Finish() = default; };
+class OwnerPair {
+  int& first;
+  int& second;
+public:
+  OwnerPair(int& left, int& right) : first(left), second(right) {}
+  int total() { return this.first + this.second; }
+  ReadCursor begin() { return ReadCursor(this); }
+  Finish end() { return Finish(); }
+};
+class ReadCursor {
+  OwnerPair& owner;
+public:
+  ReadCursor(OwnerPair& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.total() != 0; }
+  bool operator==(Finish other) { return this.owner.total() == 0; }
+};
+int main() {
+  int first = 0;
+  int second = 0;
+  int third = 1;
+  int fourth = 2;
+  auto left = OwnerPair(first, second);
+  auto right = OwnerPair(third, fourth);
+  if (left.begin() != left.end()) { return 1; }
+  if (!(left.begin() == left.end())) { return 2; }
+  if (!(right.begin() != right.end())) { return 3; }
+  return 0;
+}

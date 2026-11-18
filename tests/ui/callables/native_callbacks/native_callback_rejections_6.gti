@@ -1,0 +1,4 @@
+// Native callback rejections: owned-callback-boundary.gti should be rejected by the native callback semantic boundary.
+class Owner { public: Owner() = default; };
+using Callback = (Owner) -> void;  //~ ERROR GTI-S2076
+int main() { return 0; }

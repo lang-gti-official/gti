@@ -1,0 +1,9 @@
+// Tagged raw origins: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+enum class Event { address(const int* value), empty };
+Event address_of(int& owner) { return Event::address(&owner); }
+int main() { int live = 7; auto event = address_of(live); switch (event) {
+  case Event::address(value): unsafe { return std::assume_ref(value, live); }
+  case Event::empty: return 0; } }

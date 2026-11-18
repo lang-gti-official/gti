@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2123.
+concept Pair<T, lifetime a, lifetime b> { void use(int&<a> first, int&<b> second); };
+for<lifetime a, lifetime b> concept Pair<int, a, b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b> {}  //~ ERROR GTI-S2123
+};

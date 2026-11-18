@@ -1,0 +1,2 @@
+import "api/processing.gti"; import "api/inspection.gti";
+int main() { geometry::Point value{}; return 0; }

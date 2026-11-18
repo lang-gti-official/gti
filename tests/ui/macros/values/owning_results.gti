@@ -1,0 +1,16 @@
+// Owning results: move-only results and skipped moves must preserve caller ownership.
+//@ check-pass
+import std.string;
+#macro std::string select(bool enabled, std::string first, std::string second) {
+  if (enabled) { return first; }
+  return second;
+}
+#macro std::string local(std::string expression) {
+  std::string saved = expression;
+  return saved;
+}
+int main() {
+  std::string untouched{"untouched"};
+  std::string selected = select!(false, std::move(untouched), local!(std::string("yes")));
+  return int32_t(untouched.size() + selected.size());
+}

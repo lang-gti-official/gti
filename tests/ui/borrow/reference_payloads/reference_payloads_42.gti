@@ -1,0 +1,22 @@
+// Reference payloads: the program is accepted.
+//@ analyze-pass
+import std.panic;
+enum BorrowedCell<T> { empty, value(T& owner) };
+class GenericView<T> {
+  mut BorrowedCell<T> cell;
+public:
+  GenericView(T& owner) : cell(BorrowedCell<T>::value(owner)) {}
+  T& read() {
+    switch (this.cell) {
+    case BorrowedCell<T>::value(auto& owner): return owner;
+    case BorrowedCell<T>::empty: std::panic("empty");
+    }
+  }
+};
+
+int main() {
+  int owner = 42;
+  auto view = GenericView<int>(owner);
+  GenericView<int> copied = view;
+  return copied.read() + view.read() - 84;
+}

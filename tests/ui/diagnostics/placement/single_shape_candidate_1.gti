@@ -1,0 +1,20 @@
+// Single shape candidate: #396 the single overload accepting the argument count reports its own mismatch and guidance.
+import std.string;
+class Sink {
+  mut { std::size_t total; }
+public:
+  Sink() : total(0) {}
+  void append(std::string_view text) mut {}
+  void append(std::string_view text, std::size_t first, std::size_t count) mut {}
+};
+int scale(int value) { return value; }
+int scale(int value, int factor, int offset) {
+  return value * factor + offset;
+}
+int main() {
+  std::string word = std::string("abc");
+  mut Sink sink = Sink();
+  sink.append(word);  //~ ERROR GTI-S2003
+  bool flag = true;
+  return scale(flag);  //~ ERROR GTI-S2003
+}

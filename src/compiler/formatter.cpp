@@ -1936,6 +1936,13 @@ private:
         add(Kind::String, source.substr(start, current - start));
         continue;
       }
+      if (character == 'R' && current < source.size() &&
+          source[current] == '"') {
+        // A raw string's text is kept byte for byte, including its lines.
+        current = scanRawStringLiteral(source, start).end;
+        add(Kind::String, source.substr(start, current - start));
+        continue;
+      }
       if (isIdentifierStart(character)) {
         while (current < source.size() && isIdentifierPart(source[current])) {
           ++current;
@@ -1954,23 +1961,24 @@ private:
           add(Kind::Number, source.substr(start, current - start));
           continue;
         }
-        while (current < source.size() &&
-               std::isdigit(static_cast<unsigned char>(source[current])) != 0) {
+        // Digits, `_` separators and any suffix are kept as written.
+        const auto digitOrSeparator = [&](std::size_t at) {
+          return at < source.size() &&
+                 (std::isdigit(static_cast<unsigned char>(source[at])) != 0 ||
+                  source[at] == '_');
+        };
+        while (digitOrSeparator(current)) {
           ++current;
         }
         if (current + 1 < source.size() && source[current] == '.' &&
-            std::isdigit(static_cast<unsigned char>(source[current + 1])) !=
-                0) {
+            digitOrSeparator(current + 1)) {
           ++current;
-          while (current < source.size() &&
-                 std::isdigit(static_cast<unsigned char>(source[current])) !=
-                     0) {
+          while (digitOrSeparator(current)) {
             ++current;
           }
-          if (current < source.size() &&
-              (source[current] == 'd' || source[current] == 'D')) {
-            ++current;
-          }
+        }
+        while (current < source.size() && isIdentifierPart(source[current])) {
+          ++current;
         }
         add(Kind::Number, source.substr(start, current - start));
         continue;

@@ -1,0 +1,21 @@
+// Analyze: two same-typed field control compiles.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource { int value = 7;  public: Resource() = default; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+
+class Pair {
+  Guard first;
+  Guard second;
+public:
+  Pair(Guard first, Guard second)
+      : first(std::move(first)), second(std::move(second)) {}
+};
+int main() { Resource resource{}; Pair pair{Guard(resource), Guard(resource)}; return 0; }

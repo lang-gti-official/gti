@@ -1,0 +1,3 @@
+// A conditional == whose constraint expands without bound is not satisfied (and terminates).
+//@ check-fail
+struct Duo<T,U> {}; concept Equal<T> = requires(T& a, T& b) { { a == b } -> bool; }; class Box<T> { public: Box() = default; bool operator==(Box<T>& other) requires Equal<Box<Duo<T,T>>> { return true; } }; int main() { Box<int> a{}; Box<int> b{}; return a == b ? 0 : 1; }  //~ ERROR GTI-S2029 Equal<Box

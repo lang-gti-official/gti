@@ -1,0 +1,29 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+concept counted<T> {
+  int count(T value);
+};
+for <T, E> concept sized<expected<T, E>> {
+  using count_type = bool;
+  bool count(expected<T, E>& value) { return value.has_value(); }
+};
+for <T> concept counted<T*> {
+  int count(T* value) { return value == nullptr ? 0 : 1; }
+};
+for <T> concept counted<const T*> {
+  int count(const T* value) { return 2; }
+};
+for <T> concept counted<T[3]> {
+  int count(T value[3]) { return 3; }
+};
+for <T> concept counted<T[4]> {
+  int count(T value[4]) { return 4; }
+};
+
+int main() {
+  int five[5] = {1, 2, 3, 4, 5};
+  return counted<int[5]>::count(five);  //~ ERROR GTI-S2123
+}

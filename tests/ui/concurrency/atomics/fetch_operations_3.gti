@@ -1,0 +1,8 @@
+// Fetch operations: fetch_or should reject bool through public constraints before lowering.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<bool> flag{false};
+  [[discard]] flag.fetch_or(true);  //~ ERROR GTI-S2029
+  return 0;
+}

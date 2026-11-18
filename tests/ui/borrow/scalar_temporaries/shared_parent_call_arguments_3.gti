@@ -1,0 +1,3 @@
+// Shared parent call arguments: shared call through an incoming mutable reference.
+//@ check-pass
+int read(int& value) { return value; } void keep(int& value) {} void write(mut int& value) { value += 1; } int via(mut int& parent) { int& child = parent; int answer = read(parent); return answer + child; } int main() { mut int value = 1; return via(value) - 2; }

@@ -1,0 +1,26 @@
+// Consuming payload patterns: std::move of a named owner consumes it into the match.
+//@ check-pass
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+int main() {
+  data value = make(1);
+  switch (std::move(value)) {
+  case data::some(item):
+    return item.read() - 1;
+  default:
+    return 2;
+  }
+}

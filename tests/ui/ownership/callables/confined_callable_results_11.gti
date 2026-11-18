@@ -1,0 +1,14 @@
+// Confined callable results: a rejected borrowed callable result should produce one focused callable diagnostic without an owner-origin cascade.
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+BorrowView apply<Operation>(int& source, Operation operation) {
+  return operation(source);  //~ ERROR GTI-S2046 must be exact non-reference values
+}
+
+int main() { return 0; }

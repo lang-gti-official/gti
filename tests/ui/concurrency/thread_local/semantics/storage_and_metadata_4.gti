@@ -1,0 +1,3 @@
+// Storage and metadata: TLS also works in the single-threaded profile.
+//@ check-pass
+thread_local mut int count = 1; int main() { return count; }

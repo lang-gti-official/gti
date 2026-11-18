@@ -1,0 +1,11 @@
+// Loop break reinitialization: movement still forbids later reads and unrestored loop backedges.
+class Own {
+  int value;
+public:
+  Own(int value) : value(value) {}
+  Own(Own& other) = delete;
+  Own(Own&& other) = default;
+  int get() { return this.value; }
+};
+void consume(Own value) {}
+int main() { mut Own value = Own(1); while (true) { consume(std::move(value)); break; } return value.get(); }  //~ ERROR GTI-S2018

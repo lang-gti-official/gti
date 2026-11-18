@@ -1,0 +1,28 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+
+Token select(bool flag) {
+  mut auto value = Token::empty;
+  if (flag) { value = Token::item(7); }
+  else { value = Token::empty; }
+  auto copied = value;
+  return std::move(copied);
+}
+Token snapshot() {
+  mut auto value = Token::empty;
+  auto copied = value;
+  value = Token::item(9);
+  return copied;
+}
+int main() {
+  auto first = select(true);
+  auto second = snapshot();
+  return inspect(first) + inspect(second) - 7;
+}

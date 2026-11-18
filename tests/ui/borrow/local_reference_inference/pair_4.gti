@@ -1,0 +1,20 @@
+// Pair: no source case reaches an internal backend error.
+//@ check-pass
+struct Record { mut int count = 1;  public: Record() = default; };
+class Owner {
+  mut int count = 7;
+public:
+  Owner() = default;
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return count; }
+  void set(int value) mut { count = value; }
+  int& field() { return this.count; }
+  mut int& field_mut() mut { return this.count; }
+};
+expected<Owner&, int> lookup(Owner& owner, bool fail) {
+  if (fail) { return unexpected(9); }
+  return owner;
+}
+int main() { mut Record owner{}; auto& alias = owner;
+    int count = alias.count; mut auto& writable = owner; writable.count = count + 1; return writable.count - 2; }

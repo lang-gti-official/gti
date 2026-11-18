@@ -1,0 +1,25 @@
+// Stored callables: ordinary owned callable transfer retains use-after-move checking.
+class Capture {
+  int value;
+public:
+  Capture(int value) : value(value) {}
+  ~Capture() { int checked = 1 / this.value; }
+  int read() { return this.value; }
+};
+class Owner<T> {
+  T callback;
+public:
+  Owner(T callback) : callback(std::move(callback)) {}
+  int call(int argument) { return this.callback(argument); }
+};
+Owner<T> own<T>(T callback, bool early) {
+  if (early) { return Owner<T>(std::move(callback)); }
+  auto local = Owner<T>(std::move(callback));
+  return std::move(local);
+}
+int main() {
+  Capture offset{7};
+  auto callback = [offset = std::move(offset)](int value) -> int { return offset.read() + value; };
+  auto owner = own(std::move(callback), false);
+  return callback(5);  //~ ERROR GTI-S2018
+}

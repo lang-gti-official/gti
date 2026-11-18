@@ -1,0 +1,16 @@
+// Confined callable results: a confined callable must return the exact contextual value type.
+int map<Operation>(int value, Operation operation) {
+  return operation(value);  //~ ERROR GTI-S2046
+}
+
+class Fraction {
+public:
+  double operator()(int value) { return 0.5; }
+public:
+  Fraction() = default;
+};
+
+int main() {
+  Fraction fraction = Fraction();
+  return map(1, fraction);
+}

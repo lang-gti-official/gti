@@ -1,0 +1,12 @@
+// std::contains rejects a key of another type than the element.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { std::list<int> x = {1}; double key = 1.0; return std::contains(x, key) ? 1 : 0; }  //~ ERROR GTI-S2029

@@ -1,0 +1,7 @@
+// Native identity: rejected with GTI-S2003.
+struct Borrow {
+  int& value;
+  implicit Borrow(int& source) : value(source) {}
+};
+Borrow leak() { int local = 1; return local; }  //~ ERROR GTI-S2003
+int main() { return 0; }

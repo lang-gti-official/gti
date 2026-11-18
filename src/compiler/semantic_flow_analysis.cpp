@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <array>
+
 namespace lang {
 namespace {
 // A known-length concrete pack is not the same as the primary's empty
@@ -6578,6 +6580,84 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
       return &found->second;
   }
   return nullptr;
+}
+
+// A spelling repair is advisory: ordinary lookup still fails and the program
+// stays invalid until the user chooses an edit. Do not instantiate candidates.
+auto SemanticVisitor::Impl::suggestVisibleLocalName(
+    const Token &name, Diagnostic &diagnostic) const -> void {
+  constexpr std::size_t maximumLength = 64;
+  constexpr std::size_t maximumBindings = 512;
+  if (name.generated || macroContext(name) != nullptr ||
+      name.lexeme.size() < 3 || name.lexeme.size() > maximumLength)
+    return;
+  const std::size_t threshold = name.lexeme.size() < 6 ? 1 : 2;
+  const auto distance = [&](std::string_view candidate) {
+    // Optimal-string-alignment distance includes adjacent transpositions.
+    std::array<std::size_t, maximumLength + 1> previous{}, beforePrevious{},
+        row{};
+    for (std::size_t j = 0; j <= candidate.size(); ++j)
+      previous[j] = j;
+    for (std::size_t i = 1; i <= name.lexeme.size(); ++i) {
+      row[0] = i;
+      for (std::size_t j = 1; j <= candidate.size(); ++j) {
+        row[j] = std::min(
+            {previous[j] + 1, row[j - 1] + 1,
+             previous[j - 1] + (name.lexeme[i - 1] != candidate[j - 1])});
+        if (i > 1 && j > 1 && name.lexeme[i - 1] == candidate[j - 2] &&
+            name.lexeme[i - 2] == candidate[j - 1])
+          row[j] = std::min(row[j], beforePrevious[j - 2] + 1);
+      }
+      beforePrevious = previous;
+      previous = row;
+    }
+    return previous[candidate.size()];
+  };
+  const Symbol *best = nullptr;
+  std::size_t bestDistance = threshold + 1;
+  bool ambiguous = false;
+  std::size_t visited = 0;
+  for (const auto &scope : scopes) {
+    for (const auto &[key, symbol] : scope) {
+      // Refuse partial unordered-map searches, so a work cap cannot select an
+      // arbitrary winner or hide an equally close spelling.
+      if (++visited > maximumBindings)
+        return;
+      if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+          symbol.bindingKind != SemanticBindingKind::Parameter &&
+          symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+        continue;
+      const auto &spelling = symbol.declaration.lexeme;
+      if (symbol.declaration.generated || key != spelling ||
+          spelling.size() > maximumLength ||
+          spelling.size() + threshold < name.lexeme.size() ||
+          name.lexeme.size() + threshold < spelling.size())
+        continue;
+      Token candidate = name;
+      candidate.lexeme = spelling;
+      // Use the actual lexical/hygienic resolver, including shadowing. Captures
+      // not admitted into this lambda's environment are never candidates.
+      if (resolve(candidate) != &symbol)
+        continue;
+      const auto score = distance(spelling);
+      if (score < bestDistance) {
+        best = &symbol;
+        bestDistance = score;
+        ambiguous = false;
+      } else if (score == bestDistance) {
+        ambiguous = true;
+      }
+    }
+  }
+  if (best == nullptr || ambiguous)
+    return;
+  const std::string &spelling = best->declaration.lexeme;
+  diagnostic.hints.push_back("Did you mean '" + spelling + "'?");
+  diagnostic.related.push_back(
+      {tokenSpan(best->declaration), "Similar visible binding declared here."});
+  diagnostic.fixes.push_back({tokenSpan(name), spelling,
+                              "Replace with '" + spelling + "'", false,
+                              RepairApplicability::RequiresReview});
 }
 
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
@@ -13485,9 +13565,12 @@ auto SemanticVisitor::Impl::contextualIntegerLiteral(const Expr *expression,
     return nullptr;
   }
   if (expression->exprKind() == ExprKind::LiteralExpr) {
+    // A suffixed literal already has its written type; it is not contextual.
     const auto *literal = static_cast<const LiteralExpr *>(expression);
-    return std::holds_alternative<std::uint64_t>(literal->value()) ? literal
-                                                                   : nullptr;
+    return std::holds_alternative<std::uint64_t>(literal->value()) &&
+                   !isIntegerSuffix(literal->token().numericSuffix)
+               ? literal
+               : nullptr;
   }
   if (expression->exprKind() == ExprKind::Grouping) {
     const auto *grouping = static_cast<const Grouping *>(expression);
@@ -13507,6 +13590,90 @@ auto SemanticVisitor::Impl::contextualIntegerLiteral(const Expr *expression,
 auto SemanticVisitor::Impl::isContextualIntegerLiteral(const Expr *expression)
     -> bool {
   return contextualIntegerLiteral(expression) != nullptr;
+}
+
+auto SemanticVisitor::Impl::suffixedIntegerLiteral(const Expr *expression,
+                                                   bool allowSign)
+    -> const LiteralExpr * {
+  if (expression == nullptr) {
+    return nullptr;
+  }
+  if (const auto *literal = exprAs<LiteralExpr>(expression)) {
+    return std::holds_alternative<std::uint64_t>(literal->value()) &&
+                   isIntegerSuffix(literal->token().numericSuffix)
+               ? literal
+               : nullptr;
+  }
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
+    return suffixedIntegerLiteral(grouping->expression().get(), allowSign);
+  }
+  const auto *unary = exprAs<Unary>(expression);
+  if (allowSign && unary != nullptr &&
+      (unary->oper().kind == TokenKind::PLUS ||
+       unary->oper().kind == TokenKind::MINUS)) {
+    return suffixedIntegerLiteral(unary->right().get(), false);
+  }
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::integerSuffixType(NumericSuffix suffix)
+    -> SemanticType {
+  switch (suffix) {
+  case NumericSuffix::U8:
+    return SemanticType::UInt8;
+  case NumericSuffix::U16:
+    return SemanticType::UInt16;
+  case NumericSuffix::U32:
+    return SemanticType::UInt32;
+  case NumericSuffix::U64:
+    return SemanticType::UInt64;
+  case NumericSuffix::I8:
+    return SemanticType::Int8;
+  case NumericSuffix::I16:
+    return SemanticType::Int16;
+  case NumericSuffix::I32:
+    return SemanticType::Int32;
+  case NumericSuffix::I64:
+    return SemanticType::Int64;
+  default:
+    return SemanticType::Unknown;
+  }
+}
+
+auto SemanticVisitor::Impl::checkSuffixedIntegerLiteralRange(
+    const Expr &expression, const LiteralExpr &literal) -> void {
+  const SemanticType type = integerSuffixType(literal.token().numericSuffix);
+  const std::optional<IntegerConstant> value = integerConstant(&expression);
+  if (!value || integerFits(type, *value)) {
+    return;
+  }
+  // A sign is part of the literal constant: `-128i8` is in range although
+  // its magnitude alone is not. Span the whole signed literal.
+  SourceSpan span = tokenSpan(literal.token());
+  if (const auto *unary = exprAs<Unary>(&expression)) {
+    span.start = tokenSpan(unary->oper()).start;
+    span.line = unary->oper().line;
+  }
+  const int width = integerRank(type);
+  const bool isSigned = isSignedInteger(type);
+  const std::string minimum =
+      isSigned ? "-" + std::to_string(std::uint64_t{1}
+                                      << static_cast<unsigned>(width - 1))
+               : std::string("0");
+  const std::uint64_t maximum =
+      isSigned      ? (std::uint64_t{1} << static_cast<unsigned>(width - 1)) - 1
+      : width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                    : (std::uint64_t{1} << static_cast<unsigned>(width)) - 1;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2004", DiagnosticPhase::Semantics, span,
+      "Integer literal '" + std::string(value->negative ? "-" : "") +
+          std::to_string(value->magnitude) +
+          "' is out of range for its suffix type '" + typeSpelling(type) +
+          "' (" + minimum + " to " + std::to_string(maximum) + ").");
+  diagnostic.hints.emplace_back(
+      "A suffixed literal has exactly its suffix type and is never "
+      "truncated; choose a representable value or a wider suffix.");
+  diagnostics.emplace_back(std::move(diagnostic));
 }
 
 auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
@@ -14114,7 +14281,8 @@ auto SemanticVisitor::Impl::canConvertToUnsigned(SemanticType originalType,
     return true;
   }
   if (const std::optional<IntegerConstant> constant =
-          integerConstant(expression)) {
+          integerConstant(expression);
+      constant && suffixedIntegerLiteral(expression) == nullptr) {
     return integerFits(unsignedTarget, *constant);
   }
   return false;
@@ -14278,8 +14446,10 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
            value.pointerAccess == AccessMode::Mutable;
   }
   if (isInteger(target) && isInteger(value)) {
+    // A suffixed literal converts by its written type, like a typed value.
     if (const std::optional<IntegerConstant> constant =
-            integerConstant(expression)) {
+            integerConstant(expression);
+        constant && suffixedIntegerLiteral(expression) == nullptr) {
       return integerFits(target, *constant);
     }
     return integerRangeFits(target, value);

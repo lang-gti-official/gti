@@ -1,0 +1,10 @@
+// Complete borrow summaries: the program is accepted.
+//@ analyze-pass
+enum Reading { error, value(int& owner) };
+
+Reading<a> inspect<lifetime a>(int&<a> owner, bool fail) {
+  if (fail) return Reading::error;
+  return Reading::value(owner);
+}
+int unrelated() { return 7; }
+int main() { return 0; }

@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)
+  requires outlives<longer, shorter> { return input; }

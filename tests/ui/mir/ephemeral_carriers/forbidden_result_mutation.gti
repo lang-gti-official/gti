@@ -1,0 +1,16 @@
+// Forbidden result mutation: named carrier raw-result mutation seed verifies.
+//@ check-pass
+struct Owner { int value = 4;  public: Owner() = default; };
+class View {
+  Owner& owner;
+public:
+  View(Owner& source) : owner(source) {}
+  int read() { return this.owner.value; }
+  int* pointer() { return nullptr; }
+};
+int main() {
+  Owner owner{};
+  { View named{owner}; [[discard]] named.pointer(); }
+  [[discard]] View(owner).read();
+  return 0;
+}

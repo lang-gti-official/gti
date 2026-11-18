@@ -1,0 +1,3 @@
+// Forward defaults and late payload validation: nominal defaults and type/value/pack inference share exact generic semantics.
+//@ check-pass
+enum Event<T, uint64_t N = 3> { idle, item(T value) }; int read<T, uint64_t N>(Event<T, N>& value) { return 0; } int main() { auto event = Event<int>::item(7); return read(event); }

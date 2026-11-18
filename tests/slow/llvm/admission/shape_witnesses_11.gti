@@ -1,0 +1,10 @@
+// Shape witnesses: a class-array extent query uses only the constant extent.
+//@ build-pass
+//@ slow
+struct Slot { int value; Slot(int value) : value(value) {} };
+int main() {
+  Slot slots[2] = {Slot(3), Slot(4)};
+  mut int total = 0;
+  for (auto& slot : slots) { total += slot.value; }
+  return total == 7 && slots.size() == uint64_t(2) ? 0 : 1;
+}

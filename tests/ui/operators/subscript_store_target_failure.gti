@@ -1,0 +1,18 @@
+// A failing subscript target is reported before the right side is evaluated.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0007
+import std.vector;
+
+int32_t noisy() {
+  std::println("right operand evaluated");
+  return 7;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  values[std::size_t(9)] = noisy();
+  std::println("unreachable");
+  return 0;
+}

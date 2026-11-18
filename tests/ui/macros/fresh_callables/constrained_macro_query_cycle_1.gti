@@ -1,0 +1,8 @@
+// Constrained macro query cycle: a constrained macro query cycle must terminate before expansion.
+//@ analyze-fail
+//@ no-prelude
+concept recursive_query<T> = requires(T value) {
+  { constrained!(value) } -> int;
+};
+#macro int constrained<T>(T value) requires recursive_query<T> { return 1; }
+int main() { return constrained!(1); }  //~ ERROR GTI-S2029

@@ -1,0 +1,18 @@
+// Nested readonly references: nested references retain owner/access restrictions.
+struct Cell {
+  mut int32_t sentinel = 71;
+  mut int32_t selected = 29;
+  int32_t& operator[](std::size_t index) { return this.selected; }
+public:
+  Cell() = default;
+};
+
+struct Table {
+  mut int32_t sentinel = 83;
+  mut Cell cell{};
+  mut Cell& operator[](std::size_t index) mut { return this.cell; }
+public:
+  Table() = default;
+};
+
+int main() { mut Table table{}; Cell& row = table[std::size_t(0)]; int32_t& value = row[std::size_t(0)]; table.cell.selected = 5; return value; }  //~ ERROR GTI-S2017

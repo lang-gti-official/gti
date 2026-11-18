@@ -1,0 +1,18 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  {
+    Selected b = a;
+    switch (b) {
+    case Selected::value(owner): if (owner != 5) return 3; break;
+    case Selected::empty: return 2;
+    }
+  }
+  switch (std::move(a)) {
+  case Selected::value(owner): return owner - 5;
+  case Selected::empty: return 1;
+  }
+}

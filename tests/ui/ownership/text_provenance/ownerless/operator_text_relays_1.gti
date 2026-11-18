@@ -1,0 +1,36 @@
+// Operator text relays: operator text relays lower through MIR.
+//@ check-pass
+import std.string;
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  bool relayed = same(owner.view()) == same[owner.view()] &&
+                 echo(owner.view()) == "owned";
+  std::string_view literal = same("literal");
+  owner.append("!");
+  bool held = plain() == "plain";
+  plain.grow();
+  return relayed && held && literal == "literal" ? 0 : 1;
+}

@@ -1,0 +1,4 @@
+// Protocol concepts: rejected with GTI-S2030.
+concept writable<T> { typename element; };
+for concept writable<int> { using element = mut int; };  //~ ERROR GTI-S2030
+int main() { return 0; }

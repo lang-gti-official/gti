@@ -1,0 +1,7 @@
+// Negatives: aggregate copy retains type-only records remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+using E = void*; using P = uint64_t*;
+struct Carrier { void* address = nullptr;  public: Carrier() = default; };
+int main() { mut int value = 0; Carrier a{.address = E(&value)};
+Carrier b = a; P p = P(b.address); return 0; }  //~ WARN GTI-S2101 //~ WARN GTI-S2101

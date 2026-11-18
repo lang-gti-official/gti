@@ -1,0 +1,24 @@
+// Hover over an auto local whose type each concrete generic instance infers says so instead of showing one instance's type.
+//@ hover @decl: auto value
+//@ hover @decl: resolved independently for each concrete generic instance
+import std.iterator;
+import std.vector;
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto /*@decl*/value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+int main() {
+  std::vector<int64_t> wide = std::vector<int64_t>();
+  std::vector<int32_t> narrow = std::vector<int32_t>();
+  bool wide_result = first_less_than_next(wide.begin(), wide.end());
+  bool narrow_result = first_less_than_next(narrow.begin(), narrow.end());
+  return wide_result && narrow_result ? 0 : 1;
+}

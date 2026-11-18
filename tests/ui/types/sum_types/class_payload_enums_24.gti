@@ -1,0 +1,15 @@
+// Class payload enums: copy capture preserves the enum payload's move-only contract.
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum holder { one(resource value), none };
+
+int main() {
+  auto source = holder::one(resource());
+  auto callback = [source]() -> int { return 0; };  //~ ERROR GTI-S2027
+  return callback();
+}

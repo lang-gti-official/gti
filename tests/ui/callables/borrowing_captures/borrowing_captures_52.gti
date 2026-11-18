@@ -1,0 +1,8 @@
+// Borrowing captures: borrowed-callable-outlives-owner is rejected with a user diagnostic, not an ICE.
+import std.functional;
+std::function_ref<int()> bad() {
+  int owner = 3;
+  auto callback = [&owner]() -> int { return owner; };
+  return std::function_ref<int()>(callback);  //~ ERROR GTI-S2127
+}
+int main() { auto escaped = bad(); return escaped(); }

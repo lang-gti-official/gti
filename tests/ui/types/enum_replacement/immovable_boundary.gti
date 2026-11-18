@@ -1,0 +1,13 @@
+// Immovable boundary: whole-enum replacement cannot manufacture payload move construction.
+class Immovable {
+public:
+  Immovable() {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+  ~Immovable() {}
+};
+enum ImmovableEvent { empty, held(Immovable value) };
+void replace(mut ImmovableEvent& destination) {
+  destination = ImmovableEvent::empty;  //~ ERROR GTI-S2003
+}
+int main() { return 0; }

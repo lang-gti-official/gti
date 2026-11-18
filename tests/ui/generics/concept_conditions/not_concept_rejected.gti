@@ -1,0 +1,4 @@
+// A class name is not a concept.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+struct Box { Box() = default; }; static_assert(Box<int>);  //~ ERROR GTI-S2049 Unknown concept 'Box'

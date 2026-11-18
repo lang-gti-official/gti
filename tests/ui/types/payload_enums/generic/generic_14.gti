@@ -1,0 +1,6 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+struct Phantom<T> { T value; };
+enum Metadata<T> { absent, number(int32_t value) };
+int tag<T>() { return 7; }
+int main() { return tag<Metadata<Phantom<int32_t>>>() - 7; }

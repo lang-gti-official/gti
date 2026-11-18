@@ -1,0 +1,222 @@
+// Checked cursor steps and signed distances reject out-of-range coordinates before publishing them, after cleanup.
+//@ stdlib-overlay: std/detail_iterator.gti
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0016]
+//@ revisions: step_forward_at_end step_forward_before_begin step_forward_after_end step_forward_at_maximum step_backward_at_begin step_backward_before_begin step_backward_after_end step_backward_at_zero step_forward_reversed_boundaries step_backward_reversed_boundaries step_reverse_increment_at_begin step_reverse_decrement_at_end positive_distance_overflow negative_distance_overflow minimum_offset_before_begin minimum_subtraction_after_end
+//@[step_forward_at_end] args: step_forward_at_end
+//@[step_forward_at_end] stdout: 20
+//@[step_forward_at_end] stdout: 3
+//@[step_forward_at_end] stdout: 10
+//@[step_forward_before_begin] args: step_forward_before_begin
+//@[step_forward_before_begin] stdout: 20
+//@[step_forward_before_begin] stdout: 4
+//@[step_forward_before_begin] stdout: 10
+//@[step_forward_after_end] args: step_forward_after_end
+//@[step_forward_after_end] stdout: 20
+//@[step_forward_after_end] stdout: 10
+//@[step_forward_after_end] stdout: 10
+//@[step_forward_at_maximum] args: step_forward_at_maximum
+//@[step_forward_at_maximum] stdout: 20
+//@[step_forward_at_maximum] stdout: 18446744073709551615
+//@[step_forward_at_maximum] stdout: 10
+//@[step_backward_at_begin] args: step_backward_at_begin
+//@[step_backward_at_begin] stdout: 20
+//@[step_backward_at_begin] stdout: 5
+//@[step_backward_at_begin] stdout: 10
+//@[step_backward_before_begin] args: step_backward_before_begin
+//@[step_backward_before_begin] stdout: 20
+//@[step_backward_before_begin] stdout: 4
+//@[step_backward_before_begin] stdout: 10
+//@[step_backward_after_end] args: step_backward_after_end
+//@[step_backward_after_end] stdout: 20
+//@[step_backward_after_end] stdout: 10
+//@[step_backward_after_end] stdout: 10
+//@[step_backward_at_zero] args: step_backward_at_zero
+//@[step_backward_at_zero] stdout: 20
+//@[step_backward_at_zero] stdout: 0
+//@[step_backward_at_zero] stdout: 10
+//@[step_forward_reversed_boundaries] args: step_forward_reversed_boundaries
+//@[step_forward_reversed_boundaries] stdout: 20
+//@[step_forward_reversed_boundaries] stdout: 5
+//@[step_forward_reversed_boundaries] stdout: 10
+//@[step_backward_reversed_boundaries] args: step_backward_reversed_boundaries
+//@[step_backward_reversed_boundaries] stdout: 20
+//@[step_backward_reversed_boundaries] stdout: 5
+//@[step_backward_reversed_boundaries] stdout: 10
+//@[step_reverse_increment_at_begin] args: step_reverse_increment_at_begin
+//@[step_reverse_increment_at_begin] stdout: 20
+//@[step_reverse_increment_at_begin] stdout: 5
+//@[step_reverse_increment_at_begin] stdout: 10
+//@[step_reverse_decrement_at_end] args: step_reverse_decrement_at_end
+//@[step_reverse_decrement_at_end] stdout: 20
+//@[step_reverse_decrement_at_end] stdout: 9
+//@[step_reverse_decrement_at_end] stdout: 10
+//@[positive_distance_overflow] args: positive_distance_overflow
+//@[negative_distance_overflow] args: negative_distance_overflow
+//@[minimum_offset_before_begin] args: minimum_offset_before_begin
+//@[minimum_subtraction_after_end] args: minimum_subtraction_after_end
+// --- checked_coordinate_failures.gti
+import std.detail_iterator;
+import std.string;
+import std.vector;
+
+class StepDrop {
+  int id;
+public:
+  StepDrop(int id) : id(id) {}
+  ~StepDrop() { std::println(this.id); }
+};
+
+class StepState<uint64_t Reverse, uint64_t Decrement> {
+  mut std::size_t position;
+  std::size_t begin;
+  std::size_t end;
+public:
+  StepState(std::size_t position, std::size_t begin, std::size_t end)
+      : position(position), begin(begin), end(end) {}
+  void step() mut {
+    this.position = std::detail::checked_iterator_step<Reverse, Decrement>(
+        this.position, this.begin, this.end);
+  }
+  ~StepState() { std::println(this.position); }
+};
+
+int step_forward_at_end() {
+  StepDrop outer{10};
+  mut StepState<0, 0> state{std::size_t(3), std::size_t(0), std::size_t(3)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_forward_before_begin() {
+  StepDrop outer{10};
+  mut StepState<0, 0> state{std::size_t(4), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_forward_after_end() {
+  StepDrop outer{10};
+  mut StepState<0, 0> state{std::size_t(10), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_forward_at_maximum() {
+  StepDrop outer{10};
+  mut StepState<0, 0> state{std::size_t(18446744073709551615), std::size_t(0), std::size_t(18446744073709551615)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_backward_at_begin() {
+  StepDrop outer{10};
+  mut StepState<0, 1> state{std::size_t(5), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_backward_before_begin() {
+  StepDrop outer{10};
+  mut StepState<0, 1> state{std::size_t(4), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_backward_after_end() {
+  StepDrop outer{10};
+  mut StepState<0, 1> state{std::size_t(10), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_backward_at_zero() {
+  StepDrop outer{10};
+  mut StepState<0, 1> state{std::size_t(0), std::size_t(0), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_forward_reversed_boundaries() {
+  StepDrop outer{10};
+  mut StepState<0, 0> state{std::size_t(5), std::size_t(9), std::size_t(3)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_backward_reversed_boundaries() {
+  StepDrop outer{10};
+  mut StepState<0, 1> state{std::size_t(5), std::size_t(9), std::size_t(3)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_reverse_increment_at_begin() {
+  StepDrop outer{10};
+  mut StepState<1, 0> state{std::size_t(5), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int step_reverse_decrement_at_end() {
+  StepDrop outer{10};
+  mut StepState<1, 1> state{std::size_t(9), std::size_t(5), std::size_t(9)};
+  StepDrop inner{20};
+  state.step();
+  return 99;
+}
+
+int positive_distance_overflow() {
+  auto result = std::detail::checked_iterator_difference(std::size_t(9223372036854775808), std::size_t(0));
+  return 0;
+}
+
+int negative_distance_overflow() {
+  auto result = std::detail::checked_iterator_difference(std::size_t(0), std::size_t(9223372036854775809));
+  return 0;
+}
+
+int minimum_offset_before_begin() {
+  auto result = std::detail::checked_iterator_position(std::size_t(0), std::size_t(0), std::size_t(3), std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1));
+  return 0;
+}
+
+int minimum_subtraction_after_end() {
+  auto result = std::detail::checked_iterator_position(std::size_t(0), std::size_t(0), std::size_t(3), std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1), true);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argv[1] == "step_forward_at_end") { return step_forward_at_end(); }
+  if (argv[1] == "step_forward_before_begin") { return step_forward_before_begin(); }
+  if (argv[1] == "step_forward_after_end") { return step_forward_after_end(); }
+  if (argv[1] == "step_forward_at_maximum") { return step_forward_at_maximum(); }
+  if (argv[1] == "step_backward_at_begin") { return step_backward_at_begin(); }
+  if (argv[1] == "step_backward_before_begin") { return step_backward_before_begin(); }
+  if (argv[1] == "step_backward_after_end") { return step_backward_after_end(); }
+  if (argv[1] == "step_backward_at_zero") { return step_backward_at_zero(); }
+  if (argv[1] == "step_forward_reversed_boundaries") { return step_forward_reversed_boundaries(); }
+  if (argv[1] == "step_backward_reversed_boundaries") { return step_backward_reversed_boundaries(); }
+  if (argv[1] == "step_reverse_increment_at_begin") { return step_reverse_increment_at_begin(); }
+  if (argv[1] == "step_reverse_decrement_at_end") { return step_reverse_decrement_at_end(); }
+  if (argv[1] == "positive_distance_overflow") { return positive_distance_overflow(); }
+  if (argv[1] == "negative_distance_overflow") { return negative_distance_overflow(); }
+  if (argv[1] == "minimum_offset_before_begin") { return minimum_offset_before_begin(); }
+  if (argv[1] == "minimum_subtraction_after_end") { return minimum_subtraction_after_end(); }
+  return 1;
+}
+// --- std/detail_iterator.gti
+export module detail_iterator;
+export import "detail/iterator.gti";

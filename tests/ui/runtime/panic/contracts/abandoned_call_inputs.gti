@@ -1,0 +1,30 @@
+// Abandoned call inputs: terminal later arguments retain valid prepared-owner MIR.
+//@ check-pass
+import std.panic;
+void observe(int value) {}
+struct Guard {
+  int value;
+  Guard(int input) : value(input) {}
+  ~Guard() { observe(value); }
+};
+[[noreturn]] int terminal_argument() { std::panic("argument failed"); }
+int later() { observe(999); return 3; }
+void consume(Guard first, int second, int third) { observe(888); }
+void interrupted() { consume(Guard(85), terminal_argument(), later()); }
+void branched(bool condition) {
+  consume(Guard(86), condition ? terminal_argument() : terminal_argument(), later());
+}
+void moved() {
+  Guard owner{88};
+  consume(std::move(owner), terminal_argument(), later());
+}
+struct Plain { int value = 1;  public: Plain() = default; };
+void consume_copy(Plain first, int second) {}
+void copied() { Plain value{}; consume_copy(value, terminal_argument()); }
+void consume_borrow(int& first, int second) {}
+void borrowed() { int value = 1; consume_borrow(value, terminal_argument()); }
+void continuing() { consume(Guard(87), 2, 3); std::panic("later statement"); }
+int main() {
+  interrupted(); branched(false); moved(); copied(); borrowed(); continuing();
+  return 0;
+}

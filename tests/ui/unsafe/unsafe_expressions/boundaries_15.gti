@@ -1,0 +1,16 @@
+// Boundaries: global/default/field contexts and fresh immovable initialization.
+//@ check-pass
+unsafe int raw() { return 7; }
+
+int global = unsafe { raw() };
+int defaulted(int n = unsafe { raw() }) { return n; }
+struct Fixed {
+  int value;
+  unsafe Fixed() : value(unsafe { raw() }) {}
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+};
+int main() {
+  auto fixed = unsafe { Fixed() };
+  return fixed.value + defaulted() + global;
+}

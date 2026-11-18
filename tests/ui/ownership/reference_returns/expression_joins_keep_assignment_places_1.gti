@@ -1,0 +1,34 @@
+// Expression joins keep assignment places: field, receiver and indexed assignments of logical and conditional values should analyse and lower to verified MIR.
+//@ check-pass
+class Gate {
+  mut bool open = false;
+public:
+  Gate() = default;
+  void update(bool armed, bool ready) mut {
+    this.open = armed && ready;
+    this.open = armed || (ready && !armed);
+    this.open = armed ? ready && armed : false;
+  }
+  bool isOpen() { return this.open; }
+};
+struct Counter {
+  mut int value = 0;
+  mut bool seen = false;
+public:
+  Counter() = default;
+};
+int main() {
+  mut Gate gate{};
+  gate.update(true, true);
+  mut Counter counter{};
+  mut bool[2] flags = {false, false};
+  bool armed = gate.isOpen();
+  bool ready = true;
+  counter.seen = armed && ready;
+  counter.seen = false && ready;
+  counter.seen = true || ready;
+  counter.value += (armed && ready) ? 1 : 0;
+  flags[0] = armed && ready;
+  flags[1] = armed ? ready : false;
+  return counter.value == 1 && counter.seen && flags[0] && flags[1] ? 0 : 1;
+}

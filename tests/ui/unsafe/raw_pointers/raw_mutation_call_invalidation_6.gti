@@ -1,0 +1,14 @@
+// Raw mutation call invalidation: aggregate mutation calls conservatively invalidate old raw addresses.
+//@ raw-pointer-audit: strict
+struct Owner {
+  mut int value = 1;
+  void replace() mut { this.value = 2; }
+  mut int& borrow_after_replace() mut { this.value = 3; return this.value; }
+};
+void replace(mut Owner& owner) { owner = Owner(); }  //~ ERROR GTI-S2012
+int main() {
+  mut Owner owner{};  //~ ERROR GTI-S2012
+  const int* address = &owner.value;
+[[discard]] owner.borrow_after_replace();
+  unsafe { return *address; }  //~ ERROR GTI-S2102
+}

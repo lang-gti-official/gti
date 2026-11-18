@@ -1,0 +1,11 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept score<T> { int read(T& value); };
+struct Unit { int value; Unit(int v) : value(v) {} };
+struct Box<T> { T value; Box(T v) : value(std::move(v)) {} };
+for concept score<Unit> { int read(Unit& value) { return value.value; } };
+for <T> concept score<Box<T>> requires score<T> {
+  int read(Box<T>& value) { return score<T>::read(value.value); }
+};
+int read_score<T>(T& value) requires score<T> { return score<T>::read(value); }
+int main() { return 0; }

@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Input {
+  Input(int&<static> input) {}
+  Input(int input, bool ignored = true) {}
+};
+int main() { int value = 7; Input valid{value}; return 0; }

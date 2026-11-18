@@ -1,0 +1,10 @@
+// A move-only std::optional cannot be copy-assigned.
+//@ check-fail
+import std.optional;
+
+int main() {
+  mut std::optional<int32_t> destination{1};
+  std::optional<int32_t> source{2};
+  destination = source;  //~ ERROR GTI-S2003 Cannot copy assign move-only type
+  return destination.value();
+}

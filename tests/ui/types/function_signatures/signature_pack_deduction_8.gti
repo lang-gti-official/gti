@@ -1,0 +1,2 @@
+// Signature pack deduction: signature pack deduction must reject conflicting or mismatched exact types: int main() { Tag<int(int)> a{}; return unpack(a, 1); }.
+class Tag<S> { public: Tag() = default; }; class Types<Args...> { public: Types() = default; }; int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 0; } int repeated<R, Args...>(Tag<R(Args...)>& first, Tag<void(Args...)>& second) { return 0; } int with_values<R, Args...>(Tag<R(Args...)>& tag, Args... args) { return 0; } int main() { Tag<int(int)> a{}; return unpack(a, 1); }  //~ ERROR GTI-S2005 //~ ERROR GTI-S2005

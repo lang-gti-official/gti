@@ -185,6 +185,16 @@ jobs:
             --meta "run=${GTI_RUN_ID}" --meta "shards=${found}/8" --meta "test_status=${status}" \
             "${shards}"/shard-*.lcov.gz | tee -a "${GITHUB_STEP_SUMMARY}"
           [[ "${found}" == 8 ]] || { echo "only ${found} of 8 shards exported coverage" >&2; exit 1; }
+      - name: Compare with the committed baseline
+        # Advisory: a DROP line is a file more than 2 points below the
+        # baseline with no reason in tests/coverage_allow.txt; never fatal.
+        if: always()
+        run: |
+          out="${RUNNER_TEMP}/suite-coverage"
+          mkdir -p "${out}"
+          python3 scripts/coverage_compare.py tests/coverage_baseline.json "${out}/coverage.json" \
+            --allow tests/coverage_allow.txt > "${out}/compare.txt" || true
+          tee -a "${GITHUB_STEP_SUMMARY}" < "${out}/compare.txt"
       - name: Upload the coverage summary
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -208,7 +218,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     env:
-      GTI_MUTATION_LABELS: '^(feedback-fast|compiler-suite)$'
+      GTI_MUTATION_LABELS: '^(feedback-fast|gti-test-ui)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

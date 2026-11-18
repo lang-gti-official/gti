@@ -1,0 +1,17 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+  Default(int&<source> item, int count) : reading(Reading<source>::value(item)) {}
+};
+int main() {
+  int value = 7;
+  Default<int&> active{value, 0};
+  switch (active.reading) {
+    case Reading<_>::empty: return 1;
+    case Reading<_>::value(auto& item): return item - 7;
+  }
+}

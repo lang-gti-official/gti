@@ -1,0 +1,13 @@
+// Expansion source ownership: generic macro constructor temporaries produce checked HIR.
+//@ check-pass
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
+bool inspect(Cleanup& value) { return true; }
+void observe(bool value) {}
+#macro force(bool value) { observe(value); }
+#macro relay(bool value) { force!(value); }
+int ordinary() { relay!(inspect(Cleanup())); return 0; }
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) { return 0; }
+  else { relay!(inspect(Cleanup())); return 1; }
+}
+int main() { return ordinary() + selected<0>() + selected<1>() - 1; }

@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: class Box<T> { T[2] field = {};  public: Box() = default; }; int main() { Box<void> box{}; return 0; }.
+class Box<T> { T[2] field = {};  public: Box() = default; }; int main() { Box<void> box{}; return 0; }  //~ ERROR GTI-S2015 //~ ERROR GTI-S2015

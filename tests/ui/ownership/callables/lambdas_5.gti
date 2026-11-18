@@ -1,0 +1,10 @@
+// Lambdas: backend support should account for types nested in lambda signatures.
+//@ check-pass
+int main() {
+  auto calculate = [](bool fail) -> expected<int, std::string_view> {
+    if (fail) { return unexpected("failed"); }
+    return 1;
+  };
+  expected<int, std::string_view> result = calculate(false);
+  return result.value_or(0) - 1;
+}

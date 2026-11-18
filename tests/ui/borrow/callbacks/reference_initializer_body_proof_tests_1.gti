@@ -1,0 +1,16 @@
+// Reference initializer body proof tests: the program is accepted.
+//@ check-pass
+int global_value = 3;
+int& independent() { return global_value; }
+int& relay(int& value) { return value; }
+class View {
+  int& value;
+public:
+  View(int& value) : value(relay(value)) {}
+  int read() { return this.value; }
+};
+int main() {
+  int owner = 7;
+  View view{owner};
+  return view.read() + independent() - 10;
+}

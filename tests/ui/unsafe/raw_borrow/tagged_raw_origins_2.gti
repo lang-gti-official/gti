@@ -1,0 +1,6 @@
+// Tagged raw origins: tagged and inherited raw fields preserve callee expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+expected<int, const int*> dangling() { int dead = 7; return unexpected(&dead); }
+int main() { auto wrapped = dangling(); if (wrapped) { return 1; }
+  unsafe { return *wrapped.error(); } }  //~ ERROR GTI-S2102

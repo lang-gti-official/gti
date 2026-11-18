@@ -1,0 +1,16 @@
+// Default field rollback enters constructor: an explicit initializer should continue to override the in-class initializer.
+//@ check-pass
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+class Bundle {
+public:
+  Resource held = Resource(5);
+  Bundle(int32_t seed) : held(Resource(seed)) {}
+public:
+  Bundle() = default;
+};
+int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }

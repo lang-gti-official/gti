@@ -1,0 +1,3 @@
+// An interface has no default construction.
+//@ check-fail
+interface Value {}; int main() { Value value{}; return 0; }  //~ ERROR GTI-S2044

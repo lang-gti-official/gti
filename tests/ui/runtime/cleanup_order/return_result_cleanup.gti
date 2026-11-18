@@ -1,0 +1,209 @@
+// A failed return continuation cleans its initialised, unpublished result, also when that cleanup fails.
+//@ run-pass
+//@ revisions: c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19
+//@[c0] stdout: 2
+//@[c0] stdout: 1
+//@[c0] stdout: 9
+//@[c1] args: fail
+//@[c1] stdout: 2
+//@[c1] stdout: 1
+//@[c1] stdout: 9
+//@[c1] run-fail
+//@[c1] exit-code: 70
+//@[c1] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c2] args: fail fail
+//@[c2] stdout: 2
+//@[c2] stdout: 1
+//@[c2] run-fail
+//@[c2] exit-code: 70
+//@[c2] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+//@[c3] args: fail fail fail
+//@[c3] stdout: 2
+//@[c3] stdout: 1
+//@[c3] stdout: 9
+//@[c4] args: fail fail fail fail
+//@[c4] stdout: 2
+//@[c4] stdout: 1
+//@[c4] stdout: 9
+//@[c4] run-fail
+//@[c4] exit-code: 70
+//@[c4] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c5] args: fail fail fail fail fail
+//@[c5] stdout: 2
+//@[c5] stdout: 1
+//@[c5] run-fail
+//@[c5] exit-code: 70
+//@[c5] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+//@[c6] args: fail fail fail fail fail fail
+//@[c6] stdout: 2
+//@[c6] stdout: 1
+//@[c6] stdout: 9
+//@[c7] args: fail fail fail fail fail fail fail
+//@[c7] stdout: 2
+//@[c7] stdout: 1
+//@[c7] stdout: 9
+//@[c7] run-fail
+//@[c7] exit-code: 70
+//@[c7] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c8] args: fail fail fail fail fail fail fail fail
+//@[c8] stdout: 2
+//@[c8] stdout: 1
+//@[c8] run-fail
+//@[c8] exit-code: 70
+//@[c8] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+//@[c9] args: fail fail fail fail fail fail fail fail fail
+//@[c9] stdout: 2
+//@[c9] stdout: 1
+//@[c9] stdout: 9
+//@[c10] args: fail fail fail fail fail fail fail fail fail fail
+//@[c10] stdout: 2
+//@[c10] stdout: 1
+//@[c10] stdout: 9
+//@[c10] run-fail
+//@[c10] exit-code: 70
+//@[c10] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c11] args: fail fail fail fail fail fail fail fail fail fail fail
+//@[c11] stdout: 2
+//@[c11] stdout: 1
+//@[c11] run-fail
+//@[c11] exit-code: 70
+//@[c11] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+//@[c12] args: fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c12] stdout: 2
+//@[c12] stdout: 1
+//@[c12] stdout: 9
+//@[c13] args: fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c13] stdout: 2
+//@[c13] stdout: 1
+//@[c13] stdout: 9
+//@[c13] run-fail
+//@[c13] exit-code: 70
+//@[c13] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c14] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c14] stdout: 2
+//@[c14] stdout: 1
+//@[c14] run-fail
+//@[c14] exit-code: 70
+//@[c14] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+//@[c15] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c15] stdout: 2
+//@[c15] stdout: 1
+//@[c15] stdout: 9
+//@[c16] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c16] stdout: 2
+//@[c16] stdout: 1
+//@[c16] stdout: 9
+//@[c16] run-fail
+//@[c16] exit-code: 70
+//@[c16] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c17] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c17] stdout: 2
+//@[c17] stdout: 1
+//@[c17] stdout: 9
+//@[c18] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c18] stdout: 2
+//@[c18] stdout: 1
+//@[c18] stdout: 9
+//@[c18] run-fail
+//@[c18] exit-code: 70
+//@[c18] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c19] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[c19] stdout: 2
+//@[c19] stdout: 1
+//@[c19] run-fail
+//@[c19] exit-code: 70
+//@[c19] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+// --- main.gti
+import std.string;
+import std.vector;
+import std.memory;
+
+class Token {
+  int identity;
+  int divisor;
+public:
+  Token(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int checked = 1 / this.divisor;
+  }
+};
+
+Token produce(int divisor, int cleanup_divisor) {
+  int checked = 1 / divisor;
+  return Token(1, cleanup_divisor);
+}
+
+Token return_call(int divisor, int result_divisor) {
+  Token guard{2, divisor};
+  return produce(1, result_divisor);
+}
+
+Token return_move(int divisor, int result_divisor) {
+  Token guard{2, divisor};
+  auto result = produce(1, result_divisor);
+  return std::move(result);
+}
+
+Token return_construct(int divisor, int result_divisor) {
+  Token guard{2, divisor};
+  return Token(1, result_divisor);
+}
+
+expected<Token, int> return_expected(int divisor, int result_divisor) {
+  Token guard{2, divisor};
+  auto result = produce(1, result_divisor);
+  return std::move(result);
+}
+
+std::storage<Token> return_storage(int divisor, int result_divisor) {
+  Token guard{2, divisor};
+  std::allocator allocator{};
+  mut auto allocation = allocator.try_storage<Token>(std::size_t(1));
+  mut auto result = std::move(allocation).value();
+  result.construct(std::size_t(0), Token(1, result_divisor));
+  return std::move(result);
+}
+
+class Quiet {
+public:
+  Quiet() {}
+  ~Quiet() { std::println(1); }
+};
+
+Quiet return_infallible(int divisor) {
+  Token guard{2, divisor};
+  return Quiet();
+}
+
+class CallableOwner<T> {
+  T callback;
+public:
+  CallableOwner(T callback) : callback(std::move(callback)) {}
+};
+
+CallableOwner<T> return_callable<T>(T callback, Token guard) {
+  return CallableOwner<T>(std::move(callback));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9, 1};
+  if (argc <= 3) {
+    auto result = return_call(argc == 1 ? 1 : 0, argc == 3 ? 0 : 1);
+  } else if (argc <= 6) {
+    auto result = return_move(argc == 4 ? 1 : 0, argc == 6 ? 0 : 1);
+  } else if (argc <= 9) {
+    auto result = return_construct(argc == 7 ? 1 : 0, argc == 9 ? 0 : 1);
+  } else if (argc <= 12) {
+    auto result = return_expected(argc == 10 ? 1 : 0, argc == 12 ? 0 : 1);
+  } else if (argc <= 15) {
+    auto result = return_storage(argc == 13 ? 1 : 0, argc == 15 ? 0 : 1);
+  } else if (argc <= 17) {
+    auto result = return_infallible(argc == 16 ? 1 : 0);
+  } else {
+    Token captured{1, argc == 20 ? 0 : 1};
+    auto callback = [captured = std::move(captured)]() -> void {};
+    auto result = return_callable(std::move(callback), Token(2, argc == 18 ? 1 : 0));
+  }
+  return 0;
+}

@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: consuming invocation requires move.
+import std.functional;
+import std.memory;
+int main() { std::function<int() &&> callback{[]() -> int { return 3; }}; int value = callback(); return 0; }  //~ ERROR GTI-S2022

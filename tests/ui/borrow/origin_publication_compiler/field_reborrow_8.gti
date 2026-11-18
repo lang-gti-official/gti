@@ -1,0 +1,26 @@
+// Field reborrow: an exclusive parent remains suspended while its shared child is live.
+class Read {
+  int& value;
+public:
+  Read(int& value) : value(value) {}
+  int get() { return this.value; }
+};
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+  Read read() { return Read(this.value); }
+  void bump() mut { this.value++; }
+};
+class Holder {
+  mut Write value;
+public:
+  Holder(Write value) : value(std::move(value)) {}
+  int get() mut { auto view = this.value.read(); this.value.bump(); return view.get(); }  //~ ERROR GTI-S2017
+};
+int main() {
+  mut int value = 4;
+  Write writer{value};
+  mut Holder holder{std::move(writer)};
+  return holder.get() - 4;
+}

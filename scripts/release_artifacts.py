@@ -143,13 +143,70 @@ def integration_shards(workflow: Path | None = None) -> dict[str, int]:
     return counts
 
 
+def attempt_jobs(request, base, run_id, attempt):
+    rows = []
+    for page in range(1, 11):
+        batch = request(f"{base}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"]
+        rows.extend(batch)
+        if len(batch) < 100:
+            return rows
+    raise ValueError("job inventory exceeded bound")
+
+
+# What identifies one execution of a job. Re-running only a run's failed jobs
+# copies each job that passed into the new attempt under a new id, with the
+# original execution's times and runner.
+EXECUTION = ("started_at", "completed_at", "runner_id")
+
+
+def package_attempt(rows, artifacts, attempt, earlier_jobs):
+    """The one attempt whose package jobs produced both retained archives, or None.
+
+    Packages are named by the attempt that built them. A re-run of only the
+    failed jobs (validation-retry.yml re-runs jobs that never got a runner)
+    leaves green package jobs and their archives in the attempt that built
+    them, and the latest attempt lists copies of those jobs. Take the newest
+    attempt, up to the latest, that retains both platforms' archives. Below
+    the latest, every package job the latest attempt reports must be that
+    attempt's own execution (same times and runner, and green there), so an
+    archive is never paired with a different execution of its job. Archives
+    of one platform alone in an attempt mean the platforms were built in
+    different attempts, which the channels cannot combine.
+    """
+    present = {item.get("name") for item in artifacts if not item.get("expired", True)}
+    names = [item.get("name") for item in artifacts]
+    for candidate in range(attempt, 0, -1):
+        wanted = [f"gti-nightly-{platform}-{candidate}" for platform in PLATFORMS]
+        found = [name in present and names.count(name) == 1 for name in wanted]
+        if not any(found):
+            continue
+        if not all(found):
+            return None
+        if candidate == attempt:
+            return candidate
+        earlier = earlier_jobs(candidate)
+        for platform in PLATFORMS:
+            name = f"Release package ({platform})"
+            latest = [job for job in rows if job.get("name") == name]
+            built = [job for job in earlier if job.get("name") == name]
+            if (len(latest) != 1 or len(built) != 1 or built[0].get("conclusion") != "success"
+                    or any(not built[0].get(key) or built[0].get(key) != latest[0].get(key)
+                           for key in EXECUTION)):
+                return None
+        return candidate
+    return None
+
+
 def release_evidence(repository, sha, request, full_only=False):
     """Accept a successful full validation of a main head (push or dispatch), or a
     source-library or LSP-lane merge CI run that reused an admitted compiler.
 
     With full_only, source-library jobs cannot seed compiler reuse.
     Latest-attempt jobs and attempt-qualified artifact names prohibit mixing
-    green jobs or retained packages across retries. PR and fast-only runs fail.
+    green jobs or retained packages across retries. The returned run_attempt
+    names the attempt that built the packages (package_attempt), which is
+    older than the latest when only failed jobs were re-run. PR and fast-only
+    runs fail.
     """
     from resolve_release_source import repository_path
     base = repository_path(repository)
@@ -170,14 +227,7 @@ def release_evidence(repository, sha, request, full_only=False):
         run_id, attempt = run.get("id"), run.get("run_attempt")
         if type(run_id) is not int or type(attempt) is not int or min(run_id, attempt) < 1:
             continue
-        rows = []
-        for page in range(1, 11):
-            batch = request(f"{base}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"]
-            rows.extend(batch)
-            if len(batch) < 100:
-                break
-        else:
-            raise ValueError("job inventory exceeded bound")
+        rows = attempt_jobs(request, base, run_id, attempt)
         required = {"Full validation verdict", *(f"Release package ({platform})" for platform in PLATFORMS),
                     *(f"Integration ({platform} {index}/{count})"
                       for platform, count in integration_shards().items() for index in range(count))}
@@ -194,11 +244,11 @@ def release_evidence(repository, sha, request, full_only=False):
         artifacts = request(f"{base}/actions/runs/{run_id}/artifacts?per_page=100")
         if artifacts.get("total_count", 0) > 100:
             raise ValueError("artifact inventory exceeded bound")
-        names = {f"gti-nightly-{platform}-{attempt}" for platform in PLATFORMS}
-        if any(len(matches := [a for a in artifacts.get("artifacts", []) if a.get("name") == name]) != 1 or
-               matches[0].get("expired", True) for name in names):
+        source = package_attempt(rows, artifacts.get("artifacts", []), attempt,
+                                 lambda earlier: attempt_jobs(request, base, run_id, earlier))
+        if source is None:
             continue
-        result = {"run_id": str(run_id), "run_attempt": str(attempt)}
+        result = {"run_id": str(run_id), "run_attempt": str(source)}
         if not full:
             result["validation_mode"] = "lsp" if lsp else "source-stdlib"
         return result

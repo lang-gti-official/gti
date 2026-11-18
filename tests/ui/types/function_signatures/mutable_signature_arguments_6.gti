@@ -1,0 +1,4 @@
+// Mutable signature arguments: a read-only target serves a mutable-reference argument.
+//@ check-pass
+import std.functional;
+void read(int& value) {} int main() { std::function<void(mut int&)> fn{read}; mut int x = 0; fn(x); return 0; }

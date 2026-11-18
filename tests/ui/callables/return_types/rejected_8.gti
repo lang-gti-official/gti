@@ -1,0 +1,5 @@
+// Rejected: invalid query/use is rejected before emission.
+import std.meta;
+class Overloaded { public: int operator()(int x) { return x; }  public: Overloaded() = default; };
+using Invalid = std::meta::callable_return_type<Overloaded>;  //~ ERROR GTI-S2023
+int main() { return 0; }

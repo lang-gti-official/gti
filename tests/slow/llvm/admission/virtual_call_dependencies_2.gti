@@ -1,0 +1,14 @@
+// Virtual call dependencies: a possible override's unsupported transitive helper remains required.
+//@ build-pass
+//@ slow
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+int unsupported_helper() { Base values[1] = {Base()}; Base copied[1] = values; return copied[0].read(); }
+class Alternative : public Base {
+public:
+  int read() override { return unsupported_helper(); }
+public:
+  Alternative() = default;
+};
+void retain_type(Alternative& value) {}
+int invoke(Base& value) { return value.read(); }
+int main() { Base value{}; return invoke(value); }

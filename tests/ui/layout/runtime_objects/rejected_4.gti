@@ -1,0 +1,4 @@
+// Rejected: interface source query.
+import std.memory;
+interface Abstract { int read(); };
+int main() { auto x = std::layout_of<Abstract>(); return 0; }  //~ ERROR GTI-S2029

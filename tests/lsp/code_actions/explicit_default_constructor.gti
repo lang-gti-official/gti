@@ -1,0 +1,11 @@
+// Default-constructing a struct without a declared constructor is S2012
+// naming `Resource() = default`, with no quick fix; declaring it is clean.
+// (explicit_default_constructors_lsp_test.py; related location not asserted.)
+//@ no-code-action @brace
+// 🙂
+struct Resource { int state = 0; };
+int main() { Resource value{/*^brace*/}; return 0; }  //~ ERROR GTI-S2012 Resource() = default
+// --- step 2
+// 🙂
+struct Resource { int state = 0; Resource() = default; };
+int main() { Resource value{}; return 0; }

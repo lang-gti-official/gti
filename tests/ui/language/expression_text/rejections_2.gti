@@ -1,0 +1,6 @@
+// Rejections: unevaluated expression text must still reject an invalid expression.
+import std.source_location;
+int main() {
+  std::string_view text = std::expression_text!(missing_expression + 1);  //~ ERROR GTI-S2001
+  return 0;
+}

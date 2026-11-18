@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { c_int limit; } int main() { return int(limit); }.
+extern "C" { c_int limit; } int main() { return int(limit); }  //~ ERROR GTI-S2055

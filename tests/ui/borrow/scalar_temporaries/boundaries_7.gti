@@ -1,0 +1,3 @@
+// Boundaries: exact value tier wins.
+//@ check-pass
+int choose(int& value) { return 1; } int choose(int value) { return 2; } int main() { return choose(42) - 2; }

@@ -75,7 +75,8 @@ def main() -> int:
         text = text.replace(old, new)
     mode = arguments.mode or ("check-fail" if arguments.expect else "check-pass")
     header = [f"// {arguments.desc}", f"//@ {mode}"]
-    header += [f"//@ {d}" for d in arguments.directive]
+    # `[rev] name: value` is a revision's directive (`//@[rev] name: value`).
+    header += [f"//@{d}" if d.startswith("[") else f"//@ {d}" for d in arguments.directive]
     if arguments.exit_code is not None:
         header.append(f"//@ exit-code: {arguments.exit_code}")
     header += [f"//@ stderr-contains: {s}" for s in arguments.stderr_contains]
@@ -116,12 +117,18 @@ def main() -> int:
     environment = {k: v for k, v in os.environ.items() if k != "CI"}
     # Bless records every diagnostic (warnings included); it may not change
     # the run expectations this conversion declared.
+    before = [line for line in dest.read_text().splitlines() if line.startswith("//@")]
     blessed = subprocess.run([str(gti_test), str(dest), "--bless", "--jobs", "1"],
                              capture_output=True, text=True, env=environment)
     if "ICE" in blessed.stdout.split("RESULT")[0]:
         print(blessed.stdout, file=sys.stderr)
         return 1
     stdout_file = dest.with_suffix(".stdout")
+    after = [line for line in dest.read_text().splitlines() if line.startswith("//@")]
+    if not arguments.bless_stdout and before != after:
+        print(f"bless changed directives: {sorted(set(before) ^ set(after))}", file=sys.stderr)
+        print(blessed.stdout, file=sys.stderr)
+        return 1
     declared = [line for line in dest.read_text().splitlines() if line.startswith("//@ stdout:")]
     if not arguments.bless_stdout and (
             declared != [f"//@ stdout: {s}" for s in arguments.stdout] or stdout_file.exists()):

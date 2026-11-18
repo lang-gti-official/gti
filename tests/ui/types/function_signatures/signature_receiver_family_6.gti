@@ -1,0 +1,2 @@
+// Signature receiver family: signature families must retain exact matching without conversions.
+class C<R(R)> { public: C() = default; }; class C<R(R) mut> { public: C() = default; }; C<int(bool) mut> bad{};  //~ ERROR GTI-S2023

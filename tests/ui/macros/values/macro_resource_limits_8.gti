@@ -1,0 +1,4 @@
+// Macro resource limits: a forced written argument expansion shares its invocation's budget.
+//@ macro-expansions: 1
+#macro int32_t inc(int32_t v) { return v + 1; }
+int main() { return inc!(inc!(0)) - 2; }  //~ ERROR GTI-S2124

@@ -1,0 +1,14 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept probe<T> {
+  int read(T& value, int scale);
+};
+class Cell {
+public:
+  int value;
+  Cell(int amount) : value(amount) {}
+};
+
+for concept probe<Cell> {
+  int read(Cell& value, int scale = 2) { return value.value * scale; }  //~ ERROR GTI-S2123
+};
+int main() { return 0; }

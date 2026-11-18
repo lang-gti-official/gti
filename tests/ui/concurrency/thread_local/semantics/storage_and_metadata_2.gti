@@ -1,0 +1,12 @@
+// Storage and metadata: an unrelated noncopyable cleanup-owning TLS class is accepted.
+//@ check-pass
+//@ execution-profile: concurrent
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource&) = delete;
+  Resource(Resource&&) = delete;
+  ~Resource() {}
+};
+thread_local Resource resource{};
+int main() { return 0; }

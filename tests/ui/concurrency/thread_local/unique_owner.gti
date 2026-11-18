@@ -1,0 +1,5 @@
+// A thread-local unique owner is initialised and released without output.
+//@ run-pass
+import std.memory;
+thread_local std::unique_ptr<int> number = std::make_unique<int>(7);
+int main() { return *number - 7; }

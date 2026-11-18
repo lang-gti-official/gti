@@ -1,0 +1,6 @@
+// Scalar values: boolean character and floating temporaries.
+//@ check-pass
+bool read(bool& value) { return value; }
+char read(char& value) { return value; }
+float read(float& value) { return value; }
+int main() { return read(true && false) || read('a') != 'a' || read(float(1.0)) != float(1.0) ? 1 : 0; }

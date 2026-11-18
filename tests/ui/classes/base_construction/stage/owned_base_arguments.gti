@@ -1,0 +1,35 @@
+// Owned base arguments: owned base arguments verify.
+//@ check-pass
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int value() { return this.id; }
+};
+enum class Parcel { empty, item(Resource value) };
+Resource make(int id) { return Resource(id); }
+class Base {
+public:
+  Resource first;
+  Parcel parcel;
+  int count;
+  Base(Resource first, Parcel parcel, int count)
+      : first(std::move(first)), parcel(std::move(parcel)), count(count) {}
+};
+class Moved : public Base {
+public:
+  Moved(Resource first, Parcel parcel)
+      : Base(std::move(first), std::move(parcel), 1) {}
+};
+class Fresh : public Base {
+public:
+  Fresh(int id) : Base(make(id), Parcel::item(Resource(id + 1)), 2) {}
+};
+int main() {
+  Moved moved{Resource(1), Parcel::empty};
+  Fresh fresh{3};
+  return moved.count + fresh.count - 3;
+}

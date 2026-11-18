@@ -1,0 +1,9 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: constructor-default-field.
+//@ raw-pointer-audit: strict
+const int* dangling() { int local = 1; return &local; }
+class Address {
+public:
+  const int* pointer = dangling();
+  Address() {}
+};
+int main() { Address address{}; unsafe { return *address.pointer; } }  //~ ERROR GTI-S2102

@@ -1,0 +1,5 @@
+// General requires: explicit type arguments retain the selected callee's constraints diagnostic.
+int number<T>() requires std::integral<T> { return 1; }
+concept produces_int<T> = requires { { number<T>() } -> int; };
+int use<T>() requires produces_int<T> { return 1; }
+int main() { return use<bool>(); }  //~ ERROR GTI-S2029

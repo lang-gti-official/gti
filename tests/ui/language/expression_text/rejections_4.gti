@@ -1,0 +1,6 @@
+// Rejections: the source-text capability must remain private by declaration identity.
+import std.source_location;
+int main() {
+  std::string_view text = gti_internal::source_expression_text<int>(1);  //~ ERROR GTI-S2058
+  return 0;
+}

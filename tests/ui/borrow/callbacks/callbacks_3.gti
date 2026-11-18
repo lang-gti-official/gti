@@ -1,0 +1,8 @@
+// Callbacks: the program is accepted.
+//@ check-pass
+int main() {
+  int first = 4;
+  int second = 9;
+  auto difference = [&first, &second]() -> int { return second - first; };
+  return difference() - 5;
+}

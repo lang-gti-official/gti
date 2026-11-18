@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int&<a> identity<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> { return input; }
+int main() { int value = 7; return identity(value) - 7; }

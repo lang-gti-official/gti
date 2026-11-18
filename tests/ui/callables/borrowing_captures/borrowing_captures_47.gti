@@ -1,0 +1,8 @@
+// Borrowing captures: lambda-reference-result-from-mutable-parameter.
+//@ check-pass
+int main() {
+  mut int cell = 4;
+  auto read = [](mut int& value) -> int& { value += 1; return value; };
+  int& view = read(cell);
+  return view - 5;
+}

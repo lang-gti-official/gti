@@ -1,0 +1,11 @@
+// Layout class assertions: ordinary rejected requirements do not poison the shared work budget.
+//@ check-pass
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); int value; };
+constexpr bool rejected<T>() {
+  if constexpr (requires() { { sizeof(Bad<T>) } -> uint64_t; }) {
+    return false;
+  } else { return true; }
+}
+struct Good<T> { static_assert(rejected<T>()); int value; };
+static_assert(sizeof(Good<int>) == uint64_t(4));
+int main() { return 0; }

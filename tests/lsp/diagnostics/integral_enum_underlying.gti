@@ -1,0 +1,6 @@
+// A uint64_t enum at its maximum value formats and converts to its
+// underlying type. (From integral_enum_lsp_test.py.)
+import std.format;
+import std.string;
+enum class Status : uint64_t { failed = 18446744073709551615 };
+int main() { Status value = Status::failed; uint64_t raw = std::to_underlying<uint64_t, Status>(value); std::runtime_println("{}", /* 😀 */ value); return 0; }

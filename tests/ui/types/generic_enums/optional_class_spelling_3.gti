@@ -1,0 +1,2 @@
+// Optional class spelling: optional class does not admit unqualified cases, integer conversions or nonexhaustive payload matching.
+enum E { unscoped_entry }; int main() { E value = unscoped_entry; return 0; }  //~ ERROR GTI-S2001

@@ -1,0 +1,6 @@
+// Rejections: synthetic compound expression text should fail closed.
+import std.source_location;
+#macro std::string_view composed(int argument) {
+  return std::expression_text!(argument + 1);
+}
+int main() { std::string_view text = composed!(2); return 0; }  //~ ERROR GTI-S2019

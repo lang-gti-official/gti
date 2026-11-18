@@ -1,0 +1,10 @@
+// Raw mutation call invalidation: active global pointer carriers retain mutation invalidation.
+//@ raw-pointer-audit: strict
+struct Owner { mut int value = 1; };
+mut Owner owner{};  //~ ERROR GTI-S2012
+mut const int* pointer = nullptr;
+void replace(mut Owner& value) { value = Owner(); }  //~ ERROR GTI-S2012
+int main() {
+mut Owner local{}; pointer = &local.value; replace(local);  //~ ERROR GTI-S2012
+  unsafe { return *pointer; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2103
+}

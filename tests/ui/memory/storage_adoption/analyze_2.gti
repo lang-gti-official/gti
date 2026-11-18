@@ -1,0 +1,20 @@
+// Analyze: manual payload lifetime changes require an explicit unsafe block.
+import std.memory;
+
+import std.panic;
+class Payload {
+  int value;
+public:
+  Payload(int value) : value(value) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = delete;
+  ~Payload() { std::panic("payload cleanup"); }
+};
+int main() {
+  mut std::uninitialized<Payload> slot{};
+  {
+    [[discard]] std::construct_at(slot.data(), 42);  //~ ERROR GTI-S2055
+    std::destroy_at(slot.data());  //~ ERROR GTI-S2055
+  }
+  return 0;
+}

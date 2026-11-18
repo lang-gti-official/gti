@@ -1,0 +1,4 @@
+// Global borrow returns: global borrow summary registration must not make namespace storage forward-declarable or cascade an ownership diagnostic in ordinary source lookup.
+mut int& value_ref() { return forward_storage; }  //~ ERROR GTI-S2001
+mut int forward_storage = 1;
+int main() { return 0; }

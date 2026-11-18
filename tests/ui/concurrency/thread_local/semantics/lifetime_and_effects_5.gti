@@ -1,0 +1,4 @@
+// Lifetime and effects: a live TLS borrow does not prevent unrelated TLS storage mutation.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int first = 1; thread_local mut int second = 2; void modify() { second += 1; } int main() { int& borrowed = first; modify(); return borrowed; }

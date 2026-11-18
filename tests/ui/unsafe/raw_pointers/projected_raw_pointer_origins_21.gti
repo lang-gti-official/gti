@@ -1,0 +1,17 @@
+// Projected raw pointer origins: an exact raw alias write must replace only its known destination.
+//@ check-pass
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+int main() {
+  int live = 9;
+  mut Pair pair{};
+  Pair* alias = &pair;
+  unsafe {
+    pair.second.pointer = &live;
+    { int gone = 5; alias->first.pointer = &gone; }
+    alias->first.pointer = &live;
+    return *pair.first.pointer + *alias->second.pointer;
+  }
+}

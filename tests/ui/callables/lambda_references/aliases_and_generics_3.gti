@@ -1,0 +1,10 @@
+// Aliases and generics: lambda-generic-mutable-result.gti.
+//@ check-pass
+mut int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
+int main() {
+  auto relay = [](mut int& value) -> mut int& { return value; };
+  mut int number = 9;
+  mut int& result = invoke(relay, number);
+  result += 1;
+  return number - 10;
+}

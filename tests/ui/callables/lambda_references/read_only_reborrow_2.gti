@@ -1,0 +1,13 @@
+// Read only reborrow: readonly-lambda-result.gti.
+//@ check-pass
+int main() {
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  int& result = observe(number);
+  int snapshot = result;
+  number += 1;
+  return snapshot + number - 23;
+}

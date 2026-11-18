@@ -1,0 +1,4 @@
+// Full expressions: rejected with GTI-S2077.
+class Runner { public: int Run(int count = "bad");  public: Runner() = default; };  //~ ERROR GTI-S2077
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return runner.Run(); }

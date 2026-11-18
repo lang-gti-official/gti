@@ -1,0 +1,4 @@
+// Raw field witnesses: raw projection type verification preserves readonly, padded, nested-array and base fields.
+//@ build-pass
+//@ slow
+class Readonly { public: int value = 7;  public: Readonly() = default; }; int main() { Readonly object{}; unsafe { const Readonly* pointer = &object; return pointer->value - 7; } }

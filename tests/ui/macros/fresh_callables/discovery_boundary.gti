@@ -1,0 +1,9 @@
+// Discovery boundary: unused lambda discovery has valid semantics.
+//@ analyze-pass
+//@ no-prelude
+#macro ignore<F>(F callback) {}
+int main() {
+  int value = 1;
+  ignore!([value]() -> void { int local = value; });
+  return 0;
+}

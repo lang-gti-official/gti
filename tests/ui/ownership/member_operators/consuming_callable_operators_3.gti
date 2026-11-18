@@ -1,0 +1,21 @@
+// Consuming callable operators: a transitive once-confined forwarding edge should require an explicit source move before HIR.
+class Once {
+public:
+  int operator()() && { return 1; }
+public:
+  Once() = default;
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int middle<Operation>(Operation operation) {
+  return invoke_once(std::move(operation));
+}
+
+int outer<Operation>(Operation operation) {
+  return middle(operation);  //~ ERROR GTI-S2046 requires explicit ownership transfer
+}
+
+int main() { return outer(Once()); }

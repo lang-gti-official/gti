@@ -1,0 +1,45 @@
+// Reflection over a user type runs, and field names it never uses at run time leave no string literal in verified MIR.
+//@ run-pass
+//@ snapshot: mir
+// CHECK-NOT: literal=string:6:6865616c7468
+// CHECK-NOT: literal=string:8:706f736974696f6e
+import std.meta;
+import std.string;
+
+struct Vec2 {
+  float x = 0.0;
+  float y = 0.0;
+public:
+  Vec2() = default;
+};
+
+struct Player {
+  std::string name;
+  uint32_t health = 100;
+  Vec2 position;
+public:
+  Player() = default;
+};
+
+// A generic "encoder": sums every integral/float field recursively.
+double total<T>(T& value) {
+  mut double sum = 0.0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.type().is_integral()) {
+      sum = sum + double(field.get(value));
+    } else if constexpr (field.type().is_floating_point()) {
+      sum = sum + double(field.get(value));
+    } else if constexpr (field.type().is_struct()) {
+      sum = sum + total(field.get(value));
+    }
+  }
+  return sum;
+}
+
+int main() {
+  Player player = {.name = std::string("hero"), .health = uint32_t(7), .position = {.x = 1.5, .y = 2.5}};
+  if (total(player) != 11.0) { return 1; }
+  Vec2 point = {.x = 3.0, .y = 4.0};
+  if (total(point) != 7.0) { return 2; }
+  return 0;
+}

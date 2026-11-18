@@ -1,0 +1,3 @@
+// An empty struct without a declared constructor cannot be default-constructed.
+//@ check-fail
+struct Value {}; int main() { Value value{}; return 0; }  //~ ERROR GTI-S2012

@@ -1,0 +1,181 @@
+// Failures while dereferencing, stepping or cleaning up text-view cursors run cleanup once; a failure during cleanup reports GTI-R0014.
+//@ run-pass
+//@ revisions: a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11
+//@[a0] stdout: 2
+//@[a0] stdout: 1
+//@[a0] run-fail
+//@[a0] exit-code: 70
+//@[a0] stderr-contains: runtime error[GTI-R
+//@[a1] args: failure
+//@[a1] stdout: 2
+//@[a1] stdout: 1
+//@[a1] run-fail
+//@[a1] exit-code: 70
+//@[a1] stderr-contains: runtime error[GTI-R
+//@[a2] args: failure failure
+//@[a2] stdout: 2
+//@[a2] stdout: 1
+//@[a2] run-fail
+//@[a2] exit-code: 70
+//@[a2] stderr-contains: runtime error[GTI-R
+//@[a3] args: failure failure failure
+//@[a3] stdout: 2
+//@[a3] stdout: 1
+//@[a3] run-fail
+//@[a3] exit-code: 70
+//@[a3] stderr-contains: runtime error[GTI-R
+//@[a4] args: failure failure failure failure
+//@[a4] stdout: 2
+//@[a4] stdout: 1
+//@[a4] run-fail
+//@[a4] exit-code: 70
+//@[a4] stderr-contains: runtime error[GTI-R
+//@[a5] args: failure failure failure failure failure
+//@[a5] stdout: 2
+//@[a5] stdout: 1
+//@[a5] run-fail
+//@[a5] exit-code: 70
+//@[a5] stderr-contains: runtime error[GTI-R
+//@[a6] args: failure failure failure failure failure failure
+//@[a6] stdout: 3
+//@[a6] stdout: 2
+//@[a6] stdout: 1
+//@[a6] run-fail
+//@[a6] exit-code: 70
+//@[a6] stderr-contains: runtime error[GTI-R
+//@[a7] args: failure failure failure failure failure failure failure
+//@[a7] stdout: 2
+//@[a7] stdout: 1
+//@[a7] run-fail
+//@[a7] exit-code: 70
+//@[a7] stderr-contains: runtime error[GTI-R
+//@[a8] args: failure failure failure failure failure failure failure failure
+//@[a8] stdout: 3
+//@[a8] stdout: 2
+//@[a8] stdout: 1
+//@[a8] run-fail
+//@[a8] exit-code: 70
+//@[a8] stderr-contains: runtime error[GTI-R
+//@[a9] args: failure failure failure failure failure failure failure failure failure
+//@[a9] stdout: 3
+//@[a9] run-fail
+//@[a9] exit-code: 70
+//@[a9] stderr-contains: runtime error[GTI-R0014]
+//@[a10] args: failure failure failure failure failure failure failure failure failure failure
+//@[a10] stdout: 3
+//@[a10] stdout: 2
+//@[a10] stdout: 1
+//@[a10] run-fail
+//@[a10] exit-code: 70
+//@[a10] stderr-contains: runtime error[GTI-R
+//@[a11] args: failure failure failure failure failure failure failure failure failure failure failure
+//@[a11] stdout: 3
+//@[a11] stdout: 2
+//@[a11] stdout: 1
+// --- cursor_failure_cleanup.gti
+import std.string;
+import std.vector;
+import std.panic;
+
+extern "C" {
+  void text_view_drop(int32_t value);
+  void text_view_note_dereference();
+  int32_t text_view_dereferences();
+}
+class TextViewDrop {
+  int32_t value;
+public:
+  TextViewDrop(int32_t value) : value(value) {}
+  ~TextViewDrop() { text_view_drop(this.value); }
+};
+class ValueBorrowGuard {
+  char& value;
+  bool fails;
+public:
+  ValueBorrowGuard(char& value, bool fails) : value(value), fails(fails) {}
+  ~ValueBorrowGuard() {
+    if (this.value != 'a') { std::panic("unexpected value guard referent"); }
+    if (text_view_dereferences() != 1) { std::panic("value dereference was not evaluated once"); }
+    text_view_drop(3);
+    if (this.fails) { std::panic("value range guard cleanup failure"); }
+  }
+};
+class FailValueSentinel { public: FailValueSentinel() = default; };
+class FailValueCursor {
+  bool dereference_fails;
+  bool increment_fails;
+public:
+  FailValueCursor(bool dereference_fails, bool increment_fails)
+      : dereference_fails(dereference_fails), increment_fails(increment_fails) {}
+  char operator*() {
+    if (this.dereference_fails) { std::panic("value range dereference failure"); }
+    text_view_note_dereference();
+    return 'a';
+  }
+  void operator++() mut {
+    if (this.increment_fails) { std::panic("value range increment failure"); }
+  }
+  bool operator!=(FailValueSentinel end) { return true; }
+  bool operator==(FailValueSentinel end) { return false; }
+};
+class FailValueRange {
+  bool dereference_fails;
+  bool increment_fails;
+public:
+  FailValueRange(bool dereference_fails, bool increment_fails)
+      : dereference_fails(dereference_fails), increment_fails(increment_fails) {}
+  FailValueCursor begin() { return FailValueCursor(this.dereference_fails, this.increment_fails); }
+  FailValueSentinel end() { return FailValueSentinel(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  TextViewDrop first{1};
+  TextViewDrop second{2};
+  std::string_view view = "abc";
+  if (argc >= 7) {
+    FailValueRange values{argc == 8, argc == 11};
+    for (char& character : values) {
+      ValueBorrowGuard guard{character, argc == 9 || argc == 10};
+      if (argc == 7 || argc == 10) { std::panic("value range body failure"); }
+      if (argc != 11) { break; }
+    }
+    return 0;
+  }
+  if (argc == 1) {
+    auto end = view.end_iterator();
+    return int(uint8_t(*end));
+  }
+  if (argc == 2) {
+    mut auto begin = view.begin();
+    --begin;
+    return 1;
+  }
+  if (argc == 3) {
+    mut auto end = view.end_iterator();
+    ++end;
+    return 2;
+  }
+  if (argc == 4) {
+    auto bad = view.iterator_at(std::size_t(4));
+    return int(uint8_t(*bad));
+  }
+  if (argc == 5) {
+    std::string_view empty = "";
+    auto reverse = empty.rbegin();
+    return int(uint8_t(*reverse));
+  }
+  mut auto begin = view.begin();
+  begin += std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+  return 3;
+}
+// --- text_view_iterator_support.cpp
+#include <cstdint>
+#include <cstdio>
+namespace {
+std::int32_t value_dereferences = 0;
+}
+extern "C" void text_view_drop(std::int32_t value) {
+  std::printf("%d\n", value);
+}
+extern "C" void text_view_note_dereference() { ++value_dereferences; }
+extern "C" std::int32_t text_view_dereferences() { return value_dereferences; }

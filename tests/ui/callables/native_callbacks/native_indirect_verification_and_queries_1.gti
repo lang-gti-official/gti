@@ -1,0 +1,10 @@
+// Native indirect verification and queries: native call queries must retain the signature and underlying callback binding identity.
+//@ check-pass
+using Combine = (int32_t, int32_t) -> int32_t;
+extern "C" { Combine obtain(); }
+int main() {
+  unsafe {
+    Combine callback = obtain();
+    return callback(2, 3);
+  }
+}
