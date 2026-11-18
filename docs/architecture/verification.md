@@ -11802,7 +11802,7 @@ registered test without filtering. The separately scoped compiler-sanitizer
 job retains the explicit selection documented above; it is not a full-suite
 coverage claim.
 
-The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
+The largest compound suites (`stdlib_surface`,
 the `generic_algorithm_breadth_*` partitions, the complete-container cases) bound the
 suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
 (default `4`) instead of the per-suite default; CTest charges them that many

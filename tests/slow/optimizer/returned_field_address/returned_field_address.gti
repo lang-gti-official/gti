@@ -1,3 +1,36 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (returned field address); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_different_field bad_ambiguous_field bad_mutating_field bad_opaque_field bad_reassigned_nested bad_opaque_nested
+//@[bad_different_field] args: case
+//@[bad_different_field] run-fail
+//@[bad_different_field] exit-code: 70
+//@[bad_different_field] stderr-contains: returned_field_address.gti:34: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_ambiguous_field] args: case case
+//@[bad_ambiguous_field] run-fail
+//@[bad_ambiguous_field] exit-code: 70
+//@[bad_ambiguous_field] stderr-contains: returned_field_address.gti:41: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_mutating_field] args: case case case
+//@[bad_mutating_field] run-fail
+//@[bad_mutating_field] exit-code: 70
+//@[bad_mutating_field] stderr-contains: returned_field_address.gti:48: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_opaque_field] args: case case case case
+//@[bad_opaque_field] run-fail
+//@[bad_opaque_field] exit-code: 70
+//@[bad_opaque_field] stderr-contains: returned_field_address.gti:56: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_reassigned_nested] args: case case case case case
+//@[bad_reassigned_nested] run-fail
+//@[bad_reassigned_nested] exit-code: 70
+//@[bad_reassigned_nested] stderr-contains: returned_field_address.gti:97: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_opaque_nested] args: case case case case case case
+//@[bad_opaque_nested] run-fail
+//@[bad_opaque_nested] exit-code: 70
+//@[bad_opaque_nested] stderr-contains: returned_field_address.gti:105: runtime error[GTI-R0001]: integer_overflow in addition
+// --- returned_field_address.gti
+import std.string;
+import std.vector;
 import std.memory;
 
 extern "C" { void opaque_pointer_effect(int* pointer); }
@@ -105,27 +138,34 @@ public:
   }
 };
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
   mut std::uninitialized<int> storage{};
   mut int other = 2147483647;
   unsafe {
     AddressOwner owner{storage.data(), &other};
-    if (false) return owner.bad_different_field();
-    if (false) return owner.bad_ambiguous_field(false);
+    if (argc == 2) return owner.bad_different_field();
+    if (argc == 3) return owner.bad_ambiguous_field(false);
     if (false) return owner.bad_ambiguous_field(true);
-    if (false) return owner.bad_mutating_field();
-    if (false) return owner.bad_opaque_field();
+    if (argc == 4) return owner.bad_mutating_field();
+    if (argc == 5) return owner.bad_opaque_field();
     if (owner.returned_field() != 8) return 1;
     std::destroy_at(storage.data());
     if (returned_reference_field(owner) != 8) return 2;
     std::destroy_at(storage.data());
     mut AddressRelay relay{storage.data(), &other};
-    if (false) return relay.bad_reassigned_nested();
-    if (false) return relay.bad_opaque_nested();
+    if (argc == 6) return relay.bad_reassigned_nested();
+    if (argc == 7) return relay.bad_opaque_nested();
     if (relay.nested_returned_field() != 8) return 3;
     std::destroy_at(storage.data());
     if (relay.nested_reference_field() != 8) return 4;
     std::destroy_at(storage.data());
   }
   return 0;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

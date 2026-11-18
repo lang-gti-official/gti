@@ -14,7 +14,7 @@ if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "GTI_TEST_HEAVY_CASE_JOBS must be a positive integer")
 endif()
 set(gti_heavy_case_suites
-  stdlib_surface returned_field_address_runtime
+  stdlib_surface
   )
 
 # Every gate has a bound, so a hung test fails at a known point instead of at
@@ -84,7 +84,6 @@ if(Python3_Interpreter_FOUND)
     expected_payload_pair_arguments_runtime
     generic_enum_instances_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
-    returned_field_address_runtime
     http_url_operators
     lambda_pack_invocation_runtime
     nested_borrow_fields

@@ -1,3 +1,44 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (default scalar construction); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_default_explicit bad_default_native bad_default_other bad_default_lifetime bad_modified_prefix bad_modified_native bad_compound_prefix bad_compound_native
+//@[bad_default_explicit] args: case
+//@[bad_default_explicit] run-fail
+//@[bad_default_explicit] exit-code: 70
+//@[bad_default_explicit] stderr-contains: default_scalar_construction.gti:75: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_native] args: case case
+//@[bad_default_native] run-fail
+//@[bad_default_native] exit-code: 70
+//@[bad_default_native] stderr-contains: default_scalar_construction.gti:134: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_other] args: case case case
+//@[bad_default_other] run-fail
+//@[bad_default_other] exit-code: 70
+//@[bad_default_other] stderr-contains: default_scalar_construction.gti:142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_lifetime] args: case case case case
+//@[bad_default_lifetime] run-fail
+//@[bad_default_lifetime] exit-code: 70
+//@[bad_default_lifetime] stderr-contains: default_scalar_construction.gti:151: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_modified_prefix] args: case case case case case
+//@[bad_modified_prefix] run-fail
+//@[bad_modified_prefix] exit-code: 70
+//@[bad_modified_prefix] stderr-contains: default_scalar_construction.gti:91: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_modified_native] args: case case case case case case
+//@[bad_modified_native] run-fail
+//@[bad_modified_native] exit-code: 70
+//@[bad_modified_native] stderr-contains: default_scalar_construction.gti:100: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_compound_prefix] args: case case case case case case case
+//@[bad_compound_prefix] run-fail
+//@[bad_compound_prefix] exit-code: 70
+//@[bad_compound_prefix] stderr-contains: default_scalar_construction.gti:116: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_compound_native] args: case case case case case case case case
+//@[bad_compound_native] run-fail
+//@[bad_compound_native] exit-code: 70
+//@[bad_compound_native] stderr-contains: default_scalar_construction.gti:125: runtime error[GTI-R0001]: integer_overflow in addition
+// --- default_scalar_construction.gti
+import std.string;
+import std.vector;
 import std.memory;
 extern "C" {
   void opaque_pointer_effect(int* pointer);
@@ -150,15 +191,15 @@ unsafe int bad_default_lifetime(int* pointer) {
   }
 }
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
   mut std::uninitialized<int> first{};
   mut std::uninitialized<int> second{};
   mut std::uninitialized<uint64_t> wide{};
   unsafe {
-    if (false) return bad_default_explicit(first.data());
-    if (false) return bad_default_native(first.data());
-    if (false) return bad_default_other(first.data(), second.data());
-    if (false) return bad_default_lifetime(first.data());
+    if (argc == 2) return bad_default_explicit(first.data());
+    if (argc == 3) return bad_default_native(first.data());
+    if (argc == 4) return bad_default_other(first.data(), second.data());
+    if (argc == 5) return bad_default_lifetime(first.data());
     int direct = default_scalar(first.data());
     std::destroy_at(first.data());
     int packed = default_packed(first.data(), true, uint64_t(17));
@@ -175,10 +216,10 @@ int main() {
       sequence.append_default();
     }
     int last = default_sequence(sequence);
-    if (false) return bad_modified_prefix(sequence);
-    if (false) return bad_modified_native(sequence);
-    if (false) return bad_compound_prefix(sequence);
-    if (false) return bad_compound_native(sequence);
+    if (argc == 6) return bad_modified_prefix(sequence);
+    if (argc == 7) return bad_modified_native(sequence);
+    if (argc == 8) return bad_compound_prefix(sequence);
+    if (argc == 9) return bad_compound_native(sequence);
     int modified = modified_prefix(sequence);
     int compound = compound_prefix(sequence);
     bool stored = *(pointer + uint64_t(4095)) == 14;
@@ -188,4 +229,11 @@ int main() {
     free(bytes);
     return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && compound == 14 && stored ? 0 : 1;
   }
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

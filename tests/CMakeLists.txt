@@ -728,10 +728,6 @@ set_tests_properties(llvm_bounded_recursion_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
 target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
-add_test(NAME returned_field_address_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
-    $<TARGET_FILE:gti>)
-set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 1200)
 add_executable(gti_optimizer_intrinsic_context_tests optimizer_intrinsic_context_tests.cpp)
 target_link_libraries(gti_optimizer_intrinsic_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_intrinsic_context COMMAND gti_optimizer_intrinsic_context_tests)

@@ -1,3 +1,32 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (constructed borrows); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_borrow_ambiguous bad_borrow_lifetime bad_borrow_different bad_borrow_opaque bad_borrow_write
+//@[bad_borrow_ambiguous] args: case
+//@[bad_borrow_ambiguous] run-fail
+//@[bad_borrow_ambiguous] exit-code: 70
+//@[bad_borrow_ambiguous] stderr-contains: constructed_borrows.gti:47: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_borrow_lifetime] args: case case
+//@[bad_borrow_lifetime] run-fail
+//@[bad_borrow_lifetime] exit-code: 70
+//@[bad_borrow_lifetime] stderr-contains: constructed_borrows.gti:57: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_borrow_different] args: case case case
+//@[bad_borrow_different] run-fail
+//@[bad_borrow_different] exit-code: 70
+//@[bad_borrow_different] stderr-contains: constructed_borrows.gti:65: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_borrow_opaque] args: case case case case
+//@[bad_borrow_opaque] run-fail
+//@[bad_borrow_opaque] exit-code: 70
+//@[bad_borrow_opaque] stderr-contains: constructed_borrows.gti:74: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_borrow_write] args: case case case case case
+//@[bad_borrow_write] run-fail
+//@[bad_borrow_write] exit-code: 70
+//@[bad_borrow_write] stderr-contains: constructed_borrows.gti:83: runtime error[GTI-R0001]: integer_overflow in addition
+// --- constructed_borrows.gti
+import std.string;
+import std.vector;
 import std.memory;
 
 class Witness { public: int unrelated = 2147483647;  public: Witness() = default; };
@@ -82,17 +111,17 @@ unsafe int bad_borrow_write(int* pointer, mut Witness& owner) {
   }
 }
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
   mut Witness owner{};
   mut int other = 2147483647;
   mut std::uninitialized<int> storage{};
   unsafe {
-    if (false) return bad_borrow_ambiguous(storage.data(), &other, false, owner);
+    if (argc == 2) return bad_borrow_ambiguous(storage.data(), &other, false, owner);
     if (false) return bad_borrow_ambiguous(storage.data(), &other, true, owner);
-    if (false) return bad_borrow_lifetime(storage.data(), owner);
-    if (false) return bad_borrow_different(storage.data(), &other, owner);
-    if (false) return bad_borrow_opaque(storage.data(), owner);
-    if (false) return bad_borrow_write(storage.data(), owner);
+    if (argc == 3) return bad_borrow_lifetime(storage.data(), owner);
+    if (argc == 4) return bad_borrow_different(storage.data(), &other, owner);
+    if (argc == 5) return bad_borrow_opaque(storage.data(), owner);
+    if (argc == 6) return bad_borrow_write(storage.data(), owner);
     if (constructed_borrow(storage.data(), owner) != 8) return 1;
     std::destroy_at(storage.data());
     if (returned_borrow(storage.data(), owner) != 8) return 2;
@@ -101,4 +130,11 @@ int main() {
     std::destroy_at(storage.data());
   }
   return 0;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

@@ -1107,7 +1107,7 @@ state keeps at most 64 carriers and 64 facts per alternative. Nothing here
 names a library type: the prelude's result class, `std::vector`'s and
 `std::detail::prefix_owner`'s allocation results and an unrelated user result
 class over a user payload enum share the rule. The user control
-(`optimizer_payload_result_postconditions.gti`) proves its relayed, negated
+(`tests/slow/optimizer/returned_field_address/payload_result_postconditions.gti`) proves its relayed, negated
 and directly switched success additions and keeps the failed-path, reassigned,
 later-call, native-write, mixed unknown-exit, wrong-case and active-destructor
 negatives checked, with independent replay and runtime overflow evidence.

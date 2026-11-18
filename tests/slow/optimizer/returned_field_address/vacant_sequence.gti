@@ -1,3 +1,24 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (vacant sequence); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_vacant_replaced bad_vacant_native bad_vacant_lifetime
+//@[bad_vacant_replaced] args: case
+//@[bad_vacant_replaced] run-fail
+//@[bad_vacant_replaced] exit-code: 70
+//@[bad_vacant_replaced] stderr-contains: vacant_sequence.gti:51: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_vacant_native] args: case case
+//@[bad_vacant_native] run-fail
+//@[bad_vacant_native] exit-code: 70
+//@[bad_vacant_native] stderr-contains: vacant_sequence.gti:60: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_vacant_lifetime] args: case case case
+//@[bad_vacant_lifetime] run-fail
+//@[bad_vacant_lifetime] exit-code: 70
+//@[bad_vacant_lifetime] stderr-contains: vacant_sequence.gti:69: runtime error[GTI-R0001]: integer_overflow in addition
+// --- vacant_sequence.gti
+import std.string;
+import std.vector;
 import std.memory;
 extern "C" { void opaque_pointer_effect(int* pointer); }
 
@@ -68,13 +89,20 @@ unsafe int bad_vacant_lifetime(int* pointer, int* next) {
   }
 }
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
   mut std::uninitialized<int> first{};
   mut std::uninitialized<int> second{};
   unsafe {
-    if (false) return bad_vacant_replaced(first.data(), second.data());
-    if (false) return bad_vacant_native(first.data(), second.data());
-    if (false) return bad_vacant_lifetime(first.data(), second.data());
+    if (argc == 2) return bad_vacant_replaced(first.data(), second.data());
+    if (argc == 3) return bad_vacant_native(first.data(), second.data());
+    if (argc == 4) return bad_vacant_lifetime(first.data(), second.data());
     return consecutive_vacant(first.data(), second.data()) == 8 ? 0 : 1;
   }
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

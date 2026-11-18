@@ -1,3 +1,28 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (record prefix); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_record_prefix_broad bad_record_prefix_store bad_record_prefix_native bad_record_prefix_constructor
+//@[bad_record_prefix_broad] args: case
+//@[bad_record_prefix_broad] run-fail
+//@[bad_record_prefix_broad] exit-code: 70
+//@[bad_record_prefix_broad] stderr-contains: record_prefix.gti:64: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_record_prefix_store] args: case case
+//@[bad_record_prefix_store] run-fail
+//@[bad_record_prefix_store] exit-code: 70
+//@[bad_record_prefix_store] stderr-contains: record_prefix.gti:72: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_record_prefix_native] args: case case case
+//@[bad_record_prefix_native] run-fail
+//@[bad_record_prefix_native] exit-code: 70
+//@[bad_record_prefix_native] stderr-contains: record_prefix.gti:80: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_record_prefix_constructor] args: case case case case
+//@[bad_record_prefix_constructor] run-fail
+//@[bad_record_prefix_constructor] exit-code: 70
+//@[bad_record_prefix_constructor] stderr-contains: record_prefix.gti:88: runtime error[GTI-R0001]: integer_overflow in addition
+// --- record_prefix.gti
+import std.string;
+import std.vector;
 import std.memory;
 extern "C" {
   void* malloc(uint64_t bytes);
@@ -87,7 +112,7 @@ unsafe int bad_record_prefix_constructor(mut RecordSequence& sequence) {
   }
 }
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
   unsafe {
     void* bytes = malloc(uint64_t(32768));
     if (bytes == nullptr) return 1;
@@ -98,10 +123,10 @@ int main() {
       sequence.append(value);
     }
     if (inspect_record(Record()) != 7) return 1;
-    if (false) return bad_record_prefix_broad(sequence);
-    if (false) return bad_record_prefix_store(sequence);
-    if (false) return bad_record_prefix_native(sequence);
-    if (false) return bad_record_prefix_constructor(sequence);
+    if (argc == 2) return bad_record_prefix_broad(sequence);
+    if (argc == 3) return bad_record_prefix_store(sequence);
+    if (argc == 4) return bad_record_prefix_native(sequence);
+    if (argc == 5) return bad_record_prefix_constructor(sequence);
     int answer = record_prefix(sequence);
     for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
       std::destroy_at(pointer + index);
@@ -109,4 +134,11 @@ int main() {
     free(bytes);
     return answer == 8 ? 0 : 1;
   }
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

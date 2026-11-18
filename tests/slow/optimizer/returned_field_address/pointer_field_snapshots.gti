@@ -1,3 +1,32 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (pointer field snapshots); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_snapshot_retarget bad_snapshot_native bad_snapshot_raw bad_snapshot_loop bad_snapshot_conditional
+//@[bad_snapshot_retarget] args: case
+//@[bad_snapshot_retarget] run-fail
+//@[bad_snapshot_retarget] exit-code: 70
+//@[bad_snapshot_retarget] stderr-contains: pointer_field_snapshots.gti:52: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_snapshot_native] args: case case
+//@[bad_snapshot_native] run-fail
+//@[bad_snapshot_native] exit-code: 70
+//@[bad_snapshot_native] stderr-contains: pointer_field_snapshots.gti:63: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_snapshot_raw] args: case case case
+//@[bad_snapshot_raw] run-fail
+//@[bad_snapshot_raw] exit-code: 70
+//@[bad_snapshot_raw] stderr-contains: pointer_field_snapshots.gti:74: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_snapshot_loop] args: case case case case
+//@[bad_snapshot_loop] run-fail
+//@[bad_snapshot_loop] exit-code: 70
+//@[bad_snapshot_loop] stderr-contains: pointer_field_snapshots.gti:87: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_snapshot_conditional] args: case case case case case
+//@[bad_snapshot_conditional] run-fail
+//@[bad_snapshot_conditional] exit-code: 70
+//@[bad_snapshot_conditional] stderr-contains: pointer_field_snapshots.gti:101: runtime error[GTI-R0001]: integer_overflow in addition
+// --- pointer_field_snapshots.gti
+import std.string;
+import std.vector;
 import std.memory;
 extern "C" { void opaque_pointer_effect(int* pointer); }
 
@@ -21,7 +50,7 @@ public:
 
 int local_snapshot() {
   mut std::uninitialized<int> storage{};
-  mut Box box{storage.data()};
+  mut Box box{storage.data()};  //~ WARN GTI-S2096
   unsafe {
     initialize_cell(box.address());
     int* pointer = box.address();
@@ -100,11 +129,18 @@ int bad_snapshot_conditional(bool choose) {
   }
 }
 
-int main() {
-  if (false) return bad_snapshot_retarget();
-  if (false) return bad_snapshot_native();
-  if (false) return bad_snapshot_raw();
-  if (false) return bad_snapshot_loop();
-  if (false) return bad_snapshot_conditional(true);
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) return bad_snapshot_retarget();
+  if (argc == 3) return bad_snapshot_native();
+  if (argc == 4) return bad_snapshot_raw();
+  if (argc == 5) return bad_snapshot_loop();
+  if (argc == 6) return bad_snapshot_conditional(true);
   return local_snapshot() == 8 && after_member_initialization() == 8 ? 0 : 1;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
 }

@@ -1,0 +1,94 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (typed scalar stores); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_same_width bad_native_width bad_raw_width bad_lifetime_width
+//@[bad_same_width] args: case
+//@[bad_same_width] run-fail
+//@[bad_same_width] exit-code: 70
+//@[bad_same_width] stderr-contains: typed_scalar_stores.gti:34: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_native_width] args: case case
+//@[bad_native_width] run-fail
+//@[bad_native_width] exit-code: 70
+//@[bad_native_width] stderr-contains: typed_scalar_stores.gti:39: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_raw_width] args: case case case
+//@[bad_raw_width] run-fail
+//@[bad_raw_width] exit-code: 70
+//@[bad_raw_width] stderr-contains: typed_scalar_stores.gti:44: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_lifetime_width] args: case case case case
+//@[bad_lifetime_width] run-fail
+//@[bad_lifetime_width] exit-code: 70
+//@[bad_lifetime_width] stderr-contains: typed_scalar_stores.gti:49: runtime error[GTI-R0001]: integer_overflow in addition
+// --- typed_scalar_stores.gti
+import std.string;
+import std.vector;
+import std.memory;
+extern "C" { void opaque_wide_store(uint64_t* target); }
+
+void write_small(mut int32_t& value) { value = int32_t(7); }
+void write_wide(mut uint64_t& value) { value = uint64_t(18446744073709551615); }
+unsafe void write_raw(uint64_t* value) {
+  unsafe { *value = uint64_t(18446744073709551615); }
+}
+unsafe void replace_wide(uint64_t* value) {
+  unsafe {
+    std::destroy_at(value);
+    std::construct_at(value, uint64_t(18446744073709551615));
+  }
+}
+
+class Metadata {
+  mut uint64_t wide = uint64_t(4);
+public:
+  uint64_t after_small_store(mut int32_t& value) mut {
+    this.wide = uint64_t(4);
+    value = int32_t(7);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t after_small_call(mut int32_t& value) mut {
+    this.wide = uint64_t(4);
+    write_small(value);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_same_width() mut {
+    this.wide = uint64_t(4);
+    write_wide(this.wide);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_native_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { opaque_wide_store(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_raw_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { write_raw(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_lifetime_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { replace_wide(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+public:
+  Metadata() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Metadata data{};
+  mut int32_t value = int32_t(0);
+  if (argc == 2) return int(data.bad_same_width());
+  if (argc == 3) return int(data.bad_native_width());
+  if (argc == 4) return int(data.bad_raw_width());
+  if (argc == 5) return int(data.bad_lifetime_width());
+  return data.after_small_store(value) == uint64_t(5) &&
+         data.after_small_call(value) == uint64_t(5) && value == int32_t(7) ? 0 : 1;
+}
+// --- optimizer_typed_scalar_stores_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_wide_store(std::uint64_t *target) {
+  *target = std::numeric_limits<std::uint64_t>::max();
+}
