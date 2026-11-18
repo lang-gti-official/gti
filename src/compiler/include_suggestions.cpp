@@ -818,6 +818,14 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                                     .findUnit(result.sourceGraph.entryUnit());
   std::vector<std::pair<std::size_t, Candidate>> prepared;
   std::set<std::filesystem::path> declaresRequestedType;
+  // Written qualifiers no analysed source spells (`api` in `api::value`): a
+  // repairing surface must spell them, so a candidate that does is tried
+  // before ones that merely spell the last name. Ranking only; a surface may
+  // still spell them through its own imports.
+  std::set<std::string> requestedQualifiers;
+  for (const auto &names : qualifiers)
+    requestedQualifiers.insert(names.begin(), names.end());
+  std::set<std::filesystem::path> spellsRequestedQualifier;
   for (const auto &candidate : searchCandidates) {
     if (stopped())
       return advice;
@@ -866,6 +874,9 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                       return lexicon->typeDeclarations.contains(name);
                     }))
       declaresRequestedType.insert(candidate.path);
+    if (std::any_of(requestedQualifiers.begin(), requestedQualifiers.end(),
+                    [&](const auto &name) { return lexicon->spells(name); }))
+      spellsRequestedQualifier.insert(candidate.path);
     prepared.emplace_back(lexicon->reexports, candidate);
   }
   // Prefer direct public APIs and smaller facades. Once a precise import is
@@ -875,10 +886,15 @@ IncludeSuggestionResult discoverIncludeSuggestions(
     // File spelling is only a priority hint, never evidence of an export.
     // This makes a focused module likely to receive the bounded proof budget
     // before unrelated surfaces with common member names such as set/value.
-    const bool named = requested.contains(entry.second.path.stem().string());
-    return std::tuple{entry.first != 0, !named,
+    const auto stem = entry.second.path.stem().string();
+    const bool named =
+        requested.contains(stem) || requestedQualifiers.contains(stem);
+    return std::tuple{entry.first != 0,
+                      !named,
+                      !spellsRequestedQualifier.contains(entry.second.path),
                       !declaresRequestedType.contains(entry.second.path),
-                      entry.first, entry.second.path};
+                      entry.first,
+                      entry.second.path};
   };
   std::sort(prepared.begin(), prepared.end(),
             [&](const auto &left, const auto &right) {
