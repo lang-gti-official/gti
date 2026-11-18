@@ -951,9 +951,29 @@ std::string frontendCacheContext(const FrontendOptions &options) {
   return syntaxCacheContext(options);
 }
 
+// An importer can be checked against its already checked imports when the
+// entry is the only unit outside that prefix. Implementation units can
+// complete declarations across files, even without an import edge.
+static bool canReuseImportedModules(const SourceGraph &graph) {
+  if (!graph.sourceOwners() || !graph.moduleImplementations().empty())
+    return false;
+  const auto order = graph.compilationOrder();
+  if (order.empty() || order.back() != graph.entryUnit())
+    return false;
+  for (const SourceUnit &unit : graph.sourceUnits()) {
+    if (unit.entry || graph.isCompilerTrusted(unit.id))
+      continue;
+    if (!unit.moduleDeclaration || !unit.moduleId ||
+        graph.isVisible(unit.id, graph.entryUnit()))
+      return false;
+  }
+  return true;
+}
+
 struct SemanticPreambleBuild::State {
   SemanticPreambleKey key;
   Program prefix;
+  std::size_t trustedPrefixSize = 0;
   SourceGraph sourceGraph;
   SourceManager sources;
   TargetInfo target;
@@ -995,20 +1015,32 @@ SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
     return nullptr;
   state->ran = true;
   const auto buildStart = std::chrono::steady_clock::now();
-  SemanticVisitor builder(
-      state->target, &state->sourceGraph, state->toolingOccurrences, nullptr,
-      &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
-      TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
-  builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
-  builder.setConstexprBodyDeferral(state->deferConstexprBodies);
-  builder.setCancellation(cancellation);
-  // The preamble owns the prefix program; this build no longer needs it.
-  std::shared_ptr<const SemanticPreamble> preamble =
-      builder.buildPreamble(std::move(state->prefix));
-  if (builder.cancelled()) {
-    state->cancelled = true;
+  const auto build = [&](Program prefix) {
+    SemanticVisitor builder(state->target, &state->sourceGraph,
+                            state->toolingOccurrences, nullptr, &state->sources,
+                            RawPointerAuditMode::Off, state->requireDefinitions,
+                            TrustedBodyAnalysis::Complete,
+                            state->sourceDebugProfile, state->limits);
+    builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+    builder.setConstexprBodyDeferral(state->deferConstexprBodies);
+    builder.setCancellation(cancellation);
+    auto preamble = builder.buildPreamble(std::move(prefix));
+    state->cancelled = builder.cancelled();
+    return preamble;
+  };
+  const auto &declarations = state->prefix.declarations();
+  StmtList fallback;
+  if (state->trustedPrefixSize < declarations.size())
+    fallback.assign(declarations.begin(),
+                    declarations.begin() +
+                        static_cast<std::ptrdiff_t>(state->trustedPrefixSize));
+  auto preamble = build(std::move(state->prefix));
+  // An invalid imported module still benefits from the normal standard
+  // library cache. Adoption resumes at the actual checked prefix length.
+  if (!preamble && !state->cancelled && !fallback.empty())
+    preamble = build(Program(std::move(fallback)));
+  if (state->cancelled)
     return nullptr;
-  }
   state->cache->store(state->key, preamble);
   if (workMetrics != nullptr) {
     ++workMetrics->semanticPreambleBuilds;
@@ -1296,11 +1328,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     key.context = frontendCacheContext + "\npreamble:" +
                   (options.toolingOccurrences ? "tooling" : "plain") +
                   (requireDefinitions ? ":definitions" : ":fragments");
+    std::size_t trustedPrefixSize = 0;
+    bool trustedPrefix = true;
+    const bool reuseImports =
+        options.lowerEntryUnitOnly &&
+        options.trustedBodies == TrustedBodyAnalysis::Reachable &&
+        canReuseImportedModules(result.sourceGraph);
     const StmtList &declarations = result.program.declarations();
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       const SourceUnit *unit = result.sourceGraph.findUnit(unitId);
       if (unit == nullptr || unit->entry ||
-          !result.sourceGraph.isCompilerTrusted(unitId) ||
+          (!reuseImports && !result.sourceGraph.isCompilerTrusted(unitId)) ||
           unit->declarationStart != preambleDeclarations ||
           unit->declarationStart + unit->declarationCount > declarations.size())
         break;
@@ -1310,9 +1348,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                          .syntaxDigest = unit->syntaxDigest};
       for (std::size_t index = unit->declarationStart;
            index < unit->declarationStart + unit->declarationCount; ++index)
-        identity.declarations.push_back(declarations[index].get());
+        identity.declarations.push_back(declarations[index]);
       key.units.push_back(std::move(identity));
       preambleDeclarations = unit->declarationStart + unit->declarationCount;
+      trustedPrefix =
+          trustedPrefix && result.sourceGraph.isCompilerTrusted(unitId);
+      if (trustedPrefix)
+        trustedPrefixSize = preambleDeclarations;
     }
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder())
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId))
@@ -1333,6 +1375,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                         declarations.begin(),
                         declarations.begin() +
                             static_cast<std::ptrdiff_t>(preambleDeclarations))),
+                    .trustedPrefixSize = trustedPrefixSize,
                     .sourceGraph = result.sourceGraph,
                     .sources = result.sources,
                     .target = options.target,
@@ -1388,7 +1431,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {
-      semantic.adoptPreamble(preamble, preambleDeclarations);
+      semantic.adoptPreamble(preamble,
+                             semanticPreambleDeclarationCount(*preamble));
       if (options.workMetrics != nullptr)
         ++options.workMetrics->semanticPreambleAdoptions;
     }

@@ -4163,12 +4163,19 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   const bool bucketForPreamble = buildingPreamble && !instanceAnalysisActive &&
                                  !onDemandBodyAnalysis && functionDepth == 0 &&
                                  lambdaDepth == 0 && reachableDeferrable(stmt);
+  // A project module cached before its importer is still an application
+  // root. Carry its library demands through adoption just as the ordinary
+  // reachable lexical pass would.
+  const bool applicationPrefixBody =
+      buildingPreamble && sourceGraph && currentSourceUnit &&
+      !sourceGraph->isCompilerTrusted(currentSourceUnit);
   std::unordered_set<FunctionId> preambleDemands;
   FunctionDemandScope demandScope(
-      semanticModel, bucketForPreamble ? &preambleDemands
-                     : trustedBodies == TrustedBodyAnalysis::Reachable
-                         ? &demandedFunctions
-                         : nullptr);
+      semanticModel,
+      bucketForPreamble ? &preambleDemands
+      : applicationPrefixBody || trustedBodies == TrustedBodyAnalysis::Reachable
+          ? &demandedFunctions
+          : nullptr);
   // Only the owner of the body context completes a body for it; a worker
   // that shares the context analyses for itself.
   const bool completesTrackedBody = !instanceAnalysisActive &&
@@ -4829,6 +4836,12 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
   throwIfCancelled();
   measureTopLevelStatements = false;
   heldDiagnostics.emplace_back();
+  // Includes demands from field and global initializers outside functions.
+  std::optional<FunctionDemandScope> prefixDemands;
+  const SourceUnitId leafUnit = statementSourceUnit(*statement);
+  if (buildingPreamble && sourceGraph && leafUnit &&
+      !sourceGraph->isCompilerTrusted(leafUnit))
+    prefixDemands.emplace(semanticModel, &demandedFunctions);
   analyze(statement);
   {
     std::vector<Diagnostic> held = std::move(heldDiagnostics.back());

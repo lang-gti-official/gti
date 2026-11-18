@@ -1002,11 +1002,13 @@ frontend trace reports `semanticLateDemandBodies`,
 
 The LSP also owns a `SemanticPreambleCache` beside its parse and instance
 caches and passes it through `FrontendOptions::preambleCache`: the open
-file's standard-library prefix is analysed once per import graph and every
-later snapshot resumes from a copy of that analysis, registering and
-analysing only the file's own declarations (see "Trusted Prefix Preamble" in
-[semantic-analysis.md](semantic-analysis.md)). A changed or re-parsed library
-unit selects a new preamble. No snapshot waits for a build: analysis and
+file can reuse checked bodies from imported project and package modules as
+well as the standard library. This applies when the compiler can establish
+that every imported module can be checked independently of the open file.
+The frontend still checks every body in the open file, including callers of
+an edited function. Changing an imported body selects a new preamble for
+dependent files. See "Trusted Prefix Preamble" in
+[semantic-analysis.md](semantic-analysis.md). No snapshot waits for a build: analysis and
 completion set `FrontendOptions::deferPreambleBuild`, so a snapshot whose
 import graph has no cached preamble is analysed without one (bounded
 analysis, which reports the same diagnostics) and hands the build to a
