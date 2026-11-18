@@ -1,0 +1,11 @@
+// Comparing arrays of owning strings leaves both arrays and their elements usable.
+//@ run-pass
+import std.array;
+import std.string;
+
+int main() {
+  auto first = std::array<std::string, 2>({std::string("a"), std::string("b")});
+  auto second = std::array<std::string, 2>({std::string("a"), std::string("c")});
+  if (!(first < second && second > first)) { return 1; }
+  return first[1].view() == "b" && second[1].view() == "c" ? 0 : 2;
+}

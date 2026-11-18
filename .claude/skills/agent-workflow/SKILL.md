@@ -35,8 +35,9 @@ helper; preserve live validation before explicit rehosting.
 ## Claude-specific worktree handling
 
 The canonical repository is `lang-gti-official/gti` on GitHub; the helper uses
-the authenticated GitHub CLI. The helper requires a `codex/` branch for every
-client.
+the authenticated GitHub CLI. Claude Code task branches use the `claude/`
+prefix and Codex's use `codex/`. The helper accepts either, and without
+`--branch` it picks `claude/` from Claude Code's `CLAUDECODE=1`.
 
 Claude Code's managed session worktree may be inside the primary checkout's
 `.claude/worktrees/`, which the helper cannot adopt. Let the helper create a
@@ -46,7 +47,7 @@ An explicit path overrides selection; build within the chosen task checkout:
 
 ```sh
 python3 scripts/agent_workflow.py start <task> --title '<outcome>' \
-  --branch codex/<task>
+  --branch claude/<task>
 ```
 
 Make task edits/builds/checks there with absolute paths and preserve the

@@ -51,13 +51,20 @@ def test_trace_phase_durations() -> None:
                 {"ph": "X", "name": "gti-semantics", "dur": 30},
                 {"ph": "X", "name": "gti-semantics", "dur": 12},
                 {"ph": "X", "name": "gti-mir-lowering", "dur": 50},
+                {"ph": "X", "name": "llvm-admission", "dur": 18},
+                {"ph": "X", "name": "llvm-codegen", "dur": 10},
                 {"ph": "X", "name": "Total gti-semantics", "dur": 99},
                 {"ph": "i", "name": "gti-parse", "dur": 100},
             ]
         }
     )
     expect(
-        evidence == {"gti-mir-lowering": 50, "gti-semantics": 42},
+        evidence == {
+            "gti-mir-lowering": 50,
+            "gti-semantics": 42,
+            "llvm-admission": 18,
+            "llvm-codegen": 10,
+        },
         "trace summary should retain exact GTI phases and exclude aggregate rows",
     )
 

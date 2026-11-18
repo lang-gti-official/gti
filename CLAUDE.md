@@ -49,8 +49,11 @@ Code:
   `start` command create the task worktree at an absolute path outside the
   primary checkout (the session scratchpad directory works) and do the task
   there. Leave the session's managed worktree clean; the app archives it.
-- Task branches use the `codex/` prefix whatever the client; the helper
-  enforces it.
+- Task branches use the client's own prefix: `claude/<task>` here,
+  `codex/<task>` for Codex. Without `--branch`, the helper picks `claude/` from
+  Claude Code's `CLAUDECODE=1`, and it accepts either prefix. The app's own
+  session worktree branches are also `claude/…`, but they are not task
+  branches.
 - The Git stash stack is shared by every worktree and session. Never use a bare
   `git stash` or `git stash pop`.
 - Do not run the complete suite to finish a task: post-integration full
