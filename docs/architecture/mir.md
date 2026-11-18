@@ -5131,6 +5131,14 @@ producer to a read-only zero-parameter `operator*` whose receiver result is
 supplied by stored fields. Clearing the fact, borrowing the cursor, escaping,
 detaching the cursor's protecting loan or erasing the supplier fields fails
 verification.
+A read-only reference yield in the cursor's stored region (`T&<owner>` from
+an `operator*` of `Cursor<lifetime owner>`) over a borrowed-state formal keeps
+no proxy: the element binding is carried by the cursor's own Stored loan, a
+direct child of the range loan, and the selected dereference's CallResult on
+the iterator is that loan's child. Verification admits that shape only for a
+read-only structural range with one unambiguous, non-entry, non-escaping
+cursor loan and exactly one dereference call on the iterator place; a mutable
+element, a second cursor loan or a result parented elsewhere still fails.
 Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows
