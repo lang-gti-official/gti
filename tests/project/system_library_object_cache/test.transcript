@@ -6,11 +6,17 @@ $ cp changed.c answer.c
 $ gti run --release --verbose
 ? 9
 stderr: reused compiled GTI object; relinking
+$ python3 check_record.py validate
 $ cp changed.gti main.gti
 $ gti run --release --verbose
 ? 10
 !stderr: reused compiled GTI object
-$ python3 -c "from pathlib import Path; [p.write_bytes(b'corrupt') for p in Path('build/gti/cache/compile-object-v1').iterdir()]"
+$ python3 -c "from pathlib import Path; [p.write_bytes(b'corrupt') for p in Path('build/gti/cache/compile-object-v2').iterdir()]"
+$ gti run --release --verbose
+? 10
+stderr: ignored corrupt compiled GTI object
+!stderr: reused compiled GTI object
+$ python3 check_record.py trailing
 $ gti run --release --verbose
 ? 10
 stderr: ignored corrupt compiled GTI object

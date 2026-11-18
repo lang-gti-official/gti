@@ -2992,8 +2992,10 @@ When a declared `-l` library cannot be resolved inside the declared search
 directories, an ordinary LLVM executable can reuse its whole-program GTI
 object on a later project build. The driver always recompiles the native
 sources and relinks with the current system libraries. The managed
-`compile-object-v1` record binds the compiler and LLVM identity, frontend
-policy, target and source graph to a checksummed object. Only diagnostic-free
+`compile-object-v2` record binds the compiler and LLVM identity, frontend
+policy, target and source graph to a checksummed, ordered object list. The
+reader validates the expected object count, binary lengths and payload digest
+before replay; malformed or truncated records are rebuilt. Only diagnostic-free
 builds can populate this record. Test catalogs, embedding companions, compiled
 imports, build reports and requested optimization outputs require their existing
 build paths. The separate in-process frontend cache used by editor analysis is
