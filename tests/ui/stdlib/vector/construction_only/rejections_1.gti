@@ -1,4 +1,4 @@
-// Vectors reject copying move-only elements, non-relocatable or borrowing element types and growth under a live element borrow.
+// Vectors reject copying move-only elements, elements without move construction, use of a borrowed element after its owner changes, and growth under a live element borrow.
 //@ check-fail
 import std.optional;
 import std.string;
@@ -42,7 +42,13 @@ int entry() { std::vector<Immovable> values{}; return 0; }  //~ ERROR GTI-S2029
 
 namespace case_borrowed_element {
 struct View { int& value; View(int& source) : value(source) {} };
-int entry() { std::vector<View> values{}; return 0; }  //~ ERROR GTI-S2029
+int entry() {
+  mut int owner = 1;
+  mut std::vector<View> values{};
+  values.push_back(View(owner));
+  owner = 2;  //~ ERROR GTI-S2017
+  return values[std::size_t(0)].value;
+}
 }
 
 int main() { return 0; }
