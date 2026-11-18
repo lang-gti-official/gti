@@ -5526,7 +5526,7 @@ auto SemanticVisitor::Impl::sameSignatureType(
     }
   }
   if (left.kind != right.kind || left.nativeCScalar != right.nativeCScalar ||
-      left.classId != right.classId ||
+      left.classId != right.classId || left.enumId != right.enumId ||
       left.genericParameterId != right.genericParameterId ||
       left.functionId != right.functionId ||
       left.arrayLength != right.arrayLength ||

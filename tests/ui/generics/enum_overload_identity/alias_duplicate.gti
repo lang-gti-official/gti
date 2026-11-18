@@ -1,0 +1,6 @@
+// An alias of the same enum does not create a new overload signature.
+namespace a { enum errc { failed }; }
+using Error = a::errc;
+int code(a::errc& value) { return 1; }
+int code(Error& value) { return 2; } //~ ERROR GTI-S2011 Duplicate overload signature
+int main() { return 0; }
