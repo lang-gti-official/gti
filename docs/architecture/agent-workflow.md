@@ -681,7 +681,9 @@ hosted runner (cancelled with zero steps executed) is not reported:
 `validation-retry.yml` re-runs those jobs once when it is the newest run of
 main, and the re-run attempt's own verdict and report decide. A job that
 executed any step is never retried; a superseded or second starved attempt is
-reported like any failure. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+reported like any failure. When the failure is a test that ran and failed and one
+merge carries the blame, `auto-revert.yml` can revert that merge through an
+ordinary queued PR ([automatic revert](#automatic-revert-of-a-red-main)). The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -1234,6 +1236,68 @@ designated integrator may validate one combined candidate with `batch verify`
 on a remote runner and record that evidence on the PR. Agents never fall back
 to per-PR local full suites. Do not reintroduce advisory CI or administratively
 bypass a server rejection.
+
+### Automatic revert of a red main
+
+`auto-revert.yml` runs `scripts/auto_revert.py` when a full validation of main
+completes, and on dispatch for a given run id. It is switched off by default:
+unless the repository variable `GTI_AUTO_REVERT` is `true`, it writes its
+decision to the job summary and, for a `revert` or `track` decision, a note on
+the `main-broken` issue saying what it would have done, and nothing else. A
+dispatch only writes the summary. The decision is a pure function over facts
+read from the run, its latest attempt's jobs, recent full validation runs of
+main, the red commit's pull request and main's history:
+
+1. **Real failure.** The run is the newest attempt, it failed, and a required
+   job (plan, release package or integration shard) failed in a test step:
+   `Run this shard of the complete release suite`, `Test installed toolchain`
+   or `Verify deterministic API generation`. A job that never got a runner
+   (zero steps), was cancelled after starting, or failed only in another step
+   (job set-up, checkout, toolchain installation, caches, artifact transfer,
+   runner checks) is not evidence; neither is the verdict alone. Unknown step
+   names count as infrastructure, so renaming a step can only make the bot do
+   less (`tests/ci_release_test.py` keeps the names in step with the
+   workflow). When `validation-retry.yml` will re-run starved jobs, the retry
+   decides. A failure only in a build step (configure, build, stage, package)
+   is tracked, never reverted.
+2. **Do not fight a fix.** Nothing happens when a newer main commit
+   containing the red one passed full validation, a commit on main already
+   reverts it (`This reverts commit <sha>` or an `Auto-Revert-Of:` trailer), a
+   revert PR for it is open, or the red commit is itself an automatic revert.
+3. **Attribution.** The red commit must be a pull-request merge whose first
+   parent passed full validation. Otherwise (a push of several queue merges, an
+   unvalidated, cancelled, pending or red parent, a direct commit) it is
+   tracked: a comment on (or a new) `main-broken` issue names the failing jobs
+   and tests and the merges back to the last green main.
+4. **Caps.** At most one automatic revert is open, and at most one is made
+   per 24 hours; beyond that the failure is tracked. A merge that changes
+   `VERSION` (a release cut), a revert that conflicts with current main,
+   changes workflow files (the App has no Workflows permission) or fails
+   `check_release_version.py` or `check_test_freeze.py` is tracked too.
+
+A `revert` is `git revert -m 1` of the merge on current main, made with Git
+plumbing and pushed as `codex/revert-<pr>-<sha10>`, whose message carries
+`Auto-Revert-Of: <sha>`, `Release-Impact: internal` and a `Release-Reason:`
+(no full validation of main containing the merge has passed, so no channel
+carries it). It never changes `VERSION`; a fragment the merge added is removed
+with it. The PR is labelled `auto-revert` and `rollup=never`, its body carries
+a `Validation:` block declaring the failing CTest names as T1 (PR CI re-runs
+them), and the bot registers merge-when-ready for its exact head, so it joins
+the queue alone once its own `CI gate` passes. It does not jump the queue:
+jumping rebuilds every entry already in it, and the App's right to do so is
+unverified. The original PR gets a comment with the failing jobs and tests,
+the run and the revert. Newer pending runs do not hold a revert back: the
+revert still passes PR CI and the queue, and a later green run of a main
+commit containing the merge closes it (`withdraw`). All writes use the rollup
+App token (a PR opened with `GITHUB_TOKEN` would run no CI); `GITHUB_TOKEN`
+only reads, and the writing job is serialized so the caps hold.
+
+**When your PR is reverted.** A merged PR cannot be reopened. Once the
+revert has merged, bring the change back with a fresh PR from the same branch:
+merge `main` into it, revert the revert commit there (otherwise Git treats
+your commits as already merged and the PR changes nothing), fix the failing
+tests and open the new PR. If the failure was not your change's, close the
+revert PR with the evidence before it merges.
 
 ## Retired combined preview
 
