@@ -146,7 +146,8 @@ semantics.
   a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
   entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
   one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
-  runs the Linux half of that set on the exact candidate, so a macOS-only
+  runs the Linux half of that set on the exact candidate (macOS too when the
+  repository variable `GTI_QUEUE_MACOS` is `true`); otherwise a macOS-only
   failure from combining queued PRs is caught by full validation after merge. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`

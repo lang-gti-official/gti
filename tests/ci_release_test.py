@@ -447,7 +447,10 @@ def nightly_contract(root):
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
     # The gate judges the fast job against the platforms its real event needs.
     assert "GTI_FAST_MATRIX: ${{ needs.plan.outputs.fast_matrix }}" in gate
-    assert '--fast-matrix "${GTI_FAST_MATRIX}" --trigger "${GTI_EVENT_NAME}"' in gate
+    assert "GTI_QUEUE_MACOS: ${{ needs.plan.outputs.queue_macos }}" in gate, \
+        "the gate requires the rows the plan scheduled, not a re-read of the variable"
+    assert ('--fast-matrix "${GTI_FAST_MATRIX}" --trigger "${GTI_EVENT_NAME}" '
+            '--queue-macos "${GTI_QUEUE_MACOS}"') in gate
     for line in gate.splitlines():
         if line.lstrip().startswith(("run:", "python3", "--")):
             assert "${{" not in line, line
@@ -752,8 +755,12 @@ def gti_test_tiers_contract(root):
     plan = jobs(ci)["plan"]
     step = plan.split("name: Choose the fast-checks platforms for this event", 1)[1].split("- name:", 1)[0]
     assert "id: fast" in step and "fast_matrix: ${{ steps.fast.outputs.matrix }}" in plan
+    assert "queue_macos: ${{ steps.fast.outputs.queue_macos }}" in plan
+    # The merge-queue macOS switch is a repository variable, read in the plan
+    # the way the jobs read vars.GTI_JOBS, never hard-coded.
+    assert "GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS }}" in step
     assert ('python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"\n'
-            '          --rows "${GTI_FAST_ROWS}" --output "${GITHUB_OUTPUT}"') in step
+            '          --rows "${GTI_FAST_ROWS}" --queue-macos "${GTI_QUEUE_MACOS}" --output "${GITHUB_OUTPUT}"') in step
     folded = step.split("GTI_FAST_ROWS: >-\n", 1)[1].split("        run:", 1)[0]
     rows = json.loads(" ".join(line.strip() for line in folded.splitlines()))
     assert "matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}" in fast and "include:" not in fast
@@ -762,16 +769,25 @@ def gti_test_tiers_contract(root):
     # tests/ui shard, and full validation's darwin set runs the rest there.
     assert {row["platform"]: (row["os"], row["rotate"], row["gate"]) for row in rows} == {
         "linux": ("ubuntu-24.04", 0, tiers), "darwin": ("macos-26", 1, "gti_test_ui|gti_unit_tests")}, rows
-    # What runs on each event: both rows for a pull request (its own gate,
-    # which admits it to the queue, needs the macOS row) and a main dispatch;
-    # the Linux row alone for a merge-queue candidate.
-    expected = {"pull_request": ["darwin", "linux"], "workflow_dispatch": ["darwin", "linux"],
-                "merge_group": ["linux"]}
-    for event, platforms in expected.items():
-        matrix = checks.fast_matrix(rows, event)
-        assert sorted(row["platform"] for row in matrix["include"]) == platforms, (event, matrix)
+    # What runs on each event and switch setting: both rows for a pull request
+    # (its own gate, which admits it to the queue, needs the macOS row) and a
+    # main dispatch; for a merge-queue candidate the Linux row alone, plus
+    # macOS only when GTI_QUEUE_MACOS is exactly `true` (unset: Linux only).
+    expected = {(event, setting): ["darwin", "linux"]
+                for event in ("pull_request", "workflow_dispatch")
+                for setting in ("", "true", "false", "yes")}
+    expected |= {("merge_group", ""): ["linux"], ("merge_group", "false"): ["linux"],
+                 ("merge_group", "yes"): ["linux"], ("merge_group", "1"): ["linux"],
+                 ("merge_group", "true"): ["darwin", "linux"], ("merge_group", " TRUE "): ["darwin", "linux"]}
+    for (event, setting), platforms in expected.items():
+        enabled = checks.queue_macos_enabled(setting)
+        matrix = checks.fast_matrix(rows, event, enabled)
+        assert sorted(row["platform"] for row in matrix["include"]) == platforms, (event, setting, matrix)
         assert all(row in rows for row in matrix["include"]), "rows pass through unchanged"
-    assert set(expected) == set(checks.FAST_PLATFORMS) and \
+        assert list(checks.fast_platforms(event, enabled)) == platforms
+    assert checks.fast_matrix(rows, "merge_group") == checks.fast_matrix(rows, "merge_group", False), \
+        "the default is Linux only"
+    assert {event for event, _ in expected} == set(checks.FAST_PLATFORMS) and \
         {"pull_request", "merge_group", "workflow_dispatch"} == set(re.findall(
             r"^  (pull_request|merge_group|workflow_dispatch):", ci.split("\njobs:\n", 1)[0], re.M)), \
         "every event CI runs on has a fast-checks platform set"
@@ -1392,6 +1408,39 @@ def source_contract(root):
         query(advanced, mode="admit-nightly", success=False)
 
 
+# GitHub-hosted runner labels the workflows may use. Standard hosted runners
+# are free for this public repository; larger runners (more cores, GPU, ARM
+# larger runners, runner groups) are billed per minute even for public
+# repositories, and the owner allows no cost beyond the plan fee. A new label
+# belongs here only after confirming it is a standard (unbilled) runner.
+STANDARD_RUNNER_LABELS = {"ubuntu-24.04", "macos-26"}
+
+
+def runner_label_contract(root):
+    """Every runs-on value and every matrix `os` value in .github/workflows is
+    a standard runner label from STANDARD_RUNNER_LABELS, so a billed runner
+    cannot be introduced unnoticed. runs-on is either such a label or
+    `${{ matrix.os }}` (whose values are checked here too); a list, `group:` or
+    `labels:` form (larger runners and runner groups) is refused."""
+    seen = set()
+    for path in sorted((root / ".github/workflows").glob("*.y*ml")):
+        text = path.read_text()
+        for value in re.findall(r"^\s*runs-on:(.*)$", text, re.M):
+            value = value.split(" #", 1)[0].strip().strip("'\"")
+            assert value == "${{ matrix.os }}" or value in STANDARD_RUNNER_LABELS, \
+                f"{path.name}: runs-on {value!r} is not a standard runner label (larger runners are billed)"
+            seen.add(value)
+        for value in re.findall(r"(?:[{,]\s*os:\s*|^\s*os:\s*|\"os\":\s*\")([^,}\"\s]+)", text, re.M):
+            assert value.strip("'") in STANDARD_RUNNER_LABELS, \
+                f"{path.name}: matrix os {value!r} is not a standard runner label (larger runners are billed)"
+            seen.add(value.strip("'"))
+    assert STANDARD_RUNNER_LABELS <= seen, "the allowlist names only labels the workflows use"
+    # The checker itself refuses billed forms.
+    for forged in ("runs-on: ubuntu-24.04-16core", "runs-on:\n  group: larger", "runs-on: [self-hosted]"):
+        values = [v.split(" #", 1)[0].strip() for v in re.findall(r"^\s*runs-on:(.*)$", forged, re.M)]
+        assert not all(v == "${{ matrix.os }}" or v in STANDARD_RUNNER_LABELS for v in values), forged
+
+
 def load_module(script, name):
     sys.path.insert(0, str(pathlib.Path(script).parent))
     specification = importlib.util.spec_from_file_location(name, script)
@@ -1699,6 +1748,7 @@ def main():
     sanitizer_contract(root)
     slow_tier_contract(root)
     gti_test_tiers_contract(root)
+    runner_label_contract(root)
     retry_contract(root)
     train_contract(root)
     source_contract(root)

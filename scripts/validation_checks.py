@@ -255,26 +255,42 @@ FULL_VALIDATION_JOBS = {"package", "integration"}
 
 # The platforms ci.yml's `fast` job runs on, by triggering event. A pull
 # request proves both: its own CI gate, which needs the macOS row, is what lets
-# it enter the merge queue. Queue candidates run Linux only, so several can
-# build at once without each taking one of the few hosted macOS runners; a
-# macOS-only failure that only the combination of queued PRs causes reaches
-# main and post-integration full validation catches it (darwin set). A manual
-# main dispatch keeps both. The source-stdlib and LSP lanes are not affected:
-# they package both platforms' nightly archives in the queue.
+# it enter the merge queue. A merge-queue candidate runs Linux only unless the
+# repository variable GTI_QUEUE_MACOS is `true`: on a plan with few hosted
+# macOS runners, several queue candidates building at once must not each take
+# one, and a macOS-only failure that only the combination of queued PRs causes
+# then reaches main, where post-integration full validation catches it (darwin
+# set). A manual main dispatch keeps both. The source-stdlib and LSP lanes are
+# not affected: they package both platforms' nightly archives in the queue.
 FAST_PLATFORMS = {"pull_request": ("darwin", "linux"), "merge_group": ("linux",),
                   "workflow_dispatch": ("darwin", "linux")}
 FAST_ROW_KEYS = {"os", "platform", "rotate", "gate"}
 
 
-def fast_matrix(rows, trigger):
-    """The `fast` job's matrix for this event: the rows ci.yml declares (one
-    per platform), keeping only the event's platforms."""
+def queue_macos_enabled(value):
+    """GTI_QUEUE_MACOS as the workflow passes it: only `true` turns the
+    merge-queue macOS row on; unset, empty or anything else leaves it off."""
+    return str(value or "").strip().lower() == "true"
+
+
+def fast_platforms(trigger, queue_macos=False):
+    """Exactly the rows the fast job runs, and the gate requires, for an event.
+    Linux is in every set."""
     if trigger not in FAST_PLATFORMS:
         raise ValueError(f"No fast-checks platforms for event {trigger!r}")
+    if trigger == "merge_group" and queue_macos:
+        return ("darwin", "linux")
+    return FAST_PLATFORMS[trigger]
+
+
+def fast_matrix(rows, trigger, queue_macos=False):
+    """The `fast` job's matrix for this event: the rows ci.yml declares (one
+    per platform), keeping only the event's platforms."""
+    platforms = fast_platforms(trigger, queue_macos)
     if (not isinstance(rows, list) or not all(isinstance(row, dict) and set(row) == FAST_ROW_KEYS for row in rows)
             or sorted(row["platform"] for row in rows) != ["darwin", "linux"]):
         raise ValueError("The fast-checks rows must be one {os, platform, rotate, gate} row each for darwin and linux")
-    return {"include": [row for row in rows if row["platform"] in FAST_PLATFORMS[trigger]]}
+    return {"include": [row for row in rows if row["platform"] in platforms]}
 
 
 def fast_matrix_platforms(matrix):
@@ -284,16 +300,18 @@ def fast_matrix_platforms(matrix):
     return tuple(sorted(str(row.get("platform")) for row in rows))
 
 
-def admission(mode, results, event="pull_request", fast=None, trigger=None):
+def admission(mode, results, event="pull_request", fast=None, trigger=None, queue_macos=False):
     """The one required check. A PR proves lint and fast checks before it may
     queue, and the merge queue proves the same on the exact candidate; the
     complete suite runs post-integration under the `full_validation` event.
 
-    In full mode `fast` is the matrix the plan gave the fast job and `trigger`
-    the real event (the gate judges a main dispatch as `merge_group`).
-    `needs.fast.result` is success only when every row passed, so with the
-    matrix's platforms equal to FAST_PLATFORMS[trigger] a pull request cannot
-    pass without its macOS row, and nothing passes without the Linux row."""
+    In full mode `fast` is the matrix the plan gave the fast job, `trigger`
+    the real event (the gate judges a main dispatch as `merge_group`) and
+    `queue_macos` the plan's reading of GTI_QUEUE_MACOS. `needs.fast.result`
+    is success only when every row passed, so with the matrix's platforms
+    equal to fast_platforms(trigger, queue_macos) a pull request cannot pass
+    without its macOS row, a queue candidate needs exactly the rows the switch
+    scheduled, and nothing passes without the Linux row."""
     if event not in EVENTS:
         raise ValueError("Unknown CI event")
     if mode == "component":
@@ -321,9 +339,7 @@ def admission(mode, results, event="pull_request", fast=None, trigger=None):
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
     if "fast" in required and fast is not None:
         trigger = trigger or event
-        if trigger not in FAST_PLATFORMS:
-            raise ValueError(f"No fast-checks platforms for event {trigger!r}")
-        ran, needed = fast_matrix_platforms(fast), FAST_PLATFORMS[trigger]
+        ran, needed = fast_matrix_platforms(fast), fast_platforms(trigger, queue_macos)
         if ran != needed:
             raise ValueError(f"Fast checks ran on {', '.join(ran) or 'nothing'}; "
                              f"a {trigger} run needs {', '.join(needed)}")
@@ -1045,9 +1061,11 @@ def main(argv=None):
     gate.add_argument("--results", required=True)
     gate.add_argument("--fast-matrix", help="the fast job's matrix (JSON) from the plan; required in full mode")
     gate.add_argument("--trigger", help="the event that started the run, when --event judges it as another")
+    gate.add_argument("--queue-macos", default="", help="the plan's GTI_QUEUE_MACOS reading (`true` or not)")
     matrix = sub.add_parser("fast-matrix", help="the fast job's matrix for this event")
     matrix.add_argument("--event", required=True)
     matrix.add_argument("--rows", required=True, help="JSON list of the declared rows")
+    matrix.add_argument("--queue-macos", default="", help="repository variable GTI_QUEUE_MACOS; `true` adds macOS to merge-queue runs")
     matrix.add_argument("--output", help="GITHUB_OUTPUT file to append `matrix=` to")
     gate.add_argument("--event", default="pull_request")
     gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
@@ -1116,7 +1134,8 @@ def main(argv=None):
             if not args.fast_matrix:
                 raise ValueError("Full mode needs the fast job's matrix (--fast-matrix)")
             fast = json.loads(args.fast_matrix)
-        admission(args.mode, json.loads(args.results), args.event, fast, args.trigger)
+        admission(args.mode, json.loads(args.results), args.event, fast, args.trigger,
+                  queue_macos_enabled(args.queue_macos))
         if fast is not None:
             print("Fast checks passed on " + ", ".join(fast_matrix_platforms(fast)))
         if args.mode == "full" and args.event == "full_validation":
@@ -1127,11 +1146,14 @@ def main(argv=None):
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
         return
     if args.command == "fast-matrix":
-        line = "matrix=" + json.dumps(fast_matrix(json.loads(args.rows), args.event), separators=(",", ":"))
+        enabled = queue_macos_enabled(args.queue_macos)
+        lines = ["matrix=" + json.dumps(fast_matrix(json.loads(args.rows), args.event, enabled),
+                                        separators=(",", ":")),
+                 "queue_macos=" + ("true" if enabled else "false")]
         if args.output:
             with open(args.output, "a", encoding="utf-8") as output:
-                output.write(line + "\n")
-        print(line)
+                output.write("".join(line + "\n" for line in lines))
+        print("\n".join(lines))
         return
     if args.command == "durations":
         update_durations(root / args.durations, Path(args.reports))

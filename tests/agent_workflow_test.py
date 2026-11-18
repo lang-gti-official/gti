@@ -1444,7 +1444,8 @@ class ValidationChecks(unittest.TestCase):
 
     def test_ci_gate_requires_each_events_fast_platforms(self):
         """A pull request's gate needs fast checks on Linux and macOS (its gate
-        is what admits it to the queue); a queue candidate's needs Linux only;
+        is what admits it to the queue); a queue candidate's needs Linux only,
+        or both when GTI_QUEUE_MACOS is `true`;
         a main dispatch (judged as merge_group) needs both. needs.fast.result
         is the aggregate of the rows the matrix held, so the matrix's platforms
         decide which rows the success covers."""
@@ -1468,11 +1469,27 @@ class ValidationChecks(unittest.TestCase):
                                        ("merge_group", "push", linux)):
             with self.assertRaises(ValueError, msg=(event, trigger, matrix)):
                 validation.admission("full", gate, event, matrix, trigger)
+        # With GTI_QUEUE_MACOS on, a queue candidate needs exactly both rows the
+        # plan scheduled; Linux alone or macOS alone fails. Off or unset, Linux.
+        queued = validation.fast_matrix(rows, "merge_group", True)
+        self.assertEqual(queued, both)
+        validation.admission("full", gate, "merge_group", both, "merge_group", True)
+        for matrix in (linux, darwin, {"include": []}):
+            with self.assertRaises(ValueError):
+                validation.admission("full", gate, "merge_group", matrix, "merge_group", True)
+        validation.admission("full", gate, "pull_request", both, "pull_request", True)
+        with self.assertRaises(ValueError):
+            validation.admission("full", gate, "pull_request", linux, "pull_request", True)
+        for setting, enabled in (("true", True), ("TRUE", True), ("", False), (None, False),
+                                 ("false", False), ("1", False), ("yes", False)):
+            self.assertEqual(validation.queue_macos_enabled(setting), enabled, setting)
         # The Linux row skipped, failed or cancelled never passes, on any event.
         for state in ("skipped", "failure", "cancelled"):
-            for event, matrix in (("pull_request", both), ("merge_group", linux)):
+            for event, matrix, enabled in (("pull_request", both, False), ("merge_group", linux, False),
+                                           ("merge_group", both, True)):
                 with self.assertRaises(ValueError):
-                    validation.admission("full", {**lint, "fast": {"result": state}}, event, matrix, event)
+                    validation.admission("full", {**lint, "fast": {"result": state}}, event, matrix, event,
+                                         enabled)
         # The command line refuses full mode without the plan's matrix.
         results = json.dumps(gate)
         with self.assertRaises(ValueError):
@@ -1482,6 +1499,16 @@ class ValidationChecks(unittest.TestCase):
                              "--fast-matrix", json.dumps(linux), "--trigger", "pull_request"])
         validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
                          "--fast-matrix", json.dumps(linux), "--trigger", "merge_group"])
+        validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                         "--fast-matrix", json.dumps(both), "--trigger", "merge_group", "--queue-macos", "true"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                             "--fast-matrix", json.dumps(linux), "--trigger", "merge_group",
+                             "--queue-macos", "true"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                             "--fast-matrix", json.dumps(both), "--trigger", "merge_group",
+                             "--queue-macos", "false"])
         validation.main(["ci-gate", "--mode", "automation", "--results", json.dumps(lint),
                          "--event", "merge_group", "--fast-matrix", "", "--trigger", "merge_group"])
 

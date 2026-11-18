@@ -9944,29 +9944,39 @@ into the tiers of the redesign's §7:
 | Tier | Entries | How |
 | --- | --- | --- |
 | Pull request, merge queue and main dispatch (`ci.yml` fast checks, Linux) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_8` (`gti-test --shard i/8`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the pattern `validation_checks.py gate-tests` builds from the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
-| Pull request and main dispatch only (`ci.yml` fast checks, macOS) | `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard: `gti_test_ui_<1 + (the first 12 hex digits of the commit mod 8)>` (`rotate: 1`) | the same step and reports. Hosted macOS runners are scarce (five at once on this plan, shared with full validation, which lost runs to jobs GitHub never started), and the PR gate measured 34–39 minutes of serial gti-test time per macOS job on 2026-11-17. Merge-queue candidates do not run this row (see below). The platform entries run on every pull request; the shard rotates with each PR's commit; every shard and `gti_test_examples` run on macOS in full validation's `darwin` set after integration, which reports a macOS-only `tests/ui` or example failure in `main-broken` |
+| Pull request, main dispatch, and merge queue with `GTI_QUEUE_MACOS=true` (`ci.yml` fast checks, macOS) | `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard: `gti_test_ui_<1 + (the first 12 hex digits of the commit mod 8)>` (`rotate: 1`) | the same step and reports. Hosted macOS runners are scarce (five at once on this plan, shared with full validation, which lost runs to jobs GitHub never started), and the PR gate measured 34–39 minutes of serial gti-test time per macOS job on 2026-11-17. Merge-queue candidates run this row only when `GTI_QUEUE_MACOS` is `true` (see below). The platform entries run on every pull request; the shard rotates with each PR's commit; every shard and `gti_test_examples` run on macOS in full validation's `darwin` set after integration, which reports a macOS-only `tests/ui` or example failure in `main-broken` |
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
 | Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in one run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
 
-**Merge-queue candidates build on Linux only (2026-11-18).** The `fast`
+**Merge-queue macOS fast checks are a switch (2026-11-18).** The `fast`
 job's matrix comes from the plan (`validation_checks.py fast-matrix`,
-`FAST_PLATFORMS`): Linux and macOS for a pull request and a main dispatch,
-Linux only for a `merge_group` candidate in full mode. The queue builds
-several candidates at once, and each one taking one of the five hosted
-macOS runners (shared with PR checks and full validation's three macOS jobs)
-would starve them. The `CI gate` requires the fast job to have passed on
-exactly its event's platforms: a pull request cannot pass without its macOS
+`fast_platforms`): Linux and macOS for a pull request and a main dispatch;
+for a `merge_group` candidate in full mode Linux only, unless the repository
+variable `GTI_QUEUE_MACOS` is `true`, which adds the macOS row. Unset means
+Linux only, the safe setting for a plan with few hosted macOS runners: the
+queue builds several candidates at once, and each taking one of five macOS
+runners (shared with PR checks and full validation's three macOS jobs) would
+starve them. Turn the variable on only while the plan provides ample macOS
+runners (the one-month Enterprise trial from 2026-11-18 allows 50), and off
+again before returning to a smaller plan. The `CI gate` requires the fast
+job to have passed on exactly the rows the plan scheduled (the plan publishes
+its reading of the variable as `queue_macos`, so a change mid-run cannot make
+the gate expect other rows): a pull request cannot pass without its macOS
 row, and its own `CI gate` is what lets it enter the queue; no event passes
-with the Linux row skipped or failed. The trade-off: a change's macOS
-coverage before merge is its own PR check (the platform subset above, on the
-PR's own merge commit), and after merge full validation runs the whole
-`darwin` set. A macOS-only failure that only the combination of queued PRs
-causes is not caught in the queue; it reaches main, full validation of that
-head turns its verdict red, opens `main-broken` and keeps nightly off the
-commit. The `source-stdlib` and `lsp` lanes keep both platforms in the queue
-because they package both platforms' nightly archives there.
+with the Linux row missing, skipped or failed. The trade-off with the switch
+off: a change's macOS coverage before merge is its own PR check (the platform
+subset above, on the PR's own merge commit), and after merge full validation
+runs the whole `darwin` set. A macOS-only failure that only the combination
+of queued PRs causes is not caught in the queue; it reaches main, full
+validation of that head turns its verdict red, opens `main-broken` and keeps
+nightly off the commit. The `source-stdlib` and `lsp` lanes keep both
+platforms in the queue either way because they package both platforms'
+nightly archives there. Every workflow runs on the standard hosted labels
+`ubuntu-24.04` and `macos-26` only, free for this public repository; larger
+runners are billed per minute even for public repositories, and
+`ci_release` (`STANDARD_RUNNER_LABELS`) rejects any other label.
 
 **The budget rule is advisory pending calibration.** Its scale assumes a
 hosted Linux runner is about twice as slow as the development machine the

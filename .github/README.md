@@ -66,21 +66,31 @@ python3 scripts/agent_workflow.py protection
 - On manual dispatch from main: full integration and production packaging,
   without PR-body declarations, for release commissioning or artifact recovery.
 - In the merge queue: the same lint and workflow regression jobs, and the
-  Linux x64 fast-checks build only (`feedback-fast` and every `gti-test` tier)
-  on the exact candidate. Queue candidates take no macOS runner, so several
-  can build at once while the five hosted macOS runners serve PR checks and
-  full validation. **Trade-off:** macOS coverage of a change is its own PR
-  check (the platform subset above, which must pass before the PR may queue)
-  and post-integration full validation (the whole `darwin` set). A
-  macOS-only failure that only the combination of queued PRs causes is not
-  caught in the queue: it reaches main, and full validation of that main head
-  catches it, keeps nightly off that commit and opens `main-broken`. The
-  `CI gate` accepts a queue candidate's Linux-only fast result and a pull
-  request's only with both platforms green, and neither with the Linux job
-  skipped or failed (`validation_checks.py` `FAST_PLATFORMS`). A manual main
-  dispatch of `ci.yml` runs both platforms. The `source-stdlib` and `lsp`
-  lanes still run on both platforms in the queue, because they package the
-  nightly archives for both.
+  Linux x64 fast-checks build (`feedback-fast` and every `gti-test` tier) on
+  the exact candidate. The macOS row runs there too only when the repository
+  variable `GTI_QUEUE_MACOS` is `true`; unset or any other value means Linux
+  only. Turn it on only while the plan has ample hosted macOS runners (the
+  Enterprise trial's 50); turn it off (delete it or set `false`) before the
+  organisation returns to a plan with few macOS runners (five on the free
+  plan), where several queue candidates building at once would each take one
+  from PR checks and full validation's three macOS jobs. **Trade-off with the
+  switch off:** macOS coverage of a change is its own PR check (the platform
+  subset above, which must pass before the PR may queue) and
+  post-integration full validation (the whole `darwin` set). A macOS-only
+  failure that only the combination of queued PRs causes is not caught in
+  the queue: it reaches main, and full validation of that main head catches
+  it, keeps nightly off that commit and opens `main-broken`. The `CI gate`
+  requires exactly the rows the plan scheduled for the event (both for a pull
+  request; Linux, or both with the switch on, for a queue candidate) and
+  never accepts a missing, skipped or failed Linux row
+  (`validation_checks.py fast_platforms`). A manual main dispatch of `ci.yml`
+  runs both platforms. The `source-stdlib` and `lsp` lanes always run on both
+  platforms in the queue, because they package the nightly archives for both.
+- Runners: workflows use only the standard hosted labels `ubuntu-24.04` and
+  `macos-26`, which are free for this public repository. Larger runners,
+  runner groups and other billed features add cost beyond the plan fee and
+  are not used; `tests/ci_release_test.py` (`STANDARD_RUNNER_LABELS`) fails on
+  any other `runs-on` or matrix `os` label.
 - Explicitly allowlisted orchestration-only PRs and merge groups run the
   inexpensive lint and workflow checks. They produce no release packages;
   publication still requires admitted release-producing integration evidence for its exact source.
