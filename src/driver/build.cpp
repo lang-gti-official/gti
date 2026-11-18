@@ -4387,8 +4387,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                   *objectEntry, *key, codegen.units, result.cache.warning)) {
             result.compilation.artifact =
                 BackendArtifact{.kind = BackendArtifactKind::Object,
-                                .objects = std::move(*object),
-                                .extension = ".o"};
+                                .extension = ".o",
+                                .objects = std::move(*object)};
             result.compilation.sources = std::move(compilationInputs.sources);
             result.compilation.diagnostics =
                 std::move(compilationInputs.diagnostics);
