@@ -608,6 +608,15 @@ manufactured loan. The current source constructor slice uses an empty body
 and one common nominal field prefix; unrelated sibling obligations cannot be
 dropped during projection.
 
+A direct reference result supplied by several mutable parameters publishes the
+result's declared access for every possible owner, rather than retaining the
+call's temporary exclusive access. Returning a secondary supplier publishes a
+fresh return loan with the same rule; it never reclassifies that parameter's
+entry authority. The program verifier independently checks owner completeness
+and access, while ordinary loan conflicts continue to protect every supplier.
+Single stored-reference path discovery includes inherited class fields, with
+multiple paths remaining ambiguous rather than selecting an arbitrary base.
+
 A consuming receiver transfers its complete stored group through the ordinary
 ordered call-input stages. A reference result may outlive the consumed shell
 only when the independently checked callee contract derives it from the

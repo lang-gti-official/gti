@@ -1,0 +1,16 @@
+// A read-only same-region result shares every possible mutable supplier.
+//@ run-pass
+struct Box { mut int value; Box(int v) : value(v) {} };
+int&<a> choose<lifetime a>(mut Box&<a> box, mut int&<a> other, bool first) {
+  if (first) { return box.value; }
+  return other;
+}
+int main() {
+  mut Box box{9};
+  mut int other = 4;
+  if (choose(box, other, true) != 9) { return 1; }
+  if (choose(box, other, false) != 4) { return 2; }
+  int& selected = choose(box, other, true);
+  int observed = box.value + other;
+  return selected + observed == 22 ? 0 : 3;
+}

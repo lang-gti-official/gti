@@ -8463,6 +8463,9 @@ private:
       if (instance == program.classInstances().end())
         return false;
       visiting.push_back(current);
+      for (const auto &base : instance->bases)
+        if (!base.interface && resolvedTraits(base.type).containsBorrowedState)
+          self(self, base.type);
       for (const auto &field : instance->fields) {
         if (!field.info.traits.containsBorrowedState)
           continue;
@@ -8477,8 +8480,8 @@ private:
     return visit(visit, type);
   }
 
-  // The one stored reference field path of a class without bases, through
-  // its owned class fields, with that reference's referent type.
+  // The one stored reference field path, including inherited fields and owned
+  // class fields, with that reference's referent type.
   [[nodiscard]] std::optional<std::pair<std::vector<SymbolId>, SemanticType>>
   soleStoredReferencePath(const SemanticType &type) const {
     std::vector<std::pair<std::vector<SymbolId>, SemanticType>> paths;
@@ -8496,8 +8499,7 @@ private:
           [&](const HirClassInstance &candidate) {
             return candidate.type == current;
           });
-      if (instance == program.classInstances().end() ||
-          !instance->bases.empty()) {
+      if (instance == program.classInstances().end()) {
         exact = false;
         return;
       }
@@ -11054,6 +11056,13 @@ private:
           resultDependencies = MirBorrowDependencySet{
               .possibleAlternatives = instantiated->possibleAlternatives};
         resultDependencies->dependencies = std::move(complete);
+      }
+      // A direct read-only reference publishes shared access to each possible
+      // referent, even when the call borrowed a supplier exclusively.
+      if (kind == MirLoanKind::CallResult &&
+          value.borrowAccess == AccessMode::ReadOnly && !shellReference) {
+        for (auto &dependency : output.loans[loan - 1].additionalDependencies)
+          dependency.access = AccessMode::ReadOnly;
       }
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
@@ -18607,6 +18616,30 @@ private:
                 carrierShellEntry = borrow.loan;
               } else
                 referenceParameterEntry = borrow.loan;
+            }
+          }
+          // A same-region result can return any of its declared suppliers.
+          // Publish a fresh result permission for a secondary reference entry
+          // too; reclassifying an exclusive entry would leak its access mode.
+          if (referenceParameterEntry == 0 && storedCarrierEntry == 0 &&
+              function != nullptr &&
+              function->returnBorrowOrigin == BorrowOriginKind::Argument) {
+            const MirLoan *entry = output.findLoan(borrow.loan);
+            const MirPlace *source =
+                entry ? output.findPlace(entry->source) : nullptr;
+            if (entry && entry->kind == MirLoanKind::Parameter &&
+                entry->entry && entry->storedDependency == 0 && source &&
+                source->root == MirPlaceRootKind::Binding &&
+                source->projections.empty()) {
+              for (const auto position : function->returnBorrowParameters) {
+                const auto formal = mir_detail::returnOriginFormal(
+                    function->parameterTypes, function->parameterBindings,
+                    position);
+                if (formal && formal->binding == source->binding &&
+                    std::find(entry->carriers.begin(), entry->carriers.end(),
+                              formal->binding) != entry->carriers.end())
+                  referenceParameterEntry = borrow.loan;
+              }
             }
           }
           // A reference read out of one stored reference field of a local

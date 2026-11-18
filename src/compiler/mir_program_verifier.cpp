@@ -5279,7 +5279,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               findStoredCarrierReferences(program, parameter->arguments.front())
                   .empty())
             for (auto &source : sources)
-              source.access = parameter->referenceAccess;
+              source.access = loan->kind == MirLoanKind::CallResult
+                                  ? instruction.borrowAccess
+                                  : parameter->referenceAccess;
           expectedSources.insert(expectedSources.end(), sources.begin(),
                                  sources.end());
         };
