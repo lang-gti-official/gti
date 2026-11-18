@@ -2223,8 +2223,8 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    std::string_view expectedKey, bool object,
-                                   bool requiresSymbols,
-                                   bool embedding = false) {
+                                   bool requiresSymbols, bool embedding,
+                                   unsigned expectedObjects) {
   const std::filesystem::path metadataPath = entry / "metadata";
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
@@ -2257,6 +2257,9 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
+  if (object && metadata->additionalObjects.size() + 1 != expectedObjects)
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "cached object count does not match the requested units"};
   if (metadata->symbols.has_value() != requiresSymbols)
     return {.status = CacheLookupStatus::Corrupt,
             .detail =
@@ -2467,9 +2470,8 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     errorMessage = "backend artifact does not match the cache schema";
     return false;
   }
-  if (object && (artifact.objects.empty() ||
-                 artifact.objects.size() > maxLlvmCodegenUnits ||
-                 (embeddingBuild(request) && artifact.objects.size() != 1))) {
+  if (object && artifact.objects.size() !=
+                    request.compilation().llvmCodegenUnits().units) {
     errorMessage = "backend object count does not match the cache schema";
     return false;
   }
@@ -4321,11 +4323,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup =
-            lookupCacheEntry(*cacheEntry, *key, object,
-                             request.compilation().debugInfo() &&
-                                 request.compilation().target().os == "macos",
-                             library);
+        const CacheLookupResult lookup = lookupCacheEntry(
+            *cacheEntry, *key, object,
+            request.compilation().debugInfo() &&
+                request.compilation().target().os == "macos",
+            library, request.compilation().llvmCodegenUnits().units);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;

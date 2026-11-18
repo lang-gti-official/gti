@@ -15,5 +15,13 @@ if sys.argv[1] == "record":
     Path("objects-digests").write_text("\n".join(digests))
 elif sys.argv[1] == "compare":
     assert Path("objects-digests").read_text().splitlines() == digests
-else:
+elif sys.argv[1] == "corrupt":
     objects[-1].write_bytes(b"corrupt")
+elif sys.argv[1] == "truncate":
+    metadata = entry / "metadata"
+    lines = metadata.read_text().splitlines()
+    assert "objects 8" in lines
+    metadata.write_text("\n".join("objects 1" if line == "objects 8" else line
+                                  for line in lines if not line.startswith("object ")) + "\n")
+else:
+    raise ValueError(f"unknown cache operation: {sys.argv[1]}")

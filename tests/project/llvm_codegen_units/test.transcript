@@ -25,6 +25,11 @@ $ python3 check_cache.py corrupt
 $ gti build -O0 --codegen-units 8 --codegen-threads 2 --progress=never -v
 stderr: gti: cache recovered
 $ python3 check_cache.py compare
+$ python3 check_cache.py truncate
+$ gti build -O0 --codegen-units 8 --codegen-threads 8 --progress=never -v
+stderr: cached object count does not match the requested units
+stderr: gti: cache recovered
+$ python3 check_cache.py compare
 $ gti build -O0 --codegen-units 1 --progress=never -v
 stderr: gti: cache miss
 $ gti build numbers --codegen-units 2 --progress=never
