@@ -1,0 +1,6 @@
+// A user function may be [[track_caller]] and is called normally.
+//@ run-pass
+namespace user {
+[[track_caller]] int require_key(bool value) { return value ? 9 : 7; }
+}
+int main() { return user::require_key(false) == 7 ? 0 : 1; }

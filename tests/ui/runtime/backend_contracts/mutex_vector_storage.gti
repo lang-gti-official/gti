@@ -1,3 +1,6 @@
+// A vector of mutexes grows and cleans up under the concurrent profile.
+//@ run-pass
+//@ execution-profile: concurrent
 import std.vector;
 import std.mutex;
 import std.memory;

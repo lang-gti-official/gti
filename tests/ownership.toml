@@ -473,11 +473,6 @@ consumers = [
 [[area]]
 area = "backend-common"
 paths = [
-  "tests/backend_contract_regressions_test.py",
-  "tests/fixtures/projected_move_assignment.gti",
-  "tests/fixtures/projected_move_failure.gti",
-  "tests/fixtures/projected_move_user.gti",
-  "tests/fixtures/mutex_vector_storage.gti",
   "src/compiler/backend.cpp",
   "src/compiler/native_header.cpp",
   "src/compiler/failure_metadata.cpp",
@@ -494,7 +489,6 @@ paths = [
 ]
 owners = [
   "backend_execution_protocol",
-  "backend_contract_regressions",
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",

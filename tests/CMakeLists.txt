@@ -811,10 +811,6 @@ add_test(NAME stdlib_package_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/stdlib_package_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(stdlib_package_runtime PROPERTIES TIMEOUT 720)
-add_test(NAME backend_contract_regressions
-  COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/backend_contract_regressions_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
 add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_reuse_tests.cpp")
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
 # The corpus walk is gti-corpus's `reuse` invariant; this entry keeps the

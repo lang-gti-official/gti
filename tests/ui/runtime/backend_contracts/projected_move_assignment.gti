@@ -1,3 +1,5 @@
+// Move assignment through a projected place replaces the field in place.
+//@ run-pass
 import std.vector;
 import std.memory;
 import std.utility;

@@ -27,7 +27,6 @@
   "atomic_lsp": 1.7,
   "atomic_tsan": 0.1,
   "atomic_wait_runtime": 4.8,
-  "backend_contract_regressions": 29.9,
   "backend_execution_protocol": 0.1,
   "backend_lowered_program_boundary": 0.8,
   "backend_lowered_program_rejection": 0.0,

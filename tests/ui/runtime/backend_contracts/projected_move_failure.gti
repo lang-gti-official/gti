@@ -1,3 +1,9 @@
+// An out-of-bounds projected move fails before replacing and cleans up in order.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: index_out_of_bounds
 import std.vector;
 import std.memory;
 import std.utility;

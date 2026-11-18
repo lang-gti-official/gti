@@ -1,3 +1,5 @@
+// A user type's projected move replacement keeps its owner exact.
+//@ run-pass
 import std.utility;
 
 mut int visits = 0;

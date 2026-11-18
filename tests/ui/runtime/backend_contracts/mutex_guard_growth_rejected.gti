@@ -1,0 +1,12 @@
+// A vector of mutexes cannot grow while a lock guard borrowed from an element is live.
+//@ check-fail
+//@ execution-profile: concurrent
+import std.vector;
+import std.mutex;
+int main() {
+  mut std::vector<std::mutex<int>> v{};
+  v.push_back(std::mutex<int>(3));
+  auto guard = v[std::size_t(0)].lock();
+  v.push_back(std::mutex<int>(4));  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return guard.get();
+}
