@@ -8533,7 +8533,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  const std::optional<Symbol> callee =
+  std::optional<Symbol> callee =
       protocolTarget ? std::optional<Symbol>(protocolTarget->symbol)
                      : resolveExpressionSymbol(expr.callee());
   const std::size_t genericDiagnosticStart = diagnostics.size();
@@ -8782,6 +8782,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     currentType = SemanticType::Unknown;
     return;
   }
+
+  if (applyRequiredFreeCall(expr, argumentTypes, *callee))
+    return;
 
   if (hasPackExpansion(argumentTypes) &&
       std::none_of(callee->overloads.begin(), callee->overloads.end(),
