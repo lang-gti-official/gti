@@ -3373,7 +3373,14 @@ result's own publication (a return borrow or a reference binding) and drops.
 Verification checks that exact sequence. A further stored path of the same
 carrier is another field's owner and never the relayed one; and the referent
 of a read-only reference formal may be an additional source of a stored
-group without a loan of the body's own, as an owned local input may.
+group without a loan of the body's own, as an owned local input may. A
+shared stored group taken from an exclusive authority (`Reader(mine)` with
+`mut Box&<a> mine`) suspends that authority; its read-only result may join
+the group's readers while every live child of the authority reads. A union
+result relays the same way: its receiver mapping names the group, and each
+named argument lane is a further read-only dependency, which for a call
+result, as for a stored group, may be a read-only reference formal's
+referent without a loan of the body's own.
 
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly

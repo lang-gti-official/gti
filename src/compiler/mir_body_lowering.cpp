@@ -10494,10 +10494,19 @@ private:
       // A fresh carrier receiver whose producer recorded no field map (its
       // signature contract names the region, not a field) still stores its
       // sole reference at that one path. A field-mapped result selecting
-      // exactly that path names it on the temporary's own stored group.
-      if (selectedReceiverPlace != nullptr && value.borrowFields.size() == 1 &&
-          value.borrowFields.front().origin == BorrowOriginKind::Receiver &&
-          !value.borrowFields.front().sourceFields.empty())
+      // exactly that path names it on the temporary's own stored group. A
+      // stored class region's union result maps its named argument lanes
+      // beside that one receiver mapping; they do not touch the receiver.
+      const BorrowedFieldOrigin *receiverMapping = nullptr;
+      bool onlyReceiverAndLanes = true;
+      for (const auto &mapping : value.borrowFields) {
+        if (mapping.origin == BorrowOriginKind::Receiver && !receiverMapping)
+          receiverMapping = &mapping;
+        else if (mapping.origin != BorrowOriginKind::Argument)
+          onlyReceiverAndLanes = false;
+      }
+      if (selectedReceiverPlace != nullptr && receiverMapping &&
+          onlyReceiverAndLanes && !receiverMapping->sourceFields.empty())
         if (const auto carrier = findMirTemporaryCarrierDependency(
                 output, *selectedReceiverPlace);
             carrier && carrier.loan->kind == MirLoanKind::Stored &&
@@ -10506,7 +10515,7 @@ private:
             carrier.loan->carriers.empty())
           if (const auto path =
                   soleStoredReferencePath(selectedReceiverPlace->type);
-              path && path->first == value.borrowFields.front().sourceFields)
+              path && path->first == receiverMapping->sourceFields)
             output.loans[carrier.loan->id - 1].designatedFields = path->first;
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);

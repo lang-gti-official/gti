@@ -1,0 +1,61 @@
+// While a consumed temporary's union result lives, the caller's referent and the named argument stay borrowed.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    int& local = fallback;
+    return local;
+  }
+};
+class Writer<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Writer(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+};
+int&<a> relay<lifetime a>(mut Box&<a> mine, int&<a> fallback) {
+  return Reader(mine).pick(true, fallback);
+}
+
+int reborrowed() {
+  mut Box mine{9};
+  int fallback = 7;
+  int& first = relay(mine, fallback);
+  int& second = relay(mine, fallback);  //~ ERROR GTI-S2017
+  return first + second;
+}
+int assigned() {
+  mut Box mine{9};
+  int fallback = 7;
+  int& kept = relay(mine, fallback);
+  mine.value = 3;  //~ ERROR GTI-S2017
+  return kept;
+}
+int fallback_written() {
+  mut Box mine{9};
+  mut int fallback = 7;
+  int& kept = relay(mine, fallback);
+  fallback = 8;  //~ ERROR GTI-S2017
+  return kept;
+}
+int&<a> written_inside<lifetime a>(mut Box&<a> mine, int&<a> fallback) {
+  int& kept = Reader(mine).pick(true, fallback);
+  mine.value = 3;  //~ ERROR GTI-S2017
+  return kept;
+}
+int&<a> exclusive_while_shared<lifetime a>(mut Box&<a> mine, int&<a> fallback) {
+  int& kept = Reader(mine).pick(true, fallback);
+  int& other = Writer(mine).pick(false, fallback);  //~ ERROR GTI-S2017
+  int seen = other;
+  return kept;
+}
+int main() { return 0; }
