@@ -1858,6 +1858,7 @@ struct PendingSemanticRequest {
 };
 
 struct DocumentAnalysis {
+  std::shared_ptr<const lang::EditorBodyDiagnostics> bodyContext;
   std::vector<LspDiagnostic> diagnostics;
   // Every loaded dependency's URI and the digest of the exact text read.
   std::unordered_map<std::string, std::uint64_t> dependencies;
@@ -2055,6 +2056,8 @@ public:
         frontendTracePath(frontendTracePathFromEnvironment()),
         completionWorker(std::optional<unsigned>{frontendWorkerStackSize},
                          [this] { runCompletionWorker(); }) {
+    bodyWorker = llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
+                              [this] { runBodyWorker(); });
     const unsigned workers = analysisWorkerCountFromEnvironment();
     analysisWorkers.reserve(workers);
     for (unsigned index = 0; index < workers; ++index) {
@@ -2478,6 +2481,8 @@ private:
       semanticTokenCache.erase(uri);
       advanceAnalysisGenerationLocked(uri);
       analysisSnapshots.erase(uri);
+      if (bodyBaseline && bodyBaseline->uri == uri)
+        forgetBodyBaselineLocked();
       diagnosticsByRoot.erase(uri);
       dependenciesByRoot.erase(uri);
       dependencyRootDigests.erase(uri);
@@ -3507,6 +3512,7 @@ private:
     // library's own `gti check` concern. MIR's diagnostics arrive in
     // `FrontendResult::diagnostics` like every other phase's.
     frontendOptions.stopAfter = lang::FrontendPhase::Mir;
+    frontendOptions.retainBodyQueryContext = !request.audit;
     frontendOptions.cancellation = request.cancellation.get();
     frontendOptions.lowerEntryUnitOnly = true;
     // The editor does not need the bodies of library-only instances (trusted
@@ -3631,8 +3637,9 @@ private:
       result.includeSuggestionOptions = frontendOptions;
       result.includeSuggestionOptions->workMetrics = nullptr;
     }
-    result.frontend =
-        std::make_shared<const lang::FrontendResult>(std::move(frontend));
+    auto snapshot = std::make_shared<lang::FrontendResult>(std::move(frontend));
+    result.bodyContext = lang::EditorBodyDiagnostics::takeFrom(snapshot);
+    result.frontend = std::move(snapshot);
     if (result.frontend->cancelled)
       return result;
     const lang::FrontendResult &analysis = *result.frontend;
@@ -4114,6 +4121,89 @@ private:
                                                  maximumUpdateDebounce);
   }
 
+  void cancelBodyQueryLocked() {
+    if (bodyCancellation)
+      bodyCancellation->store(true, std::memory_order_relaxed);
+    bodyCancellation.reset();
+    pendingBodyQuery.reset();
+  }
+
+  void forgetBodyBaselineLocked() {
+    if (bodyBaseline)
+      retireSnapshotLocked(std::move(bodyBaseline));
+    cancelBodyQueryLocked();
+    lastBodyDiagnostics.clear();
+  }
+
+  void runBodyWorker() {
+    while (true) {
+      BodyEdit request;
+      std::shared_ptr<const BodyBaseline> baseline;
+      {
+        std::unique_lock lock(stateMutex);
+        bodyCondition.wait(
+            lock, [this] { return stoppingAnalysis || pendingBodyQuery; });
+        if (stoppingAnalysis)
+          return;
+        request = std::move(*pendingBodyQuery);
+        pendingBodyQuery.reset();
+        baseline = bodyBaseline;
+        if (!baseline || !sourceInputsCurrentLocked(
+                             baseline->dependencies,
+                             baseline->documentGenerations, baseline->inputs))
+          continue;
+      }
+      // The full frontend is scheduled independently, even if the foreground
+      // query cannot answer, is superseded, or reaches a compiler limit.
+      std::optional<std::vector<lang::Diagnostic>> answer;
+      try {
+        answer = baseline->context->check(request.source,
+                                          request.cancellation.get());
+      } catch (const std::exception &error) {
+        std::cerr << "Body diagnostic query failed: " << error.what() << '\n';
+      } catch (...) {
+        std::cerr << "Body diagnostic query failed with an unknown exception\n";
+      }
+      if (!answer)
+        continue;
+      const std::lock_guard publicationLock(analysisPublicationMutex);
+      std::vector<DiagnosticPublication> publications;
+      {
+        std::lock_guard lock(stateMutex);
+        const auto latest = analysisSnapshots.find(request.uri);
+        if (stoppingAnalysis || baseline != bodyBaseline ||
+            !documents.contains(request.uri) ||
+            analysisGenerations.at(request.uri) != request.generation ||
+            (latest != analysisSnapshots.end() &&
+             latest->second.generation == request.generation) ||
+            !sourceInputsCurrentLocked(baseline->dependencies,
+                                       baseline->documentGenerations,
+                                       baseline->inputs))
+          continue;
+        // Include advice or a full pass may have supplied other diagnostics in
+        // the meantime. Never replace another provider's result.
+        const auto previous = diagnosticsByRoot.find(request.uri);
+        if (previous == diagnosticsByRoot.end() ||
+            !std::ranges::equal(previous->second, lastBodyDiagnostics, {},
+                                &LspDiagnostic::diagnostic))
+          continue;
+        // An empty partial result can retract only this provider's own error.
+        if (answer->empty() && lastBodyDiagnostics.empty())
+          continue;
+        std::vector<LspDiagnostic> current;
+        lang::SourceManager source;
+        source.set(baseline->path, request.source);
+        for (const auto &d : *answer)
+          current.push_back(convertDiagnostic(d, source, baseline->path,
+                                              request.uri, request.source));
+        lastBodyDiagnostics = std::move(*answer);
+        diagnosticsByRoot[request.uri] = std::move(current);
+        publications = publicationsForLocked({request.uri});
+      }
+      publish(std::move(publications));
+    }
+  }
+
   void scheduleAnalysis(AnalysisRequest request) {
     {
       const std::lock_guard lock(stateMutex);
@@ -4121,6 +4211,18 @@ private:
         return;
       }
       const SteadyClock::time_point now = SteadyClock::now();
+      if (bodyBaseline && bodyBaseline->uri == request.uri) {
+        if (request.trigger == AnalysisTrigger::DocumentChanged) {
+          cancelBodyQueryLocked();
+          bodyCancellation = std::make_shared<std::atomic<bool>>(false);
+          pendingBodyQuery.emplace(BodyEdit{request.uri, request.source,
+                                            request.generation,
+                                            bodyCancellation});
+          bodyCondition.notify_one();
+        } else {
+          forgetBodyBaselineLocked();
+        }
+      }
       switch (request.trigger) {
       case AnalysisTrigger::DocumentChanged:
       case AnalysisTrigger::DependencyChanged:
@@ -4496,6 +4598,7 @@ private:
     std::optional<std::vector<SemanticToken>> heldTokens;
     AnalysisSnapshot published;
     bool auditScheduled = false;
+    std::unique_lock publicationLock(analysisPublicationMutex);
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -4538,6 +4641,19 @@ private:
             diagnostic.repairSnapshot =
                 request.uri + ":" + std::to_string(request.generation);
         }
+        if (analysis.bodyContext && analysis.frontend &&
+            analysis.frontend->mirValid && analysis.diagnostics.empty()) {
+          forgetBodyBaselineLocked();
+          bodyBaseline = std::make_shared<BodyBaseline>(BodyBaseline{
+              request.uri, analysis.rootPath, std::move(analysis.bodyContext),
+              analysis.dependencies, request.documentGenerations,
+              request.frontendSources});
+        } else if (bodyBaseline && bodyBaseline->uri == request.uri &&
+                   !std::ranges::equal(analysis.diagnostics,
+                                       lastBodyDiagnostics, {},
+                                       &LspDiagnostic::diagnostic)) {
+          forgetBodyBaselineLocked();
+        }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
         // Recovery keeps one last-valid graph for unchanged root text, never
@@ -4566,7 +4682,7 @@ private:
         }
         if (const auto previous = analysisSnapshots.find(request.uri);
             previous != analysisSnapshots.end() && previous->second.frontend) {
-          retireFrontendLocked(std::move(previous->second.frontend));
+          retireSnapshotLocked(std::move(previous->second.frontend));
         }
         const bool includeSuggestionsRequested =
             analysis.frontend && analysis.frontend->includeSuggestionsRequested;
@@ -4624,6 +4740,7 @@ private:
       return;
     }
     publish(std::move(publications));
+    publicationLock.unlock();
     dispatchSemanticRequests(std::move(semanticRequests));
     if (heldTokens) {
       reconcileHeldSemanticTokens(request, published, std::move(*heldTokens));
@@ -4770,7 +4887,7 @@ private:
       // The whole-program result is not retained; the ordinary snapshot
       // already serves every query.
       if (analysis.frontend) {
-        retireFrontendLocked(std::move(analysis.frontend));
+        retireSnapshotLocked(std::move(analysis.frontend));
       }
       const auto generation = analysisGenerations.find(request.uri);
       const auto ordinary = diagnosticsByRoot.find(request.uri);
@@ -4849,7 +4966,7 @@ private:
       running->second->store(true, std::memory_order_relaxed);
     if (const auto snapshot = analysisSnapshots.find(uri);
         snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
-      retireFrontendLocked(std::move(snapshot->second.frontend));
+      retireSnapshotLocked(std::move(snapshot->second.frontend));
     }
     return ++analysisGenerations[uri];
   }
@@ -4857,21 +4974,20 @@ private:
   // Destroying a frontend graph is slow, so it happens on the reclamation
   // worker rather than on the protocol thread or under `stateMutex`. A
   // request still holding the result keeps it alive until it finishes.
-  void
-  retireFrontendLocked(std::shared_ptr<const lang::FrontendResult> frontend) {
-    retiredFrontends.push_back(std::move(frontend));
+  void retireSnapshotLocked(std::shared_ptr<const void> snapshot) {
+    retiredSnapshots.push_back(std::move(snapshot));
     reclamationCondition.notify_one();
   }
 
   void runReclamationWorker() {
     while (true) {
-      std::vector<std::shared_ptr<const lang::FrontendResult>> retired;
+      std::vector<std::shared_ptr<const void>> retired;
       {
         std::unique_lock lock(stateMutex);
         reclamationCondition.wait(lock, [this] {
-          return stoppingReclamation || !retiredFrontends.empty();
+          return stoppingReclamation || !retiredSnapshots.empty();
         });
-        retired.swap(retiredFrontends);
+        retired.swap(retiredSnapshots);
         if (retired.empty()) {
           return;
         }
@@ -5343,6 +5459,7 @@ private:
         return;
       }
       stoppingAnalysis = true;
+      cancelBodyQueryLocked();
       for (const auto &[uri, cancellation] : activeAnalysisCancellations)
         cancellation->store(true, std::memory_order_relaxed);
       pendingAnalyses.clear();
@@ -5352,6 +5469,9 @@ private:
     for (const PendingSemanticRequest &request : abandoned)
       sendJson(errorResponse(request.id, -32800, "Server shutting down"));
     analysisCondition.notify_all();
+    bodyCondition.notify_all();
+    if (bodyWorker.joinable())
+      bodyWorker.join();
     for (llvm::thread &worker : analysisWorkers) {
       if (worker.joinable()) {
         worker.join();
@@ -5392,6 +5512,30 @@ private:
   lang::lsp::FrontendSnapshotState frontendSnapshots;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
+  // A single foreground lane and one last-clean baseline bound the additional
+  // memory independently of the number of open translation units.
+  struct BodyBaseline {
+    std::string uri;
+    std::string path;
+    std::shared_ptr<const lang::EditorBodyDiagnostics> context;
+    std::unordered_map<std::string, std::uint64_t> dependencies;
+    std::unordered_map<std::string, std::uint64_t> documentGenerations;
+    lang::lsp::FrontendSourceSnapshot inputs;
+  };
+  std::shared_ptr<const BodyBaseline> bodyBaseline;
+  std::vector<lang::Diagnostic> lastBodyDiagnostics;
+  struct BodyEdit {
+    std::string uri;
+    std::string source;
+    std::uint64_t generation;
+    std::shared_ptr<std::atomic<bool>> cancellation;
+  };
+  std::optional<BodyEdit> pendingBodyQuery;
+  std::shared_ptr<std::atomic<bool>> bodyCancellation;
+  // Both providers commit and send a document's publications in order.
+  // Protocol I/O holds no state lock.
+  std::mutex analysisPublicationMutex;
+  std::condition_variable bodyCondition;
   std::condition_variable reclamationCondition;
   std::condition_variable completionCondition;
   std::unordered_map<std::string, std::string> clientUris;
@@ -5470,7 +5614,7 @@ private:
   std::atomic<bool> cancelPreambleBuilds{false};
   mutable std::vector<PendingPreambleBuild> pendingPreambleBuilds;
   mutable std::shared_ptr<lang::SemanticPreambleBuild> runningPreambleBuild;
-  std::vector<std::shared_ptr<const lang::FrontendResult>> retiredFrontends;
+  std::vector<std::shared_ptr<const void>> retiredSnapshots;
   bool stoppingCompletion = false;
   bool shutdownRequested = false;
   bool markdownHover = false;
@@ -5491,6 +5635,7 @@ private:
   llvm::thread completionWorker;
   std::vector<llvm::thread> analysisWorkers;
   llvm::thread reclamationWorker;
+  llvm::thread bodyWorker;
   llvm::thread auditWorker;
   llvm::thread preambleWorker;
 };

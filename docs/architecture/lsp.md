@@ -147,6 +147,21 @@ JSON-RPC/LSP
   -> LanguageQueries / SemanticDatabase
 ```
 
+For a warm edit inside one function, the server can publish body-local type
+errors as soon as the compiler checks that function. The parser records the
+function's braces. The query requires identical source outside those braces,
+reparses the body, and uses the original declaration and its lookup environment
+in an isolated semantic model. One foreground worker retains the most recent
+clean, verified root. Dependency and project changes invalidate it. Newer
+edits cancel earlier queries, and publication checks the document generation.
+
+A clean local result retracts only errors this query previously published.
+The complete frontend still checks callers, lifetimes, cleanup and MIR for
+every settled edit. Its diagnostics replace the partial result and its snapshot
+serves navigation and other requests. Edits to declarations, generic or
+compile-time bodies, or functions with inferred reference results use that
+complete analysis directly.
+
 Missing-definition diagnostics from concrete generic instances retain the
 frontend's outer requesting call as primary, including calls through an included
 library or a constructor. Related locations still identify the selected internal

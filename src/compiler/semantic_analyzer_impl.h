@@ -561,6 +561,9 @@ public:
   // Drops the caller-owned graph, sources and metrics a frozen preamble
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
+  std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &,
+                     const std::atomic<bool> *) const;
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
   [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
@@ -837,7 +840,8 @@ public:
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
                            bool constexprDeclarationValid,
-                           bool explainMissingReturnAfterBody = false);
+                           bool explainMissingReturnAfterBody = false,
+                           const BlockStmt *editedBody = nullptr);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
@@ -3824,7 +3828,8 @@ private:
     std::unique_ptr<Impl> impl;
     std::vector<SemanticCatalog> *idleCatalogs = nullptr;
   };
-  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker() const;
+  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker(
+      const SemanticModel *publishedBase = nullptr) const;
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
