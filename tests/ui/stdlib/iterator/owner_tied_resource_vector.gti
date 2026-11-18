@@ -1,0 +1,31 @@
+// A resource_vector cursor yields element references tied to the vector, so
+// they survive advancing and outlive a temporary cursor, including when the
+// vector is reached through a reference parameter.
+//@ run-pass
+import std.memory;
+import std.resource;
+import std.resource_vector;
+
+int first_of(std::resource_vector<int32_t, std::process_resource>& values) {
+  int32_t& head = *values.begin();
+  mut int32_t total = 0;
+  for (auto& value : values) { total += value; }
+  return int(head) * 100 + int(total);
+}
+
+int main() {
+  std::process_resource heap{};
+  unsafe {
+    auto resource = std::bind_resource(heap);
+    mut std::resource_vector<int32_t, std::process_resource> values{resource};
+    values.push_back(4);
+    values.push_back(6);
+    mut auto cursor = values.begin();
+    int32_t& first = *cursor;      // kept while the cursor advances
+    ++cursor;
+    int32_t& second = *cursor;
+    if (first != 4 || second != 6) { return 1; }
+    if (first_of(values) != 410) { return 2; }
+  }
+  return 0;
+}

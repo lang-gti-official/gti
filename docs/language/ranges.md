@@ -579,13 +579,12 @@ int& head(std::vector<int>& values) { return *values.begin(); }
 
 While such a reference is live the container cannot be mutated, moved or
 destroyed, and an element of a local container cannot be returned. The
-vector, deque, list, forward_list, string, span, arena, SIMD lane and mask,
-map, set, unordered_map, unordered_set and sparse storage/pool cursors follow
-this rule. So do `std::span`'s `front()`, `back()`, `at()` and `[]`, which name
-the span's `source` region. Three cursors keep cursor-tied results:
+vector, resource_vector, deque, list, forward_list, string, span, arena, SIMD
+lane and mask, map, set, unordered_map, unordered_set and sparse storage/pool
+cursors follow this rule. So do `std::span`'s `front()`, `back()`, `at()` and
+`[]`, which name the span's `source` region. Two cursors keep cursor-tied
+results:
 - `paired_span`, whose proxy element lives inside the cursor;
-- `resource_vector`, whose owner also depends on its memory resource, which the
-  range verifier does not yet accept for an owner-region element;
 - `array`, which can hold ownerless text views: an owner-region yield of a
   `std::string_view` element is not yet lowered correctly, so the array cursor
   keeps its cursor-tied result until that is fixed.
