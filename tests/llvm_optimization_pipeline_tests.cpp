@@ -1515,7 +1515,7 @@ int main() {
       throw std::runtime_error(
           "real GTI private/hosted visibility policy failed");
     if (artifact.kind != BackendArtifactKind::Object ||
-        artifact.contents.empty())
+        artifact.singleObject().empty())
       throw std::runtime_error("pipeline did not emit a real object");
     session.verify();
     floating();

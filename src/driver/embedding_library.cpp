@@ -75,7 +75,8 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
       std::filesystem::path(request.name).filename() != request.name ||
       request.compiler.empty() ||
       artifacts.object.kind != BackendArtifactKind::Object ||
-      artifacts.object.contents.empty() ||
+      artifacts.object.objects.size() != 1 ||
+      artifacts.object.objects.front().empty() ||
       artifacts.header.kind != BackendArtifactKind::Source ||
       artifacts.header.contents.empty())
     return reject("invalid embedding artifact or generation name");
@@ -131,7 +132,7 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
     visibility += darwin ? "_" + name + "\n" : name + ";\n";
   if (!darwin)
     visibility += "local: *; };\n";
-  if (writeArtifact(object, artifacts.object.contents) !=
+  if (writeArtifact(object, artifacts.object.singleObject()) !=
           ArtifactWriteStatus::Success ||
       writeArtifact(header, artifacts.header.contents) !=
           ArtifactWriteStatus::Success ||

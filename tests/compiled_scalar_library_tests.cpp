@@ -105,7 +105,7 @@ void linkAndRun(const std::filesystem::path &root,
   for (const auto &name : client.compilation.sources.names())
     expect(name.find("/producer/") == std::string::npos,
            "consumer loaded implementation");
-  write(root / "consumer.o", client.compilation.artifact->contents);
+  write(root / "consumer.o", client.compilation.artifact->singleObject());
   write(root / "library.o", client.objects.front().bytes);
   std::vector<std::string> args{"c++", (root / "consumer.o").string(),
                                 (root / "library.o").string(), runtime.string(),
@@ -125,7 +125,9 @@ public:
   std::string_view name() const override { return "capture-scalar-unit"; }
   BackendArtifact generate(LoweredProgram p) override {
     program = std::move(p);
-    return {BackendArtifactKind::Object, "captured", ".o", {}};
+    return {.kind = BackendArtifactKind::Object,
+            .extension = ".o",
+            .objects = {"captured"}};
   }
 };
 void passiveStorageTests(const std::filesystem::path &root,
@@ -222,11 +224,11 @@ int main() {
                   "GTI-B0003", "requires passive program storage"},
         Rejection{"thread_local mut int total;", "GTI-B0003",
                   "requires passive program storage"},
-        // Source-owned global cleanup is rejected by semantics before
-        // compiled-unit admission. Keep that earlier safety boundary.
+        // Hosted programs support owning globals, but compiled-scalar
+        // artifacts may still only contain passive program storage.
         Rejection{"class Guard { public: Guard() = default; ~Guard() {} }; "
-                  "Guard guard; mut int total;",
-                  "GTI-S2061", "requires source or owning cleanup"}}) {
+                  "Guard guard{}; mut int total;",
+                  "GTI-B0003", "requires passive program storage"}}) {
     write(source, "export module numbers; " + std::string(test.storage) +
                       " export int choose(int x) { return total + x; }");
     const auto rejected = buildCompiledScalarLibrary(

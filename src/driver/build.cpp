@@ -222,7 +222,7 @@ debugBundleSourceCollision(const std::filesystem::path &symbols,
 }
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v4";
-constexpr std::string_view objectCacheSchema = "gti-build-cache-v5";
+constexpr std::string_view objectCacheSchema = "gti-build-cache-v6";
 constexpr std::string_view embeddingCacheSchema = "gti-embedding-cache-v1";
 
 bool embeddingBuild(const ExecutableBuildRequest &request) {
@@ -284,6 +284,12 @@ std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
 std::string_view cacheRepresentationFile(bool object) {
   return object ? "artifact.o" : "generated.cpp";
 }
+// The primary filename stays stable for existing one-object builds. The
+// numeric suffixes are derived from order, never read as paths from metadata.
+std::string cacheObjectFile(std::size_t index) {
+  return index == 0 ? "artifact.o" : "artifact-" + std::to_string(index) + ".o";
+}
+
 using detail::IdentityBuilder;
 
 struct FileDigest {
@@ -1912,6 +1918,7 @@ struct CacheMetadata {
   std::optional<FileDigest> header;
   std::vector<std::string> publicSymbols;
   FileDigest generated;
+  std::vector<FileDigest> additionalObjects;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
   std::vector<std::string> testCases;
@@ -2058,6 +2065,24 @@ readCacheMetadata(const std::filesystem::path &path, bool object,
     }
     metadata.symbols = FileDigest{.hash = symbolsHash, .size = symbolsSize};
   }
+  if (object && !embedding) {
+    std::string label;
+    std::size_t count = 0;
+    if (!(input >> label >> count) || label != "objects" || count == 0 ||
+        count > maxLlvmCodegenUnits) {
+      errorMessage = "metadata has an invalid native object count";
+      return std::nullopt;
+    }
+    for (std::size_t i = 1; i < count; ++i) {
+      FileDigest digest;
+      if (!(input >> label >> digest.hash >> digest.size) ||
+          label != "object" || !validDigest(digest.hash)) {
+        errorMessage = "metadata has an invalid native object digest";
+        return std::nullopt;
+      }
+      metadata.additionalObjects.push_back(std::move(digest));
+    }
+  }
   std::string testsLabel;
   if (embedding) {
     std::string label;
@@ -2131,6 +2156,13 @@ std::string renderCacheMetadata(const CacheMetadata &metadata) {
                               std::to_string(metadata.symbols->size)
                         : std::string("none")) +
       "\n";
+  if (metadata.object && !metadata.embedding) {
+    text += "objects " + std::to_string(metadata.additionalObjects.size() + 1) +
+            "\n";
+    for (const auto &digest : metadata.additionalObjects)
+      text +=
+          "object " + digest.hash + " " + std::to_string(digest.size) + "\n";
+  }
   if (metadata.embedding) {
     text += "embedding " + metadata.header->hash + " " +
             std::to_string(metadata.header->size) + " " +
@@ -2156,6 +2188,7 @@ enum class CacheLookupStatus {
 struct CacheLookupResult {
   CacheLookupStatus status = CacheLookupStatus::Miss;
   std::string generated;
+  std::vector<std::string> objects;
   std::optional<EmbeddingCompanion> embedding;
   FileDigest executableDigest;
   std::filesystem::perms executablePermissions = std::filesystem::perms::none;
@@ -2241,6 +2274,27 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
     return {.status = CacheLookupStatus::Corrupt,
             .detail = "backend representation digest does not match metadata"};
   }
+  std::vector<std::string> objects;
+  if (object) {
+    objects.push_back(std::move(*generated));
+    for (std::size_t index = 0; index < metadata->additionalObjects.size();
+         ++index) {
+      const auto path = entry / cacheObjectFile(index + 1);
+      error.clear();
+      if (!std::filesystem::is_regular_file(
+              std::filesystem::symlink_status(path, error)) ||
+          error)
+        return {.status = CacheLookupStatus::Corrupt,
+                .detail = "cached object is not a regular file"};
+      auto bytes = readTextFile(path, detail);
+      if (!bytes ||
+          FileDigest{.hash = digestText(*bytes), .size = bytes->size()} !=
+              metadata->additionalObjects[index])
+        return {.status = CacheLookupStatus::Corrupt,
+                .detail = "cached object digest does not match metadata"};
+      objects.push_back(std::move(*bytes));
+    }
+  }
   const std::optional<FileDigest> executableDigest =
       digestFile(executablePath, detail);
   if (!executableDigest || *executableDigest != metadata->executable) {
@@ -2294,7 +2348,8 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
     companion = EmbeddingCompanion{*header, metadata->publicSymbols};
   }
   return {.status = CacheLookupStatus::Hit,
-          .generated = std::move(*generated),
+          .generated = object ? std::string{} : std::move(*generated),
+          .objects = std::move(objects),
           .embedding = std::move(companion),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
@@ -2409,7 +2464,14 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     errorMessage = "backend artifact does not match the cache schema";
     return false;
   }
-  const std::string_view generated = artifact.contents;
+  if (object && (artifact.objects.empty() ||
+                 artifact.objects.size() > maxLlvmCodegenUnits ||
+                 (embeddingBuild(request) && artifact.objects.size() != 1))) {
+    errorMessage = "backend object count does not match the cache schema";
+    return false;
+  }
+  const std::string_view generated =
+      object ? artifact.objects.front() : artifact.contents;
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
   const std::filesystem::path executablePath = entry / "executable";
@@ -2417,6 +2479,15 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
                                    .size = generated.size()};
   if (!publishTextAtomically(generatedPath, generated, errorMessage)) {
     return false;
+  }
+  std::vector<FileDigest> additionalObjects;
+  for (std::size_t index = 1; index < artifact.objects.size(); ++index) {
+    const std::string_view bytes = artifact.objects[index];
+    if (!publishTextAtomically(entry / cacheObjectFile(index), bytes,
+                               errorMessage))
+      return false;
+    additionalObjects.push_back(
+        {.hash = digestText(bytes), .size = bytes.size()});
   }
   const ArtifactPublishResult executablePublished =
       copyFileAtomically(request.output(), executablePath, errorMessage);
@@ -2442,6 +2513,7 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
                          .object = object,
                          .embedding = embeddingBuild(request),
                          .generated = generatedDigest,
+                         .additionalObjects = std::move(additionalObjects),
                          .executable = *executableDigest,
                          .executablePermissions =
                              static_cast<std::uint32_t>(executablePermissions),
@@ -4201,7 +4273,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       const bool object = nativeObjectCache(request);
       const std::filesystem::path versionRoot =
           request.cache()->root / (library  ? "embedding-v1"
-                                   : object ? "v5"
+                                   : object ? "v6"
                                             : "v4");
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
@@ -4262,11 +4334,14 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                                              : BackendArtifactKind::Source,
                               .contents = lookup.generated,
                               .extension = object ? ".o" : ".cpp",
-                              .embedding = lookup.embedding};
+                              .embedding = lookup.embedding,
+                              .objects = lookup.objects};
           if (request.keepGeneratedSource()) {
             std::string writeError;
             if (!publishTextAtomically(request.generatedSource(),
-                                       lookup.generated, writeError)) {
+                                       object ? lookup.objects.front()
+                                              : lookup.generated,
+                                       writeError)) {
               result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
               result.driverDiagnostic = "gti: failed to restore cached "
                                         "backend representation: " +
@@ -4443,9 +4518,20 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     return result;
   }
 
+  const auto &backendArtifact = *result.compilation.artifact;
+  const bool nativeArtifact =
+      backendArtifactKind == BackendArtifactKind::Object;
+  if (nativeArtifact && backendArtifact.objects.empty()) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    result.driverDiagnostic =
+        "gti: the LLVM backend produced no native objects";
+    return result;
+  }
+  const std::string_view primaryRepresentation =
+      nativeArtifact ? backendArtifact.objects.front()
+                     : backendArtifact.contents;
   std::string generatedWriteError;
-  if (!publishTextAtomically(request.generatedSource(),
-                             result.compilation.artifact->contents,
+  if (!publishTextAtomically(request.generatedSource(), primaryRepresentation,
                              generatedWriteError)) {
     result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
     result.driverDiagnostic =
@@ -4671,6 +4757,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   }
   const NativeInputs effectiveInputs = effectiveNativeInputs(
       request.toolchain(), request.nativeInputs(), nativeObjects);
+  std::optional<TemporaryArtifact> codegenDirectoryCleanup;
+  std::vector<std::unique_ptr<TemporaryArtifact>> codegenObjectCleanup;
   ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
                                request.nativeCompiler());
   if (library) {
@@ -4714,8 +4802,36 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         nativeRequest,
         {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
   } else {
+    std::vector<std::filesystem::path> objects{request.generatedSource()};
+    auto unitDirectory = stagedOutputDirectory / "codegen-units";
+    if (unitDirectory == stagedOutput)
+      unitDirectory = stagedOutputDirectory / "codegen-inputs";
+    if (backendArtifact.objects.size() > 1) {
+      std::error_code error;
+      if (!std::filesystem::create_directory(unitDirectory, error)) {
+        result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+        result.driverDiagnostic =
+            "gti: cannot stage LLVM objects: " + error.message();
+        return result;
+      }
+      codegenDirectoryCleanup.emplace(unitDirectory, true);
+    }
+    for (std::size_t index = 1; index < backendArtifact.objects.size();
+         ++index) {
+      const auto path = unitDirectory / cacheObjectFile(index);
+      codegenObjectCleanup.push_back(
+          std::make_unique<TemporaryArtifact>(path, true));
+      if (writeArtifact(path, backendArtifact.objects[index]) !=
+          ArtifactWriteStatus::Success) {
+        result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
+        result.driverDiagnostic =
+            "gti: cannot stage LLVM object unit " + std::to_string(index);
+        return result;
+      }
+      objects.push_back(path);
+    }
     const NativeLinkRequest nativeRequest(
-        request.nativeCompiler(), request.generatedSource(), stagedOutput,
+        request.nativeCompiler(), std::move(objects), stagedOutput,
         effectiveInputs, request.compilation().debugInfo(),
         ForwardedSourcePolicy{request.compilation().cppStandard(),
                               request.compilation().optimization()});
