@@ -39,6 +39,7 @@ BACKPORT = ".github/workflows/backport.yml"
 ROLLBACK = ".github/workflows/rollback.yml"
 SUITE_MEASURES = ".github/workflows/suite-measures.yml"
 VALIDATION_RETRY = ".github/workflows/validation-retry.yml"
+AUTO_REVERT = ".github/workflows/auto-revert.yml"
 RELEASE_TRAIN = (TRAIN, BETA, BACKPORT, ROLLBACK)
 ROLLUP_SECRETS = ("GTI_ROLLUP_APP_ID", "GTI_ROLLUP_APP_PRIVATE_KEY")
 RELEASE = ".gitea/workflows/release.yml"
@@ -71,7 +72,7 @@ def main():
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
     expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, SLOW, LLVM_PREBUILT, LSP, NIGHTLY, RELEASE,
-                              ROLLUP, CACHE, SUITE_MEASURES, VALIDATION_RETRY, *RELEASE_TRAIN},
+                              ROLLUP, CACHE, SUITE_MEASURES, VALIDATION_RETRY, AUTO_REVERT, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -258,9 +259,17 @@ def check_rollup(root, ci, rollup, workflows):
                for name in (*ROLLUP_SECRETS, ".github/README.md")),
            "a missing App secret must fail clearly, naming both secrets and the setup section")
     for workflow in workflows:
-        if workflow not in (ROLLUP, TRAIN):
+        if workflow not in (ROLLUP, TRAIN, AUTO_REVERT):
             expect(not any(name in text(root, workflow) for name in ROLLUP_SECRETS),
-                   f"only the rollup bot and the release cut may reference the App secrets: {workflow}")
+                   f"only the rollup bot, the release cut and the automatic revert may reference the App secrets: "
+                   f"{workflow}")
+    revert = text(root, AUTO_REVERT)
+    reader, writer = revert.split("\n  act:\n", 1)
+    expect(not any(name in reader for name in ROLLUP_SECRETS)
+           and set(re.findall(r"secrets\.([A-Za-z0-9_]+)", writer)) == set(ROLLUP_SECRETS)
+           and re.findall(r"GH_TOKEN: (.*)", writer) == ["${{ steps.token.outputs.token }}"]
+           and "repositories: gti" in writer and "secrets.GITHUB_TOKEN" not in revert,
+           "the automatic revert writes only from its act job, with the repository-scoped App token")
     triggers = rollup.split("\npermissions:", 1)[0]
     expect("pull_request" not in triggers and "pull_request_target" not in rollup
            and "workflow_run" in triggers and "workflows: [CI]" in rollup

@@ -1,0 +1,11 @@
+// Requires disjunction: an opaque predicate case proves nothing about a wrapper, so the relocatable case alone cannot satisfy the wanted disjunction.
+constexpr bool special<T>() { return false; }
+concept either<T> = std::relocatable<T> || special<T>();
+class Node<either T> { T data; public: Node(T value) : data(std::move(value)) {} };
+class Holder<either T> { T held; public: Holder(T v) : held(std::move(v)) {} };
+int f<T>(T value) requires either<T> {
+  Holder<Node<T>> h = Holder<Node<T>>(Node<T>(std::move(value)));  //~ ERROR GTI-S2029 Required application 'either<Node<T>>'
+  //~| ERROR GTI-S2029 Required application 'either<Node<T>>'
+  return 0;
+}
+int main() { return f<int>(1); }
