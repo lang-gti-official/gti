@@ -11,6 +11,14 @@ namespace lang {
 class InstanceAnalysisCache;
 class SemanticPreamble;
 class SourceManager;
+struct EditedFunctionBody {
+  const Program &program;
+  const SemanticModel &model;
+  const SourceGraph &graph;
+  const SourceManager &sources;
+  const FunctionDecl &declaration;
+  const BlockStmt &body;
+};
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
 // Consumers receive the immutable base SemanticModel separately and cannot
@@ -183,6 +191,15 @@ public:
   [[nodiscard]] std::vector<const FunctionDecl *> unmetBodyDemands() const;
 
 private:
+  friend class Frontend;
+  friend class EditorBodyDiagnostics;
+  void detachBodyQueryContext();
+  // A foreground semantic query for an edit confined to a single body.
+  // nullopt delegates to the full frontend. This result is never an MIR proof.
+  [[nodiscard]] std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &input,
+                     const std::atomic<bool> *cancellation) const;
+
   class Impl;
   friend class SemanticPreamble;
   std::unique_ptr<Impl> impl;

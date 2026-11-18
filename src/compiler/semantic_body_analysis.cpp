@@ -4191,7 +4191,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid,
-    bool explainMissingReturnAfterBody) -> void {
+    bool explainMissingReturnAfterBody, const BlockStmt *editedBody) -> void {
   struct SyntaxTypeScope {
     bool &flag;
     bool saved;
@@ -4303,10 +4303,12 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
 
   // A function body owns the parameter scope, so do not add another scope.
-  analyze(stmt.body()->statements());
+  const auto &statements =
+      (editedBody ? editedBody : stmt.body().get())->statements();
+  analyze(statements);
   if (explainMissingReturnAfterBody && functionInfo != nullptr)
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
-  const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
+  const FlowSummary functionFlow = summarizeFlow(statements);
   const bool canFallThrough = functionFlow.canFallThrough;
   if (functionInfo != nullptr && functionInfo->neverReturns &&
       !bodyFlow.deferredGenericFlow && !functionErrors() &&

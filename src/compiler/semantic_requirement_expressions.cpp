@@ -160,8 +160,8 @@ SemanticVisitor::Impl::UnevaluatedWorker::~UnevaluatedWorker() {
   }
 }
 
-auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
-    -> UnevaluatedWorker {
+auto SemanticVisitor::Impl::unevaluatedExpressionWorker(
+    const SemanticModel *publishedBase) const -> UnevaluatedWorker {
   auto worker = std::make_unique<Impl>(
       target, sourceGraph, false, nullptr, sources, RawPointerAuditMode::Off,
       false, trustedBodies, sourceDebugProfile, compileLimits);
@@ -217,10 +217,27 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   worker->macroOutermostInvocation = macroOutermostInvocation;
   worker->macroLimitReported = macroLimitReported;
   worker->macroActiveBodies = macroActiveBodies;
-  worker->semanticModel.beginSpeculativeDelta(semanticModel);
+  worker->semanticModel.beginSpeculativeDelta(publishedBase ? *publishedBase
+                                                            : semanticModel);
   worker->semanticModel.setFunctionDemandSink(nullptr);
   worker->semanticModel.setCallJournal(nullptr);
   worker->diagnostics.clear();
+  if (publishedBase) {
+    // A new syntax tree lives only for this editor query. Neither its node
+    // addresses nor conclusions about its body can enter the original
+    // snapshot's staging, effect, borrow or layout caches.
+    auto &session = worker->requestSession;
+    session.constexprWork.reset();
+    session.stagedConstants.reset();
+    session.layoutAssertionWork.reset();
+    session.programConcreteEffects.reset();
+    session.completeReturnQueries.reset();
+    session.rawResultQueries.reset();
+    session.collectingRawResult.reset();
+    session.openReanalyses.reset();
+    session.bodyContext = std::make_shared<BodyContext>(worker.get());
+    return {std::move(worker), nullptr};
+  }
   if (requestSession.openReanalyses)
     worker->requestSession.openReanalyses =
         std::make_shared<std::vector<InstanceAnalysisKey>>(
