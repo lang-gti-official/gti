@@ -14,8 +14,12 @@ for path in records:
     assert len(key) == 64 and hashlib.sha256(payload).hexdigest().encode() == checksum
     count, rest = payload.split(b'\n', 1)
     assert int(count) == 4
-    length, binary = rest.split(b'\n', 1)
-    assert int(length) == len(binary) and binary
+    for _ in range(int(count)):
+        length, rest = rest.split(b'\n', 1)
+        size = int(length)
+        assert 0 < size <= len(rest)
+        rest = rest[size:]
+    assert not rest
     validated += 1
     if sys.argv[1] == 'trailing':
         payload += b'unexpected trailing object data'
