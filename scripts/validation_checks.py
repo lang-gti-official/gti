@@ -32,7 +32,7 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # Build, packaging and integration workflows (including unknown additions) stay full.
 AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml",
-                        ".github/workflows/validation-retry.yml"}
+                        ".github/workflows/validation-retry.yml", ".github/workflows/auto-revert.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
                          "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
@@ -41,7 +41,8 @@ AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "build_window.py", "bounded_log.py",
                       "cut_release.py", "check_release_version.py", "check_stdlib_surface_review.py",
-                      "rollup.py", "release_train.py", "full_validation_report.py", "validation_retry.py"}
+                      "rollup.py", "release_train.py", "full_validation_report.py", "validation_retry.py",
+                      "auto_revert.py"}
 # Harnesses whose own changes need no native CI: each is the command of a
 # tree-consistency entry, which CI's workflow-regression job runs on every
 # candidate (agent_workflow_test checks this). Other labelled harnesses guard
