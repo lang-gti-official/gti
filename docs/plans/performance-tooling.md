@@ -2618,6 +2618,29 @@ Frontend `--time-trace` and CLI live progress already observe coarse phases.
 LLVM admission, lowering, module transforms, optimization and machine-code
 regions. The structural snapshot records the region durations from a native
 build. Nested regions overlap their parents and should not be added together.
+
+The first Stage B opt-in measurements used the two examples from RFC 0006 on
+macOS arm64 with LLVM 23.1.2. Each compile cell is the median of three builds.
+The machine-code region includes partitioning and worker coordination.
+
+| Example | Level | Code generation, 1 unit / 1 worker | Code generation, 8 units / 4 workers | Total build, 1 / 1 → 8 / 4 |
+| --- | --- | ---: | ---: | ---: |
+| 093 HTTP JSON client | O0 | 0.599 s | 0.397 s | 6.50 → 6.22 s |
+| 093 HTTP JSON client | O2 | 0.892 s | 0.771 s | 15.74 → 15.71 s |
+| 141 reflected JSON | O0 | 0.552 s | 0.393 s | 8.20 → 6.93 s |
+| 141 reflected JSON | O2 | 2.343 s | 0.478 s | 22.77 → 11.19 s |
+
+These runs shared a busy development host. In particular, the O2 reflected
+JSON baseline had 12.13 s of CPU time and 22.77 s of wall time. The wall-time
+differences need quiet-host repetition before choosing a default. Peak RSS for
+eight units and four workers ranged from 3% lower to 2% higher in this sample.
+The executable grew by 6% to 18%.
+
+At O2, 24 paired runs of `checked-scalar-chain` and `game-update-stage`
+produced the same output at one and eight units. The eight-unit median user
+CPU time was 1.006× and 0.999× the corresponding single-unit time,
+respectively. This pilot leaves the default at one unit.
+
 Complete global/pass timing remains proposed: extend observational
 compiler/driver sinks without treating terminal elapsed rendering as a complete
 profiler. The sink should be caller-owned, synchronous, non-owning and unable
