@@ -1571,10 +1571,28 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     for (const std::string &path : sourcePaths) {
       identity.add("debug.source-path", path);
     }
-    if (request.compilation().target().os == "macos" &&
-        !addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
-                             errorMessage)) {
-      return std::nullopt;
+    if (request.compilation().target().os == "macos") {
+      if (!addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
+                               errorMessage))
+        return std::nullopt;
+      if (request.compilation().llvmCodegenUnits().units > 1) {
+        // Apple's strip does not provide --version. Fingerprint both the
+        // system launcher and the tool selected by the active developer root.
+        const ProcessResult selected =
+            invokeProcess({"/usr/bin/xcrun", "--find", "strip"},
+                          {.captureSuccessfulOutput = true});
+        std::string path = selected.output;
+        path.erase(path.find_last_not_of("\r\n") + 1);
+        if (!selected.succeeded() ||
+            !std::filesystem::path(path).is_absolute()) {
+          errorMessage = "cannot resolve Darwin strip for split debug output";
+          return std::nullopt;
+        }
+        if (!addFileIdentity(identity, "debug.strip-launcher", "/usr/bin/strip",
+                             true, errorMessage) ||
+            !addFileIdentity(identity, "debug.strip", path, true, errorMessage))
+          return std::nullopt;
+      }
     }
   }
   identity.add(
@@ -4972,6 +4990,22 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.driverDiagnostic =
             "gti: failed to collect native debug symbols: " +
             symbolProcess.output;
+        return result;
+      }
+    }
+    if (backendArtifact.objects.size() > 1) {
+      // dsymutil has consumed the Mach-O debug map. Its OSO records still
+      // name the unique object staging paths, so remove that map before
+      // publishing. The UUID and adjacent dSYM continue to identify the
+      // executable, including after the temporary objects are removed.
+      const ProcessResult stripProcess = invokeProcess(
+          {"/usr/bin/strip", "-S", stagedOutput.string()},
+          {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+      if (!stripProcess.succeeded()) {
+        result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+        result.driverDiagnostic = "gti: failed to remove staged object paths "
+                                  "from debug executable: " +
+                                  stripProcess.output;
         return result;
       }
     }

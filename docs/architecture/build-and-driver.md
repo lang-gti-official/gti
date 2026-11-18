@@ -931,6 +931,12 @@ Worker count changes scheduling only. LLVM IR output remains the optimized
 whole-program module. Compiled-scalar and embedding libraries and instrumented
 builds require a single unit.
 
+For split debug builds on Darwin, the driver collects the dSYM, then removes
+the Mach-O debug map's temporary object paths from the staged executable.
+LLDB finds the dSYM by UUID, and worker-count changes leave the executable
+bytes stable. The cache fingerprints both symbol collection and stripping tools.
+
+
 ## Direct Mode
 
 Executable requests explicitly require a compiler-selected global `main`
