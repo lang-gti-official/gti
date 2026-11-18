@@ -1,0 +1,24 @@
+// A cleanup-free move-only error type is valid in expected results, through ? and expected<void>.
+//@ check-pass
+class Error {
+public:
+  int code = 0;
+  Error(int code) : code(code) {}
+  Error(Error& other) = delete;
+  Error(Error&& other) = default;
+public:
+  Error() = default;
+};
+expected<int, Error> make(bool fail, int divisor) {
+  int checked = 1 / divisor;
+  if (fail) { return unexpected(Error(29)); }
+  return checked;
+}
+expected<int, Error> forward(bool fail) {
+  int value = ?make(fail, 1);
+  return value;
+}
+expected<void, Error> complete(bool fail) {
+  int value = ?make(fail, 1);
+  return;
+}

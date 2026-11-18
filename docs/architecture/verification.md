@@ -8824,8 +8824,9 @@ emission when its field-publication proof fails.
 Tea integration regressions are covered by `tests/ui/borrow/temporary_owners/` and its
 24-outcome native matrix: a returned owner may supply a nonescaping read-only
 view through its full expression, including later-argument and callee failure.
-`owned_expected_error` checks exact Expected/Unexpected publication and
-malformed activation/transfer records; its 48-outcome matrix covers passive,
+`tests/ui/language/expected/owned_expected_error.gti` (and
+`passive_move_only_error.gti`) check Expected/Unexpected publication; the
+matrix covers passive,
 void, and owning success values, owning errors, forwarding, consuming observers,
 and wrong-state cleanup. `owned_unexpected_pending_cleanup` independently
 checks unpublished return rollback and active-alternative recipes. Its six

@@ -1,0 +1,13 @@
+// A move-only constructor pack element cannot initialize two different fields.
+import std.string;
+class Item {
+  std::string value;
+public:
+  Item(std::string value) : value(std::move(value)) {}
+};
+struct Pair<T> {
+  T first;
+  T second;
+  Pair<Args...>(Args... args) : first(T(args...)), second(T(args...)) {}  //~ ERROR GTI-S2018
+};
+int main() { Pair<Item> pair = Pair<Item>(std::string("owned")); return 0; }
