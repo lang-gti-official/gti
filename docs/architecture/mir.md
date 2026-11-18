@@ -3360,7 +3360,10 @@ lane, never the temporary itself. At a call, the result loan keeps the
 receiver's stored dependency as its parent and each named lane's argument as
 an additional dependency, an owned local argument under its ordinary
 ownership, so a reference binding retains that call-result loan rather than
-the receiver's owner loan alone.
+the receiver's owner loan alone. A named lane has no entry loan in such a
+body, so a returned call that relays a local reference alias of one
+(`int& local = fallback; return pick(local);`) walks through the alias's
+`Local` loan, as it does through an alias of receiver storage.
 
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly

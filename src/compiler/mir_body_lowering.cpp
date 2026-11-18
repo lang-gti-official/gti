@@ -18824,14 +18824,33 @@ private:
                            alias->info.type.kind == SemanticType::Reference;
                   });
               // A local reference alias passed as a returned call's argument
-              // relays the authority it borrows from: an incoming entry, or
-              // receiver storage itself. The alias ends with the return.
+              // relays the authority it borrows from: an incoming entry,
+              // receiver storage itself, or a stored class region's named
+              // lane, which a receiver contract supplies without an entry
+              // loan. The alias ends with the return.
               const MirPlace *aliased = output.findPlace(candidate.source);
+              const bool namedLane =
+                  aliased != nullptr &&
+                  function->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+                  aliased->root == MirPlaceRootKind::Binding &&
+                  (aliased->projections.empty() ||
+                   (aliased->projections.size() == 1 &&
+                    aliased->projections.front().kind ==
+                        MirProjectionKind::Dereference)) &&
+                  std::any_of(
+                      function->returnBorrowParameters.begin(),
+                      function->returnBorrowParameters.end(),
+                      [&](std::size_t position) {
+                        const auto formal = mir_detail::returnOriginFormal(
+                            function->parameterTypes,
+                            function->parameterBindings, position);
+                        return formal && formal->binding == aliased->binding;
+                      });
               const bool localAlias =
                   candidate.kind == MirLoanKind::Local &&
                   !transientChain.empty() && !candidate.carriers.empty() &&
                   referenceAliases &&
-                  (candidate.parent != 0 ||
+                  (candidate.parent != 0 || namedLane ||
                    (aliased != nullptr &&
                     aliased->root == MirPlaceRootKind::This));
               if ((candidate.kind != MirLoanKind::CallResult && !localAlias) ||
