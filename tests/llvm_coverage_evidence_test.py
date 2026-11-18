@@ -5,6 +5,7 @@ from copy import deepcopy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -351,13 +352,96 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
     }
 
 
-def registered_provider_inventory(root: Path, modules: dict) -> dict:
+def registered_provider_inventory(root: Path, modules: dict,
+                                  ui_sources: dict | None = None) -> dict:
     manifests = {
         test: module.evidence_manifest(root)
         for test, module in sorted(modules.items())
     }
     require(manifests, "registered LLVM evidence provider must be nonempty")
-    return {"manifests": manifests}
+    if ui_sources:
+        cases = {name: record["source"] for name, record in ui_sources.items()}
+        manifests["gti_test_ui"] = build_manifest(
+            "gti_test_ui", cases, {name: (name,) for name in cases},
+            {name: name for name in cases},
+            execution_profiles={name: record["execution-profile"]
+                                for name, record in ui_sources.items()})
+        # Preserve the actual registered execution owner, not just the public
+        # family name (gti_test_ui itself runs self-tests and tidy).
+    result = {"manifests": manifests}
+    if ui_sources:
+        result["ui-shards"] = {name: record["shard"]
+                               for name, record in ui_sources.items()}
+    return result
+
+
+def ui_profile_sources(report: dict, root: Path, inventory: dict) -> dict:
+    """Resolve UI-family claims through the real registered shard commands.
+
+    gti-test owns parsing, configuration and shard membership. Never duplicate
+    its path hash or infer that a compile-only/host-skipped case executes.
+    """
+    requested = {row["acceptance"]["assertion"] for row in report["rows"]
+                 if row["state"] == "implemented" and
+                 row["acceptance"]["test"] == "gti_test_ui"}
+    sources = {}
+    for relative in sorted(requested):
+        source = repository_path(root, relative, "UI execution evidence")
+        require(relative.startswith("tests/ui/") and source.suffix == ".gti",
+                f"UI evidence must name a tests/ui source: {relative}")
+        matches = []
+        for name, entry in inventory.items():
+            properties = {p["name"]: p["value"]
+                          for p in entry.get("properties", [])}
+            if "gti-test-ui" not in properties.get("LABELS", []):
+                continue
+            command = entry.get("command", [])
+            require(command and Path(command[0]).name == "gti-test" and
+                    "--shard" in command,
+                    f"UI evidence shard has no runner command: {name}")
+            cwd = properties.get("WORKING_DIRECTORY")
+            require(cwd and Path(cwd).is_dir(),
+                    f"UI evidence shard has no working directory: {name}")
+            # Retain CTest's working directory: it participates in the runner's
+            # display path and therefore in shard selection.
+            environment = dict(os.environ)
+            for assignment in properties.get("ENVIRONMENT", []):
+                key, value = assignment.split("=", 1)
+                environment[key] = value
+            listed = subprocess.run(
+                [*command, "--list-evidence"], cwd=cwd,
+                env=environment, capture_output=True, text=True, timeout=120)
+            require(listed.returncode == 0, f"{name}: {listed.stderr}")
+            for line in listed.stdout.splitlines():
+                record = json.loads(line)
+                if Path(record["path"]).resolve() == source:
+                    matches.append((name, record))
+        require(len(matches) == 1,
+                f"{relative}: expected exactly one registered UI execution shard")
+        shard, record = matches[0]
+        require(record["probe-compatible"] and
+                record["mode"] in {"run-pass", "run-fail"},
+                f"{relative}: UI execution configuration is not probe-compatible")
+        require(record["execution-profile"] in {"single-threaded", "concurrent"},
+                f"{relative}: unsupported UI execution profile")
+        sources[relative] = {"source": source.read_text(encoding="utf-8"),
+                             "shard": shard,
+                             "execution-profile": record["execution-profile"]}
+    return sources
+
+
+def observed_ui_profiles(evidence: Path, root: Path, sources: dict) -> dict:
+    observations = {}
+    for relative, record in sources.items():
+        source = repository_path(root, relative, "UI execution evidence")
+        require(source.read_text(encoding="utf-8") == record["source"],
+                f"{relative}: UI evidence changed during the audit")
+        result = run([str(evidence), "--probe", str(root), str(source),
+                      record["execution-profile"]])
+        require(result.returncode == 0,
+                f"coverage probe failed for {relative}:\n{result.stderr}")
+        observations[("gti_test_ui", relative)] = set(result.stdout.splitlines())
+    return observations
 
 
 def provider_identity(provider_id: str, inventory: dict) -> dict:
@@ -1328,6 +1412,7 @@ def main() -> None:
     inventory = ctest_inventory(ctest, build)
     registered = set(inventory)
     modules = load_registry(registry, root, inventory)
+    ui_sources = ui_profile_sources(report, root, inventory)
     baseline, providers, targets, gates = load_baseline(baseline_path, root)
     baseline_mutation_controls(baseline, root)
     provider_inventories = {
@@ -1335,7 +1420,7 @@ def main() -> None:
             root, providers["shipped-examples"]),
         "stdlib-surface": stdlib_provider_inventory(
             root, providers["stdlib-surface"]),
-        "registered-llvm-evidence": registered_provider_inventory(root, modules),
+        "registered-llvm-evidence": registered_provider_inventory(root, modules, ui_sources),
     }
     for identity in providers:
         provider_identity(identity, provider_inventories[identity])
@@ -1345,6 +1430,7 @@ def main() -> None:
     execution_profile_controls(evidence, root)
     embedding_request_controls(evidence, root, modules)
     observations = observed_profiles(report, evidence, root, modules)
+    observations.update(observed_ui_profiles(evidence, root, ui_sources))
     errors = (repository_source_errors(report, observed_source) +
               validate(report, registered, observations))
     if errors:

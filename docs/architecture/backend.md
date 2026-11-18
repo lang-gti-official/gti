@@ -6771,6 +6771,19 @@ matching executable fixture uses `LLVM_COVERAGE_IMPLEMENTED_GAP(reason)`; that
 preserves the implementation classification but blocks promotion rather than
 manufacturing evidence.
 
+Migrated nonexecuting claims name `gti_unit_tests:llvm_admission_ledger`.
+Execution claims may name the `gti_test_ui` family with an exact repository
+path under `tests/ui/`. The audit resolves that family to exactly one actual
+CTest shard carrying the `gti-test-ui` label, using its registered command and
+working directory with `gti-test --list-evidence`. It never treats the base
+runner self-test/tidy entry as execution of that source. The runner reports its
+parsed mode and execution profile; only host-admitted, single-file runtime
+cases whose configuration the hosted coverage probe reproduces are eligible.
+Missing or duplicate shard ownership and unsupported configurations fail closed.
+The retained provider inventory includes exact source hashes and shard owners;
+the coverage probe must exercise the claimed row. Actual execution and output
+expectations remain the owning shard's responsibility.
+
 `llvm_coverage_evidence` reconciles those claims with the configured CTest
 inventory and JSON evidence manifests derived from the execution tests' actual
 runnable case dictionaries. Manifest schema
