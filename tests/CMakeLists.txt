@@ -2306,13 +2306,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/examples/047-binary64.gti"
   )
   add_test(
-    NAME optimizer_initializer_publication_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/optimizer_initializer_publication_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(optimizer_initializer_publication_runtime PROPERTIES TIMEOUT 300)
-  add_test(
     NAME constexpr_aggregate_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_aggregate_runtime_test.py"

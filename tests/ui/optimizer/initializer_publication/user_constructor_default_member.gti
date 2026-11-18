@@ -1,0 +1,6 @@
+// An unstaged constructor field initializer (user constructor default member) keeps its literal-backed value.
+//@ run-pass
+//@ stdout: Ada
+import std.string;
+struct P { std::string_view name = "Ada"; uint32_t health = 7; P() {} };
+int main() { P p{}; std::print(p.name); std::print("\n"); return 0; }

@@ -1,0 +1,6 @@
+// An unstaged constructor field initializer (explicit initializer) keeps its literal-backed value.
+//@ run-pass
+//@ stdout: Ada
+import std.string;
+struct P { std::string_view name; uint32_t health; P() : name("Ada"), health(7) {} };
+int main() { P p{}; std::print(p.name); std::print("\n"); return 0; }

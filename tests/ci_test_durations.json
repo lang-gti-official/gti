@@ -373,7 +373,6 @@
   "optimizer_devirtualization_runtime": 2.8,
   "optimizer_division_envelopes": 22.3,
   "optimizer_foundation": 8.6,
-  "optimizer_initializer_publication_runtime": 31.0,
   "optimizer_intrinsic_context": 4.2,
   "optimizer_object_context": 40.4,
   "optimizer_object_context_runtime": 37.6,

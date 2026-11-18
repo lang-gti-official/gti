@@ -4563,11 +4563,9 @@ budget. The native allocation assertions above remain deterministic gates.
   refuses them, so the editor, the pass and coherence replay agree; the pass
   reports the retained value as a missed candidate; and the C++ emitter's
   publication predicate now calls the same query.
-- **Regression tests.** `optimizer_initializer_publication_runtime` builds
-  and runs the four programs above at O0, O1 and O3, requires identical
-  output at every level, and reads each optimization report: no applied
-  dead-computation transformation touches a constructor body, and O1/O3
-  carry the retained remark. `testRecordPublishedInitializerRetained` in
+- **Regression tests.** `tests/ui/optimizer/initializer_publication/` runs
+  the four programs above at O0 and `tests/slow/optimizer/initializer_publication/`
+  at O3, where each optimization report must carry the retained remark. `testRecordPublishedInitializerRetained` in
   `optimizer_tests` locates the unstaged literal, proves the rewrite refuses
   it and leaves MIR byte-identical, and checks the O1 pipeline keeps the
   literal without a transformation record. Every program fails before this

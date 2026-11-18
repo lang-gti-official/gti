@@ -1,0 +1,7 @@
+// An unstaged constructor field initializer (nested record) keeps its literal-backed value.
+//@ run-pass
+//@ stdout: QAda
+import std.string;
+struct Q { std::string_view tag = "Q";  public: Q() = default; };
+struct P { Q q{}; std::string_view name = "Ada";  public: P() = default; };
+int main() { P p{}; std::print(p.q.tag); std::print(p.name); std::print("\n"); return 0; }

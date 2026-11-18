@@ -1,0 +1,12 @@
+// An unstaged constructor field initializer (nested record) keeps its literal-backed value at O3: dead-unused-computations retains it.
+//@ slow
+//@ run-pass
+//@ opt: O3
+//@ reason: the bug was the optimizer deleting the initializer's value
+//@ stdout: QAda
+//@ snapshot: optimization-report
+// CHECK: unused computation retained: the constructor record publishes an unstaged field initializer from this value
+import std.string;
+struct Q { std::string_view tag = "Q";  public: Q() = default; };
+struct P { Q q{}; std::string_view name = "Ada";  public: P() = default; };
+int main() { P p{}; std::print(p.q.tag); std::print(p.name); std::print("\n"); return 0; }

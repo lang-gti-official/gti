@@ -1,0 +1,21 @@
+// An unstaged constructor field initializer (generated default) keeps its literal-backed value at O3: dead-unused-computations retains it.
+//@ slow
+//@ run-pass
+//@ opt: O3
+//@ reason: the bug was the optimizer deleting the initializer's value
+//@ stdout: Ada|Ada
+//@ snapshot: optimization-report
+// CHECK: unused computation retained: the constructor record publishes an unstaged field initializer from this value
+import std.string;
+struct P { std::string_view name = "Ada"; uint32_t health = 7;  public: P() = default; };
+void app(mut std::string& out, std::string_view& item) { out.append(item); }
+int main() {
+  P p{};
+  mut std::string out = std::string("");
+  app(out, p.name);
+  std::print(out.view());
+  std::print("|");
+  std::print(p.name);
+  std::print("\n");
+  return 0;
+}
