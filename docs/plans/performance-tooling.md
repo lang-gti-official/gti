@@ -90,15 +90,26 @@ Review of the automatic merge also found a nested second
 `2ea995fd4871b7c4a3c3a5f16dd10706bda1d728` with two inventory events. Removing
 the redundant inner scope restores the original admission implementation;
 the trace regression now requires exactly one event for each of the four
-admission phases. This correction is being propagated to the dependent slices
-before their fresh verification resumes.
+admission phases. The correction is published in all six slices. The seven
+admission mechanism source files are byte-identical to their respective
+pre-reconciliation versions; fresh focused verification passed against
+the rebuilt, reconciled heads.
 
 The measurements and full equivalence inventory above remain evidence for
 their explicitly named pre-reconciliation heads. Their source archive,
 compiler/runner/runtime snapshots and raw artifacts are retained; they are not
-relabelled as results from the new heads. Fresh optimized builds, the affected
-trace/snapshot checks and the owning focused gates are in progress for the
-reconciled heads. Final integration handoff remains pending that evidence.
+relabelled as results from the new heads. All five rebuilt implementation heads
+passed the trace/snapshot checks, five owning CTest gates, 29 admission UI
+fixtures and native scalar/owner smoke at O0. Their ten release-version and
+stdlib-surface checks also passed.
+
+Fresh common-main comparison captured the four named benchmark programs at
+O0/O2 for all five compilers: eight captures each, 40 total. Every adjacent pair
+and the baseline/final pair have byte-identical plans, outcomes, LLVM IR and
+objects with validation enabled. These scoped integration comparisons
+supplement the historical full corpus; they do not replace it. The repeated
+common-main performance run is still in progress, so the report's final
+integration handoff remains pending those measurements.
 
 ### Measurement protocol
 
