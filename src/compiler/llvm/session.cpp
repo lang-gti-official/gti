@@ -1293,8 +1293,12 @@ BackendArtifact Session::emitObject() {
     stream.flush();
     return {BackendArtifactKind::Source, std::move(text), ".ll"};
   }
-  if (options_.codegen.units > 1)
+  if (options_.codegen.units > 1) {
+    if (diagnosticError_)
+      throw std::runtime_error("LLVM module preparation diagnostic: " +
+                               diagnostics_.back());
     return emitObjectUnits(module_, program().target(), options_);
+  }
   const PhaseTimeScope codegenTiming("llvm-codegen");
   const PhaseTimeScope unitTiming("llvm-codegen-unit", "0");
   auto bytes = emitMachineObject(module_, *machine_);
