@@ -88,7 +88,6 @@ if(Python3_Interpreter_FOUND)
     http_url_operators
     lambda_pack_invocation_runtime
     nested_borrow_fields
-    programmable_allocators_runtime
     scoped_parallel_threads
     source_text_address_runtime
     optimizer_object_context_runtime

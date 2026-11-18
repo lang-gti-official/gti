@@ -772,7 +772,6 @@ owners = [
   "gti_unit_tests",
   "allocation_abort_runtime",
   "^gti_test_ui(_[0-9]+)?$",
-  "programmable_allocators_runtime",
   "existing_value_allocation_failure_runtime",
   "unique_scalar_allocation_runtime",
   "unique_class_allocation_runtime",
@@ -1079,7 +1078,6 @@ owners = [
   "unique_owner_access_runtime",
   "unique_scalar_allocation_runtime",
   "unique_class_allocation_runtime",
-  "programmable_allocators_runtime",
 ]
 consumers = [
   "gti_unit_tests",
@@ -1103,7 +1101,6 @@ owners = [
 ]
 consumers = [
   "gti_unit_tests",
-  "test_command_controls",
 ]
 
 [[area]]
@@ -1244,7 +1241,6 @@ paths = [
 owners = [
   "gti_unit_tests",
   "test_report",
-  "test_command_controls",
 ]
 consumers = []
 

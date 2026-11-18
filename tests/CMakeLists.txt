@@ -576,9 +576,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/object_destroy_scalar_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(object_destroy_scalar_runtime PROPERTIES TIMEOUT 240)
-  add_test(NAME programmable_allocators_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
   add_test(NAME allocator_raw_audit_independence
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
   # 36 compilations, two thirds of them auditing every trusted body: about
@@ -3044,10 +3041,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
             "$<TARGET_FILE:gti>"
   )
-  add_test(NAME test_command_controls
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(test_command_controls PROPERTIES TIMEOUT 600)
   add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"

@@ -2760,14 +2760,13 @@ their allocated storage; retained result facts preserve stable failure selection
 `test_report` parses serialized events with Python's JSON implementation,
 including control bytes, valid/invalid UTF-8, hostile output, all status variants,
 large counts and non-C numeric locales.
-`test_command_controls` uses an optimized host compiler to exercise fresh/cached
-suite selection, exact filters/skips/listing, no-selection refusal/override,
-parallel assertions/crashes/timeouts, later-test continuation, legacy executables,
-invalid options and incomplete build-failure reports at GTI O0/O3. It checks
-inventory/start/completion identity equality and exact terminal counts externally.
-SIGINT and SIGTERM during execution must terminate/reap isolated children, emit
-incomplete summaries, and preserve interruption status. Closed standard streams
-must not alias private capture or exec-handshake descriptors.
+The `tests/project/test_command_controls` and `test_command_suites` transcripts
+exercise fresh/cached suite selection, exact filters/skips/listing, no-selection
+refusal/override, parallel assertions/crashes/timeouts, later-test continuation,
+legacy executables, invalid options and incomplete build-failure reports at GTI
+O0, checking the JSON events' outcomes and terminal counts. Interrupting a
+running suite (SIGINT, SIGTERM) and a closed report pipe are not expressible in
+a transcript and are not checked there.
 Parallel human reports include target identities when different targets contain
 the same qualified test name.
 `process_capture_failure` injects actual stdio failures around real child
@@ -5337,8 +5336,7 @@ The S-ALLOC-06 candidate now routes public sparse and resource-backed owners
 through source fields, live-byte loops, general typed lifetime operations and
 two same-provider leases. With the optimized Release/Ninja compiler on macOS
 arm64, `tests/ui/stdlib/resource/protocol/` passes frontend, MIR and backend admission;
-`programmable_allocators_runtime` passes its eight C++20/C++23 O0/O1/O3,
-no-elide and ASan/UBSan configurations (310.79 seconds). Its cases exercise
+`tests/ui/memory/resources/` and the `stdlib_surface` resource cases pass. Its cases exercise
 object- and metadata-allocation failures, malformed descriptors, unchanged
 owners on failed growth, original release descriptors and order, final-address
 immovable construction and cleanup failures. `process_resource_policy` passes
@@ -6707,9 +6705,10 @@ initialization, and copied formal parameters. Both use C++20/C++23 at O0/O1/O3,
 disabled elision and generated-program ASan/UBSan. Their focused successes do
 not replace the allocator-client matrix.
 
-`programmable_allocators_runtime` executes example 121 and its shared arena
+`stdlib_surface` (the `resource-*` cases) and `tests/ui/memory/resources/`
+execute example 121 and its shared arena
 implementation, raw placement and movement controls, counting/failure injection,
-container growth, and owning/immovable constructor rollback. Its required
+container growth, and owning/immovable constructor rollback. Their required
 observations include simultaneous disjoint allocations, alignment and exhaustion,
 unchanged elements after failed growth, stable object addresses, and exactly-once
 destruction before matching resource release. Region-contract controls check

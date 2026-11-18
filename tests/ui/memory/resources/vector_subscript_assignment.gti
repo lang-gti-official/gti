@@ -1,4 +1,5 @@
 // Issue #331: assignment through a mutable resource_vector subscript.
+//@ run-pass
 import std.resource_vector;
 import std.resource;
 import std.memory;

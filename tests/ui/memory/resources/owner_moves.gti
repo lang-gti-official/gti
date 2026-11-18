@@ -1,3 +1,19 @@
+// A resource vector moved through owners and branches releases once; a failing element destructor reports its site.
+//@ run-pass
+//@ stdout: 2
+//@ stdout: 1
+//@ stdout: 900
+//@ stdout: 901
+//@ revisions: ok fail fail_release explicit_release
+//@[fail] args: fail
+//@[fail_release] args: fail release
+//@[explicit_release] args: success explicit release
+//@[fail] run-fail
+//@[fail] exit-code: 70
+//@[fail] stderr-contains: main.gti:45: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[fail_release] run-fail
+//@[fail_release] exit-code: 70
+//@[fail_release] stderr-contains: main.gti:45: runtime error[GTI-R0002]: division_by_zero in integer_division
 import std.resource_vector;
 import std.resource;
 import std.memory;
