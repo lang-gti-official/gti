@@ -1,0 +1,32 @@
+// A consuming method on a fresh derived-class temporary holding borrowed state runs on LLVM.
+//@ run-pass
+//@ exit-code: 0
+
+// `Derived(x, y).right()` borrows the temporary's own shell while its
+// stored references keep their external owners; the class has a base, so
+// LLVM admits that receiver through its hierarchy proofs.
+struct Box { mut int value; Box(int v) : value(v) {} };
+class Base<lifetime b> {
+protected:
+  Box&<b> other;
+public:
+  Base(Box&<b> o) : other(o) {}
+  virtual int tag() { return 1; }
+};
+class Derived<lifetime a, lifetime b> : public Base<b> {
+  Box&<a> mine;
+public:
+  Derived(Box&<a> m, Box&<b> o) : Base<b>(o), mine(m) {}
+  int tag() override { return 2; }
+  int&<b> right() && { return this.other.value; }
+  int&<a> left() && { return this.mine.value; }
+  int both() && { return this.mine.value + this.other.value + this.tag(); }
+};
+int main() {
+  Box x{1};
+  Box y{2};
+  int& r = Derived(x, y).right();
+  int& l = Derived(x, y).left();
+  int sum = Derived(x, y).both();
+  return r * 10 + l + sum == 26 ? 0 : 1;
+}

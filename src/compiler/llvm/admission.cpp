@@ -2289,6 +2289,22 @@ private:
     if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
         !loan.conditions.empty() || loan.lifecycleBound || loan.entry)
       return false;
+    // The physical-shell loan of a fresh borrowed-carrier receiver: its
+    // address is that full-expression temporary's own storage, ended after
+    // the call, and its stored dependency is provenance for the external
+    // owners the carrier holds, with no representation of its own.
+    if (loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
+        loan.storedDependency)
+      if (const auto *source = body.findPlace(loan.source);
+          source && source->root == MirPlaceRootKind::Value &&
+          source->projections.empty()) {
+        const auto found = temporaries.find(&body);
+        const auto *dependency = body.findLoan(loan.storedDependency);
+        if (found != temporaries.end() &&
+            found->second.contains(source->value) && dependency &&
+            dependency->kind == MirLoanKind::Stored && !dependency->escapes)
+          return true;
+      }
     // A reserved two-phase store's address is its accessor's checked result,
     // activated before the store and ended with it.
     if (loan.twoPhase)
