@@ -1,3 +1,32 @@
+// Vector relocation of optional owning payloads cleans up each payload once on failure.
+//@ run-pass
+//@ revisions: r0 r1 r2
+//@[r0] stdout: 20
+//@[r0] stdout: 2
+//@[r0] stdout: 30
+//@[r0] stdout: 3
+//@[r0] stdout: 10
+//@[r0] stdout: 1
+//@[r0] stdout: 9
+//@[r1] args: fail
+//@[r1] stdout: 20
+//@[r1] stdout: 2
+//@[r1] stdout: 30
+//@[r1] stdout: 3
+//@[r1] stdout: 10
+//@[r1] stdout: 1
+//@[r1] stdout: 9
+//@[r1] run-fail
+//@[r1] exit-code: 70
+//@[r1] stderr-contains: main.gti:42: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[r2] args: fail fail
+//@[r2] stdout: 20
+//@[r2] stdout: 2
+//@[r2] stdout: 30
+//@[r2] stdout: 3
+//@[r2] run-fail
+//@[r2] exit-code: 70
+//@[r2] stderr-contains: main.gti:42: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:42; secondary [GTI-R0002]
 import std.optional;
 import std.string;
 import std.vector;

@@ -1005,7 +1005,6 @@ owners = [
   "associative_hash_contracts",
   "associative_constructor_runtime",
   "mir_associative_determinism",
-  "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
   "^gti_test_ui(_[0-9]+)?$",

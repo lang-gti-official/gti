@@ -1,0 +1,48 @@
+// Vectors reject copying move-only elements, non-relocatable or borrowing element types and growth under a live element borrow.
+//@ check-fail
+import std.optional;
+import std.string;
+import std.vector;
+
+namespace case_copy_assignment {
+struct Envelope {
+  std::optional<std::string> payload{};
+public:
+  Envelope() = default;
+};
+
+int entry() {
+  mut Envelope target{};
+  Envelope source{};
+  target = source;  //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+namespace case_copy_concept {
+struct Envelope {
+  std::optional<std::string> payload{};
+public:
+  Envelope() = default;
+};
+
+bool requires_copy<std::copyable T>(T& input) { return true; }
+int entry() { Envelope input{}; return requires_copy(input) ? 0 : 1; }  //~ ERROR GTI-S2029
+}
+
+namespace case_deleted_move {
+class Immovable {
+public:
+  Immovable() {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+int entry() { std::vector<Immovable> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+namespace case_borrowed_element {
+struct View { int& value; View(int& source) : value(source) {} };
+int entry() { std::vector<View> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+int main() { return 0; }

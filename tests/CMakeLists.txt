@@ -2389,13 +2389,6 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(issues_122_124_field_initializers_runtime
                        PROPERTIES TIMEOUT 180)
   add_test(
-    NAME vector_construction_only_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/vector_construction_only_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(vector_construction_only_runtime PROPERTIES TIMEOUT 240)
-  add_test(
     NAME vector_scalar_constructor_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/vector_scalar_constructor_runtime_test.py"

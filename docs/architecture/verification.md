@@ -8017,7 +8017,7 @@ not a substitute for the combined production suite:
 | --- | --- |
 | Construction, replacement and partial cleanup | `tests/ui/mir/owned_lifecycle/`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `tests/ui/stdlib/optional/compiler/`, `tests/ui/stdlib/optional`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `tests/ui/borrow/composition/`, `tests/ui/borrow/ordered_composition`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
-| Eligible container/value-wrapper consistency | `tests/ui/stdlib/optional`, `vector_construction_only_runtime`, `tests/ui/generics/clone`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
+| Eligible container/value-wrapper consistency | `tests/ui/stdlib/optional`, `tests/ui/stdlib/vector/construction_only`, `tests/ui/generics/clone`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
 | Owning payload enums | `tests/ui/types/sum_types/`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `tests/ui/types/payload_enums/generic_owning/`, `tests/ui/types/payload_enums/recursive_sum`, `tests/ui/types/payload_enums/consuming_patterns.gti`, `tests/ui/types/payload_enums/move_only_payload_transport.gti`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, move-only transport without cleanup, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
@@ -8865,7 +8865,8 @@ duplicated, conditional or forged input handoffs and missing result/field
 publication. The callback-field fixture also checks containment wrappers for
 both an erased callback and an unrelated generic constructor with an unnamed
 closure parameter, using the same admitted template body plan as the definition.
-`vector_construction_only_runtime` covers empty-slot movement without
+`tests/ui/stdlib/vector/construction_only/` (with the `stdlib_surface`
+`vector-construction-only` case) covers empty-slot movement without
 assignment, cloning and growth, fallible zero-argument sized construction and
 resize, partial-prefix rollback, nested optional payload destruction, and
 first/secondary failure records. Its source negatives retain deleted-move,

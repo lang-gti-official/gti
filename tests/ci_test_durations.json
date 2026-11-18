@@ -509,7 +509,6 @@
   "unsafe_function_runtime": 6.8,
   "user_dual_range_lifetime": 32.8,
   "user_owning_reference_replacement": 7.8,
-  "vector_construction_only_runtime": 47.8,
   "vector_prepared_constructor_runtime": 12.4,
   "vector_scalar_constructor_runtime": 10.3,
   "view_fields": 799.9,
