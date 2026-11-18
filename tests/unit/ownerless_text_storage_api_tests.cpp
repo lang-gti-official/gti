@@ -2089,33 +2089,39 @@ int main() {
 }
 
 void testOwnedStorageReferenceReceiver() {
+  // The elements are views, so the formal's referent can hold external
+  // owners and the formal gets an external-contents entry. A referent that
+  // cannot hold value dependencies (std::vector<std::string>) has no such
+  // entry since borrowed-carrier shells were narrowed to those records.
   for (const int projected : {0, 1, 2}) {
     std::string source = R"gti(
 import std.string;
 import std.vector;
-std::string clone_first(std::vector<std::string>& values) {
-  return values[std::size_t(0)].clone();
+std::string clone_first(std::vector<std::string_view>& values) {
+  return std::string(values[std::size_t(0)]);
 }
 int main() {
-  mut std::vector<std::string> values{};
-  values.push_back(std::string("kept"));
+  std::string kept = std::string("kept");
+  mut std::vector<std::string_view> values{};
+  values.push_back(kept.view());
   return clone_first(values).size() == 4 ? 0 : 1;
 }
 )gti";
     if (projected) {
       const auto insert = source.find("std::string clone_first");
-      source.insert(insert, "struct State { std::vector<std::string> values; "
-                            "State(std::vector<std::string> values) : "
-                            "values(std::move(values)) {} };\n");
+      source.insert(insert,
+                    "struct State { std::vector<std::string_view> values; "
+                    "State(std::vector<std::string_view> values) : "
+                    "values(std::move(values)) {} };\n");
       const auto signature =
-          source.find("clone_first(std::vector<std::string>& values)");
+          source.find("clone_first(std::vector<std::string_view>& values)");
       source.replace(
           signature,
-          std::string("clone_first(std::vector<std::string>& values)").size(),
+          std::string("clone_first(std::vector<std::string_view>& values)")
+              .size(),
           "clone_first(State& state)");
-      source.replace(source.find("return values["),
-                     std::string("return values[").size(),
-                     "return state.values[");
+      source.replace(source.find("(values["), std::string("(values[").size(),
+                     "(state.values[");
       source.replace(
           source.find("return clone_first(values)"),
           std::string("return clone_first(values)").size(),
