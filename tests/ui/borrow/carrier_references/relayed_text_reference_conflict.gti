@@ -1,0 +1,16 @@
+// The owner of a relayed text-view reference cannot be written while that reference is live (#565).
+struct Box { mut std::string_view text = ""; public: Box() = default; };
+class Cur<lifetime o> {
+  Box&<o> box;
+public:
+  Cur(Box&<o> b) : box(b) {}
+  std::string_view&<o> get() { return this.box.text; }
+};
+int main() {
+  mut Box b{};
+  b.text = "gti";
+  Cur c = Cur(b);
+  std::string_view& t = c.get();
+  b.text = "changed"; //~ ERROR GTI-S2017
+  return int(t.size());
+}

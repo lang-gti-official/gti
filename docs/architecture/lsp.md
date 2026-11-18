@@ -965,9 +965,14 @@ summary only against a lowered body, so a signature-only analysis can be
 rejected where complete lowering is accepted, never the reverse. The LSP
 therefore publishes a signature-only analysis that MIR accepts, and when MIR
 rejects one it analyses the snapshot again with library-only bodies and
-publishes that result: the published diagnostics are always those of complete
-lowering. The trace's `analysis` record reports `hirOmittedInstanceBodies`
-and `mirSignatureOnlyFallback` (see "Current Limits"). An instance of the
+publishes that result. After a clean confirmation, up to eight subsequent
+successful edits in the same open document start with complete library bodies.
+An error before HIR preserves this preference. Closing the file, analysing a
+dependency or project change, or exhausting the window restores the ordinary
+order. When a complete-first pass produces diagnostics after entering HIR,
+the editor checks the scoped result to preserve which diagnostics it exposes.
+The trace records the number of frontend passes as `frontendPasses`, alongside
+`hirOmittedInstanceBodies` and `mirSignatureOnlyFallback`. An instance of the
 open file's own types is lowered completely and reaches what `gti check`
 reaches.
 The LSP releases HIR, failure metadata and MIR as soon as the analysis
@@ -1017,11 +1022,13 @@ frontend trace reports `semanticLateDemandBodies`,
 
 The LSP also owns a `SemanticPreambleCache` beside its parse and instance
 caches and passes it through `FrontendOptions::preambleCache`: the open
-file's standard-library prefix is analysed once per import graph and every
-later snapshot resumes from a copy of that analysis, registering and
-analysing only the file's own declarations (see "Trusted Prefix Preamble" in
-[semantic-analysis.md](semantic-analysis.md)). A changed or re-parsed library
-unit selects a new preamble. No snapshot waits for a build: analysis and
+file can reuse checked bodies from imported project and package modules as
+well as the standard library. This applies when the compiler can establish
+that every imported module can be checked independently of the open file.
+The frontend still checks every body in the open file, including callers of
+an edited function. Changing an imported body selects a new preamble for
+dependent files. See "Trusted Prefix Preamble" in
+[semantic-analysis.md](semantic-analysis.md). No snapshot waits for a build: analysis and
 completion set `FrontendOptions::deferPreambleBuild`, so a snapshot whose
 import graph has no cached preamble is analysed without one (bounded
 analysis, which reports the same diagnostics) and hands the build to a
@@ -1480,7 +1487,7 @@ function-local names: identities visible outside the entry document's
   accepts the call to the lowered body (see "Signature-only declarations" in
   [mir.md](mir.md)). A snapshot MIR rejects is analysed a second time with
   library-only bodies (`mirSignatureOnlyFallback` in the trace), so such a
-  snapshot costs both analyses. Measured with a message-flow probe
+  snapshot costs both analyses on the first confirmation. Measured with a message-flow probe
   (`didOpen`, then `didChange` edits with `GTI_LSP_UPDATE_DEBOUNCE_MS=0`, time
   to the matching `publishDiagnostics`, phases from `GTI_LSP_FRONTEND_TRACE`)
   on `examples/089-library-workflow.gti`, a steady edit fell from about

@@ -82,7 +82,8 @@ task update and continue without claiming a rename. Follow the canonical
 for completion and intermediate statuses.
 
 1. Inspect status; preserve other tasks' work. Fetch current `origin/main`.
-   Give each task its own `codex/` branch and worktree. Never implement on
+   Give each task its own client-prefixed branch (`codex/` for Codex,
+   `claude/` for Claude Code) and worktree. Never implement on
    primary `main`, reuse another task's branch, or reset a checkout.
 2. Follow [storage selection](../../../docs/architecture/agent-workflow.md#storage-selection).
    On the Mac mini, prefer `start <task> --title <text> --branch codex/<task>`

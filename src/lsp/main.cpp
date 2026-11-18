@@ -1795,6 +1795,7 @@ struct AnalysisRequest {
   // A raw-pointer audit of an already published generation; see
   // `runAuditWorker`. Ordinary analyses never run the audit.
   bool audit = false;
+  unsigned remainingCompleteMirEdits = 0;
   SteadyClock::time_point scheduledAt{};
   std::uint64_t includeDiscoveryGeneration = 0;
   std::optional<std::string> projectProfile;
@@ -1872,6 +1873,8 @@ struct DocumentAnalysis {
   // The signature-only analysis was rejected by MIR and the published result
   // comes from analysing again with library-only bodies.
   bool mirSignatureOnlyFallback = false;
+  unsigned remainingCompleteMirEdits = 0;
+  unsigned frontendPasses = 0;
   std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
       sourceIdentities;
 };
@@ -1886,6 +1889,7 @@ struct AnalysisSnapshot {
   // Copied from the frontend so dependency invalidation can still read it
   // after a stale frontend has been released.
   bool includeSuggestionsRequested = false;
+  unsigned remainingCompleteMirEdits = 0;
 };
 
 struct CachedSemanticTokens {
@@ -3518,7 +3522,8 @@ private:
     // instance as a signature-only declaration. See
     // FrontendOptions::lowerLibraryOnlyInstanceBodies and the MIR rejection
     // fallback below.
-    frontendOptions.lowerLibraryOnlyInstanceBodies = false;
+    frontendOptions.lowerLibraryOnlyInstanceBodies =
+        !request.audit && request.remainingCompleteMirEdits != 0;
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
     frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
@@ -3558,6 +3563,7 @@ private:
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     const auto analyze = [&] {
+      ++result.frontendPasses;
       return lang::Frontend(frontendOptions)
           .analyze(*filePath, source, {standardLibrary.prelude},
                    request.sourceOverrides, {standardLibrary.root},
@@ -3566,23 +3572,49 @@ private:
     lang::FrontendResult frontend = analyze();
     // MIR still verifies some calls and its interprocedural summaries
     // (defined-failure effects, persistent-storage access, text relays) only
-    // against lowered callee bodies, so a signature-only declaration can be
-    // rejected where its body would verify; it is never accepted where its
-    // body would be rejected. A valid program is therefore published from
-    // the signature-only analysis, and a MIR rejection is confirmed by
-    // analysing again with library-only bodies: the published diagnostics
-    // are exactly those of complete lowering. See "Current Limits" in
-    // docs/architecture/lsp.md.
-    if (!frontend.cancelled && frontend.sourceValid && frontend.syntaxValid &&
-        (frontend.semanticValid || frontend.mirBorrowRejected) &&
-        frontend.hirValid && frontend.failureMetadataValid &&
-        !frontend.mirValid &&
-        result.workMetrics.hirOmittedInstanceBodies != 0 &&
-        (request.cancellation == nullptr ||
-         !request.cancellation->load(std::memory_order_relaxed))) {
+    // against lowered callee bodies. Confirm a rejection from scoped MIR
+    // with the full bodies before publishing it.
+    const auto needsCompleteMir = [&](const lang::FrontendResult &candidate) {
+      return !candidate.cancelled && candidate.sourceValid &&
+             candidate.syntaxValid &&
+             (candidate.semanticValid || candidate.mirBorrowRejected) &&
+             candidate.hirValid && candidate.failureMetadataValid &&
+             !candidate.mirValid &&
+             result.workMetrics.hirOmittedInstanceBodies != 0 &&
+             (request.cancellation == nullptr ||
+              !request.cancellation->load(std::memory_order_relaxed));
+    };
+    // Remember only a choice of lowering order. Always check the current
+    // source. Periodically probe again so a changed program can recover the
+    // cheaper path. An early semantic error does not use up a MIR attempt.
+    constexpr unsigned completeMirWindow = 8;
+    if (frontendOptions.lowerLibraryOnlyInstanceBodies) {
+      result.remainingCompleteMirEdits = request.remainingCompleteMirEdits;
+      if (frontend.mirValid)
+        --result.remainingCompleteMirEdits;
+      // Omitted instances can have diagnostics of their own. If complete
+      // lowering produced diagnostics after entering HIR, preserve the
+      // ordinary editor's visibility rules by trying its scoped analysis.
+      if (!frontend.cancelled && !frontend.diagnostics.empty() &&
+          result.workMetrics.hirPasses != 0) {
+        frontendOptions.lowerLibraryOnlyInstanceBodies = false;
+        auto completeMetrics = std::move(result.workMetrics);
+        auto scoped = analyze();
+        if (needsCompleteMir(scoped)) {
+          frontendOptions.lowerLibraryOnlyInstanceBodies = true;
+          result.workMetrics = std::move(completeMetrics);
+          result.remainingCompleteMirEdits = 0;
+        } else {
+          result.remainingCompleteMirEdits = 0;
+          frontend = std::move(scoped);
+        }
+      }
+    } else if (needsCompleteMir(frontend)) {
       result.mirSignatureOnlyFallback = true;
       frontendOptions.lowerLibraryOnlyInstanceBodies = true;
       frontend = analyze();
+      if (frontend.mirValid && frontend.diagnostics.empty())
+        result.remainingCompleteMirEdits = completeMirWindow;
     }
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -3659,6 +3691,12 @@ private:
                             .version = version,
                             .generation = generation,
                             .trigger = trigger};
+    if (trigger == AnalysisTrigger::DocumentChanged) {
+      const auto previous = analysisSnapshots.find(uri);
+      if (previous != analysisSnapshots.end())
+        request.remainingCompleteMirEdits =
+            previous->second.remainingCompleteMirEdits;
+    }
     request.includeDiscoveryGeneration = includeDiscoveryGeneration;
     request.projectProfile = projectProfile;
     for (const auto &[documentUri, documentSource] : documents) {
@@ -4334,7 +4372,8 @@ private:
               guarded.analysis->workMetrics, retained,
               guarded.analysis->frontend != nullptr &&
                   guarded.analysis->frontend->includeSuggestionsRequested,
-              {}, guarded.analysis->mirSignatureOnlyFallback);
+              {}, guarded.analysis->mirSignatureOnlyFallback,
+              guarded.analysis->frontendPasses);
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -4651,7 +4690,8 @@ private:
             .generation = request.generation,
             .rootPath = std::move(analysis.rootPath),
             .frontend = std::move(analysis.frontend),
-            .includeSuggestionsRequested = includeSuggestionsRequested};
+            .includeSuggestionsRequested = includeSuggestionsRequested,
+            .remainingCompleteMirEdits = analysis.remainingCompleteMirEdits};
         switch (request.trigger) {
         case AnalysisTrigger::Opened:
         case AnalysisTrigger::DocumentChanged:
@@ -5235,7 +5275,8 @@ private:
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
       bool includeSuggestionsRequested = false, std::string_view requestId = {},
-      bool mirSignatureOnlyFallback = false) const {
+      bool mirSignatureOnlyFallback = false,
+      unsigned frontendPasses = 0) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5377,6 +5418,8 @@ private:
     }
     if (!requestId.empty())
       record["requestId"] = std::string(requestId);
+    if (frontendPasses != 0)
+      record["frontendPasses"] = static_cast<std::int64_t>(frontendPasses);
     const std::string encoded =
         llvm::formatv("{0}", JsonValue(std::move(record))).str();
     const std::lock_guard lock(frontendTraceMutex);

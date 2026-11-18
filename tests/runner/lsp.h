@@ -32,7 +32,7 @@ public:
 
   // Starts the process; `initialize` is sent separately so a transcript can
   // drive it.
-  bool start(std::string &error);
+  bool start(std::string &error, const std::filesystem::path &trace = {});
   // start() plus initialize/initialized with the capabilities tests need.
   bool startInitialized(double seconds, std::string &error);
   [[nodiscard]] bool running() const { return pid > 0; }
