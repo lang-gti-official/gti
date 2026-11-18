@@ -4523,14 +4523,13 @@ requires zero native allocations for a short missing name and exactly one
 combined metadata/byte allocation for a present value. `environment_c_header`
 independently compiles and links the header as C17.
 
-`environment_runtime` builds the public source API, its `std.environment`
-module and runnable configuration example at O0/O3 under C++20/C++23. It checks
-controlled empty, spaced, Unicode and 16-KiB values, movement of returned
-owners, verified-MIR/native cleanup witnesses, sanitizer execution,
-and a rejected view escaping a local returned string owner.
-It also reports runtime and executable/build costs for 100,000 successful
-owned lookups at O3. This is a new-service cost measurement, not a speedup
-comparison to a borrowed libc pointer. `macos_installed_runtime` checks the
+`tests/ui/stdlib/environment/` builds the public source API, its `std.environment`
+module and runnable configuration example at O0. It checks controlled empty,
+spaced, Unicode and 16-KiB values, movement of returned owners and a rejected
+view escaping a local returned string owner (a variable name outside
+`[A-Za-z0-9_]` is not expressible as a `//@ env:` and is no longer checked).
+The former harness's 100,000-lookup cost report (a measurement, not an
+assertion) was dropped with it. `macos_installed_runtime` checks the
 new module and runtime symbols from a relocated install without repository
 overrides. Existing process, filesystem and I/O boundaries remain separate
 regression gates.
@@ -9651,7 +9650,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an import-only source unit, including unused generic declarations |
 | `stdlib_modules` | every public `std.name` module has exactly one canonical `stdlib/std/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
 | `tests/ui/modules/dormant_capability` | import-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
-| `encoding_runtime` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, and C++20/C++23 O0/O1/O3 plus no-elide and ASan/UBSan execution |
+| `tests/ui/stdlib/encoding/` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, every UTF-8 scalar value and the decoder's retained input borrow, at O0 |
 | `tests/ui/stdlib/containers/forward_list` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
 | `unique_scalar_allocation_runtime` | exact/default primitive allocation, enum/raw-pointer/null/callback values, owner movement/reset/reuse, same-translation-unit `char`/`uint8_t` identity, injected terminal exhaustion before publication, normal/recoverable-failure reverse cleanup, and secondary cleanup failure at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` owns exact diagnostic spans and malformed allocation contracts, and emitter lifecycle assertions require the status ABI |

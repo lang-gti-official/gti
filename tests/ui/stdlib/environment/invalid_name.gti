@@ -1,0 +1,8 @@
+// A lookup of a name containing '=' reports invalid_name.
+//@ run-pass
+import std.environment;
+int main() {
+  auto value = std::environment::get("A=B");
+  if (value || value.error() != std::environment::errc::invalid_name) { return 1; }
+  return 0;
+}

@@ -1,0 +1,10 @@
+// A view of an owned environment value cannot escape the value.
+//@ check-fail
+import std.environment;
+import std.string;
+std::string_view bad() {
+  auto lookup = std::environment::get("PATH");
+  auto value = std::move(lookup).expect("environment lookup");
+  return value.value().view();  //~ ERROR GTI-S2045 cannot escape
+}
+int main() { return 0; }

@@ -872,7 +872,6 @@ owners = [
   "gti_unit_tests",
   "environment_runtime_boundary",
   "environment_c_header",
-  "environment_runtime",
   "filesystem_path_runtime",
   "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
@@ -1027,7 +1026,6 @@ paths = [
 ]
 owners = [
   "string_c_string_runtime",
-  "encoding_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
@@ -1119,7 +1117,6 @@ owners = [
   "filesystem_path_runtime",
   "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
-  "environment_runtime",
   "cmath_runtime",
   "http_runtime",
   "http_url_operators",

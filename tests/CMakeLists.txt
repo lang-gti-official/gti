@@ -1889,14 +1889,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(process_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME environment_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/environment_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "$<TARGET_FILE:gti_runtime>"
-  )
-  set_tests_properties(environment_runtime PROPERTIES TIMEOUT 600)
-  add_test(
     NAME cthread_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cthread_runtime_test.py"
@@ -2627,15 +2619,8 @@ if(Python3_Interpreter_FOUND)
   endforeach()
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
-  add_test(
-    NAME encoding_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/encoding_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
-  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME source_location_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -1,3 +1,5 @@
+// UTF-8 append and decode round-trip every scalar value with its exact width and reject every surrogate.
+//@ run-pass
 import std.encoding;
 import std.string;
 

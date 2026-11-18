@@ -4369,8 +4369,8 @@
       "evidence": [
         "docs/language/encoding.md",
         "stdlib/std/encoding.gti",
-        "tests/encoding_runtime_test.py",
-        "tests/fixtures/stdlib_surface_encoding.gti"
+        "tests/fixtures/stdlib_surface_encoding.gti",
+        "tests/ui/stdlib/encoding"
       ]
     },
     {
@@ -4394,8 +4394,7 @@
         "examples/140-environment-configuration.gti",
         "runtime/src/environment.cpp",
         "tests/fixtures/stdlib_surface_environment.gti",
-        "tests/fixtures/environment_lookup.gti",
-        "tests/environment_runtime_test.py",
+        "tests/ui/stdlib/environment",
         "tests/runtime_environment_tests.cpp"
       ]
     },
