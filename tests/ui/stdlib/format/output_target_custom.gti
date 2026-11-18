@@ -1,0 +1,26 @@
+// A custom formatter is borrowed and its errors are preserved before output submission.
+//@ run-pass
+//@ stderr-contains: custom token
+import std.format;
+import std.string;
+struct Token { int value; };
+class std::formatter<Token> {
+public:
+  expected<void, std::format_errc> format(Token& value, mut std::string& output, std::format_spec& spec) {
+    if (value.value == 0) { return unexpected(std::format_errc::unsupported_argument); }
+    output.append("token");
+    return;
+  }
+  formatter() = default;
+};
+int main() {
+  Token token{.value=1};
+  auto good = std::try_println(std::cerr, "custom {}", token);
+  if (!good || token.value != 1) { return 1; }
+  Token rejected{.value=0};
+  auto bad = std::try_runtime_println(std::cout, "must not print {}", rejected);
+  if (bad || bad.error() != std::print_errc::unsupported_argument) { return 2; }
+  auto count = std::try_runtime_println(std::cout, "{} {}", token);
+  if (count || count.error() != std::print_errc::argument_count_mismatch) { return 3; }
+  return 0;
+}

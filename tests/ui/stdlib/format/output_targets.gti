@@ -1,0 +1,20 @@
+// Targeted println routes complete literal and formatted lines without moving arguments.
+//@ run-pass
+//@ stdout: default
+//@ stdout: explicit 42
+//@ stderr-contains: gtiup: ready
+//@ stderr-contains: literal {braces}
+//@ stderr-contains: checked 42
+import std.format;
+import std.string;
+int main() {
+  std::string message = std::string("ready");
+  int number = 42;
+  std::println("default");
+  std::println(std::cout, "explicit {}", number);
+  std::println(std::cerr, "gtiup: {}", message);
+  auto literal = std::try_println(std::cerr, "literal {braces}");
+  auto formatted = std::try_println(std::cerr, "checked {}", number);
+  if (!literal || !formatted || message.size() != std::size_t(5)) { return 1; }
+  return 0;
+}

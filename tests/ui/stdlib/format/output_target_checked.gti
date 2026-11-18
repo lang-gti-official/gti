@@ -1,0 +1,6 @@
+// Explicit destinations preserve compile-time format/type validation.
+import std.format;
+int main() {
+  std::println(std::cerr, "{:x}", "text"); //~ ERROR GTI-S2057
+  return 0;
+}
