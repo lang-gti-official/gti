@@ -38,7 +38,8 @@ implementing the feature. Follow the
 2. Locate a separate checkout of `lang-gti-official/rfcs`, or clone it if needed.
    Inspect its status, preserve unrelated work, and read its current `AGENTS.md`,
    `README.md`, `CONTRIBUTING.md`, and `templates/feature.md`. Use a dedicated
-   `codex/proposal-<slug>` branch from its current main for a new proposal; do not
+   `codex/proposal-<slug>` branch (`claude/proposal-<slug>` from Claude Code)
+   from its current main for a new proposal; do not
    register an RFC with the GTI compiler's lifecycle helper.
 3. Use the RFC repository's generator from that checkout:
 
