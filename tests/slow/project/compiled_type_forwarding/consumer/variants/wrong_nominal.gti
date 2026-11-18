@@ -1,0 +1,2 @@
+import "api/processing.gti"; import "api/inspection.gti";
+struct Point { int x = 3; int y = 4; }; int main() { Point value{}; return inspection::sum(value); }

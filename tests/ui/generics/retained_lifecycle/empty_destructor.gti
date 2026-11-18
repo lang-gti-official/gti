@@ -1,0 +1,26 @@
+// A nested generic owner of a closure, with an empty destructor, verifies and builds.
+//@ build-pass
+import std.string;
+class Token {
+public:
+  Token() = default;
+  ~Token() { std::println(7); }
+  int read() { return 1; }
+};
+class Owner<Callable> {
+  Callable callable;
+public:
+  Owner(Callable callable) : callable(std::move(callable)) {}
+  ~Owner() {  }
+  int operator()() { return this.callable(); }
+};
+int nest<Callable>(Callable callable) {
+  Owner<Callable> inner{std::move(callable)};
+  Owner<Owner<Callable>> outer{std::move(inner)};
+  return 0;
+}
+int main() {
+  Token token{};
+  auto callback = [token = std::move(token)]() -> int { return token.read(); };
+  return nest(std::move(callback));
+}

@@ -1,0 +1,65 @@
+// Clearing or erasing a source prefix whose element destructor fails reports the primary failure, or GTI-R0014 for a second failure, after exact cleanup.
+//@ stdlib-overlay: std/detail/memory_storage.gti
+//@ run-pass
+//@ revisions: ok clear clear_secondary erase_primary erase_secondary
+//@[ok] stdout: 3
+//@[ok] stdout: 2
+//@[ok] stdout: 1
+//@[ok] stdout: 9
+//@[clear] args: clear
+//@[clear] stdout: 3
+//@[clear] stdout: 2
+//@[clear] stdout: 1
+//@[clear] stdout: 9
+//@[clear] run-fail
+//@[clear] exit-code: 70
+//@[clear] stderr-contains: main.gti:48: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[clear_secondary] args: clear secondary
+//@[clear_secondary] stdout: 3
+//@[clear_secondary] stdout: 2
+//@[clear_secondary] run-fail
+//@[clear_secondary] exit-code: 70
+//@[clear_secondary] stderr-contains: main.gti:48: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:48; secondary [GTI-R0002]
+//@[erase_primary] args: erase primary suffix
+//@[erase_primary] stdout: 2
+//@[erase_primary] stdout: 3
+//@[erase_primary] stdout: 1
+//@[erase_primary] stdout: 9
+//@[erase_primary] run-fail
+//@[erase_primary] exit-code: 70
+//@[erase_primary] stderr-contains: main.gti:48: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[erase_secondary] args: erase secondary suffix stop
+//@[erase_secondary] stdout: 2
+//@[erase_secondary] stdout: 3
+//@[erase_secondary] run-fail
+//@[erase_secondary] exit-code: 70
+//@[erase_secondary] stderr-contains: main.gti:48: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:48; secondary [GTI-R0002]
+import std.detail.memory_storage; import std.memory;
+import std.string;
+import std.vector;
+
+class Probe {
+  int identity;
+  int divisor;
+public:
+  Probe(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Probe() {
+    std::println(this.identity);
+    int checked = 1 / this.divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Probe caller{9, 1};
+  mut std::detail::prefix_owner<Probe> values{uint64_t(3)};
+  int mode = argc - 1;
+  values.append(1, 1);
+  values.append(2, mode == 0 ? 1 : 0);
+  values.append(3, mode == 2 || mode == 4 ? 0 : 1);
+  if (mode >= 3) {
+    values.erase(uint64_t(1));
+  } else {
+    values.clear();
+  }
+  return 0;
+}

@@ -3527,7 +3527,7 @@
         "tests/fixtures/generic_algorithm_for_each.gti",
         "tests/fixtures/generic_callable_concepts.gti",
         "tests/fixtures/complete_range_probe.gti",
-        "tests/generic_algorithm_cluster_test.py",
+        "tests/ui/stdlib/algorithm/generic_cluster",
         "tests/ui/callables/concepts",
         "tests/ui/stdlib/algorithm",
         "tests/ui/stdlib/algorithm/ordered_search",
@@ -3592,8 +3592,8 @@
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -3673,7 +3673,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp",
+        "tests/ui/stdlib/utility/restoring_exchange",
         "examples/104-move-only-ordering.gti"
       ]
     },
@@ -3697,7 +3697,7 @@
       ],
       "evidence": [
         "tests/ui/language/deferred_assertions",
-        "tests/deferred_assertion_runtime_test.py",
+        "tests/ui/stdlib/assert/deferred_assertion_failures.gti",
         "examples/172-deferred-assertions.gti",
         "examples/174-typed-macros.gti",
         "stdlib/std/assert.gti"
@@ -4076,8 +4076,8 @@
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -4133,7 +4133,7 @@
         "unique_ptr<int>"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/algorithm_search_deque.gti"
@@ -4333,7 +4333,7 @@
         "resource-programmable"
       ],
       "evidence": [
-        "tests/source_resource_prefix_runtime_test.py",
+        "tests/ui/memory/resource_prefix",
         "tests/stdlib_module_boundaries_test.py"
       ]
     },
@@ -4717,7 +4717,7 @@
       ],
       "evidence": [
         "tests/fixtures/forward_list_iterator_completion.gti",
-        "tests/forward_list_iterator_runtime_test.py",
+        "tests/ui/stdlib/forward_list",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -4827,7 +4827,7 @@
         "tests/fixtures/stdlib_surface_functional.gti",
         "tests/fixtures/generic_callable_concepts.gti",
         "tests/fixtures/complete_range_probe.gti",
-        "tests/generic_algorithm_cluster_test.py",
+        "tests/ui/stdlib/algorithm/generic_cluster",
         "stdlib/std/functional.gti"
       ]
     },
@@ -5215,7 +5215,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_iterator.gti",
         "tests/fixtures/complete_range_probe.gti",
-        "tests/generic_algorithm_cluster_test.py",
+        "tests/ui/stdlib/algorithm/generic_cluster",
         "stdlib/std/iterator.gti"
       ]
     },
@@ -5243,7 +5243,7 @@
       ],
       "evidence": [
         "tests/fixtures/iterator_coordinate_boundaries.gti",
-        "tests/container_iterator_movement_test.py"
+        "tests/ui/stdlib/iterator/movement"
       ]
     },
     {
@@ -5267,7 +5267,7 @@
       "evidence": [
         "stdlib/std/iterator.gti",
         "tests/fixtures/stdlib_surface_iterator.gti",
-        "tests/container_iterator_movement_test.py"
+        "tests/ui/stdlib/iterator/movement"
       ]
     },
     {
@@ -5326,7 +5326,7 @@
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
         "tests/slow/stdlib/json/dynamic",
-        "tests/reflection_runtime_test.py"
+        "tests/ui/reflection/runtime"
       ]
     },
     {
@@ -5358,8 +5358,8 @@
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -5418,7 +5418,7 @@
         "immovable Element"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/algorithm_search_list.gti"
@@ -5477,7 +5477,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/container_reverse_probe.gti",
         "tests/fixtures/map_mutable_entry_projection.gti",
-        "tests/container_iterator_movement_test.py",
+        "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -5538,8 +5538,8 @@
       ],
       "evidence": [
         "stdlib/std/map.gti",
-        "tests/associative_map_test.py",
-        "tests/container_contract_failure_test.py",
+        "tests/ui/stdlib/map",
+        "tests/slow/stdlib/containers/contract_failure",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",
@@ -5571,7 +5571,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/container_reverse_probe.gti",
         "tests/fixtures/map_mutable_entry_projection.gti",
-        "tests/container_iterator_movement_test.py",
+        "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -6287,7 +6287,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_meta.gti",
         "tests/fixtures/reflection_type_facts.gti",
-        "tests/reflection_runtime_test.py",
+        "tests/ui/reflection/runtime",
         "tests/ui/reflection/semantics",
         "stdlib/std/meta.gti",
         "tests/slow/reflection/attributes.gti",
@@ -6327,7 +6327,7 @@
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
-        "tests/contiguous_iterator_completion_test.py"
+        "tests/ui/stdlib/iterator/contiguous"
       ]
     },
     {
@@ -6557,7 +6557,7 @@
       ],
       "evidence": [
         "tests/fixtures/paired_span_iterator_completion.gti",
-        "tests/paired_span_iterator_completion_test.py",
+        "tests/ui/stdlib/paired_span/iterators",
         "tests/user_dual_range_lifetime_test.py",
         "examples/144-checked-view-iteration.gti"
       ]
@@ -6822,7 +6822,7 @@
       ],
       "evidence": [
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_tests.cpp",
+        "tests/ui/memory/structural_relocation",
         "examples/033-source-concepts.gti",
         "stdlib/prelude.gti"
       ]
@@ -6918,7 +6918,7 @@
         "immovable Element"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti"
       ]
     },
@@ -7062,8 +7062,8 @@
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -7115,7 +7115,7 @@
       "evidence": [
         "examples/121-programmable-allocators.gti",
         "tests/fixtures/programmable_allocators.gti",
-        "tests/programmable_allocators_runtime_test.py",
+        "tests/ui/memory/resources",
         "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
@@ -7178,7 +7178,7 @@
         "tests/unit/resource_memory_runtime_tests.cpp",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/fixtures/raw_resource_movement.gti",
-        "tests/programmable_allocators_runtime_test.py",
+        "tests/ui/memory/resources",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/process_resource_policy_test.py",
@@ -7226,7 +7226,7 @@
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_constructor_rollback.gti",
         "tests/fixtures/resource_region_contracts.gti",
-        "tests/programmable_allocators_runtime_test.py",
+        "tests/ui/memory/resources",
         "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
@@ -7259,7 +7259,7 @@
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/container_reverse_probe.gti",
-        "tests/container_iterator_movement_test.py"
+        "tests/ui/stdlib/iterator/movement"
       ]
     },
     {
@@ -7305,7 +7305,7 @@
         "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/stdlib/contracts"
@@ -7484,8 +7484,8 @@
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -7587,7 +7587,7 @@
         "tests/fixtures/text_view_iterator_completion.gti",
         "tests/fixtures/text_view_iterator_module.gti",
         "stdlib/std/string_view.gti",
-        "tests/text_view_iterator_runtime_test.py",
+        "tests/ui/stdlib/text/view_iterators",
         "tests/ui/stdlib/text/view_iterators",
         "examples/146-counted-text-view-iteration.gti"
       ]
@@ -7614,7 +7614,7 @@
         "tests/fixtures/text_view_subview.gti",
         "tests/fixtures/text_view_subview_failure.gti",
         "stdlib/std/string_view.gti",
-        "tests/text_view_iterator_runtime_test.py",
+        "tests/ui/stdlib/text/view_iterators",
         "examples/194-string-view-subviews.gti"
       ]
     },
@@ -7676,8 +7676,8 @@
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -8025,7 +8025,7 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_testing.gti",
-        "tests/annotated_test_suite_test.py",
+        "tests/slow/project/annotated_test_suites",
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
         "tests/ui/stdlib/testing/assertions",
@@ -8090,7 +8090,7 @@
       "evidence": [
         "tests/fixtures/map_mutable_entry_projection.gti",
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
+        "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -8119,7 +8119,7 @@
       "evidence": [
         "tests/fixtures/map_mutable_entry_projection.gti",
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
+        "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
       ]
@@ -8191,8 +8191,8 @@
       ],
       "evidence": [
         "stdlib/std/unordered_map.gti",
-        "tests/unordered_map_test.py",
-        "tests/container_contract_failure_test.py",
+        "tests/ui/stdlib/unordered_map",
+        "tests/slow/stdlib/containers/contract_failure",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",
@@ -8242,7 +8242,7 @@
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py"
+        "tests/ui/stdlib/iterator/movement"
       ]
     },
     {
@@ -8298,7 +8298,7 @@
         "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
@@ -8407,7 +8407,7 @@
       "evidence": [
         "examples/103-resource-exchange.gti",
         "tests/fixtures/restoring_exchange_shapes.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {
@@ -8439,8 +8439,8 @@
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/container_iterator_movement_test.py",
-        "tests/contiguous_iterator_completion_test.py",
+        "tests/ui/stdlib/iterator/movement",
+        "tests/ui/stdlib/iterator/contiguous",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -8487,7 +8487,7 @@
       ],
       "evidence": [
         "tests/fixtures/vector_contains.gti",
-        "tests/complete_containers_test.py"
+        "tests/ui/stdlib/containers/complete"
       ]
     },
     {
@@ -8553,12 +8553,11 @@
         "tests/fixtures/stdlib_surface_vector.gti",
         "tests/fixtures/generic_clone.gti",
         "tests/fixtures/vector_construction_only.gti",
-        "tests/fixtures/vector_construction_only_failure.gti",
-        "tests/vector_construction_only_runtime_test.py",
+        "tests/ui/stdlib/vector/construction_only",
         "stdlib/std/vector.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
-        "tests/source_prefix_owner_runtime_test.py",
+        "tests/ui/memory/source_prefix",
         "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
@@ -8583,7 +8582,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {

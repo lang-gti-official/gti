@@ -1,0 +1,27 @@
+// Paired-span cursors reject invalidated sides, read-only writes and cursor-child loans across a step.
+//@ check-fail
+import std.paired_span;
+import std.vector;
+
+namespace case_readonly_first {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+(*cursor).first() = 99; return 0; }  //~ ERROR GTI-S2002
+}
+
+namespace case_readonly_second {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+(*cursor).second() = 99; return 0; }  //~ ERROR GTI-S2002
+}
+
+namespace case_indexed_readonly_first {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+auto entry = cursor[std::ptrdiff_t(1)]; entry.first() = 99; return 0; }  //~ ERROR GTI-S2002
+}
+
+int main() { return 0; }

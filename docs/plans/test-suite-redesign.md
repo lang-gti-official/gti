@@ -514,7 +514,7 @@ The owner does not review code, so a visible diff is not sufficient on its own. 
 - Exhaustive error/warning annotation in check tests — an unexpected extra diagnostic fails the test.
 - MIR verification on every accepted program in every check test (it is the compiler's internal consistency check and costs little).
 - At least one run test per run-time language mechanism (destruction order, moves, panics/unwinding, dynamic dispatch, closures, threads, FFI), and the stdlib packages. Ownership and lifetime bugs in this compiler have produced real UB.
-- Both platforms (Linux x86_64, macOS arm64) in the pre tier, because LLVM is the default backend on both and link behaviour differs.
+- Both platforms (Linux x86_64, macOS arm64) in the pre tier, because LLVM is the default backend on both and link behaviour differs. Since 2026-11-18 the macOS pre tier is the platform subset (tidy, runner self-test, `tests/project`, `tests/lsp`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit) and the post tier runs the rest of the pre tier there, as its row allows: hosted macOS runners are scarce enough that full validation lost runs to jobs GitHub never started.
 - The nightly sanitizer run and the nightly `--isolate` run.
 - The conformance holdout and the expectation-change accounting.
 - A smoke of the packaged toolchain before any channel publishes.

@@ -1,0 +1,96 @@
+// Prefix receivers under the concurrent profile keep exact failures.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must preserve these outcomes at the production level
+//@ stdlib-overlay: std/detail/memory_storage.gti std/prefix_query_probe.gti
+//@ execution-profile: concurrent
+//@ run-pass
+//@ stdout: 99
+//@ revisions: c0 c1 c2 c3 c4 c5 c6 c7
+//@[c1] args: x
+//@[c1] run-fail
+//@[c1] exit-code: 70
+//@[c1] stderr-contains: runtime error[GTI-R
+//@[c2] args: x x
+//@[c3] args: x x x
+//@[c3] run-fail
+//@[c3] exit-code: 70
+//@[c3] stderr-contains: runtime error[GTI-R
+//@[c4] args: x x x x
+//@[c5] args: x x x x x
+//@[c5] run-fail
+//@[c5] exit-code: 70
+//@[c5] stderr-contains: runtime error[GTI-R
+//@[c6] args: x x x x x x
+//@[c7] args: x x x x x x x
+//@[c7] run-fail
+//@[c7] exit-code: 70
+//@[c7] stderr-contains: runtime error[GTI-R
+// --- prefix_receiver_concurrent.gti
+import std.detail.memory_storage; import std.memory;
+import std.prefix_query_probe;
+import std.atomic;
+import std.vector;
+import std.string;
+
+class SyncAudit { public: SyncAudit() {} ~SyncAudit() { std::println(99); } };
+class SyncValue { public:
+  mut uint64_t value;
+  SyncValue() : value(9) {}
+  void sync_change(bool change) mut {
+    std::atomic<uint64_t> signal{uint64_t(0)};
+    uint64_t observed = signal.load(std::memory_order_acquire());
+    if (change || observed != uint64_t(0)) { this.value = uint64_t(18446744073709551615); }
+  }
+};
+uint64_t synchronized_receiver_postcondition(bool change) {
+  mut SyncValue value{};
+  value.sync_change(change);
+  return value.value * uint64_t(2);
+}
+uint64_t synchronized_read(mut SyncValue& value, bool fail) {
+  mut std::detail::prefix_owner<uint64_t> storage{uint64_t(4)};  //~ WARN GTI-S2096
+  std::atomic<uint64_t> signal{uint64_t(0)};
+  uint64_t observed = signal.load(std::memory_order_acquire());
+  if (observed != uint64_t(0)) { return uint64_t(0); }
+  if (fail) { value.value = uint64_t(18446744073709551615); }
+  return value.value * uint64_t(2);
+}
+int repeated_atomic(bool changed) {
+  std::atomic<int32_t> signal{int32_t(0)};
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    int32_t observed = signal.load(std::memory_order_acquire());
+    int32_t checked = observed + int32_t(2147483647);
+    if (checked != int32_t(2147483647)) { return 2; }
+    signal.store(changed ? int32_t(1) : int32_t(0), std::memory_order_release());
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  SyncAudit audit{};
+  if (argc == 3 || argc == 4) { return repeated_atomic(argc == 4); }
+  if (argc == 5 || argc == 6) { return std::detail::repeated_alignment(argc == 6); }
+  if (argc == 7 || argc == 8) { return synchronized_receiver_postcondition(argc == 8) == uint64_t(18) ? 0 : 1; }
+  mut SyncValue value{};
+  return synchronized_read(value, argc > 1) == uint64_t(18) ? 0 : 1;
+}
+// --- std/prefix_query_probe.gti
+export module prefix_query_probe;
+import "detail/memory_capabilities.gti";
+namespace std::detail {
+using QueryErased = void*;
+export int repeated_alignment(bool changed) {
+  mut uint64_t storage = uint64_t(0);
+  mut void* address = nullptr;
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    unsafe {
+      int32_t aligned = gti_internal::runtime::gti_rt_address_is_aligned_v1(address, uint64_t(1));
+      int32_t checked = aligned + int32_t(2147483647);
+      if (checked != int32_t(2147483647)) { return 2; }
+      if (changed) { address = QueryErased(&storage); }
+    }
+  }
+  return 0;
+}
+}

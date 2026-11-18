@@ -1,0 +1,2 @@
+[[test]] void case_one() {}
+int main() { return 0; }

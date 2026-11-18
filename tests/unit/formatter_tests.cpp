@@ -671,10 +671,73 @@ void testDirectiveMarkerSeparation() {
   }
 }
 
+// Operator, literal and fixed-width spellings over fragments (some no longer
+// valid GTI, such as the legacy `int8` aliases the formatter canonicalizes).
+// (Restored from the former compiler_constexpr_tests.cpp; their GTI sources
+// became tests/ui/constexpr cases, which do not format.)
+void testOperatorAndLiteralSpellings() {
+  std::string formatted = lang::Formatter().format(
+      "import \"uint64.gti\";\n"
+      "int8 small=1;int64 large=small;uint8 byte=0xFF;uint64 wide=0b1010;");
+  expect(formatted == "import \"uint64.gti\";\n"
+                      "int8_t small = 1;\nint64_t large = small;\n"
+                      "uint8_t byte = 0xFF;\nuint64_t wide = 0b1010;\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should canonicalize legacy fixed-width aliases, preserve "
+         "import paths and prefixed integer literals, and remain idempotent");
+
+  formatted = lang::Formatter().format(
+      "int main(){char quote='\\\'';char newline='\\n';return 0;}");
+  expect(formatted.find("char quote = '\\\'';") != std::string::npos &&
+             formatted.find("char newline = '\\n';") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve character literal escapes");
+
+  formatted =
+      lang::Formatter().format("int main(){bool value=true&&false||true;"
+                               "if(value||false&&true){return 0;}return 1;}");
+  expect(formatted.find("bool value = true && false || true;") !=
+                 std::string::npos &&
+             formatted.find("if (value || false && true)") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should treat symbolic logical aliases as binary operators");
+
+  formatted = lang::Formatter().format("int value=(mask&3)|((mask^1)<<2);int "
+                                       "mod=value%7;int inv=~value;int "
+                                       "shifted=value>>1;");
+  expect(formatted == "int value = (mask & 3) | ((mask ^ 1) << 2);\n"
+                      "int mod = value % 7;\n"
+                      "int inv = ~value;\n"
+                      "int shifted = value >> 1;\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should use C++ spacing for integer operators");
+
+  formatted = lang::Formatter().format(R"(
+bool compare(uint64_t left, uint64_t right, uint64_t limit) {
+  return left < right && right >= limit && limit > (0);
+}
+)");
+  expect(
+      formatted.find("return left < right && right >= limit && limit > (0);") !=
+              std::string::npos &&
+          formatted.find("> =") == std::string::npos &&
+          lang::Formatter().format(formatted) == formatted,
+      "formatter should not treat comparisons as generic angle lists or "
+      "split '>='");
+  expect(lang::Formatter().format(
+             "concept sortable<T>=std::totally_ordered<T>&&std::movable<T>;") ==
+             "concept sortable<T> = std::totally_ordered<T> && "
+             "std::movable<T>;\n",
+         "formatter should still disambiguate a compact concept generic close "
+         "from its assignment token");
+}
+
 } // namespace
 
 GTI_UNIT_TEST(formatter) {
   testFormatting();
   testDirectiveMarkerSeparation();
+  testOperatorAndLiteralSpellings();
   return failures == 0 ? 0 : 1;
 }

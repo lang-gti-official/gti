@@ -1,0 +1,16 @@
+// A live element reference blocks growing a resource prefix.
+//@ check-fail
+import std.resource_vector;
+import std.resource;
+
+int main() {
+  std::process_resource provider{};
+  unsafe {
+    auto binding = std::bind_resource(provider);
+    mut std::resource_vector<int, std::process_resource> values{binding};
+    values.push_back(7);
+    int& selected = values.front();
+    values.push_back(8);  //~ ERROR GTI-S2017
+    return selected;
+  }
+}

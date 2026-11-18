@@ -1,0 +1,171 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (returned field address); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_different_field bad_ambiguous_field bad_mutating_field bad_opaque_field bad_reassigned_nested bad_opaque_nested
+//@[bad_different_field] args: case
+//@[bad_different_field] run-fail
+//@[bad_different_field] exit-code: 70
+//@[bad_different_field] stderr-contains: returned_field_address.gti:34: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_ambiguous_field] args: case case
+//@[bad_ambiguous_field] run-fail
+//@[bad_ambiguous_field] exit-code: 70
+//@[bad_ambiguous_field] stderr-contains: returned_field_address.gti:41: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_mutating_field] args: case case case
+//@[bad_mutating_field] run-fail
+//@[bad_mutating_field] exit-code: 70
+//@[bad_mutating_field] stderr-contains: returned_field_address.gti:48: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_opaque_field] args: case case case case
+//@[bad_opaque_field] run-fail
+//@[bad_opaque_field] exit-code: 70
+//@[bad_opaque_field] stderr-contains: returned_field_address.gti:56: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_reassigned_nested] args: case case case case case
+//@[bad_reassigned_nested] run-fail
+//@[bad_reassigned_nested] exit-code: 70
+//@[bad_reassigned_nested] stderr-contains: returned_field_address.gti:97: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_opaque_nested] args: case case case case case case
+//@[bad_opaque_nested] run-fail
+//@[bad_opaque_nested] exit-code: 70
+//@[bad_opaque_nested] stderr-contains: returned_field_address.gti:105: runtime error[GTI-R0001]: integer_overflow in addition
+// --- returned_field_address.gti
+import std.string;
+import std.vector;
+import std.memory;
+
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class AddressOwner {
+public:
+  mut int* slot = nullptr;
+  mut int* other = nullptr;
+  AddressOwner(int* slot, int* other) : slot(slot), other(other) {}
+
+  unsafe int* address() { return this.slot; }
+  unsafe int* different_address() { return this.other; }
+  unsafe int* ambiguous_address(bool choice) {
+    return choice ? this.slot : this.other;
+  }
+  unsafe int* mutating_address() {
+    unsafe { *this.slot = 2147483647; }
+    return this.slot;
+  }
+
+  unsafe int returned_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_different_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.different_address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_ambiguous_field(bool choice) {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.ambiguous_address(choice);
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_mutating_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.mutating_address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_opaque_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      opaque_pointer_effect(this.slot);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+public:
+  AddressOwner() = default;
+};
+
+unsafe int* reference_address(AddressOwner& owner) { return owner.slot; }
+unsafe int returned_reference_field(AddressOwner& owner) {
+  unsafe {
+    std::construct_at(owner.slot, 7);
+    int* pointer = reference_address(owner);
+    return *pointer + 1;
+  }
+}
+
+class AddressRelay {
+public:
+  mut AddressOwner owner;
+  AddressRelay(int* slot, int* other) : owner(AddressOwner(slot, other)) {}
+  unsafe int* address() { unsafe { return this.owner.address(); } }
+  unsafe int* reference_forward() { unsafe { return reference_address(this.owner); } }
+  unsafe int nested_returned_field() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int nested_reference_field() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      int* pointer = this.reference_forward();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_reassigned_nested() mut {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      this.owner.slot = this.owner.other;
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_opaque_nested() {
+    unsafe {
+      std::construct_at(this.owner.slot, 7);
+      opaque_pointer_effect(this.owner.slot);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::uninitialized<int> storage{};
+  mut int other = 2147483647;
+  unsafe {
+    AddressOwner owner{storage.data(), &other};
+    if (argc == 2) return owner.bad_different_field();
+    if (argc == 3) return owner.bad_ambiguous_field(false);
+    if (false) return owner.bad_ambiguous_field(true);
+    if (argc == 4) return owner.bad_mutating_field();
+    if (argc == 5) return owner.bad_opaque_field();
+    if (owner.returned_field() != 8) return 1;
+    std::destroy_at(storage.data());
+    if (returned_reference_field(owner) != 8) return 2;
+    std::destroy_at(storage.data());
+    mut AddressRelay relay{storage.data(), &other};
+    if (argc == 6) return relay.bad_reassigned_nested();
+    if (argc == 7) return relay.bad_opaque_nested();
+    if (relay.nested_returned_field() != 8) return 3;
+    std::destroy_at(storage.data());
+    if (relay.nested_reference_field() != 8) return 4;
+    std::destroy_at(storage.data());
+  }
+  return 0;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

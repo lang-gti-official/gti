@@ -3,6 +3,8 @@
 // library, a private layout change rebuilds them all, and a consumer with
 // only the bundles (one interface at an escaped path) checks, runs, shares
 // the owner's types and is refused private types and conflicting loans.
+// Types-only use, foreign enums, missing re-exports, private fields, other
+// nominal types, a missing owner and a stale owner receipt are covered too.
 // (From compiled_type_forwarding_test.py, at the default release level.)
 slow
 unset CPATH
@@ -13,6 +15,7 @@ unset SDKROOT
 $ cd producer
 $ gti run app --release
 $ touch ../before-edit
+$ sh -c "cp $(find build -name drawing.gtilib) ../drawing-original.gtilib"
 $ sh -c "echo '// Consumer-only change.' >> main.gti"
 $ gti build app --release
 $ find build -name "*.gtilib" -newer ../before-edit
@@ -28,11 +31,28 @@ $ mkdir ../consumer/dependencies
 $ sh -c "cp $(find build -name '*.gtilib') ../consumer/dependencies/"
 $ cd ../consumer
 $ rm -rf ../producer
+$ cp main.gti ../original-main.gti
 $ gti check app --release
 $ gti run app --release
 $ cp variants/direct_owner.gti main.gti
 $ gti run app --release
 $ cp variants/private_type.gti main.gti
+$ gti check app --release
+? 65
+stderr: error[GTI-S
+$ cp variants/types_only.gti main.gti
+$ gti run app --release
+$ cp variants/foreign_enum.gti main.gti
+$ gti run app --release
+$ cp variants/no_implicit_reexport.gti main.gti
+$ gti check app --release
+? 65
+stderr: error[GTI-S
+$ cp variants/private_field.gti main.gti
+$ gti check app --release
+? 65
+stderr: error[GTI-S
+$ cp variants/wrong_nominal.gti main.gti
 $ gti check app --release
 ? 65
 stderr: error[GTI-S
@@ -42,3 +62,16 @@ $ gti check app --release
 stderr: error[GTI-S2017]
 $ find . -name ".gti-compiled-*.gti"
 !stdout: .gti
+$ cp ../original-main.gti main.gti
+$ cp gti.toml ../distributed.toml
+$ cp variants/missing_owner.toml gti.toml
+$ gti check app --release
+? 65
+stderr: missing compiled dependency artifact
+$ cp ../distributed.toml gti.toml
+$ cp ../drawing-original.gtilib dependencies/drawing.gtilib
+$ gti check app --release
+? 65
+stderr: conflicting compiled dependency artifact digest
+$ ls
+!stdout: api

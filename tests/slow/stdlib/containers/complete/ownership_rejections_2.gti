@@ -1,0 +1,98 @@
+// Complete containers reject copies, live borrows and cursors across mutation, element writes through set cursors, and contains without equality.
+//@ slow
+//@ check-fail
+import std.deque;
+import std.list;
+import std.queue;
+import std.set;
+import std.unordered_set;
+
+namespace case_borrow_list {
+int entry() {
+  mut std::list<int> values{};
+  values.push_back(1);
+  int& value = values.front();
+  values.pop_front();  //~ ERROR GTI-S2017
+  return value;
+}
+}
+
+namespace case_borrow_deque {
+int entry() {
+  mut std::deque<int> values{};
+  values.push_back(1);
+  int& value = values.front();
+  values.pop_front();  //~ ERROR GTI-S2017
+  return value;
+}
+}
+
+namespace case_borrow_queue {
+int entry() {
+  mut std::queue<int> values{};
+  values.push(1);
+  int& value = values.front();
+  values.pop();  //~ ERROR GTI-S2017
+  return value;
+}
+}
+
+namespace case_iterator_list {
+int entry() {
+  mut std::list<int> values{};
+  values.push_back(1);
+  auto cursor = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return *cursor;
+}
+}
+
+namespace case_iterator_deque {
+int entry() {
+  mut std::deque<int> values{};
+  values.push_back(1);
+  auto cursor = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return *cursor;
+}
+}
+
+namespace case_iterator_set {
+int entry() {
+  mut std::set<int> values{};
+  [[discard]] values.insert(1);
+  auto cursor = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return *cursor;
+}
+}
+
+namespace case_iterator_unordered_set {
+int entry() {
+  mut std::unordered_set<int> values{};
+  [[discard]] values.insert(1);
+  auto cursor = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return *cursor;
+}
+}
+
+namespace case_insertion_loan_set {
+int entry() {
+  mut std::set<int> values{};
+  auto result = values.insert(1);
+  values.clear();  //~ ERROR GTI-S2017
+  return *result.first;
+}
+}
+
+namespace case_insertion_loan_unordered_set {
+int entry() {
+  mut std::unordered_set<int> values{};
+  auto result = values.insert(1);
+  values.clear();  //~ ERROR GTI-S2017
+  return *result.first;
+}
+}
+
+int main() { return 0; }

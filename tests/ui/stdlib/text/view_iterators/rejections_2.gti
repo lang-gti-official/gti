@@ -1,0 +1,26 @@
+// Text views and their cursors reject private names, owner invalidation, escapes, read-only writes and invalid value cursors.
+//@ check-fail
+import std.string;
+import std.string_view;
+
+namespace case_value_range_mutable_reference {
+int entry() { std::string_view view = "abc"; for (mut char& character : view) {} return 0; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2035 //~ ERROR GTI-S2022 //~ ERROR GTI-S2083
+}
+
+namespace case_mutable_value_dereference {
+class ValueCursor { public: int operator*() mut { return 1; }  public: ValueCursor() = default; }; int entry() { return 0; }  //~ ERROR GTI-S2022
+}
+
+namespace case_value_arrow {
+class ValueCursor { public: int operator->() { return 1; }  public: ValueCursor() = default; }; int entry() { return 0; }  //~ ERROR GTI-S2022
+}
+
+namespace case_borrowed_value_dereference {
+struct Borrowed { int& value; }; class ValueCursor { public: Borrowed operator*();  public: ValueCursor() = default; }; int entry() { return 0; }  //~ ERROR GTI-S2045 //~ ERROR GTI-S2022
+}
+
+namespace case_move_only_value_dereference {
+class ValueCursor { public: std::string operator*() { return std::string("owned"); }  public: ValueCursor() = default; }; int entry() { return 0; }  //~ ERROR GTI-S2022
+}
+
+int main() { return 0; }

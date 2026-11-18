@@ -1,0 +1,5 @@
+// Structural_relocation: invalid structural relocation is rejected before lowering.
+    struct Parcel<T> { T item; };
+    void accept<std::bitwise_relocatable U>() {}
+    void check<T>() requires std::relocatable<T> { accept<Parcel<T>>(); }  //~ ERROR GTI-S2029
+    int main() { return 0; }

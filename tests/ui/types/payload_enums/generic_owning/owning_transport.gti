@@ -1,0 +1,254 @@
+// Generic owning sums keep exact payload transport through calls, bindings, envelopes and containers, and clean up on failure.
+//@ run-pass
+//@ stdout: 1
+//@ stdout: 4
+//@ stdout: 3
+//@ stdout: 2
+//@ revisions: success call_binding_publication call_binding_publication_failure consuming_binding_publication consuming_binding_publication_failure generic_owner_capture partial_owner later_argument_failure later_argument_after_move callee_failure constructor_later_argument_failure
+//@[call_binding_publication] args: call-binding-publication
+//@[call_binding_publication] stdout: 9
+//@[call_binding_publication] stdout: 4
+//@[call_binding_publication_failure] args: call-binding-publication-failure
+//@[call_binding_publication_failure] run-fail
+//@[call_binding_publication_failure] exit-code: 70
+//@[call_binding_publication_failure] stderr-contains: division_by_zero
+//@[call_binding_publication_failure] stdout: 9
+//@[consuming_binding_publication] args: consuming-binding-publication
+//@[consuming_binding_publication] stdout: 4
+//@[consuming_binding_publication_failure] args: consuming-binding-publication-failure
+//@[consuming_binding_publication_failure] run-fail
+//@[consuming_binding_publication_failure] exit-code: 70
+//@[consuming_binding_publication_failure] stderr-contains: division_by_zero
+//@[consuming_binding_publication_failure] stdout: 4
+//@[generic_owner_capture] args: generic-owner-capture
+//@[generic_owner_capture] stdout: 5
+//@[partial_owner] args: partial-owner
+//@[partial_owner] run-fail
+//@[partial_owner] exit-code: 70
+//@[partial_owner] stderr-contains: division_by_zero
+//@[partial_owner] stdout: 7
+//@[later_argument_failure] args: later-argument-failure
+//@[later_argument_failure] run-fail
+//@[later_argument_failure] exit-code: 70
+//@[later_argument_failure] stderr-contains: division_by_zero
+//@[later_argument_failure] stdout: 7
+//@[later_argument_failure] stdout: 9
+//@[later_argument_after_move] args: later-argument-after-move
+//@[later_argument_after_move] run-fail
+//@[later_argument_after_move] exit-code: 70
+//@[later_argument_after_move] stderr-contains: division_by_zero
+//@[later_argument_after_move] stdout: 7
+//@[later_argument_after_move] stdout: 9
+//@[callee_failure] args: callee-failure
+//@[callee_failure] run-fail
+//@[callee_failure] exit-code: 70
+//@[callee_failure] stderr-contains: division_by_zero
+//@[callee_failure] stdout: 6
+//@[callee_failure] stdout: 7
+//@[callee_failure] stdout: 9
+//@[constructor_later_argument_failure] args: constructor-later-argument-failure
+//@[constructor_later_argument_failure] run-fail
+//@[constructor_later_argument_failure] exit-code: 70
+//@[constructor_later_argument_failure] stderr-contains: division_by_zero
+//@[constructor_later_argument_failure] stdout: 7
+//@[constructor_later_argument_failure] stdout: 9
+import std.string;
+import std.optional;
+import std.vector;
+
+mut int32_t drops = 0;
+
+class Resource {
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+  }
+  int32_t id() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+enum class Event { message(Resource resource), idle };
+
+int32_t id(Event& event) {
+  switch (event) {
+  case Event::message(auto& resource): return resource.id();
+  case Event::idle: return 0;
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+// Deliberately unrelated to a public container: generic ownership must use
+// the exact concrete field and callable identities, not library spellings.
+class Envelope<T> {
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+private:
+  mut T value;
+};
+
+void exercise() {
+  Event source = relay(Event::message(Resource(1)));
+  mut Envelope<Event> packet = Envelope<Event>(std::move(source));
+  packet.replace(Event::message(Resource(2)));
+  if (id(packet.get()) != 2) { std::println(99); }
+  Event extracted = std::move(packet).extract();
+
+  mut std::vector<Event> events{};
+  events.push_back(std::move(extracted));
+  events.push_back(Event::idle);
+  events.push_back(Event::message(Resource(3)));
+  events.reserve(std::size_t(12));
+  mut int32_t total = 0;
+  for (auto& event : events) { total = total + id(event); }
+  if (total != 5) { std::println(99); }
+
+  mut std::optional<Event> selected =
+      std::optional<Event>(Event::message(Resource(4)));
+  if (id(selected.value()) != 4) { std::println(99); }
+  selected.reset();
+}
+namespace case_call_binding_publication {
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int entry() {
+  {
+    auto event = produce(1);
+    if (drops != 1 || id(event) != 4) return 1;
+  }
+  return drops == 2 ? 0 : 2;
+}
+}
+namespace case_call_binding_publication_failure {
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int entry() {
+  auto event = produce(0);
+  return id(event);
+}
+}
+namespace case_consuming_binding_publication {
+Event produce() { return Event::message(Resource(4)); }
+int entry() {
+  {
+    auto event = produce();
+    switch (std::move(event)) {
+      case Event::idle: return 1;
+      case Event::message(resource): {
+        if (resource.id() != 4 || drops != 0) return 2;
+        break;
+      }
+    }
+  }
+  return drops == 1 ? 0 : 3;
+}
+}
+namespace case_consuming_binding_publication_failure {
+Event produce() { return Event::message(Resource(4)); }
+int consume(int divisor) {
+  auto event = produce();
+  switch (std::move(event)) {
+    case Event::idle: return 1;
+    case Event::message(resource): return resource.id() / divisor;
+  }
+}
+int entry() { return consume(0); }
+}
+namespace case_generic_owner_capture {
+int entry() {
+  {
+    Envelope<Event> packet = Envelope<Event>(Event::message(Resource(5)));
+    auto callback = [owned = std::move(packet)]() -> int32_t {
+      return id(owned.get());
+    };
+    if (callback() != 5) { return 1; }
+  }
+  return drops == 1 ? 0 : 1;
+}
+}
+namespace case_partial_owner {
+class Partial<T> {
+  T completed;
+  int32_t checked;
+public:
+  Partial(T value, int32_t divisor)
+      : completed(std::move(value)), checked(int32_t(1) / divisor) {}
+};
+int entry() {
+  Partial<Event> value = Partial<Event>(Event::message(Resource(7)), 0);
+  return 1;
+}
+}
+namespace case_later_argument_failure {
+void accept<T>(T first, int32_t second) {}
+int entry() {
+  Resource caller = Resource(9);
+  mut int32_t divisor = 0;  //~ WARN GTI-S2096
+  accept(Event::message(Resource(7)), int32_t(1) / divisor);
+  return 1;
+}
+}
+namespace case_later_argument_after_move {
+void accept<T>(T first, int32_t second) {}
+int entry() {
+  Resource caller = Resource(9);
+  Event event = Event::message(Resource(7));
+  mut int32_t divisor = 0;  //~ WARN GTI-S2096
+  accept(std::move(event), int32_t(1) / divisor);
+  return 1;
+}
+}
+namespace case_callee_failure {
+void accept<T>(T first, int32_t divisor) {
+  Resource local = Resource(6);
+  int32_t checked = int32_t(1) / divisor;
+}
+int entry() {
+  Resource caller = Resource(9);
+  accept(Event::message(Resource(7)), 0);
+  return 1;
+}
+}
+namespace case_constructor_later_argument_failure {
+class Sink<T> {
+public:
+  Sink(T first, int32_t second) {}
+public:
+  Sink() = default;
+};
+int entry() {
+  Resource caller = Resource(9);
+  mut int32_t divisor = 0;  //~ WARN GTI-S2096
+  Sink<Event> sink = Sink<Event>(Event::message(Resource(7)), int32_t(1) / divisor);
+  return 1;
+}
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc < 2) {
+    exercise();
+    return drops == 4 ? 0 : 1;
+  }
+  if (argv[std::size_t(1)] == "call-binding-publication") { return case_call_binding_publication::entry(); }
+  if (argv[std::size_t(1)] == "call-binding-publication-failure") { return case_call_binding_publication_failure::entry(); }
+  if (argv[std::size_t(1)] == "consuming-binding-publication") { return case_consuming_binding_publication::entry(); }
+  if (argv[std::size_t(1)] == "consuming-binding-publication-failure") { return case_consuming_binding_publication_failure::entry(); }
+  if (argv[std::size_t(1)] == "generic-owner-capture") { return case_generic_owner_capture::entry(); }
+  if (argv[std::size_t(1)] == "partial-owner") { return case_partial_owner::entry(); }
+  if (argv[std::size_t(1)] == "later-argument-failure") { return case_later_argument_failure::entry(); }
+  if (argv[std::size_t(1)] == "later-argument-after-move") { return case_later_argument_after_move::entry(); }
+  if (argv[std::size_t(1)] == "callee-failure") { return case_callee_failure::entry(); }
+  if (argv[std::size_t(1)] == "constructor-later-argument-failure") { return case_constructor_later_argument_failure::entry(); }
+  return 100;
+}

@@ -1,0 +1,5 @@
+// Restoring_exchange: indexed transfers preserve mutability, exclusivity and initialized element rules.
+import std.vector;
+import std.array;
+class Resource { public: Resource(int id) {} Resource(Resource& other) = delete; };
+int main() { mut std::vector<Resource> v{}; v.push_back(Resource(1)); Resource escaped = std::move(v[std::size_t(0)]); return 0; }  //~ ERROR GTI-S2018

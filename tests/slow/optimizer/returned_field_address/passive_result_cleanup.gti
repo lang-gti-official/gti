@@ -1,0 +1,75 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (passive result cleanup); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_active_result
+//@[bad_active_result] args: case
+//@[bad_active_result] run-fail
+//@[bad_active_result] exit-code: 70
+//@[bad_active_result] stderr-contains: passive_result_cleanup.gti:46: runtime error[GTI-R0001]: integer_overflow in addition
+// --- passive_result_cleanup.gti
+import std.string;
+import std.vector;
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Stamp { public: int number = 0;  public: Stamp() = default; };
+
+class Destructive {
+  mut int* target = nullptr;
+public:
+  Destructive(mut int* target) : target(target) {}
+  ~Destructive() { unsafe { opaque_pointer_effect(this.target); } }
+public:
+  Destructive() = default;
+};
+
+class Counter {
+  mut int count = 7;
+public:
+  expected<void, int> publish() mut { this.count = 7; return; }
+  int after_local_result() mut {
+    {
+      auto status = this.publish();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+  expected<Stamp, int> publish_value() mut {
+    this.count = 7;
+    return Stamp();
+  }
+  int after_record_result() mut {
+    {
+      auto status = this.publish_value();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+  expected<Destructive, int> destructive() mut {
+    return Destructive(&this.count);
+  }
+  int bad_active_result() mut {
+    {
+      auto status = this.destructive();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+public:
+  Counter() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Counter counter{};
+  if (argc == 2) return counter.bad_active_result();
+  return counter.after_local_result() == 8 &&
+         counter.after_record_result() == 8 ? 0 : 1;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

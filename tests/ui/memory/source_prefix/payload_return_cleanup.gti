@@ -1,0 +1,84 @@
+// A returned payload's cleanup failure after a primary failure reports GTI-R0014 with both sites.
+//@ run-pass
+//@ revisions: ok primary secondary
+//@[ok] stdout: 8
+//@[ok] stdout: 42
+//@[ok] stdout: 42
+//@[ok] stdout: 9
+//@[primary] args: primary
+//@[primary] stdout: 8
+//@[primary] stdout: 42
+//@[primary] stdout: 9
+//@[primary] run-fail
+//@[primary] exit-code: 70
+//@[primary] stderr-contains: main.gti:48: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[secondary] args: primary secondary
+//@[secondary] stdout: 8
+//@[secondary] stdout: 42
+//@[secondary] run-fail
+//@[secondary] exit-code: 70
+//@[secondary] stderr-contains: main.gti:36: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:48; secondary [GTI-R0002]
+import std.string;
+import std.vector;
+
+mut int mode = 0;
+void checked(int value) {}
+
+class Element {
+  int number;
+public:
+  Element(int number) : number(number) {}
+  Element(Element& other) = delete;
+  Element(Element&& other) = default;
+  int id() { return this.number; }
+  ~Element() {
+    std::println(this.number);
+    checked(1 / (mode - 2)); // result cleanup
+  }
+};
+
+enum class Data { empty, items(std::vector<Element> values), };
+
+class BeforePublication {
+public:
+  BeforePublication() {}
+  ~BeforePublication() {
+    std::println(8);
+    int divisor = mode == 0 ? 1 : 0;
+    checked(1 / divisor); // primary cleanup
+  }
+};
+
+class Box {
+  mut Data data;
+public:
+  Box(Data input) : data(std::move(input)) {}
+  Data replace(Data replacement) mut {
+    Data previous = std::move(this.data);
+    this.data = std::move(replacement);
+    BeforePublication pending{};
+    return std::move(previous);
+  }
+};
+
+class Caller {
+public:
+  Caller() {}
+  ~Caller() { std::println(9); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc - 1;
+  Caller caller{};
+  mut std::vector<Element> values{};
+  [[discard]] values.emplace_back(42);
+  mut Box box = Box(Data::items(std::move(values)));
+  Data previous = box.replace(Data::empty);
+  switch (previous) {
+    case Data::items(auto& items):
+      std::println(items[std::size_t(0)].id());
+      break;
+    default: return 1;
+  }
+  return 0;
+}

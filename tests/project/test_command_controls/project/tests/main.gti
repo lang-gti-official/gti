@@ -1,0 +1,8 @@
+import std.testing;
+import std.string;
+extern "C" { int raise(int signal); int usleep(uint32_t duration); }
+[[test]] void a_pass() { std::println("pass-output"); }
+[[test]] void b_failure() { std::testing::check(false, "forced-failure"); }
+[[test]] void c_crash() { unsafe { [[discard]] raise(15); } }
+[[test]] void d_timeout() { unsafe { [[discard]] usleep(uint32_t(5000000)); } }
+[[test]] void e_after() { std::println("after-output"); }

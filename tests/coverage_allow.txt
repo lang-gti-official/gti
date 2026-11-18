@@ -1,0 +1,8 @@
+# Written reasons for source files more than 2 points of line coverage below
+# tests/coverage_baseline.json (scripts/coverage_compare.py --allow; read by
+# .github/workflows/suite-measures.yml). One `<path-or-glob> <reason>` per
+# line. The test-suite redesign's rule: no compiler source file loses more
+# than 2 points without a reason here. Remove an entry when its file recovers
+# (the compare prints UNUSED for it). See docs/architecture/verification.md.
+src/compiler/mir_constant_evaluator.cpp Most of the 65 lines lost on unchanged code (1.8 points) are ResourceLimit early returns that only exhaustive step-budget sweeps reached (a result, enum or reference evaluation re-run once per budget below its cost, 5 s or more per sweep), the rest rejections of forged constant arguments (escaped, imported or forged transient owners, wrong-typed operands) and a cancelled procedural request, all dropped from compiler_constexpr_tests.cpp and procedural_syntax_tests.cpp as API-only; the step and depth limits keep their source-level cases in tests/ui/constexpr. The rest of the drop is code added after the baseline: the file grew by 255 lines, 71 of them never covered.
+src/compiler/llvm/placement.h The one lost line is Placement::Target's defaulted operator==, a compiler-generated comparison with no branch of its own; no surviving or deleted test that this attribution could run reaches it.

@@ -9,6 +9,11 @@ add_executable(gti-test
   "${PROJECT_SOURCE_DIR}/tests/runner/project.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/test_file.cpp")
 target_link_libraries(gti-test PRIVATE gti_driver)
+# Workers end with _exit; under source coverage they write their profile
+# first, so in-process cases count (docs/architecture/verification.md).
+if(GTI_ENABLE_SOURCE_COVERAGE)
+  target_compile_definitions(gti-test PRIVATE GTI_SOURCE_COVERAGE)
+endif()
 target_include_directories(gti-test SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 # --isolate runs the sibling `gti`.
 add_dependencies(gti-test gti)

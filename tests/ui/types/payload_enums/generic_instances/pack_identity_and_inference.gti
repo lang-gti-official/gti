@@ -1,0 +1,13 @@
+// Generic enum instances: pack identity and inference.
+//@ run-pass
+enum Packet<std::copyable T, Rest...> { item(T value) };
+T read<std::copyable T, Rest...>(Packet<T, Rest...>& packet) {
+  switch (packet) {
+    case Packet<T, Rest...>::item(value): return value;
+  }
+}
+int main() {
+  Packet<int32_t, bool, char> first = Packet<int32_t, bool, char>::item(7);
+  Packet<int32_t> second = Packet<int32_t>::item(9);
+  return read(first) == 7 && read(second) == 9 ? 0 : 1;
+}

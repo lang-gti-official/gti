@@ -12,7 +12,9 @@ name: Full validation
 # (sanitizers.yml); the release train requires both verdicts. A failure
 # opens (or updates) a `main-broken` issue naming the commit range; it never
 # blocks the queue, and a channel never selects a main commit this workflow
-# has not passed. See docs/architecture/agent-workflow.md.
+# has not passed. Required jobs that never got a hosted runner are re-run once
+# by validation-retry.yml rather than reported. See
+# docs/architecture/agent-workflow.md.
 on:
   push:
     branches: [main]
@@ -438,17 +440,32 @@ jobs:
   report:
     # A red main must be visible without anyone watching the Actions tab:
     # one `main-broken` issue is opened or updated on failure and closed when
-    # main is green again. A cancelled run reports nothing.
+    # main is green again. A cancelled run reports nothing. A run that is red
+    # only because required jobs never got a runner (zero steps executed) is
+    # left to validation-retry.yml, which re-runs those jobs once when this is
+    # the newest run of main; the re-run attempt reports again.
     name: Report main status
     if: always() && github.event_name == 'push' && needs.verdict.result != 'cancelled'
     needs: [verdict]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Leave a run that only lacked runners to the retry
+        id: retry
+        if: needs.verdict.result != 'success'
+        # Any doubt reports: if this step breaks, the issue step still runs.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/validation_retry.py defer --repository "${GITHUB_REPOSITORY}"
+          --run-id "${GITHUB_RUN_ID}" --attempt "${GITHUB_RUN_ATTEMPT}" --output "${GITHUB_OUTPUT}"
       - name: Open, update or close the main-broken issue
+        if: steps.retry.outputs.deferred != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GTI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

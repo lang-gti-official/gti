@@ -38,6 +38,7 @@ BETA = ".github/workflows/beta.yml"
 BACKPORT = ".github/workflows/backport.yml"
 ROLLBACK = ".github/workflows/rollback.yml"
 SUITE_MEASURES = ".github/workflows/suite-measures.yml"
+VALIDATION_RETRY = ".github/workflows/validation-retry.yml"
 RELEASE_TRAIN = (TRAIN, BETA, BACKPORT, ROLLBACK)
 ROLLUP_SECRETS = ("GTI_ROLLUP_APP_ID", "GTI_ROLLUP_APP_PRIVATE_KEY")
 RELEASE = ".gitea/workflows/release.yml"
@@ -70,7 +71,7 @@ def main():
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
     expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, SLOW, LLVM_PREBUILT, LSP, NIGHTLY, RELEASE,
-                              ROLLUP, CACHE, SUITE_MEASURES, *RELEASE_TRAIN},
+                              ROLLUP, CACHE, SUITE_MEASURES, VALIDATION_RETRY, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -119,7 +120,9 @@ def main():
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
     full, sanitizers = text(root, FULL_VALIDATION), text(root, SANITIZERS)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
-           and "python3 tests/repository_hosting_test.py ." in ci
+           and "-L '^tree-consistency$'" in ci
+           and re.search(r"\bset\(gti_tree_consistency_tests\b[^)]*\brepository_hosting\b",
+                         text(root, "tests/TestThroughput.cmake")) is not None
            and "npm run test:source-text" in ci
            and "installed_library_smoke" in ci,
            "CI lost its gate, Tree-sitter or installed-toolchain checks")

@@ -1,0 +1,830 @@
+// Checked reductions (masked, remainder, conditional, nested, keyed and clamped accumulations) keep their results, overflow sites and the cleanup order of the iteration that fails (one count per mode).
+//@ run-pass
+//@ revisions: m0_31 m1_31 m2_31 m3_31 m4_31 m5_31 m6_31 m7_31 m8_31 m9_3 m10_31 m11_31 m12_7 m13_31 m14_31 m15_31 m16_31 m17_31 m18_31 m19_31 m20_31 m21_31 m22_31 m23_31 m24_31 m25_31 m26_31 m27_31 m28_31 m29_31 m30_2
+//@[m0_31] args: '' xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m0_31] stdout: 31
+//@[m0_31] stdout: 21
+//@[m0_31] stdout: 112
+//@[m0_31] stdout: 2
+//@[m0_31] stdout: 21
+//@[m0_31] stdout: 1
+//@[m1_31] args: m xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 2
+//@[m1_31] stdout: 1
+//@[m1_31] run-fail
+//@[m1_31] exit-code: 70
+//@[m1_31] stderr-contains: main.gti:568: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m2_31] args: mm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 2
+//@[m2_31] stdout: 1
+//@[m2_31] run-fail
+//@[m2_31] exit-code: 70
+//@[m2_31] stderr-contains: main.gti:578: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m3_31] args: mmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 2
+//@[m3_31] stdout: 1
+//@[m3_31] run-fail
+//@[m3_31] exit-code: 70
+//@[m3_31] stderr-contains: main.gti:588: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[m4_31] args: mmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m4_31] stdout: 2
+//@[m4_31] stdout: 179
+//@[m4_31] stdout: 1
+//@[m5_31] args: mmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m5_31] stdout: 31
+//@[m5_31] stdout: 238
+//@[m5_31] stdout: 100
+//@[m5_31] stdout: 3777
+//@[m5_31] stdout: 133
+//@[m5_31] stdout: 2
+//@[m5_31] stdout: 2077
+//@[m5_31] stdout: 1
+//@[m6_31] args: mmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m6_31] stdout: 3
+//@[m6_31] stdout: 24
+//@[m6_31] stdout: 16
+//@[m6_31] stdout: 508
+//@[m6_31] stdout: 31
+//@[m6_31] stdout: 2
+//@[m6_31] stdout: 357
+//@[m6_31] stdout: 1
+//@[m7_31] args: mmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 2
+//@[m7_31] stdout: 1
+//@[m7_31] run-fail
+//@[m7_31] exit-code: 70
+//@[m7_31] stderr-contains: main.gti:650: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_31] args: mmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 2
+//@[m8_31] stdout: 1
+//@[m8_31] run-fail
+//@[m8_31] exit-code: 70
+//@[m8_31] stderr-contains: main.gti:662: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_3] args: mmmmmmmmm xxx
+//@[m9_3] stdout: 9
+//@[m9_3] stdout: 9
+//@[m9_3] stdout: 2
+//@[m9_3] stdout: 1
+//@[m9_3] run-fail
+//@[m9_3] exit-code: 70
+//@[m9_3] stderr-contains: main.gti:650: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_31] args: mmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m10_31] stdout: 89
+//@[m10_31] stdout: 150
+//@[m10_31] stdout: 229
+//@[m10_31] stdout: 285
+//@[m10_31] stdout: 124
+//@[m10_31] stdout: 2
+//@[m10_31] stdout: 285
+//@[m10_31] stdout: 1
+//@[m11_31] args: mmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 2
+//@[m11_31] stdout: 1
+//@[m11_31] run-fail
+//@[m11_31] exit-code: 70
+//@[m11_31] stderr-contains: main.gti:694: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_7] args: mmmmmmmmmmmm xxxxxxx
+//@[m12_7] stdout: 9
+//@[m12_7] stdout: 9
+//@[m12_7] stdout: 2
+//@[m12_7] stdout: 1
+//@[m12_7] run-fail
+//@[m12_7] exit-code: 70
+//@[m12_7] stderr-contains: main.gti:694: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_31] args: mmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 2
+//@[m13_31] stdout: 1
+//@[m13_31] run-fail
+//@[m13_31] exit-code: 70
+//@[m13_31] stderr-contains: main.gti:705: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_31] args: mmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m14_31] stdout: 259
+//@[m14_31] stdout: 515
+//@[m14_31] stdout: 771
+//@[m14_31] stdout: 1027
+//@[m14_31] stdout: 64
+//@[m14_31] stdout: 2
+//@[m14_31] stdout: 1027
+//@[m14_31] stdout: 1
+//@[m15_31] args: mmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m15_31] stdout: 9
+//@[m15_31] stdout: 2
+//@[m15_31] stdout: 1
+//@[m15_31] run-fail
+//@[m15_31] exit-code: 70
+//@[m15_31] stderr-contains: main.gti:734: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_31] args: mmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m16_31] stdout: 9
+//@[m16_31] stdout: 9
+//@[m16_31] stdout: 2
+//@[m16_31] stdout: 1
+//@[m16_31] run-fail
+//@[m16_31] exit-code: 70
+//@[m16_31] stderr-contains: main.gti:745: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m17_31] args: mmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m17_31] stdout: 31
+//@[m17_31] stdout: 59
+//@[m17_31] stdout: 87
+//@[m17_31] stdout: 115
+//@[m17_31] stdout: 12
+//@[m17_31] stdout: 2
+//@[m17_31] stdout: 115
+//@[m17_31] stdout: 1
+//@[m18_31] args: mmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 2
+//@[m18_31] stdout: 43
+//@[m18_31] stdout: 1
+//@[m19_31] args: mmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 2
+//@[m19_31] stdout: 57
+//@[m19_31] stdout: 1
+//@[m20_31] args: mmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 2
+//@[m20_31] stdout: 47
+//@[m20_31] stdout: 1
+//@[m21_31] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m21_31] stdout: 9
+//@[m21_31] stdout: 2
+//@[m21_31] stdout: 1
+//@[m21_31] run-fail
+//@[m21_31] exit-code: 70
+//@[m21_31] stderr-contains: main.gti:760: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_31] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 2
+//@[m22_31] stdout: 45
+//@[m22_31] stdout: 1
+//@[m23_31] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_31] stdout: 14
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 21
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 28
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 35
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 42
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 49
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 56
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 63
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 70
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 77
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 84
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 91
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 98
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 105
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 112
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 119
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 126
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 133
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 140
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 147
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 154
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 161
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 168
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 175
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 182
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 189
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 196
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 203
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 210
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 217
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 224
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 14
+//@[m23_31] stdout: 21
+//@[m23_31] stdout: 28
+//@[m23_31] stdout: 35
+//@[m23_31] stdout: 42
+//@[m23_31] stdout: 49
+//@[m23_31] stdout: 56
+//@[m23_31] stdout: 63
+//@[m23_31] stdout: 70
+//@[m23_31] stdout: 77
+//@[m23_31] stdout: 84
+//@[m23_31] stdout: 91
+//@[m23_31] stdout: 98
+//@[m23_31] stdout: 105
+//@[m23_31] stdout: 112
+//@[m23_31] stdout: 119
+//@[m23_31] stdout: 126
+//@[m23_31] stdout: 133
+//@[m23_31] stdout: 140
+//@[m23_31] stdout: 147
+//@[m23_31] stdout: 154
+//@[m23_31] stdout: 161
+//@[m23_31] stdout: 168
+//@[m23_31] stdout: 175
+//@[m23_31] stdout: 182
+//@[m23_31] stdout: 189
+//@[m23_31] stdout: 196
+//@[m23_31] stdout: 203
+//@[m23_31] stdout: 210
+//@[m23_31] stdout: 217
+//@[m23_31] stdout: 224
+//@[m23_31] stdout: 2
+//@[m23_31] stdout: 1
+//@[m24_31] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_31] stdout: 4294967295
+//@[m24_31] stdout: 9
+//@[m24_31] stdout: 9
+//@[m24_31] stdout: 2
+//@[m24_31] stdout: 1
+//@[m24_31] run-fail
+//@[m24_31] exit-code: 70
+//@[m24_31] stderr-contains: main.gti:780: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_31] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_31] stdout: 14
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 21
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 14
+//@[m25_31] stdout: 21
+//@[m25_31] stdout: 2
+//@[m25_31] stdout: 1
+//@[m26_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_31] stdout: 14
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 18
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 22
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 26
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 30
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 34
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 38
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 42
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 46
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 50
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 54
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 58
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 62
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 66
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 70
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 74
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 78
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 82
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 86
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 90
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 94
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 98
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 102
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 106
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 110
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 114
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 118
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 122
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 126
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 130
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 134
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 14
+//@[m26_31] stdout: 18
+//@[m26_31] stdout: 22
+//@[m26_31] stdout: 26
+//@[m26_31] stdout: 30
+//@[m26_31] stdout: 34
+//@[m26_31] stdout: 38
+//@[m26_31] stdout: 42
+//@[m26_31] stdout: 46
+//@[m26_31] stdout: 50
+//@[m26_31] stdout: 54
+//@[m26_31] stdout: 58
+//@[m26_31] stdout: 62
+//@[m26_31] stdout: 66
+//@[m26_31] stdout: 70
+//@[m26_31] stdout: 74
+//@[m26_31] stdout: 78
+//@[m26_31] stdout: 82
+//@[m26_31] stdout: 86
+//@[m26_31] stdout: 90
+//@[m26_31] stdout: 94
+//@[m26_31] stdout: 98
+//@[m26_31] stdout: 102
+//@[m26_31] stdout: 106
+//@[m26_31] stdout: 110
+//@[m26_31] stdout: 114
+//@[m26_31] stdout: 118
+//@[m26_31] stdout: 122
+//@[m26_31] stdout: 126
+//@[m26_31] stdout: 130
+//@[m26_31] stdout: 134
+//@[m26_31] stdout: 2
+//@[m26_31] stdout: 1
+//@[m27_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_31] stdout: 4294967295
+//@[m27_31] stdout: 9
+//@[m27_31] stdout: 9
+//@[m27_31] stdout: 2
+//@[m27_31] stdout: 1
+//@[m27_31] run-fail
+//@[m27_31] exit-code: 70
+//@[m27_31] stderr-contains: main.gti:780: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m28_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 2
+//@[m28_31] stdout: 98
+//@[m28_31] stdout: 1
+//@[m29_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 2
+//@[m29_31] stdout: 1
+//@[m29_31] run-fail
+//@[m29_31] exit-code: 70
+//@[m29_31] stderr-contains: main.gti:801: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m30_2] stdout: 9
+//@[m30_2] stdout: 9
+//@[m30_2] stdout: 2
+//@[m30_2] stdout: 1
+//@[m30_2] run-fail
+//@[m30_2] exit-code: 70
+//@[m30_2] stderr-contains: main.gti:801: runtime error[GTI-R0001]: integer_overflow in addition
+import std.algorithm;
+import std.string;
+import std.vector;
+
+class ReductionCleanup {
+  int identity;
+public:
+  ReductionCleanup(int identity) : identity(identity) {}
+  ~ReductionCleanup() { std::println(this.identity); }
+};
+
+// This predicate is user-defined ordinary source, not a standard-library hook.
+class SelectRemainder {
+  int excluded;
+public:
+  SelectRemainder(int excluded) : excluded(excluded) {}
+  bool accepts(int value) { return value % 3 != this.excluded; }
+};
+
+int ordinary(int limit) {
+  ReductionCleanup inner{2};
+  SelectRemainder predicate{1};
+  mut int count = 0;
+  mut int sum = 7;
+  mut int visits = 0;
+  for (mut int index = 0; index < limit; index++) {
+    visits += 1;
+    if (predicate.accepts(index)) {
+      count += 1;
+      sum += 2;
+      sum += 3;
+    }
+  }
+  // Exercise the generic iterator/captured-callable consumer independently.
+  mut std::vector<int> values{};
+  for (mut int index = 0; index < limit; index++) values.push_back(index);
+  int excluded = 1;
+  int selected = int(std::count_if(values, [excluded](int &value) -> bool {
+    return value % 3 != excluded;
+  }));
+  std::println(visits);
+  std::println(selected);
+  std::println(sum);
+  return count;
+}
+
+int signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // signed-boundary
+  }
+  return total;
+}
+
+uint32_t unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += uint32_t(2); // unsigned-boundary
+  }
+  return total;
+}
+
+int narrow_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int8_t total = int8_t(120);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // narrow-boundary
+  }
+  return int(total);
+}
+
+int alternative(int limit) {
+  ReductionCleanup inner{2};
+  mut int decreasing = 0;
+  mut int dynamic = 5;
+  for (mut int index = 0; index < limit; index++) {
+    decreasing -= 2;
+    dynamic += limit;
+    if (index == 5) break;
+  }
+  return decreasing + dynamic;
+}
+
+// All bounds below come from source operations, not from an overflow check.
+// The traversal starts at seven and uses equality to exercise modular distance.
+uint32_t bounded_dynamic(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t seed = uint32_t(limit);
+  uint32_t finish = uint32_t(7) + seed;
+  mut uint32_t masked = 3;
+  mut uint32_t remainder = 5;
+  mut uint32_t extended = 7;
+  mut uint32_t selected = 11;
+  mut uint32_t choice = 13;
+  mut uint32_t visits = 0;
+  for (mut uint32_t index = 7; index != finish; index++) {
+    if (early && index == uint32_t(10)) break;
+    uint32_t input = index * uint32_t(17) + seed;
+    uint8_t narrow = uint8_t(input % uint32_t(251));
+    masked += input & uint32_t(15);
+    remainder += input % uint32_t(7);
+    extended += uint32_t(narrow);
+    if ((index & uint32_t(1)) == uint32_t(0)) {
+      selected += (input & uint32_t(7)) + uint32_t(1);
+    } else {
+      selected += input % uint32_t(5);
+      selected += uint32_t(narrow);
+    }
+    choice += (index & uint32_t(1)) == uint32_t(0)
+        ? input & uint32_t(3) : input % uint32_t(11);
+    visits++;
+  }
+  std::println(visits);
+  std::println(masked);
+  std::println(remainder);
+  std::println(extended);
+  std::println(choice);
+  return selected;
+}
+
+uint32_t dynamic_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967291);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    uint32_t increment = (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1);
+    total += increment; // dynamic-unsigned-boundary
+  }
+  return total;
+}
+
+int dynamic_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    int increment = int((index + uint32_t(limit)) % uint32_t(5));
+    total += increment; // dynamic-signed-boundary
+  }
+  return total;
+}
+
+// The inner header starts with the result of the previous outer traversal.
+uint32_t outer_accumulation(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(limit) & uint32_t(7);
+  mut uint32_t visits = 0;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (((index + round) & uint32_t(1)) != uint32_t(0)) {
+        total += (index + round + uint32_t(limit)) % uint32_t(7);
+        total += index & uint32_t(3);
+      }
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t initial_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290) + uint32_t(limit % 5);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    total += (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1); // initial-unsigned-boundary
+  }
+  return total;
+}
+
+int initial_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640 + limit % 6;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int((index + uint32_t(limit)) % uint32_t(3) + uint32_t(1)); // initial-signed-boundary
+  }
+  return total;
+}
+
+uint32_t weighted_outer(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t total = uint32_t(limit) % uint32_t(7);
+  mut uint32_t visits = 0;
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (early && index == uint32_t(10)) break;
+      total += index;
+      total += index & uint32_t(3);
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t weighted_unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967295) - uint32_t(limit % 13);
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += index; // weighted-unsigned-boundary
+  }
+  return total;
+}
+
+int weighted_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483647 - limit % 23;
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int(index); // weighted-signed-boundary
+  }
+  return total;
+}
+
+uint32_t indexed_key_sum(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t base = uint32_t(limit) % uint32_t(17);
+  if (mode == 20) base = finish;
+  if (mode == 21) base = uint32_t(4294967295) - uint32_t(limit % 13);
+  if (mode == 22) base = uint32_t(limit) & uint32_t(15);
+  mut uint32_t total = mode == 19 ? base : uint32_t(0);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    uint32_t key = base + index; // ancillary-key-boundary
+    total += key % uint32_t(7);
+  }
+  return total;
+}
+
+// Stores need the same bounded-key proof even when there is no reduction.
+void fill_keys(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(limit) % uint32_t(32);
+  bool early = mode == 25;
+  bool shifted = mode >= 26;
+  uint32_t base = mode == 24 || mode == 27
+                    ? uint32_t(4294967295) - uint32_t(limit % 31)
+                    : uint32_t(limit % 17);
+  mut uint32_t keys[32] = {};
+  for (mut uint32_t index = 0; index < finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(2)) break;
+    uint32_t offset = shifted ? index << uint32_t(2) : index * uint32_t(7);
+    uint32_t key = base + offset; // standalone-key-boundary
+    keys[index] = key;
+    std::println(key);
+  }
+  for (mut uint32_t index = 0; index < finish; index++) {
+    if (early && index == uint32_t(2)) break;
+    std::println(keys[index]);
+  }
+}
+
+// Both the traversal and conditional increment are clamped. Overflow still
+// belongs to the actual selected addition, with the original cleanup order.
+uint32_t clamped_sum(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = std::min(uint32_t(limit), uint32_t(32));
+  mut uint32_t total = mode == 28 ? uint32_t(limit % 7)
+                                : uint32_t(4294967295) - uint32_t(limit % 13);
+  for (mut uint32_t index = 0; index < finish; index++) {
+    ReductionCleanup iteration{9};
+    if (mode == 30 && index == uint32_t(2)) break;
+    if ((index + uint32_t(limit)) % uint32_t(3) != uint32_t(1)) {
+      total += std::max(std::min(index + uint32_t(1), uint32_t(5)), uint32_t(1)); // clamped-boundary
+    }
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 3) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  int limit = int(argv[std::size_t(2)].size());
+  ReductionCleanup outer{1};
+  if (mode == 0) std::println(ordinary(limit));
+  else if (mode == 1) std::println(signed_boundary(limit));
+  else if (mode == 2) std::println(unsigned_boundary(limit));
+  else if (mode == 3) std::println(narrow_boundary(limit));
+  else if (mode == 4) std::println(alternative(limit));
+  else if (mode == 5 || mode == 6) std::println(bounded_dynamic(limit, mode == 6));
+  else if (mode == 7 || mode == 9) std::println(dynamic_unsigned_boundary(limit, mode == 9));
+  else if (mode == 8) std::println(dynamic_signed_boundary(limit));
+  else if (mode == 10) std::println(outer_accumulation(limit));
+  else if (mode == 11 || mode == 12) std::println(initial_unsigned_boundary(limit, mode == 12));
+  else if (mode == 13) std::println(initial_signed_boundary(limit));
+  else if (mode == 14 || mode == 17) std::println(weighted_outer(limit, mode == 17));
+  else if (mode == 15) std::println(weighted_unsigned_boundary(limit));
+  else if (mode == 16) std::println(weighted_signed_boundary(limit));
+  else if (mode >= 28) std::println(clamped_sum(limit, mode));
+  else if (mode >= 23) fill_keys(limit, mode);
+  else std::println(indexed_key_sum(limit, mode));
+  return 0;
+}

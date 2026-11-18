@@ -142,17 +142,19 @@ semantics.
   and rejection behavior where applicable, not just absence of the crash.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
-  role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
+  role. A PR's `CI gate` runs the fast checks (lint, the `tree-consistency` tests, and
   a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
-  entries); the queue's `CI gate` runs the same bounded set on the
-  exact candidate. Post-integration full validation then runs the per-commit
+  entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
+  one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
+  runs the same bounded set on the exact candidate. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
   Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
   ABI/layout; `tests/ci_darwin_tests.json`) and installed-toolchain checks,
   produces the production archives, and proves each platform's shards covered
-  its inventory. The compiler, LLVM-backend and thread sanitizers
+  its inventory. A run that is red only because required jobs never got a
+  hosted runner is re-run once (`validation-retry.yml`) instead of reported. The compiler, LLVM-backend and thread sanitizers
   (`sanitizers.yml`) and the slow tier (`slow.yml`: the `slow`-labelled tests
   at `-O0` and `-O3`, plus an `-O3` re-run of the per-commit runtime harnesses)
   run daily on the nightly commit; neither gates `main` or nightly, and the
@@ -394,6 +396,11 @@ one-off implementation-note or redesign files when an existing category fits.
   or convert it to a new-style test and delete it there; never add to it. Add
   no CMake registration, `tests/ownership.toml` entry, census baseline or
   manifest for a new test.
+- Deleting, adding or renaming a test file, script or fixture can break a
+  meta-test that cross-references the tree. Before pushing, run the
+  `tree-consistency` label from a configure-only tree (the CI gate runs it too):
+  `cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"`
+  then `ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'`.
 - Never weaken an expectation to get green. A removed annotation, deleted
   test or downgraded mode in a PR that also changes the compiler needs a
   one-line reason in the PR body (`- expectations:` in its `Validation:`
@@ -402,7 +409,10 @@ one-off implementation-note or redesign files when an existing category fits.
   `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
   runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
   in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
-  it. Run them all with `ctest --test-dir build-release -R '^gti_test_ui'`.
+  it on Linux (macOS runs one rotating shard per candidate and every shard
+  after integration). Declared names the gate already ran are not re-run, and
+  macOS re-runs only declared tests in the `darwin` set. Run them all with
+  `ctest --test-dir build-release -R '^gti_test_ui'`.
   Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish
   a task.
 
