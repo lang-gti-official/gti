@@ -49,8 +49,9 @@ CONFIGURATIONS = tuple(
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
 TRACE_PHASE_PATTERN = re.compile(
-    r"^gti-(source-load|parse|semantics|hir-lowering|failure-metadata|"
-    r"mir-lowering|optimization|backend)"
+    r"^(?:gti-(?:source-load|parse|semantics|hir-lowering|failure-metadata|"
+    r"mir-lowering|optimize|optimization|backend)|llvm-(?:admission(?:-inventory)?|"
+    r"lower|module-transforms|optimize|codegen(?:-unit)?))$"
 )
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
     "066-managed-threads.gti": "concurrent",
@@ -444,15 +445,14 @@ def capture_trace(
     trace_root = raw_directory / "frontend-trace"
     trace_root.mkdir(parents=True, exist_ok=False)
     trace = trace_root / "trace.json"
-    output = trace_root / "output.cpp"
+    output = trace_root / "program"
     command, _, _ = run_command(
         [
             str(gti),
             str(source),
             "-O0",
-            "--std",
-            "c++23",
-            "--emit-cpp",
+            "--backend",
+            "llvm",
             "--time-trace",
             str(trace),
             "-o",
