@@ -255,6 +255,86 @@ def tip_contract(artifacts, sha, repository):
             assert not (output / "BUILD_ID").exists(), output.name
 
 
+def report_order_contract(root):
+    """Full validation runs of several main commits overlap and finish in any
+    order. The main-broken report applies a commit's result only while no
+    newer main commit (a descendant) has its own verdict, in both finish
+    orders, so an older failure never re-flags main after a newer pass and an
+    older pass never closes an issue a newer failure opened."""
+    report = load_module(root / "scripts/full_validation_report.py", "full_validation_report_order")
+    repository = "lang-gti-official/gti"
+    older, newer, newest, stray = "a" * 40, "b" * 40, "c" * 40, "d" * 40
+    history = [older, newer, newest]  # main's first-parent order
+
+    def descends(sha, other):
+        if other == stray:
+            return None  # not in the checkout: unknown, so it never suppresses
+        return history.index(sha) < history.index(other)
+
+    def run_row(identity, sha, **overrides):
+        row = {"id": identity, "head_sha": sha, "event": "push", "head_branch": "main",
+               "path": ".github/workflows/full-validation.yml", "repository": {"full_name": repository}}
+        row.update(overrides)
+        return row
+
+    def verdict(conclusion, status="completed"):
+        return [{"name": "Full validation verdict", "status": status, "conclusion": conclusion},
+                {"name": "Report main status", "status": "in_progress", "conclusion": None}]
+
+    def newer_verdict(sha, runs, jobs):
+        calls = []
+
+        def request(path):
+            calls.append(path)
+            if "/workflows/" in path:
+                return {"workflow_runs": runs}
+            identity = int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])
+            return {"jobs": jobs[identity]}
+        return report.newer_verdict(sha, repository, request, descends), calls
+
+    # Older failure finishing after the newer commit passed: stale, no issue.
+    found, _ = newer_verdict(older, [run_row(2, newer), run_row(1, older)], {2: verdict("success")})
+    assert found == {"id": 2, "sha": newer, "conclusion": "success"}, found
+    # Older pass finishing after the newer commit failed: the issue stays open.
+    found, _ = newer_verdict(older, [run_row(2, newer), run_row(1, older)], {2: verdict("failure")})
+    assert found and found["conclusion"] == "failure"
+    # The other finish order: the older result arrives first and is applied;
+    # the newer one, having no descendant verdict, is applied after it.
+    for conclusion in ("success", "failure"):
+        found, _ = newer_verdict(older, [run_row(2, newer, status="in_progress"), run_row(1, older)],
+                                 {2: verdict(None, status="in_progress")})
+        assert found is None, conclusion
+        found, calls = newer_verdict(newer, [run_row(2, newer), run_row(1, older)], {1: verdict(conclusion)})
+        assert found is None and not any("/runs/1/" in path for path in calls), \
+            "an ancestor's verdict never suppresses a newer result"
+    # Only a completed pass or failure of a strictly newer main commit counts.
+    ignored = [
+        ([run_row(3, newest)], {3: verdict("cancelled")}),
+        ([run_row(3, newest)], {3: verdict("skipped")}),
+        ([run_row(3, newest)], {3: [{"name": "Report main status", "status": "completed",
+                                     "conclusion": "success"}]}),
+        ([run_row(3, older)], {3: verdict("success")}),
+        ([run_row(3, newer)], {3: verdict("success")}),
+        ([run_row(3, stray)], {3: verdict("success")}),
+        ([run_row(3, newest, event="pull_request")], {3: verdict("success")}),
+        ([run_row(3, newest, head_branch="feature")], {3: verdict("success")}),
+        ([run_row(3, newest, path=".github/workflows/ci.yml")], {3: verdict("success")}),
+        ([run_row(3, newest, repository={"full_name": "attacker/gti"})], {3: verdict("success")}),
+    ]
+    for runs, jobs in ignored:
+        found, _ = newer_verdict(newer, runs, jobs)
+        assert found is None, (runs, jobs)
+    found, _ = newer_verdict(newer, [run_row(3, newest, event="workflow_dispatch")], {3: verdict("failure")})
+    assert found == {"id": 3, "sha": newest, "conclusion": "failure"}
+    # The CLI orders only the full-validation issue.
+    for extra in (["--title", report.SANITIZER_TITLE], ["--label", "nightly"]):
+        result = subprocess.run([sys.executable, str(root / "scripts/full_validation_report.py"),
+                                 "--run-url", "https://github.com/lang-gti-official/gti/actions/runs/1",
+                                 "--sha", older, "--repository", repository, *extra],
+                                capture_output=True, text=True, check=False)
+        assert result.returncode == 1 and "ordering applies only" in result.stderr, result.stderr
+
+
 def editor_contract(root):
     # Exercise both platform downloads and fail before execution/PATH publication
     # for altered archives; no host installation or network access in this test.
@@ -376,8 +456,10 @@ def nightly_contract(root):
     full_header = full.split("\njobs:\n", 1)[0]
     assert "  push:\n    branches: [main]\n  workflow_dispatch:" in full_header
     assert "merge_group" not in full and "pull_request" not in full, "full validation runs post-integration"
-    assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
-        "full validation runs queue; a superseded head's verdict is still channel evidence"
+    assert "group: full-validation-${{ github.sha }}\n  cancel-in-progress: false" in full_header, \
+        "every main commit gets its own uncancelled run; a repeated dispatch of one commit waits"
+    assert full.count("concurrency:") == 1, \
+        "a job-level group cancels its pending job, which cancels the run and can drop a newer tip"
     integration = jobs(full)
     # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
     assert list(integration) == ["plan", "package", "tip", "integration", "verdict", "report"], list(integration)
@@ -385,19 +467,22 @@ def nightly_contract(root):
     assert "needs: [package]\n" in tip, "tip waits for both packages and nothing else"
     assert "continue-on-error: true" in tip, "a tip failure never changes the run nightly selects by"
     assert "if: github.event_name == 'push' && github.repository == 'lang-gti-official/gti'" in tip
-    assert "group: gti-tip-publication\n      cancel-in-progress: false" in tip
     assert "contents: write" in tip and "contents: write" not in full.replace(tip, ""), \
         "only tip publication writes from full validation"
     assert "pattern: gti-nightly-*-${{ github.run_attempt }}" in tip
     assert "cmake" not in tip and "validation_checks.py" not in tip and "ctest" not in tip, \
         "tip republishes the packaged archives; it builds and tests nothing"
-    order = ["release_artifacts.py tip", "admit-tip",
-             "--force-with-lease=refs/tags/tip:${GTI_TIP_LEASE}", "gh release create tip",
+    order = ["release_artifacts.py tip", "resolve_release_source.py claim-tip", "resolve_release_source.py await-tip",
+             "still_tip || exit 0", "gh release create tip", "still_tip || exit 0\n          gh release upload",
              "--clobber dist/tip/BUILD_ID"]
     positions = [tip.index(item) for item in order]
-    assert positions == sorted(positions), "tip must verify, admit, lease the tag, then upload BUILD_ID last"
+    assert positions == sorted(positions), \
+        "tip must verify, claim the tag, wait for older publications, then upload BUILD_ID last"
+    assert tip.count("still_tip || exit 0") == 3, "a newer claim stops this upload before each asset"
+    assert '--run-id "${GITHUB_RUN_ID}"' in tip and "GTI_GITHUB_TOKEN: ${{ github.token }}" in tip
     assert tip.count("if: steps.admission.outputs.publish == 'true'") == 2
-    assert "--force " not in tip and "push --force" not in tip and "+refs/tags" not in tip
+    assert "--force" not in tip and "+refs/tags" not in tip and "git push" not in tip, \
+        "only the leased claim in resolve_release_source.py moves the tag"
     assert "git tag" not in tip and "nightly\"" not in tip and "refs/tags/nightly" not in tip
     assert "--prerelease" in tip and "--verify-tag" in tip and "--latest=false" in tip
     assert "tip" not in integration["verdict"].split("steps:", 1)[0], "the verdict never depends on tip"
@@ -480,6 +565,9 @@ def nightly_contract(root):
     assert "actions: read" in report and "actions: write" not in full, "full validation never re-runs itself"
     issue = report.split("name: Open, update or close the main-broken issue", 1)[1]
     assert "if: steps.retry.outputs.deferred != 'true'" in issue
+    assert '--repository "${GITHUB_REPOSITORY}"' in issue and "fetch-depth: 0" in report, \
+        "overlapping runs report in commit order: main's history decides which result is newer"
+    report_order_contract(root)
     publish = sections["publish"]
     assert "needs: select" in publish
     assert "run-id: ${{ needs.select.outputs.run_id }}" in publish
@@ -1403,6 +1491,7 @@ def source_contract(root):
         run(["git", "checkout", "--quiet", "--detach", stray], work)
         assert query(stray, mode="admit-tip") == {"publish": "false", "lease": ""}, "tip names main commits only"
         run(["git", "checkout", "--quiet", "main"], work)
+        tip_order_contract(script, work, latest, newest, advanced, stray)
         selection_contract(script, work, newest, latest, advanced, stray)
         run(["git", "remote", "remove", "origin"], work)
         query(advanced, mode="admit-nightly", success=False)
@@ -1487,6 +1576,133 @@ def gate_job(sha, **overrides):
     job = {"name": "CI gate", "head_sha": sha, "status": "completed", "conclusion": "success"}
     job.update(overrides)
     return job
+
+
+def tip_order_contract(script, work, older, newer, oldest, stray):
+    """Full validation runs of several main commits overlap, so their tip jobs
+    finish in either order. Whichever order, the tag ends at the newer commit:
+    the claim skips a commit the published tip descends from, a lease lost to
+    a concurrent claim is decided again, and a claimed publication waits only
+    for older in-progress ones, so the newest claim uploads last."""
+    resolver = load_resolver(script)
+    repository = "lang-gti-official/gti"
+
+    def tag():
+        return run(["git", "ls-remote", "origin", "refs/tags/tip"], work).split()[0]
+
+    def set_tag(sha):
+        run(["git", "push", "--quiet", "--force", "origin", f"{sha}:refs/tags/tip"], work)
+
+    def output(values):
+        return dict(sorted(values.items()))
+
+    def claim(sha, *push):
+        # Admission checks the job's own checkout, as in full validation.
+        run(["git", "checkout", "--quiet", "--detach", sha], work)
+        return resolver.claim_tip(sha, *push)
+
+    with working_directory(work):
+        # Older finishes first, then newer: the newer claim moves the tag on.
+        set_tag(oldest)
+        assert claim(older) == {"publish": "true", "lease": oldest} and tag() == older
+        assert claim(newer) == {"publish": "true", "lease": older} and tag() == newer
+        # Newer finishes first, then older: the older claim is skipped.
+        set_tag(oldest)
+        assert claim(newer) == {"publish": "true", "lease": oldest} and tag() == newer
+        assert claim(older) == {"publish": "false", "lease": ""} and tag() == newer, \
+            "an older commit finishing late never replaces a newer tip"
+        assert output(claim(newer)) == {"lease": newer, "publish": "true"}, "a retry repairs"
+        assert claim(stray) == {"publish": "false", "lease": ""} and tag() == newer
+
+        # Both claims read the same tag; the other one's push lands first.
+        def racing(winner):
+            pushes = []
+
+            def push(sha, lease):
+                pushes.append((sha, lease))
+                if len(pushes) == 1:
+                    set_tag(winner)
+                    return resolver.push_tip(sha, lease)  # the stale lease must fail
+                return resolver.push_tip(sha, lease)
+            return push, pushes
+        set_tag(oldest)
+        push, pushes = racing(older)
+        assert claim(newer, push) == {"publish": "true", "lease": older} and tag() == newer
+        assert pushes == [(newer, oldest), (newer, older)], pushes
+        set_tag(oldest)
+        push, pushes = racing(newer)
+        assert claim(older, push) == {"publish": "false", "lease": ""} and tag() == newer
+        assert pushes == [(older, oldest)], "a lost lease decides again and then skips the older commit"
+        try:
+            claim(newer, lambda sha, lease: False)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an endlessly moving tag must fail the claim, not loop")
+
+        def tip_job(status):
+            return [{"name": "Validation plan", "status": "completed"}, {"name": "Tip toolchain", "status": status}]
+
+        def full(identity, sha, **overrides):
+            row = full_run(sha, id=identity, status="in_progress")
+            row.update(overrides)
+            return row
+
+        def listing(runs, jobs):
+            calls = []
+
+            def request(path):
+                calls.append(path)
+                if "/workflows/" in path:
+                    assert "branch=main" in path and "status=in_progress" in path, path
+                    return {"workflow_runs": runs}
+                return {"jobs": jobs[int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])]}
+            return request, calls
+        # The newer claim waits for the older publication; never the reverse.
+        request, _ = listing([full(9, newer), full(8, older)], {8: tip_job("in_progress"), 9: tip_job("in_progress")})
+        assert resolver.older_tip_publications(repository, newer, 9, request) == [8]
+        assert resolver.older_tip_publications(repository, older, 8, request) == []
+        quiet = [
+            ([full(8, older)], {8: tip_job("queued")}),
+            ([full(8, older)], {8: tip_job("completed")}),
+            ([full(8, older)], {8: [{"name": "Validation plan", "status": "in_progress"}]}),
+            ([full(9, older)], {9: tip_job("in_progress")}),
+            ([full(8, newer)], {8: tip_job("in_progress")}),
+            ([full(8, stray)], {8: tip_job("in_progress")}),
+            ([full(8, "f" * 40)], {8: tip_job("in_progress")}),
+            ([full(8, older, head_branch="feature")], {8: tip_job("in_progress")}),
+            ([full(8, older, path=".github/workflows/ci.yml")], {8: tip_job("in_progress")}),
+            ([full(8, older, repository={"full_name": "attacker/gti"})], {8: tip_job("in_progress")}),
+        ]
+        for runs, jobs in quiet:
+            request, calls = listing(runs, jobs)
+            assert resolver.older_tip_publications(repository, newer, 9, request) == [], (runs, jobs)
+        states = iter([tip_job("in_progress"), tip_job("in_progress"), tip_job("completed")])
+        sleeps = []
+
+        def waiting(path):
+            if "/workflows/" in path:
+                return {"workflow_runs": [full(8, older)]}
+            return {"jobs": next(states)}
+        assert resolver.await_tip(repository, newer, 9, waiting, sleep=sleeps.append, clock=lambda: 0.0) == \
+            {"ready": "true"}
+        assert sleeps == [resolver.TIP_POLL_SECONDS] * 2, sleeps
+        times = iter([0.0, resolver.TIP_WAIT_SECONDS + 1.0])
+        request, _ = listing([full(8, older)], {8: tip_job("in_progress")})
+        try:
+            resolver.await_tip(repository, newer, 9, request, sleep=lambda _: None, clock=lambda: next(times))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a stuck older publication must end the wait")
+        try:
+            resolver.await_tip(repository, newer, 0, request)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("the waiting run must identify itself")
+        set_tag(newer)
+    run(["git", "checkout", "--quiet", "main"], work)
 
 
 def selection_contract(script, work, head, published, older, stray):

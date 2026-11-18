@@ -49,11 +49,18 @@ python3 scripts/agent_workflow.py protection
   entries' cases with instrumented programs. See
   [verification](../docs/architecture/verification.md). Drafts run lint only.
   A merge-queue candidate the queue has discarded stops before its build.
-- On every push to main, full validation's `tip` job republishes that run's
+- On every push to main, full validation starts at once in a concurrency
+  group of its own commit (`full-validation-<sha>`): a later push never
+  cancels or replaces it, and only a repeated dispatch of the same commit
+  waits. Runs of several commits overlap and finish in any order, so tip
+  admission, nightly selection and the `main-broken` report decide by commit
+  ancestry on main (a result is reported only while no newer commit has its
+  own verdict). Each run's `tip` job republishes that run's
   production archives as the rolling `tip` prerelease once both platforms pass
   their installed-toolchain checks, before the integration shards finish. It
-  builds nothing, never affects the run's verdict, and nightly still publishes
-  only a commit that passed the complete suite.
+  builds nothing, never affects the run's verdict, never moves the tag back to
+  an older commit, and nightly still publishes only a commit that passed the
+  complete suite.
 - When full validation of main is red only because required jobs never got
   a hosted runner (cancelled having executed zero steps; GitHub drops
   long-queued macOS jobs), `workflows/validation-retry.yml` re-runs those

@@ -20,11 +20,16 @@ A job that executed any step is never retried, so a test that ran and failed
 can never be retried into green: a run with any such failure is reported as
 before. A run is retried at most once (MAX_ATTEMPTS); a second starvation is
 reported as a failure. Only the newest full-validation run on main is retried
-or deferred: a newer run already covers an older head's commits, and
-re-running an old run would enter the workflow's concurrency group and cancel
-the newer pending run. A starved run that is not the newest when its report
-runs therefore reports as before; one superseded in the moment between its
-report and its completion is covered by the newer run's own report.
+or deferred: a newer run, in progress or finished, already covers an older
+head's commits, so re-running the older one would spend runners on a verdict
+the newer one supersedes. Runs of different commits overlap (one concurrency
+group per commit), and every decision reads only its own run id and attempt;
+"newest" is the highest run number, which follows main's push order. A
+starved run that is not the newest when its report runs therefore reports as
+before, unless a newer commit already has a verdict
+(full_validation_report.py --repository); one superseded in the moment
+between its report and its completion is covered by the newer run's own
+report.
 """
 
 from __future__ import annotations
@@ -92,8 +97,8 @@ def decide(jobs):
 def newest(runs, run_id):
     """Whether run_id is the newest full-validation run of main in a run listing.
 
-    A newer run that was cancelled (a pending run replaced by a later push, or
-    cancelled by hand) validates nothing and does not supersede it."""
+    A newer run that was cancelled (by hand; pushes no longer replace pending
+    runs) validates nothing and does not supersede it."""
     rows = [run for run in runs if run.get("head_branch") == "main" and run.get("event") in TRIGGERS
             and run.get("path") == WORKFLOW and type(run.get("run_number")) is int
             and (run.get("id") == run_id or run.get("conclusion") != "cancelled")]
@@ -225,6 +230,17 @@ def self_test():
     assert outcome == "retried-failed" and calls[-1] == (
         "POST", "repos/lang-gti-official/gti/actions/runs/44149467023/rerun-failed-jobs"), calls
     assert requested(jobs=package)[1][-1][1].endswith("/rerun")
+    # Runs of other commits overlap: an older one still in flight never stops
+    # the newest from retrying, a newer one in flight supersedes it, and only
+    # this run's own jobs are read or re-run.
+    older_in_flight = {**run, "id": 44140000000, "run_number": 208, "status": "in_progress", "conclusion": None}
+    newer_in_flight = {**newer, "status": "in_progress"}
+    assert deferred(recorded, 1, [older_in_flight, run], run["id"])
+    assert not deferred(recorded, 1, [run, newer_in_flight, older_in_flight], run["id"])
+    outcome, calls = requested(listing=(older_in_flight, run))
+    assert outcome == "retried-failed" and all(
+        "/actions/runs/" not in path or "/actions/runs/44149467023" in path for _, path in calls), calls
+    assert requested(listing=(run, newer_in_flight))[0].startswith("declined")
     for options in ({"listing": (run, newer)}, {"jobs": failed}, {"run": {**run, "run_attempt": 2}},
                     {"run": {**run, "conclusion": "cancelled"}}, {"run": {**run, "event": "pull_request"}},
                     {"run": {**run, "head_branch": "feature"}},
