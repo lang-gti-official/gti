@@ -5697,14 +5697,14 @@
         "std::alloc_errc",
         "std::assume_mut<T,Owner>",
         "std::assume_ref<T,Owner>",
-        "std::erase_address<T>",
-        "std::storage_element<T>",
-        "std::typed_address<T>",
+        "std::borrow_owned_at",
+        "std::borrow_owned_mut_at",
         "std::construct_owned_at",
+        "std::erase_address<T>",
         "std::initialize_owned_at",
         "std::relocate_owned_at",
-        "std::borrow_owned_at",
-        "std::borrow_owned_mut_at"
+        "std::storage_element<T>",
+        "std::typed_address<T>"
       ],
       "case_ids": [
         "allocator-storage",
