@@ -17,6 +17,7 @@
 #include <map>
 
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -23894,8 +23895,37 @@ verifyMirProgramContracts(const MirProgram &program,
   return result;
 }
 
+namespace {
+MirVerificationResult
+verifyMirProgramUncached(const MirProgram &program,
+                         MirVerificationComponents components);
+} // namespace
+
 MirVerificationResult verifyMirProgram(const MirProgram &program,
                                        MirVerificationComponents components) {
+  // Lowering verifies its final program, and the driver and optimizer verify
+  // the same (moved or copied) program again. Verification is a function of
+  // the program's contents, so reuse a result for an equal program.
+  struct Verified {
+    MirProgram program;
+    MirVerificationComponents components;
+    MirVerificationResult result;
+  };
+  thread_local std::deque<Verified> recent;
+  for (const auto &entry : recent)
+    if (entry.components == components && entry.program == program)
+      return entry.result;
+  auto result = verifyMirProgramUncached(program, components);
+  recent.push_front({program, components, result});
+  if (recent.size() > 2)
+    recent.pop_back();
+  return result;
+}
+
+namespace {
+MirVerificationResult
+verifyMirProgramUncached(const MirProgram &program,
+                         MirVerificationComponents components) {
   MirVerificationResult result;
   if (components != requiredMirVerificationComponents) {
     result.errors.push_back(
@@ -24705,5 +24735,6 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
   appendVerification(result, verifyMirEffectSummaries(program));
   return result;
 }
+} // namespace
 
 } // namespace lang

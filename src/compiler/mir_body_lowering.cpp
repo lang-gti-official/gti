@@ -838,10 +838,39 @@ public:
       }
   }
 
+  // Binding-reader liveness facts without carrier-flow uses.
+  [[nodiscard]] std::vector<LoanFacts> mirLoanFactsWithout() const {
+    std::vector<LoanFacts> facts;
+    for (const MirLoan &loan : output.loans) {
+      LoanFacts fact{.id = loan.id,
+                     .reference = loan.kind != MirLoanKind::Stored,
+                     .carriers = loan.carriers,
+                     .parent = loan.parent,
+                     .storedDependency = loan.storedDependency,
+                     .entry = loan.entry,
+                     .lifecycleBound = loan.lifecycleBound,
+                     .access = loan.access};
+      for (const auto &dependency : loan.additionalDependencies)
+        fact.dependencyParents.push_back(dependency.parent);
+      if (const MirPlace *place = output.findPlace(loan.source);
+          place != nullptr && place->root == MirPlaceRootKind::Binding)
+        if (const HirBinding *binding = findBinding(place->binding))
+          fact.placeRoot = binding->info.symbol;
+      facts.push_back(std::move(fact));
+    }
+    return facts;
+  }
+
   [[nodiscard]] std::vector<LoanFacts> mirLoanFacts() const {
     std::vector<LoanFacts> facts;
     if (output.loans.empty())
       return facts;
+    // The seed lowering has no callee summaries yet. Its bodies supply only
+    // storage-transfer shapes for the rebuild, which re-derives loan ends with
+    // the seed's summaries; give the seed the conservative binding-reader
+    // ends rather than an uninformed carrier flow.
+    if (!retainingProgram && !retainingAnalysis)
+      return mirLoanFactsWithout();
     const MirCarrierFlow flow =
         retainingAnalysis ? retainingAnalysis->flow(output)
                           : deriveMirCarrierFlow(output, retainingProgram);
@@ -3564,6 +3593,11 @@ private:
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
     finishSourceDebug();
+    // A seed body (no retaining snapshot yet) only supplies storage-transfer
+    // shapes to the rebuild; it is never executable and its verdict is never
+    // read. The rebuild and whole-program verification check every body.
+    if (!retainingProgram && !retainingAnalysis)
+      return;
     verification = retainingAnalysis
                        ? verifyMirBody(output, 0, *retainingAnalysis)
                        : verifyMirBody(output, 0, retainingProgram);

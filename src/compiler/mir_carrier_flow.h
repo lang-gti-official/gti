@@ -140,6 +140,18 @@ deriveMirCarrierFlow(const MirBody &body, const MirProgram *program = nullptr,
 class MirCarrierAnalysis {
 public:
   explicit MirCarrierAnalysis(const MirProgram &program);
+  // Starts from `donor`'s converged call summaries. Only for a program whose
+  // function bodies equal the donor program's (a copy differing in entry
+  // metadata, for example).
+  MirCarrierAnalysis(const MirProgram &program,
+                     const MirCarrierAnalysis &donor);
+  // Starts from `donor`'s converged summaries of every function whose whole
+  // summary input is unchanged in `program`: its body, and recursively every
+  // function, constructor and cleanup body it reaches. Everything else is
+  // recomputed. Function and class tables must otherwise agree (successive
+  // lowerings of one HIR program).
+  [[nodiscard]] static std::unique_ptr<MirCarrierAnalysis>
+  reusingUnchanged(const MirProgram &program, const MirCarrierAnalysis &donor);
   ~MirCarrierAnalysis();
   [[nodiscard]] const MirProgram &program() const;
   [[nodiscard]] MirCarrierFlow flow(const MirBody &body,

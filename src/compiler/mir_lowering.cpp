@@ -216,9 +216,10 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // the initial pass cannot retain a call's inputs before its callee exists.
   // Verification below reconstructs effects from the rebuilt program and
   // checks every lifetime; an unchecked seed never becomes executable MIR.
+  MirCarrierAnalysis seedAnalysis(seed.program);
   MirLoweringResult provisional =
       lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false,
-                   &seed.program);
+                   &seed.program, &seedAnalysis);
   if (!provisional.valid()) {
     return provisional;
   }
@@ -230,7 +231,16 @@ MirLowerer::lowerVerified(const HirProgram &source,
     function.entryKind = ProgramEntryKind::None;
     function.entryArgumentAppendTarget.reset();
   }
-  const auto provisionalProof = verifyMirProgram(provisionalVerification);
+  // The verification copy differs only in entry metadata: its call
+  // summaries are the provisional program's, reused for the rounds below.
+  // Summaries whose inputs the rebuild left unchanged carry over from the
+  // seed.
+  const auto verificationAnalysis = MirCarrierAnalysis::reusingUnchanged(
+      provisionalVerification, seedAnalysis);
+  const auto provisionalProof = [&] {
+    const MirCarrierAnalysisScope scope(*verificationAnalysis);
+    return verifyMirProgram(provisionalVerification);
+  }();
   if (!provisionalProof.valid()) {
     for (const auto &error : provisionalProof.errors)
       provisional.errors.push_back({.body = {error.bodyKind, error.owner},
@@ -247,30 +257,31 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // Effects only ever move from conservative true toward proved false, so this
   // terminates; the bound keeps a non-converging program fail-closed below.
   constexpr int maximumEffectRounds = 8;
-  // Each effects query reads one immutable program; scope its analysis so
-  // repeated body flows inside the query are shared.
-  const auto failureEffects = [](const MirProgram &program) {
-    MirCarrierAnalysis analysis(program);
-    const MirCarrierAnalysisScope scope(analysis);
-    return deriveMirDefinedFailureEffects(program);
-  };
-  MirDefinedFailureEffects effects = failureEffects(provisional.program);
   // Retaining transfers come from independently verified source MIR, never
   // from unchecked declaration hints. Reuse that conservative shape while
   // failure cleanup is refined; source function identities remain fixed.
-  MirCarrierAnalysis provisionalAnalysis(provisional.program);
+  MirCarrierAnalysis provisionalAnalysis(provisional.program,
+                                         *verificationAnalysis);
+  MirDefinedFailureEffects effects = [&] {
+    const MirCarrierAnalysisScope scope(provisionalAnalysis);
+    return deriveMirDefinedFailureEffects(provisional.program);
+  }();
   MirLoweringResult result =
       lowerProgram(source, failureMetadata, effects, true, &provisional.program,
                    &provisionalAnalysis);
   // The final program's effects and its verification share one analysis
   // session. A session never outlives the program contents it read.
+  // Functions whose bodies and reached bodies the rounds left unchanged keep
+  // the provisional program's converged call summaries.
   struct ScopedAnalysis {
-    MirCarrierAnalysis analysis;
+    std::unique_ptr<MirCarrierAnalysis> analysis;
     MirCarrierAnalysisScope scope;
-    explicit ScopedAnalysis(const MirProgram &program)
-        : analysis(program), scope(analysis) {}
+    ScopedAnalysis(const MirProgram &program, const MirCarrierAnalysis &donor)
+        : analysis(MirCarrierAnalysis::reusingUnchanged(program, donor)),
+          scope(*analysis) {}
   };
-  auto resultAnalysis = std::make_unique<ScopedAnalysis>(result.program);
+  auto resultAnalysis =
+      std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
   MirDefinedFailureEffects finalEffects =
       deriveMirDefinedFailureEffects(result.program);
   for (int round = 0; round < maximumEffectRounds && effects != finalEffects;
@@ -279,7 +290,8 @@ MirLowerer::lowerVerified(const HirProgram &source,
     resultAnalysis.reset();
     result = lowerProgram(source, failureMetadata, effects, true,
                           &provisional.program, &provisionalAnalysis);
-    resultAnalysis = std::make_unique<ScopedAnalysis>(result.program);
+    resultAnalysis =
+        std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
     finalEffects = deriveMirDefinedFailureEffects(result.program);
   }
   const bool exactSummaries =
