@@ -28,6 +28,10 @@ API = "https://api.github.com/repos/" + REPOSITORY
 GRAPHQL = "https://api.github.com/graphql"
 HOST = "github"
 SCHEMA = 4
+# Each agent client names its task branches under its own prefix. Every helper
+# command accepts either, so tasks started by one client stay resumable by the
+# other.
+BRANCH_PREFIXES = ("claude/", "codex/")
 REHOST_SCHEMAS = {("github", 2), ("gitea", 3)}
 # The one required status check. CI reports it on pull_request (fast checks)
 # and on merge_group (the complete integration suite of the queued candidate).
@@ -330,6 +334,16 @@ class Workflow:
             raise WorkflowError("GitHub did not create the PR as a draft")
         return pr
 
+    @staticmethod
+    def branch_prefix(environ=None):
+        """Return the running client's task-branch prefix.
+
+        Claude Code marks its shells with CLAUDECODE=1; every other client,
+        including Codex, keeps the original codex/ prefix.
+        """
+        environ = os.environ if environ is None else environ
+        return "claude/" if environ.get("CLAUDECODE") == "1" else "codex/"
+
     def start(self, task, title, worktree, branch=None, adopt=False):
         path = self.file(task)
         if worktree is None:
@@ -366,9 +380,10 @@ class Workflow:
         root = Path(worktree).resolve()
         if root == self.primary or self.primary in root.parents:
             raise WorkflowError("Use a separate worktree outside the primary checkout")
-        branch = branch or "codex/" + task + "-" + uuid.uuid4().hex[:8]
-        if not branch.startswith("codex/") or git(self.primary, "check-ref-format", "--branch", branch, check=False).returncode:
-            raise WorkflowError("Use a valid codex/ task branch")
+        branch = branch or self.branch_prefix() + task + "-" + uuid.uuid4().hex[:8]
+        if (not branch.startswith(BRANCH_PREFIXES) or
+                git(self.primary, "check-ref-format", "--branch", branch, check=False).returncode):
+            raise WorkflowError("Use a valid claude/ or codex/ task branch")
         for record in self.state_dir.glob("*.json"):
             other = json.loads(record.read_text())
             if self.is_legacy(other):

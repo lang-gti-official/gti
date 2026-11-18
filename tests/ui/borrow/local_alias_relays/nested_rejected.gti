@@ -1,0 +1,40 @@
+// A nested region call or stored-reference alias supplies only what its own suppliers do.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Holder<lifetime h> {
+  Box&<h> ref;
+  Box owned;
+  Holder(Box&<h> ref) : ref(ref), owned(Box(5)) {}
+};
+int&<a> pass<lifetime a>(Box&<a> box) { return box.value; }
+Box&<a> same<lifetime a>(Box&<a> box) { return box; }
+Box&<a> pick<lifetime a>(Box&<a> left, Box&<a> right) { return right; }
+
+int&<a> nested_local<lifetime a>(Box&<a> box) {
+  Box mine{1};
+  return pass(same(mine));  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+}
+int&<a> nested_other<lifetime a, lifetime b>(Box&<a> left, Box&<b> right) {
+  return pass(pick(left, right));  //~ ERROR GTI-S2127 supplied by 'b'
+}
+int&<a> other_stored<lifetime a, lifetime b>(Holder<b>& holder, Box&<a> box) {
+  Box& local = holder.ref;
+  return pass(local);  //~ ERROR GTI-S2127 supplied by 'b'
+}
+// `owned` lives for the holder reference's elided region, not for `a`.
+int&<a> owned_part<lifetime a>(Holder<a>& holder) {
+  Box& local = holder.owned;
+  return pass(local);  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+}
+// An inner alias named like the parameter designates another referent.
+int&<a> shadowed<lifetime a, lifetime b>(Holder<a>& holder, Holder<b>& other) {
+  {
+    Holder<b>& holder = other;
+    Box& local = holder.ref;
+    return pass(local);  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+  }
+}
+
+int main() { return 0; }

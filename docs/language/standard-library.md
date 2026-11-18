@@ -341,8 +341,14 @@ The current implemented foundation includes:
   front/back access, copyable-element fill, read-only random-access cursors,
   and checked exclusive positional/reverse cursors. Constructors, `size`,
   `empty`, and the read-only `at`, `front`, and `back` methods support constexpr
-  evaluation for supported elements; mutable access and iterator traversal remain runtime
-  operations; and
+  evaluation for supported elements. Two arrays of the same element type and
+  extent support element-wise `==` and `!=` when the elements satisfy
+  `std::equality_comparable`. The operators `<`, `<=`, `>`, and `>=` require
+  `std::totally_ordered` elements and compare lexicographically. Comparison
+  borrows both arrays, stops at the first unequal pair, and is constexpr when
+  the element comparisons are. If the first unequal pair is unordered (as with
+  floating-point NaN), all four ordering operators return false. Mutable access
+  and iterator traversal remain runtime operations; and
 - `std.string` `std::string` as a move-only owner over a source-defined
   terminated character prefix, including
   construction from an exact input iterator/sentinel pair whose dereference
