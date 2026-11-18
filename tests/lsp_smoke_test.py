@@ -6512,9 +6512,9 @@ def test_diagnostic_capability_negotiation(executable, root):
 def test_current_language_diagnostics(executable, root):
     source = (
         "class Cleanup { public: Cleanup() {} ~Cleanup() {} };\n"
-        "Cleanup global_cleanup{};\n"
         "int32_t runtime_value() { return 1; }\n"
         "constexpr int32_t called = runtime_value();\n"
+        "constexpr Cleanup global_cleanup{};\n"
         'int main(int bad) { string text = "value"; return bad; }\n'
     )
     path = root / "current-language-diagnostics.gti"
