@@ -22,7 +22,7 @@ public:
   Buffer(uint64_t capacity)
       : data(std::detail::prefix_owner<T>(capacity)) {}
 
-  void push(T value) mut {
+  void push(T value) mut requires std::move_constructible<T> {
     this.data.append_value(std::move(value));
   }
 

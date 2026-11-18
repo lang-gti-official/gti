@@ -4,22 +4,22 @@
 //@[phase0] run-fail
 //@[phase0] exit-code: 70
 //@[phase0] stdout: 9
-//@[phase0] stderr-contains: <std/detail/memory_core>:218: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase0] stderr-contains: <std/detail/memory_core>:280: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase1] run-fail
 //@[phase1] exit-code: 70
 //@[phase1] args: phase
 //@[phase1] stdout: 9
-//@[phase1] stderr-contains: <std/detail/memory_core>:222: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase1] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase2] run-fail
 //@[phase2] exit-code: 70
 //@[phase2] args: phase phase
 //@[phase2] stdout: 9
-//@[phase2] stderr-contains: <std/detail/memory_core>:218: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase2] stderr-contains: <std/detail/memory_core>:280: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase3] run-fail
 //@[phase3] exit-code: 70
 //@[phase3] args: phase phase phase
 //@[phase3] stdout: 9
-//@[phase3] stderr-contains: <std/detail/memory_core>:222: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase3] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase7] args: phase phase phase phase phase phase phase
 //@[phase7] stdout: 7
 //@[phase7] stdout: 8
@@ -29,12 +29,12 @@
 //@[phase8] exit-code: 70
 //@[phase8] args: phase phase phase phase phase phase phase phase
 //@[phase8] stdout: 9
-//@[phase8] stderr-contains: <std/detail/memory_core>:222: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase8] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase9] run-fail
 //@[phase9] exit-code: 70
 //@[phase9] args: phase phase phase phase phase phase phase phase phase
 //@[phase9] stdout: 9
-//@[phase9] stderr-contains: <std/detail/memory_core>:222: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase9] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
 //@[phase12] run-fail
 //@[phase12] exit-code: 42
 //@[phase12] args: phase phase phase phase phase phase phase phase phase phase phase phase

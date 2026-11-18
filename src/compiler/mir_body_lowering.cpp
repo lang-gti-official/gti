@@ -919,6 +919,7 @@ public:
                           carrier) != fact.carriers.end())
               continue;
             fact.carriers.push_back(carrier);
+            fact.retainedCarriers.push_back(carrier);
             const auto *binding = findBinding(carrier);
             if (!binding || lifecycleBoundCarrier(binding->info.type))
               fact.scopeBound = true;
@@ -5706,40 +5707,67 @@ private:
 
   // The exact storage place of a global or static symbol along a field path,
   // typed by that storage itself rather than by a value borrowing it.
+  [[nodiscard]] const HirThreadLocalStorage *
+  threadLocalStorageFor(SymbolId symbol) const {
+    const auto &storage = program.threadLocalStorage();
+    const auto found =
+        std::find_if(storage.begin(), storage.end(),
+                     [&](const auto &item) { return item.symbol == symbol; });
+    return found == storage.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] MirPlaceId globalStoragePlace(const BorrowOriginPlace &origin,
                                               const PlaceDomain &domain) {
+    if (!origin.valid())
+      return 0;
+    // Thread-local storage is not eagerly initialized, so it has no program
+    // initialization step; its inventory entry states its exact type.
+    const SemanticType *type = nullptr;
+    AccessMode access = AccessMode::ReadOnly;
+    SemanticTypeTraits traits;
     const auto &steps = program.programInitializationPlan().steps;
     const auto step =
         std::find_if(steps.begin(), steps.end(), [&](const auto &candidate) {
           return candidate.symbol == origin.root;
         });
-    if (!origin.valid() || step == steps.end())
+    if (step != steps.end()) {
+      const auto &bindings = program.module().bindings;
+      const auto global = std::find_if(
+          bindings.begin(), bindings.end(), [&](const HirBinding &binding) {
+            return binding.id == step->binding;
+          });
+      if (global == bindings.end())
+        return 0;
+      type = &global->info.type;
+      access = global->info.access;
+      traits = resolvedTraits(global->info.type);
+    } else if (const HirThreadLocalStorage *storage =
+                   threadLocalStorageFor(origin.root)) {
+      type = &storage->type;
+      access = storage->access;
+      traits = storage->traits;
+    } else {
       return 0;
-    const auto &bindings = program.module().bindings;
-    const auto global = std::find_if(
-        bindings.begin(), bindings.end(),
-        [&](const HirBinding &binding) { return binding.id == step->binding; });
+    }
     std::vector<SymbolId> fields;
     for (const auto &projection : origin.projections) {
       if (projection.kind != PlaceProjectionKind::Field)
         return 0;
       fields.push_back(projection.field);
     }
-    if (global == bindings.end())
-      return 0;
     const PlaceKey key{.domain = domain, .root = origin.root};
     MirPlaceId root = 0;
     for (const auto &place : output.places)
       if (place.root == MirPlaceRootKind::Symbol &&
           place.symbol == origin.root && place.projections.empty() &&
-          place.type == global->info.type && place.key == key)
+          place.type == *type && place.key == key)
         root = place.id;
     if (root == 0)
       root = appendPlace({.root = MirPlaceRootKind::Symbol,
                           .symbol = origin.root,
-                          .type = global->info.type,
-                          .access = global->info.access,
-                          .traits = resolvedTraits(global->info.type),
+                          .type = *type,
+                          .access = access,
+                          .traits = traits,
                           .key = key});
     return fields.empty() ? root : projectBorrowFields(root, fields);
   }
@@ -5754,7 +5782,8 @@ private:
     if ((value.info.type.kind == SemanticType::Class ||
          value.info.type.kind == SemanticType::Enum) &&
         value.info.traits.containsBorrowedState &&
-        completeSet(value.id).has_value())
+        (completeSet(value.id).has_value() ||
+         threadLocalStorageFor(origin.root) != nullptr))
       if (const MirPlaceId global =
               globalStoragePlace(origin, output.placeDomain))
         return global;

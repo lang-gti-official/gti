@@ -1068,8 +1068,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
+    const auto aliasCarriers = std::count_if(
+        loan.carriers.begin(), loan.carriers.end(), [&](HirBindingId carrier) {
+          return std::find(loan.retainedCarriers.begin(),
+                           loan.retainedCarriers.end(),
+                           carrier) == loan.retainedCarriers.end();
+        });
     if (loan.lifecycleBound ||
-        (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
+        (aliasCarriers > 1 && loan.access != AccessMode::ReadOnly))
       continue;
     if (unconfined.contains(loan.id)) {
       // A range-for's loan is carried by the loop's own symbol-less range

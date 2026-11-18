@@ -1,4 +1,6 @@
-// Analyze: invalid carrier movement, access or construction rejected.
+// Analyze: uninitialized storage admits a complete object type with borrowed
+// state (RFC 0003); its owner-aware operations carry the dependencies.
+//@ check-pass
 import std.memory;
 import std.string;
 struct Plain { int value = 8;  public: Plain() = default; };
@@ -15,4 +17,4 @@ class Holder<std::layout_queryable T> {
 public:
   Holder() {}
 };
-int main() { std::uninitialized<expected<Plain&, int>> a{}; return 0; }  //~ ERROR GTI-S2019
+int main() { std::uninitialized<expected<Plain&, int>> a{}; return 0; }

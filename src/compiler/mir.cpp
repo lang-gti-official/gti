@@ -3,6 +3,9 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/mir_printer.h" // TEMP-DEBUG
+#include <cstdio> // TEMP-DEBUG
+#include <cstdlib> // TEMP-DEBUG
 #include "gti/optimization/coverage.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
@@ -956,6 +959,10 @@ namespace {
 failure(const MirBody &body, std::size_t owner, std::string message,
         MirBlockId block = 0, MirInstructionId instruction = 0) {
   MirVerificationResult result;
+  if (std::getenv("GTI_DEBUG_MIR_FAILURE")) { // TEMP-DEBUG
+    std::fprintf(stderr, "MIR FAILURE: %s\n%s\n", message.c_str(), // TEMP-DEBUG
+                 MirPrinter{}.print(body).c_str()); // TEMP-DEBUG
+  } // TEMP-DEBUG
   result.errors.push_back({.bodyKind = body.kind,
                            .owner = owner,
                            .block = block,

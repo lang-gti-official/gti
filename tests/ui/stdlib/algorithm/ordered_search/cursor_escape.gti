@@ -17,6 +17,6 @@ public:
 };
 std::vector<int>::const_iterator escape(std::vector<int>& external) {
   std::vector<int> values = {1, 2, 3};
-  return std::partition_point(values.begin(), values.end(), [](int& value) -> bool { return value < 2; });  //~ ERROR GTI-S2045 must derive from read-only parameter 'external'
+  return std::partition_point(values.begin(), values.end(), [](int& value) -> bool { return value < 2; });  //~ ERROR GTI-S2017 depends on storage the function owns
 }
 int main() { return 0; }

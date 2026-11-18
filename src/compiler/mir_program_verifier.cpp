@@ -8586,6 +8586,50 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                                          .loan = *block.terminator.returnLoan};
       return rejected;
     }
+    // A composed carrier result (RFC 0003) records every field's owner as an
+    // additional dependency of the one returned loan. With a single elided
+    // supplier each of those owners must be that same supplier as well: a
+    // field borrowed from body storage escapes, and one borrowed from another
+    // formal is outside the signature's contract.
+    if (instance.returnBorrowParameters.empty() &&
+        (instance.returnBorrowOrigin == BorrowOriginKind::Argument ||
+         instance.returnBorrowOrigin == BorrowOriginKind::Receiver)) {
+      const auto formal =
+          instance.returnBorrowOrigin == BorrowOriginKind::Argument
+              ? mir_detail::returnOriginFormal(instance.parameterTypes,
+                                               instance.parameterBindings,
+                                               instance.returnBorrowParameter)
+              : std::nullopt;
+      for (const auto id : loan->additionalSources()) {
+        const auto canonical = borrowSourceForPlace(body, id, 0);
+        const auto *place = canonical ? body.findPlace(*canonical) : nullptr;
+        const bool supplied =
+            place != nullptr &&
+            (instance.returnBorrowOrigin == BorrowOriginKind::Receiver
+                 ? place->root == MirPlaceRootKind::This
+                 : place->root == MirPlaceRootKind::Binding && formal &&
+                       place->binding == formal->binding);
+        if (supplied)
+          continue;
+        MirVerificationResult rejected = verificationFailure(
+            body, instance.id,
+            "composed return dependency does not originate from the "
+            "summarized supplier",
+            block.id);
+        if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
+            !rejected.errors.empty()) {
+          const bool otherFormal =
+              std::find(instance.parameterBindings.begin(),
+                        instance.parameterBindings.end(),
+                        place->binding) != instance.parameterBindings.end();
+          rejected.errors.back().borrow = {
+              .kind = otherFormal ? MirBorrowRejectionKind::Supplier
+                                  : MirBorrowRejectionKind::Escape,
+              .loan = *block.terminator.returnLoan};
+        }
+        return rejected;
+      }
+    }
     if (!instance.returnBorrowParameters.empty()) {
       // Each supplier is one formal, or one lane of a formal pack.
       using Supplier = std::pair<HirBindingId, std::size_t>;

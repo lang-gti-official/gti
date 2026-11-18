@@ -36,6 +36,6 @@ c_string ctext(ByteOwner& owner) {
   }
 }
 std::string_view bad(ByteOwner& left, ByteOwner& right) {
-  mut auto text = view(left); text = view(right); return text;  //~ ERROR GTI-S2045 //~ ERROR GTI-S2045
+  mut auto text = view(left); text = view(right); return text;  //~ ERROR GTI-S2045
 }
 int main() { return 0; }

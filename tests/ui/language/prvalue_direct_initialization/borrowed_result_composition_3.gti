@@ -11,5 +11,5 @@ Update<a> relay<lifetime a>(int&<a> step, mut int&<a> value) {
 }
 Update<a> view<lifetime a>(int&<a> step, mut int&<a> value) { return Update(step, value); }
 Update bad(int& step) { mut int local = 3;
-                return Update(relay(step, local)); }  //~ ERROR GTI-S2045
+                return Update(relay(step, local)); }  //~ ERROR GTI-S2017 depends on storage the function owns
                 int main() { return 0; }

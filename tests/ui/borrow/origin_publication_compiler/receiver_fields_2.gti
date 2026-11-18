@@ -9,6 +9,6 @@ public:
   mut int key = 1;
   mut int value = 2;
   Owner() {}
-  Entry entry() { return Entry(this.key, this.value); }  //~ ERROR GTI-S2012 //~ ERROR GTI-S2045
+  Entry entry() { return Entry(this.key, this.value); }  //~ ERROR GTI-S2012
 };
 int main() { return 0; }

@@ -19,7 +19,7 @@ public:
     }
   }
 
-  void push(T value) mut {
+  void push(T value) mut requires std::move_constructible<T> {
     this.data.append_value(std::move(value));
     this.count++;
   }
