@@ -1,0 +1,93 @@
+// A union result of a consumed temporary relays its stored reference or a named parameter, whether the caller's reference is shared or mutable.
+//@ run-pass
+//@ exit-code: 0
+
+// `Reader` stores a shared reference and `Writer` an exclusive one. Each
+// consuming method returns either that stored referent or `fallback`
+// (directly or through a local alias), and the result outlives the
+// consumed temporary. A caller holding `mut Box&<a>` lends the temporary a
+// shared or exclusive group of its referent; either relays a read-only
+// result.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+  int&<owner> pick_alias(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    int& local = fallback;
+    return local;
+  }
+};
+class Writer<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Writer(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+  int&<owner> pick_alias(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    int& local = fallback;
+    return local;
+  }
+};
+
+int&<a> shared_reader<lifetime a>(Box&<a> mine, int&<a> fallback, bool stored) {
+  return Reader(mine).pick(stored, fallback);
+}
+int&<a> shared_reader_alias<lifetime a>(Box&<a> mine, int&<a> fallback, bool stored) {
+  return Reader(mine).pick_alias(stored, fallback);
+}
+int&<a> mut_reader<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) {
+  return Reader(mine).pick(stored, fallback);
+}
+int&<a> mut_reader_alias<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) {
+  return Reader(mine).pick_alias(stored, fallback);
+}
+int&<a> mut_writer<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) {
+  return Writer(mine).pick(stored, fallback);
+}
+int&<a> mut_writer_alias<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) {
+  return Writer(mine).pick_alias(stored, fallback);
+}
+// A lane may be a part of a shared formal's referent.
+int lane_field<lifetime a>(mut Box&<a> mine, Box&<a> other) {
+  int& kept = Reader(mine).pick(false, other.value);
+  return kept;
+}
+// A reference binding keeps the result past the consumed temporary too.
+int bound<lifetime a>(mut Box&<a> mine, int&<a> fallback) {
+  int& kept = Reader(mine).pick(true, fallback);
+  int seen = kept;
+  int& other = Writer(mine).pick_alias(false, fallback);
+  return seen * 10 + other;
+}
+
+int main() {
+  mut Box mine{9};
+  int fallback = 7;
+  if (shared_reader(mine, fallback, true) != 9) { return 1; }
+  if (shared_reader_alias(mine, fallback, false) != 7) { return 2; }
+  if (mut_reader(mine, fallback, true) != 9) { return 3; }
+  if (mut_reader_alias(mine, fallback, false) != 7) { return 4; }
+  if (mut_writer(mine, fallback, true) != 9) { return 5; }
+  if (mut_writer_alias(mine, fallback, false) != 7) { return 6; }
+  if (bound(mine, fallback) != 97) { return 7; }
+  Box other{4};
+  if (lane_field(mine, other) != 4) { return 9; }
+  // The result names the caller's storage, not a copy.
+  int& seen = mut_reader(mine, fallback, true);
+  int before = seen;
+  mine.value = 4;
+  int& again = mut_writer(mine, fallback, true);
+  return before == 9 && again == 4 ? 0 : 8;
+}

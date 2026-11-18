@@ -88,6 +88,20 @@ public:
     return Program(std::move(declarations));
   }
 
+  std::unique_ptr<BlockStmt> parseFunctionBody() {
+    reset();
+    try {
+      auto body = functionBody();
+      if (!isAtEnd())
+        throw error(peek(), "Expect end of function body.");
+      return body;
+    } catch (const ParseError &) {
+      return nullptr;
+    } catch (const ErrorLimitReached &) {
+      return nullptr;
+    }
+  }
+
   // Kept as a focused entry point for expression tests and tooling.
   ExprPtr parseExpression() {
     reset();
@@ -1869,8 +1883,7 @@ private:
           std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
+    auto body = functionBody();
     return std::make_shared<FunctionDecl>(
         std::move(returnType), name, std::move(genericParameters),
         std::move(parameters), std::move(body), std::move(runtimeBinding),
@@ -3162,6 +3175,16 @@ private:
           consume(TokenKind::IDENTIFIER, "Expect name after '::'."));
     }
     return NamePath(std::move(segments));
+  }
+
+  std::unique_ptr<BlockStmt> functionBody() {
+    const Token opening =
+        consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
+    auto body = std::make_unique<BlockStmt>(blockItems());
+    body->setExtent({opening.source, opening.position,
+                     previous().position + previous().lexeme.size(),
+                     opening.line});
+    return body;
   }
 
   StmtList blockItems() {
@@ -5817,6 +5840,10 @@ Parser &Parser::operator=(Parser &&) noexcept = default;
 void Parser::setErrorLimit(std::size_t limit) { impl->errorLimit = limit; }
 
 Program Parser::parse() { return impl->parse(); }
+
+std::unique_ptr<BlockStmt> Parser::parseFunctionBody() {
+  return impl->parseFunctionBody();
+}
 
 ExprPtr Parser::parseExpression() { return impl->parseExpression(); }
 

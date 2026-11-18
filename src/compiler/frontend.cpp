@@ -951,9 +951,29 @@ std::string frontendCacheContext(const FrontendOptions &options) {
   return syntaxCacheContext(options);
 }
 
+// An importer can be checked against its already checked imports when the
+// entry is the only unit outside that prefix. Implementation units can
+// complete declarations across files, even without an import edge.
+static bool canReuseImportedModules(const SourceGraph &graph) {
+  if (!graph.sourceOwners() || !graph.moduleImplementations().empty())
+    return false;
+  const auto order = graph.compilationOrder();
+  if (order.empty() || order.back() != graph.entryUnit())
+    return false;
+  for (const SourceUnit &unit : graph.sourceUnits()) {
+    if (unit.entry || graph.isCompilerTrusted(unit.id))
+      continue;
+    if (!unit.moduleDeclaration || !unit.moduleId ||
+        graph.isVisible(unit.id, graph.entryUnit()))
+      return false;
+  }
+  return true;
+}
+
 struct SemanticPreambleBuild::State {
   SemanticPreambleKey key;
   Program prefix;
+  std::size_t trustedPrefixSize = 0;
   SourceGraph sourceGraph;
   SourceManager sources;
   TargetInfo target;
@@ -995,20 +1015,32 @@ SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
     return nullptr;
   state->ran = true;
   const auto buildStart = std::chrono::steady_clock::now();
-  SemanticVisitor builder(
-      state->target, &state->sourceGraph, state->toolingOccurrences, nullptr,
-      &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
-      TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
-  builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
-  builder.setConstexprBodyDeferral(state->deferConstexprBodies);
-  builder.setCancellation(cancellation);
-  // The preamble owns the prefix program; this build no longer needs it.
-  std::shared_ptr<const SemanticPreamble> preamble =
-      builder.buildPreamble(std::move(state->prefix));
-  if (builder.cancelled()) {
-    state->cancelled = true;
+  const auto build = [&](Program prefix) {
+    SemanticVisitor builder(state->target, &state->sourceGraph,
+                            state->toolingOccurrences, nullptr, &state->sources,
+                            RawPointerAuditMode::Off, state->requireDefinitions,
+                            TrustedBodyAnalysis::Complete,
+                            state->sourceDebugProfile, state->limits);
+    builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+    builder.setConstexprBodyDeferral(state->deferConstexprBodies);
+    builder.setCancellation(cancellation);
+    auto preamble = builder.buildPreamble(std::move(prefix));
+    state->cancelled = builder.cancelled();
+    return preamble;
+  };
+  const auto &declarations = state->prefix.declarations();
+  StmtList fallback;
+  if (state->trustedPrefixSize < declarations.size())
+    fallback.assign(declarations.begin(),
+                    declarations.begin() +
+                        static_cast<std::ptrdiff_t>(state->trustedPrefixSize));
+  auto preamble = build(std::move(state->prefix));
+  // An invalid imported module still benefits from the normal standard
+  // library cache. Adoption resumes at the actual checked prefix length.
+  if (!preamble && !state->cancelled && !fallback.empty())
+    preamble = build(Program(std::move(fallback)));
+  if (state->cancelled)
     return nullptr;
-  }
   state->cache->store(state->key, preamble);
   if (workMetrics != nullptr) {
     ++workMetrics->semanticPreambleBuilds;
@@ -1296,11 +1328,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     key.context = frontendCacheContext + "\npreamble:" +
                   (options.toolingOccurrences ? "tooling" : "plain") +
                   (requireDefinitions ? ":definitions" : ":fragments");
+    std::size_t trustedPrefixSize = 0;
+    bool trustedPrefix = true;
+    const bool reuseImports =
+        options.lowerEntryUnitOnly &&
+        options.trustedBodies == TrustedBodyAnalysis::Reachable &&
+        canReuseImportedModules(result.sourceGraph);
     const StmtList &declarations = result.program.declarations();
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       const SourceUnit *unit = result.sourceGraph.findUnit(unitId);
       if (unit == nullptr || unit->entry ||
-          !result.sourceGraph.isCompilerTrusted(unitId) ||
+          (!reuseImports && !result.sourceGraph.isCompilerTrusted(unitId)) ||
           unit->declarationStart != preambleDeclarations ||
           unit->declarationStart + unit->declarationCount > declarations.size())
         break;
@@ -1310,9 +1348,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                          .syntaxDigest = unit->syntaxDigest};
       for (std::size_t index = unit->declarationStart;
            index < unit->declarationStart + unit->declarationCount; ++index)
-        identity.declarations.push_back(declarations[index].get());
+        identity.declarations.push_back(declarations[index]);
       key.units.push_back(std::move(identity));
       preambleDeclarations = unit->declarationStart + unit->declarationCount;
+      trustedPrefix =
+          trustedPrefix && result.sourceGraph.isCompilerTrusted(unitId);
+      if (trustedPrefix)
+        trustedPrefixSize = preambleDeclarations;
     }
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder())
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId))
@@ -1333,6 +1375,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                         declarations.begin(),
                         declarations.begin() +
                             static_cast<std::ptrdiff_t>(preambleDeclarations))),
+                    .trustedPrefixSize = trustedPrefixSize,
                     .sourceGraph = result.sourceGraph,
                     .sources = result.sources,
                     .target = options.target,
@@ -1388,7 +1431,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {
-      semantic.adoptPreamble(preamble, preambleDeclarations);
+      semantic.adoptPreamble(preamble,
+                             semanticPreambleDeclarationCount(*preamble));
       if (options.workMetrics != nullptr)
         ++options.workMetrics->semanticPreambleAdoptions;
     }
@@ -1590,6 +1634,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       return result;
     }
 
+    if (options.workMetrics != nullptr)
+      ++options.workMetrics->hirPasses;
     const auto hirStart = std::chrono::steady_clock::now();
     const std::size_t lateDemandStart =
         options.workMetrics == nullptr
@@ -1742,6 +1788,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // HIR instance reanalysis is the last reader of the semantic visitor;
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();
+  if (options.retainBodyQueryContext) {
+    semantic.detachBodyQueryContext();
+    result.bodyQueryContext = std::move(semanticOwner);
+  }
   // A program the parser recovered (analyzeRecoveredProgram) stops here.
   // Semantics stays quiet about recovered nodes to avoid cascades, so their
   // bodies can be incomplete; MIR checks only programs that parsed, and the
@@ -1993,6 +2043,113 @@ void Frontend::append(std::vector<Diagnostic> &destination,
     byStart.emplace(diagnostic.primary.start, destination.size());
     destination.push_back(std::move(diagnostic));
   }
+}
+
+EditorBodyDiagnostics::EditorBodyDiagnostics(
+    const std::shared_ptr<FrontendResult> &snapshot)
+    : baseline(snapshot), context(std::move(snapshot->bodyQueryContext)) {}
+
+std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
+    const std::shared_ptr<FrontendResult> &snapshot) {
+  if (!snapshot)
+    return {};
+  if (!snapshot->bodyQueryContext || !snapshot->canGenerateCode() ||
+      !snapshot->diagnostics.empty() || snapshot->cancelled) {
+    snapshot->bodyQueryContext.reset();
+    return {};
+  }
+  return std::shared_ptr<const EditorBodyDiagnostics>(
+      new EditorBodyDiagnostics(snapshot));
+}
+
+namespace {
+const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
+                                   std::size_t start, std::size_t end) {
+  for (const auto &item : items) {
+    if (!item)
+      continue;
+    if (const auto *fn = stmtAs<FunctionDecl>(item.get())) {
+      if (!fn->body() || !fn->body()->extent())
+        continue;
+      const auto &span = *fn->body()->extent();
+      if (span.source == path && span.start < start && end < span.end)
+        return fn;
+    } else if (const auto *space = stmtAs<NamespaceDecl>(item.get())) {
+      if (const auto *fn =
+              editedFunction(space->declarations(), path, start, end))
+        return fn;
+    } else if (const auto *owner = stmtAs<ClassDecl>(item.get())) {
+      if (const auto *fn = editedFunction(owner->members(), path, start, end))
+        return fn;
+    }
+  }
+  return nullptr;
+}
+} // namespace
+
+std::optional<std::vector<Diagnostic>>
+EditorBodyDiagnostics::check(const std::string &source,
+                             const std::atomic<bool> *cancel) const {
+  const std::lock_guard lock(queryMutex);
+  if (cancel && cancel->load(std::memory_order_relaxed))
+    return std::nullopt;
+  const auto *unit =
+      baseline->sourceGraph.findUnit(baseline->sourceGraph.entryUnit());
+  if (!unit)
+    return std::nullopt;
+  const auto path = unit->path.string();
+  const auto *original = baseline->sources.find(path);
+  if (!original)
+    return std::nullopt;
+  std::size_t first = 0;
+  while (first < source.size() && first < original->size() &&
+         source[first] == (*original)[first])
+    ++first;
+  if (first == source.size() && first == original->size())
+    return std::vector<Diagnostic>{};
+  std::size_t past = original->size(), newPast = source.size();
+  while (past > first && newPast > first &&
+         (*original)[past - 1] == source[newPast - 1]) {
+    --past;
+    --newPast;
+  }
+  const auto *prior =
+      editedFunction(baseline->program.declarations(), path, first, past);
+  if (!prior || prior->isConstexpr() || prior->isProceduralMacro() ||
+      !prior->genericParameters().empty())
+    return std::nullopt;
+  const auto &span = *prior->body()->extent();
+  if (span.end > original->size())
+    return std::nullopt;
+  const auto bodyEnd = source.size() - (original->size() - span.end);
+  Lexer lexer;
+  lexer.setErrorLimit(1);
+  const auto scanned = lexer.scan(source, path);
+  if (lexer.hadError() || scanned.empty())
+    return std::nullopt;
+  std::vector<Token> tokens;
+  for (const auto &token : scanned) {
+    if (token.position < span.start || token.position >= bodyEnd)
+      continue;
+    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO)
+      return std::nullopt;
+    tokens.push_back(token);
+  }
+  tokens.push_back(scanned.back());
+  Parser parser(std::move(tokens), source);
+  parser.setErrorLimit(1);
+  auto changed = parser.parseFunctionBody();
+  if (!changed || parser.hadError() || !parser.lifetimeNames().empty() ||
+      changed->extent()->start != span.start ||
+      changed->extent()->end != bodyEnd)
+    return std::nullopt;
+
+  auto sources = baseline->sources;
+  sources.set(path, source);
+  return context->diagnoseEditedBody({baseline->program, baseline->semantics,
+                                      baseline->sourceGraph, sources, *prior,
+                                      *changed},
+                                     cancel);
 }
 
 } // namespace lang

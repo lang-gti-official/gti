@@ -1,0 +1,40 @@
+// A text-view reference relayed through a stored region borrows the view object in the external owner (#565).
+//@ run-pass
+//@ stdout: [gti] 3 abc
+//@ stdout: [written] 7
+//@ stdout: written
+import std.format;
+struct Box { mut std::string_view text = ""; public: Box() = default; };
+class View<lifetime o> {
+  Box&<o> box;
+  std::string_view name = "abc";
+public:
+  View(Box&<o> b) : box(b) {}
+  std::string_view&<o> get() { return this.box.text; }
+  std::string_view& own() { return this.name; }
+};
+class Cursor<lifetime o> {
+  mut Box&<o> box;
+public:
+  Cursor(mut Box&<o> b) : box(b) {}
+  std::string_view&<o> get() { return this.box.text; }
+  mut std::string_view&<o> slot() mut { return this.box.text; }
+};
+int main() {
+  mut Box b{};
+  b.text = "gti";
+  {
+    View v = View(b);
+    std::string_view& t = v.get();
+    std::string_view& n = v.own();
+    std::println("[{}] {} {}", t, t.size(), n);
+  }
+  {
+    mut Cursor c = Cursor(b);
+    c.slot() = "written";
+    std::string_view& t = c.get();
+    std::println("[{}] {}", t, t.size());
+  }
+  std::println("{}", b.text);
+  return int(b.text.size()) - 7;
+}
