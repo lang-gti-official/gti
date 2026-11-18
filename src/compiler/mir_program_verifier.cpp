@@ -6600,6 +6600,15 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         (independentlyStaticTextBinding(program, body, *source) ||
          ownerlessTextPayload || exactParent || throughRawDereference))
       continue;
+    // A text-view object in checked text storage (a record's text field or
+    // a text array element) holds only text its checked writers proved
+    // ownerless, however its physical storage is reached: through the
+    // receiver, or through a stored reference relaying an external record.
+    // Its shell loan keeps the physical source and owes no stored
+    // dependency, even where the reaching path has an abstract entry.
+    if (expected != 0 && loan.storedDependency == 0 &&
+        mir_detail::isOwnerlessTextStorageProjection(program, body, *source))
+      continue;
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(
           body, owner,
