@@ -3750,9 +3750,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               dependency.access == AccessMode::Mutable);
     };
 
+    // The live descendants that suspend a stored dependency, if every one
+    // of them is a shared reborrow.
+    const auto sharedSuspension = [&](MirLoanId dependency) {
+      return std::none_of(
+          body.loans.begin(), body.loans.end(), [&](const MirLoan &child) {
+            return active[child.id - 1] != MirLoanFlowState::Inactive &&
+                   !isParkedLoan(active[child.id - 1]) &&
+                   isLoanAncestor(body, dependency, child.id) &&
+                   child.access != AccessMode::ReadOnly;
+          });
+    };
     const auto requireStoredDependency =
-        [&](MirLoanId loan, const char *context, MirInstructionId instruction)
-        -> std::optional<MirVerificationResult> {
+        [&](MirLoanId loan, const char *context, MirInstructionId instruction,
+            bool sharedRead = false) -> std::optional<MirVerificationResult> {
       MirLoanId dependency = body.loans[loan - 1].storedDependency;
       while (dependency != 0) {
         const auto *restoration =
@@ -3762,8 +3773,42 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             restoration && restoration->loan &&
             active[*restoration->loan - 1] == MirLoanFlowState::Active &&
             isLoanAncestor(body, dependency, *restoration->loan);
+        // A shared read through a plain read-only reference keeps its own
+        // permission while shared reborrows of its carrier's external
+        // dependency are live: shared accesses never conflict, and the
+        // dependency itself stays alive until those children end.
+        const bool sharedReadDependency =
+            sharedRead && body.loans[loan - 1].access == AccessMode::ReadOnly &&
+            active[dependency - 1] == MirLoanFlowState::Suspended &&
+            sharedSuspension(dependency);
+        if (active[dependency - 1] == MirLoanFlowState::Suspended &&
+            !reborrowedRestoreWitness && !sharedReadDependency) {
+          // Operating through a carrier whose external dependency a live
+          // child reborrow suspends is a source borrow conflict, as is using
+          // the suspended parent itself; it is not malformed MIR.
+          const auto child = std::find_if(
+              body.loans.begin(), body.loans.end(),
+              [&](const MirLoan &candidate) {
+                return active[candidate.id - 1] != MirLoanFlowState::Inactive &&
+                       !isParkedLoan(active[candidate.id - 1]) &&
+                       isLoanAncestor(body, dependency, candidate.id);
+              });
+          MirVerificationResult rejected = failure(
+              body, owner,
+              "carrier-shell loan " + std::to_string(loan) +
+                  " uses stored dependency loan " + std::to_string(dependency) +
+                  " while a child reborrow suspends it in " + context,
+              block.id, instruction);
+          if (!rejected.errors.empty())
+            rejected.errors.back().borrow = {
+                .kind = MirBorrowRejectionKind::ParentUse,
+                .loanAccess = body.loans[dependency - 1].access,
+                .loan = dependency,
+                .conflictingLoan = child != body.loans.end() ? child->id : 0};
+          return rejected;
+        }
         if (active[dependency - 1] != MirLoanFlowState::Active &&
-            !reborrowedRestoreWitness) {
+            !reborrowedRestoreWitness && !sharedReadDependency) {
           return failure(body, owner,
                          "carrier-shell loan " + std::to_string(loan) +
                              " requires active stored dependency loan " +
@@ -3776,8 +3821,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     };
     const auto requireActive =
         [&](MirLoanId loan, const char *context,
-            MirInstructionId instruction =
-                0) -> std::optional<MirVerificationResult> {
+            MirInstructionId instruction = 0,
+            bool sharedRead = false) -> std::optional<MirVerificationResult> {
       if (active[loan - 1] == MirLoanFlowState::Inactive) {
         return failure(body, owner,
                        "loan " + std::to_string(loan) +
@@ -3830,7 +3875,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            std::string(context),
                        block.id, instruction);
       }
-      return requireStoredDependency(loan, context, instruction);
+      return requireStoredDependency(loan, context, instruction, sharedRead);
     };
     // Loans a payload extraction's sibling fields selected (see the operand
     // check below); disjoint from the field this extraction reads.
@@ -4093,7 +4138,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       }
       if (place.throughLoan != 0) {
         if (auto invalid = requireStoredDependency(place.throughLoan, context,
-                                                   instruction)) {
+                                                   instruction, !write)) {
           return invalid;
         }
         const MirLoanFlowState throughState = active[place.throughLoan - 1];
@@ -4447,7 +4492,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       const MirOperand &resolved = *callInputSource(operand);
       switch (resolved.kind) {
       case MirOperandKind::Loan: {
-        if (auto invalid = requireActive(resolved.loan, context, instruction)) {
+        // A plain scalar or text reference can only be read through: it
+        // reaches no stored reference of the carrier that produced it.
+        const SemanticType &referent =
+            resolved.type.kind == SemanticType::Reference &&
+                    resolved.type.arguments.size() == 1
+                ? resolved.type.arguments.front()
+                : resolved.type;
+        const bool plainReferent = referent.kind >= SemanticType::Int8 &&
+                                   referent.kind <= SemanticType::CString;
+        if (auto invalid = requireActive(resolved.loan, context, instruction,
+                                         plainReferent)) {
           return invalid;
         }
         if (resolved.type.kind == SemanticType::Reference &&
