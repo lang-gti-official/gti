@@ -1872,10 +1872,12 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
     if (item.syntax && item.syntax->predicate)
       proof.capability = predicateCapabilityFor(
           *item.syntax, item.arguments,
-          item.lookupScope ? &*item.lookupScope : nullptr);
+          item.lookupScope ? &*item.lookupScope : nullptr,
+          /*admitNegation=*/true);
     return append(std::move(proof));
   };
   const auto required = tree(requirements, expression, root, 0);
+  std::size_t lifts = 0;
   std::function<bool(std::size_t, std::size_t)> implies =
       [&](std::size_t provided, std::size_t wanted) -> bool {
     if (!provided || !wanted || exhausted || budget == 0)
@@ -1904,9 +1906,26 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
     if (a.capability && b.capability &&
         a.capability->atomic != GenericConstraintKind::None &&
         b.capability->atomic != GenericConstraintKind::None &&
-        a.capability->arguments == b.capability->arguments)
-      return constraintImplies(constraintBit(a.capability->atomic),
-                               b.capability->atomic);
+        a.capability->negated == b.capability->negated) {
+      const PredicateCapability &have = *a.capability;
+      const PredicateCapability &need = *b.capability;
+      // Lacking a fact implies lacking every fact that implies it.
+      if (have.arguments == need.arguments)
+        return have.negated
+                   ? constraintImplies(constraintBit(need.atomic), have.atomic)
+                   : constraintImplies(constraintBit(have.atomic), need.atomic);
+      // Within this case the provided type parameter has the fact, so a
+      // type built from it may derive the wanted fact structurally, through
+      // the same field rules that concrete instances use.
+      if (have.arguments.size() == 1 && need.arguments.size() == 1 &&
+          lifts < 256) {
+        ++lifts;
+        if (liftedParameterFact(have.arguments.front(), have.atomic,
+                                need.arguments.front(), need.atomic,
+                                have.negated))
+          return true;
+      }
+    }
     // Opaque predicates and member queries retain declaration identity. Equal
     // spelling, or equal results on one concrete type, is not a proof.
     const auto special = [](const AppliedConceptRequirement &item) {
@@ -1937,6 +1956,50 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
     }
   }
   return false;
+}
+
+auto SemanticVisitor::Impl::liftedParameterFact(const SemanticType &parameter,
+                                                GenericConstraintKind assumed,
+                                                const SemanticType &wanted,
+                                                GenericConstraintKind fact,
+                                                bool negated) const -> bool {
+  if (parameter.kind != SemanticType::TypeParameter || wanted == parameter ||
+      wanted == SemanticType::Unknown || assumedParameterFacts.size() >= 16)
+    return false;
+  const auto mentions = [&](const auto &self, const SemanticType &type,
+                            unsigned depth) -> bool {
+    if (type == parameter)
+      return true;
+    if (depth > 64)
+      return false;
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return self(self, argument, depth + 1);
+                       });
+  };
+  if (!mentions(mentions, wanted, 0))
+    return false;
+  // Only borrowed state is a negated fact that storage preserves: a value
+  // field holding borrowed state makes its owner carry it. Lacking any other
+  // fact does not compose through fields in a way this evaluator can derive.
+  if (negated && (assumed != GenericConstraintKind::BorrowFree ||
+                  fact != GenericConstraintKind::BorrowFree))
+    return false;
+  assumedParameterFacts.push_back({.parameter = parameter.genericParameterId,
+                                   .constraints = negated
+                                                      ? GenericConstraintSet{0}
+                                                      : constraintBit(assumed),
+                                   .borrowedState = negated});
+  struct PopAssumption {
+    std::vector<AssumedParameterFact> &facts;
+    ~PopAssumption() { facts.pop_back(); }
+  } pop{assumedParameterFacts};
+  // Borrowed state is positive evidence (a reference, a stored reference or
+  // a component carrying one), so its presence proves the negated fact.
+  if (negated)
+    return wanted.kind == SemanticType::Reference ||
+           typeTraits(wanted).containsBorrowedState;
+  return satisfiesConstraint(wanted, constraintBit(fact));
 }
 
 auto SemanticVisitor::Impl::firstRequirementFailure(

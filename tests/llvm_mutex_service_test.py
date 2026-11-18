@@ -136,8 +136,10 @@ def main():
                     raise AssertionError(f"{label}: wrong rejection or changed artifact")
         for name, source, profile, diagnostic in (
             ("single-threaded", root / "tests/fixtures/mutex_basic.gti", [], "GTI-S2084"),
+            # Owning globals are admitted, but a mutex whose element has a
+            # source destructor is not share-capable in the concurrent profile.
             ("source-global-cleanup", output / "reject-source-global.gti",
-             ["--execution-profile", "concurrent"], "GTI-S2061"),
+             ["--execution-profile", "concurrent"], "GTI-S2060"),
         ):
             if name == "source-global-cleanup":
                 source.write_text("import std.mutex;\n"

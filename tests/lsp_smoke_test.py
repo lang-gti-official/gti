@@ -6512,7 +6512,10 @@ def test_diagnostic_capability_negotiation(executable, root):
 def test_current_language_diagnostics(executable, root):
     source = (
         "class Cleanup { public: Cleanup() {} ~Cleanup() {} };\n"
-        "Cleanup global_cleanup{};\n"
+        # Hosted programs admit owning namespace globals; constexpr program
+        # storage still cannot retain runtime ownership.
+        "Cleanup accepted_cleanup{};\n"
+        "constexpr Cleanup global_cleanup{};\n"
         "int32_t runtime_value() { return 1; }\n"
         "constexpr int32_t called = runtime_value();\n"
         'int main(int bad) { string text = "value"; return bad; }\n'
@@ -6579,13 +6582,20 @@ def test_current_language_diagnostics(executable, root):
             diagnostic
             for diagnostic in publication["diagnostics"]
             if diagnostic.get("code") == "GTI-S2057"
+            and "runtime_value" in diagnostic["message"]
         )
         assert constexpr_diagnostic["data"]["phase"] == "semantics"
         assert constexpr_diagnostic["data"]["hints"]
         assert constexpr_diagnostic["relatedInformation"][0]["location"][
             "uri"
         ] == uri
-        constexpr_start = source.index("constexpr")
+        constexpr_start = source.index("constexpr int32_t")
+        accepted_line = source[: source.index("accepted_cleanup")].count("\n")
+        assert not [
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic["range"]["start"]["line"] == accepted_line
+        ], publication["diagnostics"]
         assert constexpr_diagnostic["relatedInformation"][0]["location"][
             "range"
         ]["start"] == lsp_position(source, constexpr_start)
@@ -6621,6 +6631,7 @@ def test_current_language_diagnostics(executable, root):
             for diagnostic in publication["diagnostics"]
             if diagnostic.get("code") == "GTI-S2061"
         )
+        assert "constexpr program storage" in lifecycle["message"], lifecycle
         lifecycle_name = source.index("global_cleanup")
         assert lifecycle["range"] == {
             "start": lsp_position(source, lifecycle_name),

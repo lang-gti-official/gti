@@ -1,0 +1,23 @@
+// A failed global constructor destroys its fields, then earlier completed globals.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: division_by_zero
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) { std::println(value); }
+  ~Marker() { std::println(value); }
+};
+Marker first{1};
+struct Failing {
+  Marker field;
+  int value;
+  Failing(int divisor) : field(Marker(2)), value(12 / divisor) {}
+  ~Failing() { std::println(99); }
+};
+Failing second{0};
+int main() { std::println(100); return 0; }

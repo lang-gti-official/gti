@@ -66,6 +66,7 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
   case MirInstructionKind::BeginThreadLocals:
+  case MirInstructionKind::CleanupProgramStorage:
   case MirInstructionKind::RetireProgramStorage:
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
@@ -804,7 +805,8 @@ std::string mirOptimizationBarrierReason(const MirProgram &program,
       !optimizationCoverage(instruction.intrinsic).classified()) {
     add("unclassified MIR operation");
   }
-  const MirEffectTraits effect = effects(program, instruction);
+  const MirEffectTraits effect = body ? effects(program, *body, instruction)
+                                      : effects(program, instruction);
   if (instruction.rawMemoryAccess ||
       instruction.unsafeOperation != UnsafeOperationKind::None)
     add("unsafe/raw-memory access");

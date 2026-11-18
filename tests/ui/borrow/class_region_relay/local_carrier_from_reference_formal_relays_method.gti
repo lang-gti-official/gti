@@ -1,0 +1,31 @@
+// A local carrier built from a reference parameter relays the parameter's owner through a class-region method.
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> f<lifetime h>(Holder&<h> holder) { auto w = holder.window(); return w.get(); }
+int main() { Holder h{}; return f(h) - 7; }

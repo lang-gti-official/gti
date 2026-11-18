@@ -853,6 +853,10 @@ auto SemanticVisitor::Impl::programConstructor(ConstructorId id) const
     return nullptr;
   }
   for (const ClassInfo &owner : classes) {
+    if (owner.copyConstructor && owner.copyConstructor->id == id)
+      return &*owner.copyConstructor;
+    if (owner.moveConstructor && owner.moveConstructor->id == id)
+      return &*owner.moveConstructor;
     if (owner.designatedConstructor && owner.designatedConstructor->id == id) {
       return &*owner.designatedConstructor;
     }
@@ -963,8 +967,9 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
     const SourceSpan &span, const std::vector<SemanticType> &types,
     const std::vector<CompileTimeValue> &values) -> void {
   if (constructor == nullptr || constructor->declaration == nullptr) {
-    addUnknownProgramEffect(
-        span, "a selected GTI constructor has no exact declaration");
+    addUnknownProgramEffect(span, "a selected GTI constructor for " +
+                                      typeSpelling(constructedType) +
+                                      " has no exact declaration");
     return;
   }
   if (constructor->declaration->body() != nullptr) {
@@ -980,6 +985,12 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
   if (constructor->declaration->specifier() &&
       constructor->declaration->specifier()->kind ==
           SpecialMemberSpecifierKind::Defaulted) {
+    // Defaulted copy/move policies structurally transfer the existing fields
+    // and base. They do not run their default initializers. Custom copy/move
+    // bodies are rejected by declaration analysis.
+    if (constructor->kind == ConstructorKind::Copy ||
+        constructor->kind == ConstructorKind::Move)
+      return;
     const ClassInfo &owner = classInfo(constructedType.classId);
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       recordProgramDefaultConstructionEffects(
@@ -1168,7 +1179,14 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
                                   "program-storage effect summary");
     return true;
   }
-  if (construction.generatedDefault || construction.constructor == 0) {
+  if (construction.kind == ConstructorKind::Copy ||
+      construction.kind == ConstructorKind::Move) {
+    if (construction.constructor != 0)
+      recordProgramSelectedConstructorEffect(
+          programConstructor(construction.constructor),
+          construction.constructedType, span, construction.typeArguments,
+          construction.valueArguments);
+  } else if (construction.generatedDefault || construction.constructor == 0) {
     recordProgramDefaultConstructionEffects(construction.constructedType, span);
   } else {
     const ProgramEffectOwner fields{
@@ -2052,6 +2070,8 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
        .requiresNativeRetirement = !variable->isThreadLocal() &&
                                    requiresActiveCleanupFor(binding->type) &&
                                    !requiresSourceCleanupFor(binding->type),
+       .requiresSourceCleanup = !variable->isThreadLocal() &&
+                                requiresSourceCleanupFor(binding->type),
        .threadLocal = variable->isThreadLocal(),
        .ensureFailure =
            variable->isThreadLocal()
@@ -2311,6 +2331,71 @@ auto SemanticVisitor::Impl::validateProgramInitializationEffects(
   }
 }
 
+// A global destructor runs after later program roots and thread-local roots
+// have ended. Reuse the closed source call graph used for initialization;
+// representation and backend emission must not invent this lifetime proof.
+void SemanticVisitor::Impl::validateProgramCleanupEffects(
+    const ProgramInitializationPlan &plan) {
+  std::unordered_map<SymbolId, ProgramInitializationStepId> stepForSymbol;
+  for (const auto &step : plan.steps)
+    stepForSymbol.emplace(step.symbol, step.id);
+  for (const auto &step : plan.steps) {
+    if (!step.requiresSourceCleanup)
+      continue;
+    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
+    const auto report = [&](SourceSpan span, const std::string &reason,
+                            const SymbolRecord *target) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2061", DiagnosticPhase::Semantics, span,
+          "Cannot safely destroy namespace or static object '" +
+              step.declaration->name().lexeme + "': " + reason + ".");
+      diagnostic.related.push_back(
+          {step.declarationSpan, "This object's program lifetime ends here in "
+                                 "reverse initialization order."});
+      if (target)
+        diagnostic.related.push_back(
+            {target->declarationSpan,
+             "The referenced storage is declared here."});
+      diagnostic.hints.emplace_back(
+          "Keep destructor dependencies in earlier program storage; do not "
+          "access thread-local storage during program shutdown.");
+      diagnostics.push_back(std::move(diagnostic));
+    };
+    const auto visit = [&](auto &&self, ProgramEffectOwner owner) -> bool {
+      if (!visited.insert(owner).second)
+        return false;
+      initializerEffectOwners.insert(owner);
+      const auto found = programEffects.find(owner);
+      if (found == programEffects.end())
+        return false;
+      const auto &summary = found->second;
+      if (!summary.unknown.empty()) {
+        const auto &unknown = summary.unknown.front();
+        report(unknown.span,
+               "its cleanup effects are not closed because " + unknown.reason,
+               nullptr);
+        return true;
+      }
+      for (const auto &use : summary.uses) {
+        const auto target = stepForSymbol.find(use.symbol);
+        if (isThreadLocalStorage(use.symbol) || target == stepForSymbol.end() ||
+            target->second >= step.id) {
+          report(use.span,
+                 "cleanup may access storage whose lifetime has already ended",
+                 semanticModel.database().findSymbol(use.symbol));
+          return true;
+        }
+      }
+      for (const auto &edge : summary.edges)
+        if (self(self, edge.target))
+          return true;
+      return false;
+    };
+    visit(visit,
+          {.kind = ProgramEffectOwnerKind::ProgramCleanup, .id = step.symbol});
+  }
+}
+
 auto SemanticVisitor::Impl::finalizeDeferredProgramConstantSubstitutions(
     const ProgramInitializationPlan &plan) -> void {
   std::unordered_map<SymbolId, const ConstantValue *> constants;
@@ -2400,10 +2485,24 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
   for (std::size_t index = 0; index < plan.steps.size(); ++index) {
     plan.steps[index].id = index + 1;
   }
+  const auto savedEffectOwner = currentProgramEffectOwner;
+  for (const auto &step : plan.steps) {
+    if (!step.requiresSourceCleanup)
+      continue;
+    const auto *binding = semanticModel.findBinding(*step.declaration);
+    if (!binding)
+      continue;
+    currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::ProgramCleanup,
+                                 .id = step.symbol};
+    programEffects[currentProgramEffectOwner] = {};
+    recordProgramCleanupEffects(binding->type, step.declarationSpan);
+  }
+  currentProgramEffectOwner = savedEffectOwner;
   closeConcreteProgramEffects(plan);
   closeConcreteProgramEffects(semanticModel.threadLocalInitializationPlan());
   finalizeDeferredProgramConstantSubstitutions(plan);
   validateProgramInitializationEffects(plan);
+  validateProgramCleanupEffects(plan);
   semanticModel.setProgramInitializationPlan(std::move(plan));
   finalizeHostedProgramEntry(program);
 }
@@ -8657,10 +8756,47 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
        (function.returnType.kind == SemanticType::Reference &&
         function.returnType.referenceAccess == AccessMode::ReadOnly &&
         !textReference));
-  return readObservation ||
+  return readObservation || receiverClassRegionRelay(function) ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&
           !typeTraits(function.returnType).containsBorrowedState);
+}
+
+auto SemanticVisitor::Impl::receiverClassRegionRelay(
+    const CallableCandidate &function) const -> bool {
+  // A result written in one of the receiver's class regions is what one of
+  // its reference fields stores, never storage of the receiver itself, so a
+  // fresh carrier temporary can supply it beyond the full expression: the
+  // result keeps the temporary's external owners, not the temporary.
+  // A carrier result takes the stored reference into one of its own fields.
+  const bool referenceResult =
+      function.returnType.kind == SemanticType::Reference;
+  const bool carrierResult =
+      function.returnType.kind == SemanticType::Class &&
+      typeTraits(function.returnType).containsBorrowedState;
+  if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+      function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+      (!referenceResult && !carrierResult))
+    return false;
+  // A generic class's member reaches resolution before its instance maps
+  // the stored fields; its signature already states the relationship: a
+  // result written only in a class binder that the class stores.
+  if (function.returnBorrowFields.empty()) {
+    if (function.declaration == nullptr)
+      return false;
+    const auto lifetime =
+        explicitLifetimeResult(*function.declaration, {}, function.ownerClass);
+    return lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+           lifetime.classBinder && lifetime.classStoresRegion &&
+           lifetime.parameters.empty();
+  }
+  if (function.returnBorrowFields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
+  return mapping.origin == BorrowOriginKind::Receiver &&
+         mapping.sourceFields.size() == 1 &&
+         mapping.resultFields.empty() == referenceResult &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
 
 auto SemanticVisitor::Impl::receiverTextFieldRelay(
@@ -8726,7 +8862,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function) ||
-       (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
+       (isTextDependentValue(*info) && receiverTextFieldRelay(function)) ||
+       receiverClassRegionRelay(function)) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
        (consumingReceiverValue(receiver) && !virtualCarrierProducer()))) {
     return function.receiverMutability == ReceiverMutability::Mutable
@@ -14071,8 +14208,11 @@ auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const
     return 0;
   }
   const auto found = genericConstraints.find(type.genericParameterId);
-  const GenericConstraintSet declared =
+  GenericConstraintSet declared =
       found == genericConstraints.end() ? 0 : found->second;
+  for (const AssumedParameterFact &assumed : assumedParameterFacts)
+    if (assumed.parameter == type.genericParameterId)
+      declared |= assumed.constraints;
   return impliedConstraints(declared | activeAtomicConstraints(type));
 }
 

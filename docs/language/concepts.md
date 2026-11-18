@@ -483,6 +483,29 @@ the required alternative; one successful branch is insufficient. This bounded
 implication check does not execute or infer arbitrary predicate bodies. Recursive query
 checking is bounded to 64 active checks.
 
+Within one provided branch, a compiler-verified fact of a type parameter also
+carries to a type built from it. The wanted fact is evaluated by the ordinary
+structural rules under the assumption that the parameter has the branch's fact,
+so `std::relocatable<T> || has_borrowed<T>()` proves the same disjunction for
+`Node<T>` when `Node` stores a `T` by value:
+
+```gti
+import std.meta;
+constexpr bool has_borrowed<T>() { return !std::meta::is_borrow_free<T>(); }
+concept element<T> = std::relocatable<T> || has_borrowed<T>();
+class Node<T> { T data; public: Node(T value) : data(std::move(value)) {} };
+int store<element T>() { return 0; }
+int nested<T>() requires element<T> { return store<Node<T>>(); }
+```
+
+Each branch is lifted on its own, and only where the storage derives it: a
+`T*` or `T&` field, a deleted move constructor or other declared policy that
+removes the fact, and a branch whose predicate is an arbitrary constexpr
+function all yield no proof. Lacking borrow freedom (carrying borrowed state)
+is the one negated fact that lifts, because a field holding borrowed state
+makes its owner carry it. Concrete instances are still checked against their
+actual types.
+
 ### Constexpr reflection predicates
 
 ```gti
@@ -497,7 +520,8 @@ non-Boolean, unsafe or false call cannot satisfy a constraint. An arbitrary
 constexpr function is a concrete validity filter, not a promise that the
 compiler can deduce every consequence of its implementation. Direct reflected
 facts, and unambiguous safe constexpr wrappers that directly forward such a
-fact, additionally carry that fact into symbolic body checking. Public function
+fact or its negation (`!`), additionally carry that fact into symbolic body
+checking; a negated fact is used only to prove implications. Public function
 names are not special: the fact originates at a trusted declaration identity.
 Lexical lookup belongs to the predicate declaration rather than the caller's
 generic bindings. No separate constexpr interpreter or native template probing

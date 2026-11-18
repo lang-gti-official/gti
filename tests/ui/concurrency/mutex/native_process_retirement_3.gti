@@ -1,5 +1,6 @@
-// Native process retirement: even infallible source destructors remain outside native retirement.
+// Concurrent globals: a mutex of an element whose destructor body denies
+// automatic transfer is not share-capable as a concurrent-profile global.
 //@ execution-profile: concurrent
 import std.mutex;
-class Owned { public: ~Owned() {} Owned() = default; }; std::mutex<Owned> global{Owned()};  //~ ERROR GTI-S2061
+class Owned { public: ~Owned() {} Owned() = default; }; std::mutex<Owned> global{Owned()};  //~ ERROR GTI-S2060 not share-capable
 int main() { return 0; }

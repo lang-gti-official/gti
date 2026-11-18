@@ -62,6 +62,11 @@ llvm::Function *declareRuntimeService(Session &session,
     name = "gti_rt_thread_locals_drain_v2";
     parameters = {ptr, ptr};
     break;
+  case RuntimeService::DrainThreadLocalsChecked:
+    name = "gti_rt_thread_locals_drain_checked_v3";
+    result = llvm::Type::getInt32Ty(context);
+    parameters = {ptr, ptr};
+    break;
   case RuntimeService::ThreadLocalsAttached:
   case RuntimeService::ThreadLocalsClosing:
     name = service == RuntimeService::ThreadLocalsAttached
