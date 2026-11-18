@@ -94,6 +94,10 @@ from making an incomplete run appear successful. Compare the same source and
 stdlib paths, target, compiler configuration and optimization level across
 builds; no source identities or coverage counts are normalized. Counters are
 observations and are deliberately excluded from byte-equivalence comparisons.
+The command honors the runner's execution-profile defaults and configuration
+flags. It rejects unsupported multi-file, overlay, cross-target, limit, native,
+prelude and raw-audit configurations instead of silently capturing another
+program configuration.
 This command does not run the executable or establish performance evidence:
 it emits IR and object bytes separately and repeats backend planning.
 `scripts/llvm_admission_evidence.py capture` runs this over numbered examples

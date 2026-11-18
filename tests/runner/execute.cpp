@@ -72,10 +72,11 @@ int writeAdmissionEvidence(const char *self, const fs::path &source,
       throw std::invalid_argument(test.errors.front());
     if (test.sections.size() != 1 || !test.stdlibOverlay.empty() ||
         !test.target.empty() || !test.compileLimits.empty() ||
-        !test.nativeArgs.empty())
+        !test.nativeArgs.empty() || test.noPrelude ||
+        test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings)
       throw std::invalid_argument(
-          "admission evidence requires an ordinary, single-file host input; "
-          "materialize multi-file/overlay inputs separately");
+          "admission evidence does not yet support this input's multi-file, "
+          "overlay, target, limit, native, prelude or audit configuration");
     const lang::driver::AnalysisConfiguration configuration(
         lang::TargetInfo::host(),
         test.concurrent ? lang::ExecutionProfile::Concurrent

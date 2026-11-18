@@ -44,7 +44,7 @@ GTI_UNIT_TEST(llvm_admission_evidence) {
   require(lang::endTimeTrace(tracePath.string()), "trace publication failed");
   std::ifstream traceFile(tracePath);
   const std::string traceText((std::istreambuf_iterator<char>(traceFile)), {});
-  const auto trace = llvm::json::parse(traceText);
+  auto trace = llvm::json::parse(traceText);
   require(trace && trace->getAsObject(), "invalid trace JSON");
   const auto *events = trace->getAsObject()->getArray("traceEvents");
   require(events != nullptr, "missing trace events");
