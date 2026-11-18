@@ -3146,3 +3146,52 @@ int main() { return 0; }
   expect(exercised, "forgery exercises the concrete relay body");
   return ::failures == 0 ? 0 : 1;
 }
+
+// Read-only references to mutable globals cannot acquire static supplier proof.
+GTI_UNIT_TEST(static_return_supplier_storage_forgery) {
+  const auto frontend = analyzeEmissionFixture(R"(
+class Two<lifetime o> {
+  int&<o> first;
+  int&<o> second;
+public:
+  Two(int&<o> a, int&<o> b) : first(a), second(b) {}
+  int&<o> pick(bool choose) && {
+    if (choose) { return this.first; }
+    return this.second;
+  }
+};
+int global = 7;
+int&<o> relay<lifetime o>(int&<o> keep) {
+  return Two(keep, global).pick(false);
+}
+int main() { return 0; }
+)");
+  if (!frontend.canGenerateCode())
+    return 1;
+  auto forged = frontend.mir;
+  auto &module = const_cast<lang::MirBody &>(forged.module());
+  bool changed = false;
+  for (const auto &step : forged.programInitializationPlan().steps) {
+    if (step.storageKind != lang::ProgramStorageKind::NamespaceGlobal ||
+        step.storagePlace == 0)
+      continue;
+    auto *place =
+        const_cast<lang::MirPlace *>(module.findPlace(step.storagePlace));
+    if (!place || place->type != lang::SemanticType::Int32)
+      continue;
+    place->access = lang::AccessMode::Mutable;
+    changed = true;
+  }
+  expect(changed, "forgery changes the actual global storage permission");
+  const auto verified = lang::verifyMirProgram(forged);
+  expect(
+      !verified.valid() &&
+          std::any_of(verified.errors.begin(), verified.errors.end(),
+                      [](const auto &error) {
+                        return error.message.find("composed return contains an "
+                                                  "unproved owner origin") !=
+                               std::string::npos;
+                      }),
+      "read-only supplier views do not prove mutable globals live statically");
+  return ::failures == 0 ? 0 : 1;
+}

@@ -7169,6 +7169,32 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return result;
 }
 
+// Prove the actual storage identity, not merely a read-only view of it.
+[[nodiscard]] bool staticStoragePlace(
+    const MirProgram &program, const MirBody &body, MirPlaceId id,
+    const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
+        &bindingLoans) {
+  const CanonicalPlace place =
+      mir_detail::canonicalBorrowOrigin(body, id, bindingLoans);
+  if (place.ambiguous || place.root != MirPlaceRootKind::Symbol ||
+      place.capture != 0 || program.findThreadLocalStorage(place.symbol))
+    return false;
+  for (const auto &projection : place.projections)
+    if (projection.kind != MirProjectionKind::Field &&
+        projection.kind != MirProjectionKind::Index &&
+        projection.kind != MirProjectionKind::Base &&
+        projection.kind != MirProjectionKind::Dereference)
+      return false;
+  const auto *step =
+      program.programInitializationPlan().findStepForSymbol(place.symbol);
+  const auto *storage =
+      step ? program.module().findPlace(step->storagePlace) : nullptr;
+  return storage != nullptr &&
+         (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
+          step->storageKind == ProgramStorageKind::StaticField) &&
+         storage->access == AccessMode::ReadOnly;
+}
+
 // RFC 0004: a declared `static` reference result with no exact summarized
 // place. The returned loan, its ancestors and every stored dependency must
 // each be rooted in immutable namespace or static-field storage. Thread-local
@@ -7179,27 +7205,6 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                   const MirLoan &returned,
                   const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
                       &bindingLoans) {
-  const auto staticPlace = [&](MirPlaceId id) {
-    const CanonicalPlace place =
-        mir_detail::canonicalBorrowOrigin(body, id, bindingLoans);
-    if (place.ambiguous || place.root != MirPlaceRootKind::Symbol ||
-        place.capture != 0 || program.findThreadLocalStorage(place.symbol))
-      return false;
-    for (const auto &projection : place.projections)
-      if (projection.kind != MirProjectionKind::Field &&
-          projection.kind != MirProjectionKind::Index &&
-          projection.kind != MirProjectionKind::Base &&
-          projection.kind != MirProjectionKind::Dereference)
-        return false;
-    const auto *step =
-        program.programInitializationPlan().findStepForSymbol(place.symbol);
-    const auto *storage =
-        step ? program.module().findPlace(step->storagePlace) : nullptr;
-    return storage != nullptr &&
-           (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
-            step->storageKind == ProgramStorageKind::StaticField) &&
-           storage->access == AccessMode::ReadOnly;
-  };
   std::vector<MirLoanId> pending{returned.id};
   std::unordered_set<MirLoanId> visited;
   while (!pending.empty()) {
@@ -7210,12 +7215,14 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     const MirLoan *loan = body.findLoan(id);
     if (loan == nullptr || loan->entry ||
         loan->kind == MirLoanKind::Parameter ||
-        loan->access != AccessMode::ReadOnly || !staticPlace(loan->source))
+        loan->access != AccessMode::ReadOnly ||
+        !staticStoragePlace(program, body, loan->source, bindingLoans))
       return false;
     pending.push_back(loan->parent);
     pending.push_back(loan->storedDependency);
     for (const auto &dependency : loan->additionalDependencies) {
-      if (dependency.source == 0 || !staticPlace(dependency.source))
+      if (dependency.source == 0 ||
+          !staticStoragePlace(program, body, dependency.source, bindingLoans))
         return false;
       pending.push_back(dependency.parent);
     }
@@ -7854,6 +7861,19 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       auto sources = loan->additionalSources();
       sources.insert(sources.begin(), loan->source);
       for (const auto id : sources) {
+        // Immutable process-lifetime storage outlives every formal region.
+        // This permits an additional supplier, not a replacement for the
+        // primary origin independently checked above. A read-only local view
+        // cannot turn mutable or thread-local global storage into static.
+        if (id != loan->source && loan->access == AccessMode::ReadOnly &&
+            staticStoragePlace(program, body, id, bindingLoans) &&
+            std::all_of(loan->additionalDependencies.begin(),
+                        loan->additionalDependencies.end(),
+                        [&](const auto &dependency) {
+                          return dependency.source != id ||
+                                 dependency.access == AccessMode::ReadOnly;
+                        }))
+          continue;
         const auto canonical = borrowSourceForPlace(body, id, 0);
         const auto *place = canonical ? body.findPlace(*canonical) : nullptr;
         if (place == nullptr || place->root != MirPlaceRootKind::Binding) {
