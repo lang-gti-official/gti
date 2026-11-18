@@ -139,10 +139,10 @@ jobs:
           GTI_HEAD_SHA: ${{ github.sha }}
         run: python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
       - name: Keep the old test suite frozen
-        # No new tests/*_test.py, tests/*_tests.cpp or add_test( registration:
-        # the old suite is being drained into one runner
-        # (docs/plans/test-suite-redesign.md). tests/ui/, tests/unit/,
-        # tests/runner/ and tests/gti_test.cmake are the new runner's.
+        # No new tests/*_test.py, tests/*_tests.cpp or add_test( registration,
+        # a standing rule (docs/plans/test-suite-redesign.md). tests/ui/,
+        # tests/slow/, tests/lsp/, tests/project/, tests/unit/, tests/runner/
+        # and tests/gti_test.cmake are the runner's.
         env:
           GTI_FORK_SHA: ${{ steps.range.outputs.base }}
           GTI_HEAD_SHA: ${{ github.sha }}
