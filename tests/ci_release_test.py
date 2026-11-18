@@ -445,6 +445,12 @@ def nightly_contract(root):
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
         "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
+    # The gate judges the fast job against the platforms its real event needs.
+    assert "GTI_FAST_MATRIX: ${{ needs.plan.outputs.fast_matrix }}" in gate
+    assert '--fast-matrix "${GTI_FAST_MATRIX}" --trigger "${GTI_EVENT_NAME}"' in gate
+    for line in gate.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "--")):
+            assert "${{" not in line, line
     verdict = integration["verdict"]
     assert "needs: [plan, package, integration]\n" in verdict
     assert "advisories --reports" in verdict and "continue-on-error: true" in verdict, \
@@ -726,30 +732,65 @@ def retry_contract(root):
 
 def gti_test_tiers_contract(root):
     """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
-    puts them: the PR gate and merge queue run gti_test_ui, every tests/ui
-    shard, gti_test_examples and gti_unit_tests on Linux, and gti_test_ui,
-    gti_unit_tests and one tests/ui shard chosen from the commit on macOS, with
-    per-case JUnit, and hold changed cases to half their limit (gti_test_ui is
-    the runner, tidy, tests/project and tests/lsp; gti_test_ui_<i> shard
-    tests/ui); full validation runs them all on both platforms; the daily slow
-    tier runs tests/slow and the --isolate run; the sanitizer verdict includes an
-    instrumented gti_test_ui run."""
+    puts them: a pull request runs gti_test_ui, every tests/ui shard,
+    gti_test_examples and gti_unit_tests on Linux, and gti_test_ui,
+    gti_unit_tests and one tests/ui shard chosen from the commit on macOS; a
+    merge-queue candidate runs only the Linux row; a main dispatch runs both;
+    all with per-case JUnit, and the PR holds changed cases to half their limit
+    (gti_test_ui is the runner, tidy, tests/project and tests/lsp;
+    gti_test_ui_<i> shard tests/ui); full validation runs them all on both
+    platforms; the daily slow tier runs tests/slow and the --isolate run; the
+    sanitizer verdict includes an instrumented gti_test_ui run."""
     workflows = root / ".github/workflows"
     ci = (workflows / "ci.yml").read_text()
     fast = jobs(ci)["fast"]
+    checks = load_module(root / "scripts/validation_checks.py", "validation_checks_tiers_contract")
     # gti_test_ui and its tests/ui shards gti_test_ui_<i> (tests/gti_test.cmake).
     tiers = "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"
-    rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), rotate: ([0-9]+), "
-                      r"gate: '([a-z0-9_|()?\[\]+-]+)'\}", fast)
-    assert sorted(platform for platform, _, _ in rows) == ["darwin", "linux"], rows
+    # The rows live in the plan job, which keeps the event's platforms; the
+    # fast job's matrix is exactly that output, never a static list.
+    plan = jobs(ci)["plan"]
+    step = plan.split("name: Choose the fast-checks platforms for this event", 1)[1].split("- name:", 1)[0]
+    assert "id: fast" in step and "fast_matrix: ${{ steps.fast.outputs.matrix }}" in plan
+    assert ('python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"\n'
+            '          --rows "${GTI_FAST_ROWS}" --output "${GITHUB_OUTPUT}"') in step
+    folded = step.split("GTI_FAST_ROWS: >-\n", 1)[1].split("        run:", 1)[0]
+    rows = json.loads(" ".join(line.strip() for line in folded.splitlines()))
+    assert "matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}" in fast and "include:" not in fast
+    assert "runs-on: ${{ matrix.os }}" in fast
     # Linux runs every tier; macOS the platform entries plus one rotating
     # tests/ui shard, and full validation's darwin set runs the rest there.
-    assert {platform: (int(rotate), gate) for platform, rotate, gate in rows} == {
-        "linux": (0, tiers), "darwin": (1, "gti_test_ui|gti_unit_tests")}, rows
+    assert {row["platform"]: (row["os"], row["rotate"], row["gate"]) for row in rows} == {
+        "linux": ("ubuntu-24.04", 0, tiers), "darwin": ("macos-26", 1, "gti_test_ui|gti_unit_tests")}, rows
+    # What runs on each event: both rows for a pull request (its own gate,
+    # which admits it to the queue, needs the macOS row) and a main dispatch;
+    # the Linux row alone for a merge-queue candidate.
+    expected = {"pull_request": ["darwin", "linux"], "workflow_dispatch": ["darwin", "linux"],
+                "merge_group": ["linux"]}
+    for event, platforms in expected.items():
+        matrix = checks.fast_matrix(rows, event)
+        assert sorted(row["platform"] for row in matrix["include"]) == platforms, (event, matrix)
+        assert all(row in rows for row in matrix["include"]), "rows pass through unchanged"
+    assert set(expected) == set(checks.FAST_PLATFORMS) and \
+        {"pull_request", "merge_group", "workflow_dispatch"} == set(re.findall(
+            r"^  (pull_request|merge_group|workflow_dispatch):", ci.split("\njobs:\n", 1)[0], re.M)), \
+        "every event CI runs on has a fast-checks platform set"
+    for bad in (rows[:1], rows + rows[:1], [{**rows[0], "extra": 1}, rows[1]]):
+        try:
+            checks.fast_matrix(bad, "pull_request")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(("accepted malformed fast rows", bad))
+    try:
+        checks.fast_matrix(rows, "push")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an event CI does not run on has no fast-checks matrix")
     selection = fast.split("name: Select this commit's gti-test entries", 1)[1].split("- name:", 1)[0]
     assert "validation_checks.py gate-tests --build build" in selection and '--sha "${GITHUB_SHA}"' in selection
     assert "GTI_GATE: ${{ matrix.gate }}" in selection and "GTI_ROTATE: ${{ matrix.rotate }}" in selection
-    checks = load_module(root / "scripts/validation_checks.py", "validation_checks_tiers_contract")
     registered = ["gti_test_ui", "gti_test_examples", "gti_unit_tests", "llvm_backend_cli",
                   *(f"gti_test_ui_{index}" for index in range(1, 9))]
     assert checks.gate_tests(registered, tiers, 0, "0" * 40) == (tiers, [])

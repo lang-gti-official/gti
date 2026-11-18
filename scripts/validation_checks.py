@@ -253,10 +253,47 @@ EVENTS = {"pull_request", "merge_group", "full_validation"}
 FULL_VALIDATION_JOBS = {"package", "integration"}
 
 
-def admission(mode, results, event="pull_request"):
+# The platforms ci.yml's `fast` job runs on, by triggering event. A pull
+# request proves both: its own CI gate, which needs the macOS row, is what lets
+# it enter the merge queue. Queue candidates run Linux only, so several can
+# build at once without each taking one of the few hosted macOS runners; a
+# macOS-only failure that only the combination of queued PRs causes reaches
+# main and post-integration full validation catches it (darwin set). A manual
+# main dispatch keeps both. The source-stdlib and LSP lanes are not affected:
+# they package both platforms' nightly archives in the queue.
+FAST_PLATFORMS = {"pull_request": ("darwin", "linux"), "merge_group": ("linux",),
+                  "workflow_dispatch": ("darwin", "linux")}
+FAST_ROW_KEYS = {"os", "platform", "rotate", "gate"}
+
+
+def fast_matrix(rows, trigger):
+    """The `fast` job's matrix for this event: the rows ci.yml declares (one
+    per platform), keeping only the event's platforms."""
+    if trigger not in FAST_PLATFORMS:
+        raise ValueError(f"No fast-checks platforms for event {trigger!r}")
+    if (not isinstance(rows, list) or not all(isinstance(row, dict) and set(row) == FAST_ROW_KEYS for row in rows)
+            or sorted(row["platform"] for row in rows) != ["darwin", "linux"]):
+        raise ValueError("The fast-checks rows must be one {os, platform, rotate, gate} row each for darwin and linux")
+    return {"include": [row for row in rows if row["platform"] in FAST_PLATFORMS[trigger]]}
+
+
+def fast_matrix_platforms(matrix):
+    rows = matrix.get("include") if isinstance(matrix, dict) else None
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("The plan published no fast-checks matrix")
+    return tuple(sorted(str(row.get("platform")) for row in rows))
+
+
+def admission(mode, results, event="pull_request", fast=None, trigger=None):
     """The one required check. A PR proves lint and fast checks before it may
     queue, and the merge queue proves the same on the exact candidate; the
-    complete suite runs post-integration under the `full_validation` event."""
+    complete suite runs post-integration under the `full_validation` event.
+
+    In full mode `fast` is the matrix the plan gave the fast job and `trigger`
+    the real event (the gate judges a main dispatch as `merge_group`).
+    `needs.fast.result` is success only when every row passed, so with the
+    matrix's platforms equal to FAST_PLATFORMS[trigger] a pull request cannot
+    pass without its macOS row, and nothing passes without the Linux row."""
     if event not in EVENTS:
         raise ValueError("Unknown CI event")
     if mode == "component":
@@ -282,6 +319,14 @@ def admission(mode, results, event="pull_request"):
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
+    if "fast" in required and fast is not None:
+        trigger = trigger or event
+        if trigger not in FAST_PLATFORMS:
+            raise ValueError(f"No fast-checks platforms for event {trigger!r}")
+        ran, needed = fast_matrix_platforms(fast), FAST_PLATFORMS[trigger]
+        if ran != needed:
+            raise ValueError(f"Fast checks ran on {', '.join(ran) or 'nothing'}; "
+                             f"a {trigger} run needs {', '.join(needed)}")
     return required
 
 
@@ -998,6 +1043,12 @@ def main(argv=None):
     gate = sub.add_parser("ci-gate")
     gate.add_argument("--mode", required=True)
     gate.add_argument("--results", required=True)
+    gate.add_argument("--fast-matrix", help="the fast job's matrix (JSON) from the plan; required in full mode")
+    gate.add_argument("--trigger", help="the event that started the run, when --event judges it as another")
+    matrix = sub.add_parser("fast-matrix", help="the fast job's matrix for this event")
+    matrix.add_argument("--event", required=True)
+    matrix.add_argument("--rows", required=True, help="JSON list of the declared rows")
+    matrix.add_argument("--output", help="GITHUB_OUTPUT file to append `matrix=` to")
     gate.add_argument("--event", default="pull_request")
     gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
     gate.add_argument("--platforms", default="darwin,linux")
@@ -1060,13 +1111,27 @@ def main(argv=None):
         if args.mode == "metadata":
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
-        admission(args.mode, json.loads(args.results), args.event)
+        fast = None
+        if args.mode == "full" and args.event != "full_validation":
+            if not args.fast_matrix:
+                raise ValueError("Full mode needs the fast job's matrix (--fast-matrix)")
+            fast = json.loads(args.fast_matrix)
+        admission(args.mode, json.loads(args.results), args.event, fast, args.trigger)
+        if fast is not None:
+            print("Fast checks passed on " + ", ".join(fast_matrix_platforms(fast)))
         if args.mode == "full" and args.event == "full_validation":
             if not args.shard_reports:
                 raise ValueError("Full validation needs the shard reports")
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "fast-matrix":
+        line = "matrix=" + json.dumps(fast_matrix(json.loads(args.rows), args.event), separators=(",", ":"))
+        if args.output:
+            with open(args.output, "a", encoding="utf-8") as output:
+                output.write(line + "\n")
+        print(line)
         return
     if args.command == "durations":
         update_durations(root / args.durations, Path(args.reports))

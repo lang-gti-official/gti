@@ -146,7 +146,8 @@ semantics.
   a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
   entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
   one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
-  runs the same bounded set on the exact candidate. Post-integration full validation then runs the per-commit
+  runs the Linux half of that set on the exact candidate, so a macOS-only
+  failure from combining queued PRs is caught by full validation after merge. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
@@ -410,7 +411,7 @@ one-off implementation-note or redesign files when an existing category fits.
   `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
   runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
   in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
-  it on Linux (macOS runs one rotating shard per candidate and every shard
+  it on Linux (macOS runs one rotating shard per pull request and every shard
   after integration). Declared names the gate already ran are not re-run, and
   macOS re-runs only declared tests in the `darwin` set. Run them all with
   `ctest --test-dir build-release -R '^gti_test_ui'`.

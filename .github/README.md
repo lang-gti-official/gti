@@ -65,13 +65,22 @@ python3 scripts/agent_workflow.py protection
   (`release_artifacts.py package_attempt`).
 - On manual dispatch from main: full integration and production packaging,
   without PR-body declarations, for release commissioning or artifact recovery.
-- In the merge queue: system-LLVM fast checks plus production packaging and
-  installed-consumer checks on both platforms, and the complete suite on the
-  exact candidate in its bundled-release configuration, split into
-  cost-balanced shards (`scripts/validation_checks.py shard`, balanced by
-  `tests/ci_test_durations.json`) on both platforms, the ASan/UBSan subset, the
-  installed-toolchain smoke and deterministic docgen. The gate merges the shard
-  reports and fails unless each platform ran its whole inventory exactly once.
+- In the merge queue: the same lint and workflow regression jobs, and the
+  Linux x64 fast-checks build only (`feedback-fast` and every `gti-test` tier)
+  on the exact candidate. Queue candidates take no macOS runner, so several
+  can build at once while the five hosted macOS runners serve PR checks and
+  full validation. **Trade-off:** macOS coverage of a change is its own PR
+  check (the platform subset above, which must pass before the PR may queue)
+  and post-integration full validation (the whole `darwin` set). A
+  macOS-only failure that only the combination of queued PRs causes is not
+  caught in the queue: it reaches main, and full validation of that main head
+  catches it, keeps nightly off that commit and opens `main-broken`. The
+  `CI gate` accepts a queue candidate's Linux-only fast result and a pull
+  request's only with both platforms green, and neither with the Linux job
+  skipped or failed (`validation_checks.py` `FAST_PLATFORMS`). A manual main
+  dispatch of `ci.yml` runs both platforms. The `source-stdlib` and `lsp`
+  lanes still run on both platforms in the queue, because they package the
+  nightly archives for both.
 - Explicitly allowlisted orchestration-only PRs and merge groups run the
   inexpensive lint and workflow checks. They produce no release packages;
   publication still requires admitted release-producing integration evidence for its exact source.
@@ -104,8 +113,8 @@ Every native job builds with the reviewed runtime compiler that
 on `macos-26`. The script fails before the build if `runtime/src/atomic_lane.h`
 does not admit the compiler.
 
-Contributors run focused checks only; the queue owns the complete suite. A
-queue failure belongs to the change that introduced it.
+Contributors run focused checks only; post-integration full validation owns
+the complete suite. A queue failure belongs to the change that introduced it.
 
 ## Nightly toolchain
 

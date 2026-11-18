@@ -1442,6 +1442,49 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("full", gate, "push")
 
+    def test_ci_gate_requires_each_events_fast_platforms(self):
+        """A pull request's gate needs fast checks on Linux and macOS (its gate
+        is what admits it to the queue); a queue candidate's needs Linux only;
+        a main dispatch (judged as merge_group) needs both. needs.fast.result
+        is the aggregate of the rows the matrix held, so the matrix's platforms
+        decide which rows the success covers."""
+        lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
+        gate = {**lint, "fast": {"result": "success"}}
+        rows = [{"os": "ubuntu-24.04", "platform": "linux", "rotate": 0, "gate": "gti_test_ui"},
+                {"os": "macos-26", "platform": "darwin", "rotate": 1, "gate": "gti_test_ui"}]
+        both, linux = validation.fast_matrix(rows, "pull_request"), validation.fast_matrix(rows, "merge_group")
+        darwin = {"include": [rows[1]]}
+        self.assertEqual(validation.fast_matrix(rows, "workflow_dispatch"), both)
+        validation.admission("full", gate, "pull_request", both, "pull_request")
+        validation.admission("full", gate, "merge_group", linux, "merge_group")
+        validation.admission("full", gate, "merge_group", both, "workflow_dispatch")
+        for event, trigger, matrix in (("pull_request", "pull_request", linux),
+                                       ("pull_request", "pull_request", darwin),
+                                       ("merge_group", "merge_group", darwin),
+                                       ("merge_group", "merge_group", both),
+                                       ("merge_group", "workflow_dispatch", linux),
+                                       ("merge_group", "merge_group", {"include": []}),
+                                       ("merge_group", "merge_group", {}),
+                                       ("merge_group", "push", linux)):
+            with self.assertRaises(ValueError, msg=(event, trigger, matrix)):
+                validation.admission("full", gate, event, matrix, trigger)
+        # The Linux row skipped, failed or cancelled never passes, on any event.
+        for state in ("skipped", "failure", "cancelled"):
+            for event, matrix in (("pull_request", both), ("merge_group", linux)):
+                with self.assertRaises(ValueError):
+                    validation.admission("full", {**lint, "fast": {"result": state}}, event, matrix, event)
+        # The command line refuses full mode without the plan's matrix.
+        results = json.dumps(gate)
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "pull_request",
+                             "--fast-matrix", json.dumps(linux), "--trigger", "pull_request"])
+        validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                         "--fast-matrix", json.dumps(linux), "--trigger", "merge_group"])
+        validation.main(["ci-gate", "--mode", "automation", "--results", json.dumps(lint),
+                         "--event", "merge_group", "--fast-matrix", "", "--trigger", "merge_group"])
+
     def test_ci_draft_and_component_report_incomplete_integration(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
         for draft in (True, False):
