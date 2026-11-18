@@ -3399,7 +3399,7 @@ available source. A failed dependency stops the application build and preserves
 the failing target and application outputs; previously completed prerequisites
 remain published. Explicit artifacts still require no producer source.
 The [`compiled-dependencies`](../../examples/compiled-dependencies/README.md)
-example and `compiled_dependency_project` gate cover a diamond graph, freshness,
+example and `tests/slow/project/compiled_dependencies` gate cover a diamond graph, freshness,
 receipt mismatches, failures and source-free distribution of the complete closure.
 
 Consumer requests retain whole-program cache bypass; compiled library output reuse

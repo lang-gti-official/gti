@@ -1851,7 +1851,7 @@ A conservative source/configuration/compiler/runtime/dependency fingerprint reus
 unchanged library outputs and rebuilds stale or corrupted ones. This still reads
 producer source inputs to establish freshness. `check` remains read-only and
 requires existing dependency artifacts. Explicit distributed artifact closures
-remain usable without sources. The `compiled_dependency_project` example covers
+remain usable without sources. The `tests/slow/project/compiled_dependencies` example covers
 these paths. Package-qualified source edges, zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
 
@@ -1873,7 +1873,7 @@ constants without active cleanup/native retirement. Their internal LLVM globals
 are linked once per library, including source-absent dependency diamonds. The
 `compiled_scalar_library` regression covers mutable namespace storage, addressed
 namespace/class static constant data, fresh process state, and fail-closed plan mutations;
-`compiled_dependency_project` covers shared counters through both diamond paths.
+`tests/slow/project/compiled_dependencies` covers shared counters through both diamond paths.
 No new startup execution or retirement scheduling is claimed. Executable explicit
 initializers (including plain literal initializers), TLS, function-local lazy
 storage and active destruction still require composable per-library lifetime

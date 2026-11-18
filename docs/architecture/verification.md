@@ -12905,7 +12905,7 @@ Owning Release evidence on macOS arm64:
   origin, index/access/type contracts, including forged access-enum ordinals;
   source-absent primitive/record reference execution at O3 (formerly also O0),
   mutable writes and eight exact GTI-S2017 escape/alias/access rejections.
-- `project_model` and `compiled_dependency_project`: immutable DAG planning,
+- `project_model` and `tests/slow/project/compiled_dependencies`: immutable DAG planning,
   automatic diamond builds, timestamp reuse, dependency-body invalidation,
   stale receipts/corrupt artifact recovery, failure preservation, graph/path
   rejection and source-absent distributed dependency closure (22 CLI steps).

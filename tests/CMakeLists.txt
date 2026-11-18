@@ -3343,10 +3343,6 @@ add_executable(gti_compiled_interface_types_tests compiled_interface_types_tests
 target_link_libraries(gti_compiled_interface_types_tests PRIVATE gti_compiler)
 add_test(NAME compiled_interface_types COMMAND gti_compiled_interface_types_tests)
 
-add_test(NAME compiled_dependency_project
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_dependency_project_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-dependency-project")
-set_tests_properties(compiled_dependency_project PROPERTIES TIMEOUT 600)
 
 
 
