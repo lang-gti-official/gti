@@ -1075,6 +1075,20 @@ it does not infer ownerlessness from missing loan metadata. A lowered range
 iterator retaining an exact local owner uses that owner's layout for this
 proof. The physical source, parent and call contract remain independently
 verified, including raw borrows' explicit unsafe owner witness.
+A call returning a text-view reference (`std::string_view&<o>`) is a Place
+result, never the by-value text field relay that `textFieldResult` describes;
+lowering keys that rule on the call's value category. When the result is
+mapped through a stored reference field of a local carrier, it borrows the
+view object in that field's external referent: its `CallResult` loan is a
+child of the carrier's non-entry `Stored` group, holding that group's stored
+dependency, so writes through it use the group's authority and writes to the
+owner conflict with it. An abstract entry group remains the separate stored
+dependency instead. A shell loan whose source is checked text storage (a
+record's text field or a text array element, `isOwnerlessTextStorageProjection`)
+owes no stored dependency even when its path crosses an abstract entry, as in
+`return this.box.text;` through a stored `Box&<o>`: the storage invariant,
+verified independently for the whole program, already proves the view holds
+ownerless text, and its physical source still names the external record.
 A reference return preserves both its physical source and stored dependency.
 A copied by-value return instead publishes a fresh external-owner loan from
 the exact copied SSA value. Its original entry remains live until physical

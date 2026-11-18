@@ -10183,8 +10183,11 @@ private:
     // A text field result (L-OWN-02) holds what its origin holds in that
     // field: the retained loan of a dependent carrier that designates it, or
     // no dependency here at all (ownerless text, another field's owner, or a
-    // formal's field whose text is the caller's).
+    // formal's field whose text is the caller's). Only a by-value result
+    // copies that text: a text-view reference result (a Place) names the
+    // view object itself and borrows its region like any other reference.
     const bool textFieldResult =
+        value.info.category == ValueCategory::Value &&
         mir_detail::textFieldResult(value.info.type, value.borrowOrigin,
                                     value.borrowArgument, value.borrowFields);
     // A temporary argument holds its dependency as the Stored loan that its
@@ -10207,6 +10210,18 @@ private:
               ? MirLoanKind::Stored
               : MirLoanKind::CallResult;
       MirLoanId parent = 0;
+      // A text-view reference mapped through a stored reference field names
+      // a view object inside that field's external referent, not the
+      // carrier's own shell. Like any other reference into the referent it
+      // is a child of the carrier's Stored group, so writes through it use
+      // that group's authority, and it holds exactly the group's own stored
+      // dependency (issue #565).
+      const bool mappedTextReferent =
+          shellReference &&
+          (value.info.type.kind == SemanticType::StringView ||
+           value.info.type.kind == SemanticType::CString) &&
+          !value.borrowFields.empty() &&
+          !value.borrowFields.front().sourceFields.empty();
       // A carrier alias's access reaches a receiver behind one of its stored
       // references only as far as that reference allows. Through a read-only
       // reference the alias cannot parent an exclusive carrier; the
@@ -10288,9 +10303,12 @@ private:
             originPlace->type.kind != SemanticType::Reference &&
             std::find(held.carriers.begin(), held.carriers.end(),
                       originPlace->binding) != held.carriers.end();
+        // An abstract entry group stays the separate stored dependency.
+        const bool localTextReferent =
+            mappedTextReferent && !output.loans[originLoan - 1].entry;
         if ((derivedCallResult || derivedOriginCarrier) &&
             !carrierShellOrigin &&
-            !(shellReference &&
+            !(shellReference && !localTextReferent &&
               output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
           parent = originLoan;
         }
@@ -10625,6 +10643,11 @@ private:
             output.loans[loan - 1].parent ==
                 output.loans[loan - 1].storedDependency)
           output.loans[loan - 1].parent = 0;
+      } else if (mappedTextReferent && parent != 0 &&
+                 output.loans[parent - 1].kind == MirLoanKind::Stored &&
+                 !output.loans[parent - 1].entry) {
+        output.loans[loan - 1].storedDependency =
+            output.loans[parent - 1].storedDependency;
       } else if (shellReference) {
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
