@@ -214,7 +214,6 @@
   "llvm_cache_round_trip": 49.8,
   "llvm_callable_execution": 202.2,
   "llvm_callable_null_owner_rollback": 21.6,
-  "llvm_callable_owned_composition": 46.4,
   "llvm_canonical_host_controls": 35.7,
   "llvm_case_context_controls": 0.5,
   "llvm_checked_offset_runtime": 19.2,

@@ -47,7 +47,6 @@
     "llvm_cache_round_trip",
     "llvm_callable_execution",
     "llvm_callable_null_owner_rollback",
-    "llvm_callable_owned_composition",
     "llvm_case_context_controls",
     "llvm_checked_range_runtime",
     "llvm_clang_coexistence",

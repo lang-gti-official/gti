@@ -1512,10 +1512,6 @@ if(Python3_Interpreter_FOUND)
     llvm_callable_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_callable_execution_test.py"
   )
-  add_test(NAME llvm_callable_owned_composition
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_owned_composition_test.py"
-                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(llvm_callable_owned_composition PROPERTIES TIMEOUT 300)
   add_test(NAME llvm_callable_null_owner_rollback
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_null_owner_rollback_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")

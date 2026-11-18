@@ -11988,7 +11988,9 @@ owner proof and has been removed. Focused sealed-owner mutations and native
 O0/O3 duplicate-view execution cover this prerequisite for reuse by O-LLVM-07.
 
 **Named O-LLVM-08/O-LLVM-09 integration proof (passed):**
-`llvm_callable_owned_composition_test.py` is the callable-owned composition
+`llvm_callable_owned_composition_test.py` (since deleted: its success fixture
+runs in `llvm_callable_execution`, its failures are
+`tests/ui/callables/owned_composition/`) was the callable-owned composition
 proof and is intentionally not part of the passing O-LLVM-09 component gate.
 It uses an unrelated source-defined `Stored<F>` adapter and covers a returned/
 stored consuming closure whose environment contains ordinary owned values and

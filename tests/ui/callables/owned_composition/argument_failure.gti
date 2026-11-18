@@ -1,3 +1,7 @@
+// A panic in a later argument after an owned callable environment was built cleans it up and reports the panic.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:39: runtime error[GTI-R0017]: panic: "owned callable later argument failed"
 import std.memory;
 import std.panic;
 
@@ -33,7 +37,7 @@ public:
 
 int fail_argument() {
   std::panic("owned callable later argument failed");
-  return 0;
+  return 0;  //~ WARN GTI-S2095
 }
 
 int consume<F>(F callable, int value) {
