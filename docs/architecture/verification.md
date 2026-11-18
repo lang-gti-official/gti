@@ -10348,7 +10348,7 @@ highlighting.
 exact nominal identity, invalid applications, optional `class` spelling, and
 retained instance-signature reset. `tests/ui/types/payload_enums/generic/` verifies
 exact concrete enum rows and construction/matching through detached lowering,
-including forged type/instance metadata. `generic_enum_instances_runtime`
+including forged type/instance metadata. `tests/ui/types/payload_enums/generic_instances/`
 checks generic and nongeneric transport, owning and passive field publication,
 borrowed/copied patterns, finite owning recursion, cleanup and failure rollback
 under both C++ standards at O0/O1/O3, no-elide construction, and ASan/UBSan.

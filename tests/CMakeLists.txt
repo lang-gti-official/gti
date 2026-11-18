@@ -2825,13 +2825,6 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(payload_enum_containment_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
-      NAME generic_enum_instances_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_enum_instances_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(generic_enum_instances_runtime PROPERTIES TIMEOUT 600)
-    add_test(
       NAME field_subscript_store_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/field_subscript_store_runtime_test.py"

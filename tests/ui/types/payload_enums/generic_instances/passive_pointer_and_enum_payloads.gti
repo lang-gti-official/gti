@@ -1,0 +1,19 @@
+// Generic enum instances: passive pointer and enum payloads.
+//@ run-pass
+enum Color : uint8_t { blue = 4, green = 5 };
+enum Value<T> { empty, item(T value) };
+int main() {
+  int32_t owner = 7;
+  Value<const int32_t*> pointer = Value<const int32_t*>::item(&owner);
+  Value<Color> color = Value<Color>::item(Color::blue);
+  switch (pointer) {
+    case Value<const int32_t*>::empty: return 1;
+    case Value<const int32_t*>::item(address):
+      unsafe { if (*address != 7) { return 2; } }
+      break;
+  }
+  switch (color) {
+    case Value<Color>::empty: return 3;
+    case Value<Color>::item(value): return value == Color::blue ? 0 : 4;
+  }
+}

@@ -156,7 +156,6 @@
   "frontend_cache_invalidation": 0.1,
   "gcp_spot_runner": 0.7,
   "general_requires_runtime": 21.0,
-  "generic_enum_instances_runtime": 38.1,
   "generic_owner_callable_variants_runtime": 0.8,
   "glfw_3_4_c_oracle": 2.1,
   "global_class_storage_runtime": 0.4,

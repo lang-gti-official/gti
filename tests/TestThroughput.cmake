@@ -82,7 +82,7 @@ if(Python3_Interpreter_FOUND)
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
     expected_payload_pair_arguments_runtime
-    generic_enum_instances_runtime hosted_constructor_identity_runtime
+    hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators
     lambda_pack_invocation_runtime

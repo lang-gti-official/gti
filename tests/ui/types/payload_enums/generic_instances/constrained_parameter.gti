@@ -1,0 +1,11 @@
+// Generic enum instances: constrained parameter.
+//@ run-pass
+concept numeric<T> = std::signed_numeric<T>;
+enum NumericEvent<numeric T> { empty, item(T value) };
+int main() {
+  NumericEvent<int32_t> event = NumericEvent<int32_t>::item(8);
+  switch (event) {
+    case NumericEvent<int32_t>::empty: return 1;
+    case NumericEvent<int32_t>::item(value): return value == 8 ? 0 : 2;
+  }
+}
