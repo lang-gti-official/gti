@@ -1,0 +1,4 @@
+// Counted-array contracts compare resolved parameter positions rather than parameter spelling.
+namespace first { extern "C" { [[c_array(count)]] const c_int* items(c_int* count); } }
+namespace second { extern "C" { [[c_array(length)]] const c_int* items(c_int* length); } }
+int main() { return 0; }

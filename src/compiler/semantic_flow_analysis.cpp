@@ -5689,8 +5689,9 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     const bool candidateC = candidate.declaration != nullptr &&
                             candidate.declaration->hasCLinkage();
     if (previousC || candidateC) {
-      // The external-symbol catalog owns duplicate C symbol diagnostics,
-      // including this same-name case. Keep the GTI overload rule for mixed
+      // The external-symbol catalog owns C signature/contract checks,
+      // including compatible redeclarations. Keep one lookup candidate for
+      // this same-name case, and the GTI overload rule for mixed
       // linkage and distinct native link names.
       if (previousC && candidateC &&
           previous.record().externalSymbol ==

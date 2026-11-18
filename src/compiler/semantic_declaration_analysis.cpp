@@ -702,9 +702,24 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
             symbols.addAlternative(name, published);
           return;
         }
-        existing->second.overloads.insert(existing->second.overloads.end(),
-                                          published.overloads.begin(),
-                                          published.overloads.end());
+        for (const CallableCandidate &candidate : published.overloads) {
+          // Visibility is filtered before coalescing: each package can use its
+          // own declaration without importing another binding's source API.
+          // The external-symbol catalog still validates every declaration's
+          // signature and safety contract before code generation.
+          const bool sameNativeBinding =
+              candidate.record().linkage == LanguageLinkage::C &&
+              std::any_of(existing->second.overloads.begin(),
+                          existing->second.overloads.end(),
+                          [&](const CallableCandidate &previous) {
+                            return previous.record().linkage ==
+                                       LanguageLinkage::C &&
+                                   previous.record().externalSymbol ==
+                                       candidate.record().externalSymbol;
+                          });
+          if (!sameNativeBinding)
+            existing->second.overloads.push_back(candidate);
+        }
         existing->second.compilerPrivate =
             !existing->second.overloads.empty() &&
             std::all_of(existing->second.overloads.begin(),

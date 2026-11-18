@@ -1,6 +1,33 @@
 #include "semantic_analyzer_impl.h"
 
 namespace lang {
+namespace {
+// Compare resolved language contracts, not lowered LLVM types: pointer access,
+// nominal records/callbacks and target C scalar identity must survive here.
+// Source names, parameter names and optimization hints are not C identity.
+bool compatibleExternCFunctions(const FunctionInfo &left,
+                                const FunctionInfo &right) {
+  return left.returnType == right.returnType &&
+         left.parameterTypes == right.parameterTypes &&
+         left.requiresUnsafe == right.requiresUnsafe &&
+         left.neverReturns == right.neverReturns &&
+         left.tracksCaller == right.tracksCaller &&
+         left.cArrayCountParameter == right.cArrayCountParameter &&
+         left.threadConfinedCallback == right.threadConfinedCallback &&
+         left.cThreadOperation == right.cThreadOperation &&
+         left.processMemoryOperation == right.processMemoryOperation &&
+         left.intrinsic == right.intrinsic &&
+         left.returnBorrowOrigin == right.returnBorrowOrigin &&
+         left.returnBorrowParameter == right.returnBorrowParameter &&
+         left.returnBorrowAccess == right.returnBorrowAccess &&
+         left.returnBorrowParameters == right.returnBorrowParameters &&
+         left.returnBorrowFields == right.returnBorrowFields &&
+         left.completeReturnBorrow == right.completeReturnBorrow &&
+         left.returnBorrowPlace == right.returnBorrowPlace &&
+         left.rawBorrowContracts == right.rawBorrowContracts &&
+         left.ownerlessTextParameters == right.ownerlessTextParameters;
+}
+} // namespace
 
 auto SemanticVisitor::Impl::isContextualArrayArgument(
     const ExprPtr &expression) const -> bool {
@@ -9186,12 +9213,20 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   }
   const auto [previous, inserted] =
       externCSymbols.emplace(std::string(externalSymbol), &function);
-  if (!inserted && previous->second != &function) {
+  const FunctionInfo *previousInfo =
+      inserted ? nullptr : semanticModel.findFunction(*previous->second);
+  if (!inserted && previous->second != &function &&
+      (functionInfo == nullptr || previousInfo == nullptr ||
+       !compatibleExternCFunctions(*previousInfo, *functionInfo))) {
+    const bool signatureConflict =
+        previousInfo == nullptr || functionInfo == nullptr ||
+        previousInfo->returnType != functionInfo->returnType ||
+        previousInfo->parameterTypes != functionInfo->parameterTypes;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
         "C symbol '" + std::string(externalSymbol) +
-            "' is declared more than once; extern \"C\" functions "
-            "cannot be overloaded or redeclared.");
+            (signatureConflict ? "' has conflicting function signatures."
+                               : "' has conflicting safety contracts."));
     const Token &previousLocation =
         previous->second->nativeLinkName()
             ? previous->second->nativeLinkName()->symbol
