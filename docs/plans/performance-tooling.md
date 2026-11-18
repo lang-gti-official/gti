@@ -6,7 +6,7 @@ Implementation of [RFC 0007](https://github.com/lang-gti-official/rfcs/pull/8)
 starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
 is unchanged admission and output, at least 2x faster admission on examples
 091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
-RSS. No speedup is claimed yet. Non-throwing outcomes, plan-local type indexes,
+RSS. Final performance acceptance is still pending. Non-throwing outcomes, plan-local type indexes,
 whole-query memoization/replay, and stable coverage-identity hash keys are
 implemented in separate RFC branches; final equivalence, performance and
 integration evidence remain required before this campaign is complete.
@@ -79,9 +79,9 @@ time-trace region. They record wall time, child CPU time and peak resident set,
 and compare the actual resulting executable bytes.
 
 The queued target run uses five interleaved measured baseline/candidate pairs
-after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. The queued
-corpus run measures all 207 examples at both levels in one paired pass; it will
-be reported as descriptive corpus data, not as a repeated-sample estimate.
+after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. The completed
+corpus run measured all 207 examples at both levels in one paired pass. It is
+descriptive corpus data, not a repeated-sample estimate.
 Sources, example helpers, execution profiles, standard library, runtime archive
 and native compiler are fixed and checked again at completion. Compiler binary
 hashes and clean source revisions are retained with the raw samples.
@@ -94,9 +94,41 @@ does not alter backend/admission source, but total wall/CPU/RSS differences
 must not be attributed exclusively to admission without accounting for it.
 The exact admission plans and generated artifacts above remain equal.
 
-No final timing or memory result is available yet. The at-least-2x admission
-target, the 5% peak-RSS limit, final measurements and follow-up decisions remain
-open; the implementation campaign is not complete.
+### Corpus measurements (single paired pass)
+
+The corpus run completed all 414 workload rows on macOS 27.0.1 arm64 with 12
+logical CPUs. Each row contains one ordinary baseline compile and one candidate
+compile, in seeded interleaved order, without a separate warm-up. All 414
+resulting executables are byte-identical. Source, helper, standard-library,
+runtime and native-compiler identity checks passed at completion.
+
+Time columns below sum the 207 per-example measurements at each level. RSS is
+the largest per-compile peak in that level, not a sum or a bound on every
+individual example's relative change. Values are baseline / candidate.
+
+| Opt | Admission s | Backend s | Wall s | CPU s | Largest peak RSS MiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| O0 | 10.61 / 1.87 | 25.16 / 16.41 | 158.53 / 149.81 | 164.39 / 155.80 | 1355.61 / 1377.41 |
+| O2 | 10.68 / 1.88 | 59.03 / 50.04 | 261.21 / 252.19 | 267.06 / 258.28 | 1536.14 / 1539.06 |
+
+Aggregate admission time is 5.68x lower at both levels. The largest peak-RSS
+reading rises 1.61% at O0 and 0.19% at O2. Seven individual single-pair readings
+nevertheless exceed a 5% RSS increase (5.33% to 8.40%); the largest is
+`namespace_regex.gti` at O0. Those seven sources are being repeated at both
+levels with five measured pairs and one warm-up. The original readings are
+retained; these exploratory repeats do not replace the corpus data or narrow
+the four-program acceptance workload.
+
+These measurements came from a shared development machine. Two short coverage
+probe rebuilds overlapped part of the corpus run; their before/after hashes
+prove that neither measured compiler nor the runtime archive changed. Together
+with the upstream frontend change noted above, this limits attribution of the
+single-pass total wall/CPU differences. The separate repeated target run was
+still queued during those rebuilds.
+
+The at-least-2x target on all four named programs, the peak-RSS acceptance,
+remaining repeated measurements, and follow-up decisions remain open. The
+implementation campaign is not complete.
 
 ## Current Status and Evidence Policy (2026-10-28)
 
