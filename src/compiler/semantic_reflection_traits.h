@@ -15,6 +15,10 @@ struct PredicateCapability {
   GenericConstraintKind atomic = GenericConstraintKind::None;
   StructuralConstraintKind structural = StructuralConstraintKind::None;
   std::vector<SemanticType> arguments;
+  // The predicate is the logical negation of the fact. Only implication
+  // discovery asks for negated capabilities; a negated fact is never a
+  // constraint bit or a shortcut for concrete predicate checking.
+  bool negated = false;
 };
 
 // The trusted reflection query and generic-body proof transport share this

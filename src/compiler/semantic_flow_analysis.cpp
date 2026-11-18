@@ -14163,8 +14163,11 @@ auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const
     return 0;
   }
   const auto found = genericConstraints.find(type.genericParameterId);
-  const GenericConstraintSet declared =
+  GenericConstraintSet declared =
       found == genericConstraints.end() ? 0 : found->second;
+  for (const AssumedParameterFact &assumed : assumedParameterFacts)
+    if (assumed.parameter == type.genericParameterId)
+      declared |= assumed.constraints;
   return impliedConstraints(declared | activeAtomicConstraints(type));
 }
 
