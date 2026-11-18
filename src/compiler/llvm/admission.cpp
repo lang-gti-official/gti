@@ -589,13 +589,9 @@ public:
   }
 
   bool contains(const SemanticType &type) const {
-    try {
-      return native_llvm::containsHierarchyStorage(program, type);
-    } catch (const BackendUnsupportedError &) {
-      // The existing inventory still owns this unsupported representation.
-      // An unknown result supplies no NEW dispatch witness or transfer fact.
-      return false;
-    }
+    // Unknown supplies no dispatch witness or transfer fact. The ordinary
+    // inventory still owns rejection of that unsupported representation.
+    return native_llvm::classifyHierarchyStorage(program, type).contains();
   }
   bool referent(const SemanticType &type) const {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&

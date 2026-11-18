@@ -623,7 +623,17 @@ The LLVM backend applies the same rule to its inline hierarchy-storage query.
 `native_llvm::HierarchyStorageScope` is opened by `LlvmBackend::generate` for
 admission, lowering and emission, and by `planLlvmAdmission` when it runs
 alone. While it is open, each type's complete outcome for that exact program is
-computed once: the answer, or the rejection it rethrows. Only a finished
+computed once: `Contains`, `Excludes`, or `Unknown` with its original reason.
+`classifyHierarchyStorage` returns that outcome without throwing an unsupported
+error. `containsHierarchyStorage` remains a throwing wrapper: unknown storage
+still rejects with exactly the same reason. Admission's dispatch-witness query,
+fresh aggregate candidate query, and thread inline-storage predicate consume
+the outcome directly; layout, relocation and cleanup preflight catches remain
+because those operations can reject independently of hierarchy classification.
+The recursive visitor preserves field/base order and stops at the same first
+unknown, even after a sibling proves that hierarchy storage is present.
+Validation mode recomputes cached outcomes and reports a compiler-integrity
+failure on disagreement. Only a finished
 top-level query is recorded, because its outcome depends on the type's whole
 reachable storage graph and never on another query's path.
 
