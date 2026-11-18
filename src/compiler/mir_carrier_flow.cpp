@@ -133,6 +133,31 @@ public:
   template <class Predicate> void eraseIf(Predicate predicate) {
     std::erase_if(items, predicate);
   }
+  // Union in one ordered pass: keys only in `incoming` are added with their
+  // value, and keys on both sides join. Returns whether this map changed.
+  template <class Join>
+  bool unionWith(const FlatMap &incoming, Join &&joinValues) {
+    bool changed = false;
+    std::vector<value_type> merged;
+    merged.reserve(items.size() + incoming.items.size());
+    auto left = items.begin();
+    auto right = incoming.items.begin();
+    while (left != items.end() || right != incoming.items.end()) {
+      if (right == incoming.items.end() ||
+          (left != items.end() && left->first < right->first)) {
+        merged.push_back(std::move(*left++));
+      } else if (left == items.end() || right->first < left->first) {
+        merged.push_back(*right++);
+        changed = true;
+      } else {
+        changed = joinValues(left->second, right->second) || changed;
+        merged.push_back(std::move(*left++));
+        ++right;
+      }
+    }
+    items = std::move(merged);
+    return changed;
+  }
   // Path join in one ordered pass: a key absent from either side becomes
   // unknown (a default value, which every join keeps unknown), and keys on
   // both sides join their values. Returns whether this map changed.
@@ -272,12 +297,9 @@ bool join(std::optional<std::vector<T>> &into,
   return changed || into->size() != before;
 }
 template <class Map> bool mergeMap(Map &into, const Map &from) {
-  bool changed = false;
-  for (const auto &[key, value] : from) {
-    const auto [position, inserted] = into.emplace(key, value);
-    changed = inserted || join(position->second, value) || changed;
-  }
-  return changed;
+  return into.unionWith(from, [](auto &target, const auto &source) {
+    return join(target, source);
+  });
 }
 bool join(State &into, const State &from) {
   // Absence on an executable predecessor is unknown, not an empty set.
@@ -836,7 +858,13 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
     const auto id = current.id;
-    std::optional<State> beforeInvoke;
+    // Only these parts of the pre-invoke state feed the failure edge.
+    struct InvokeSnapshot {
+      FlatMap<Root, Fact> roots;
+      FlatMap<Root, Fact> expiredRoots;
+      std::set<MirLoanId> unavailable;
+    };
+    std::optional<InvokeSnapshot> beforeInvoke;
     const MirInstruction *invoked = nullptr;
     for (const auto &instruction : block->instructions) {
       if (instruction.tombstone)
@@ -851,7 +879,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       };
       if (block->terminator.kind == MirTerminatorKind::Invoke &&
           block->terminator.invokeInstruction == instruction.id) {
-        beforeInvoke = state;
+        beforeInvoke = InvokeSnapshot{.roots = state.roots,
+                                      .expiredRoots = state.expiredRoots,
+                                      .unavailable = state.unavailable};
         invoked = &instruction;
       }
       Fact callReturned;
