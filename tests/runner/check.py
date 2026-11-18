@@ -17,7 +17,6 @@ test kinds: parse-only modes, analysis options, and the mir, llvm-ir,
 diagnostics and format snapshots with their failure and bless paths.
 """
 
-import argparse
 import json
 import os
 from xml.etree import ElementTree
@@ -726,7 +725,16 @@ def lsp_self_test(runner):
                "bless annotates published diagnostics", out)
 
 
-def suite_roots(runner):
+def main():
+    runner = Path(sys.argv[1]).resolve()
+    jobs = "4"
+    if "--jobs" in sys.argv:
+        jobs = sys.argv[sys.argv.index("--jobs") + 1]
+    self_test(runner)
+    retained_assertion_test(runner)
+    print("gti-test self-test: ok", flush=True)
+    if "--self-test-only" in sys.argv:
+        return 0
     # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
     roots = ["tests/ui", "tests/project"]
     if (runner.parent / "gti_lsp").exists():
