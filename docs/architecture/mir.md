@@ -3380,7 +3380,15 @@ the group's readers while every live child of the authority reads. A union
 result relays the same way: its receiver mapping names the group, and each
 named argument lane is a further read-only dependency, which for a call
 result, as for a stored group, may be a read-only reference formal's
-referent without a loan of the body's own.
+referent, or a field or element of it, without a loan of the body's own.
+
+Those exemptions hold only inside the body. A loan that leaves it never
+depends on an object the body declares, and a returned loan under a
+one-formal contract publishes only that formal (or static storage): each
+argument that the producing call, and any call nested in its arguments,
+borrows must be that formal, and, unless a receiver's stored group relays
+the result, so must each further dependency of the returned loan. The
+program verifier checks this independently of semantics.
 
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly

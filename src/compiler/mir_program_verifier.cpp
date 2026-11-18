@@ -7824,6 +7824,136 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                                          .loan = *block.terminator.returnLoan};
       return rejected;
     }
+    // A one-supplier contract names exactly one formal. A returned call's
+    // result borrows each argument its contract names, so every such
+    // argument of the call that produced the returned loan (and of a call
+    // nested in one) is that formal, static storage, or nothing this body
+    // owns. Its loan's further dependencies over-approximate a consumed
+    // carrier's owners, so the exact call arguments are the evidence.
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        instance.returnBorrowParameters.empty()) {
+      const auto formal = mir_detail::returnOriginFormal(
+          instance.parameterTypes, instance.parameterBindings,
+          instance.returnBorrowParameter);
+      const auto producerCall =
+          [&](HirValueId produced) -> const MirInstruction * {
+        if (produced == 0)
+          return nullptr;
+        // The call whose result loan the returned loan publishes.
+        for (const auto &candidate : body.blocks)
+          for (const auto &instruction : candidate.instructions)
+            if (instruction.kind == MirInstructionKind::Call &&
+                (instruction.hirValue == produced ||
+                 (instruction.loan &&
+                  body.findLoan(*instruction.loan) != nullptr &&
+                  body.findLoan(*instruction.loan)->producedBy == produced)))
+              return &instruction;
+        return nullptr;
+      };
+      std::optional<MirPlaceId> outside;
+      std::function<void(const MirInstruction &, std::size_t)> checkCall =
+          [&](const MirInstruction &call, std::size_t depth) {
+            if (outside || depth > 16 ||
+                (call.borrowOrigin != BorrowOriginKind::Argument &&
+                 call.borrowOrigin != BorrowOriginKind::Receiver))
+              return;
+            std::vector<std::size_t> positions = call.borrowArguments;
+            if (call.borrowOrigin == BorrowOriginKind::Argument &&
+                positions.empty())
+              positions.push_back(call.borrowArgument);
+            for (const std::size_t position : positions) {
+              if (outside || position >= call.operands.size())
+                continue;
+              const MirOperand &operand = call.operands[position];
+              // A nested call's result supplies through that call's own
+              // arguments.
+              const MirInstruction *definition =
+                  operand.kind == MirOperandKind::Value
+                      ? mir_detail::definitionFor(body, operand.value)
+                      : nullptr;
+              for (std::size_t hops = 0;
+                   definition != nullptr &&
+                   definition->kind == MirInstructionKind::CallInput &&
+                   definition->operands.size() == 1 &&
+                   definition->operands.front().kind == MirOperandKind::Value &&
+                   hops < 8;
+                   ++hops)
+                definition = mir_detail::definitionFor(
+                    body, definition->operands.front().value);
+              if (definition != nullptr &&
+                  definition->kind == MirInstructionKind::Call) {
+                checkCall(*definition, depth + 1);
+                continue;
+              }
+              // Or a staged borrow of a nested call's result loan.
+              const MirOperand *staged =
+                  definition != nullptr &&
+                          definition->kind == MirInstructionKind::CallInput &&
+                          definition->operands.size() == 1
+                      ? &definition->operands.front()
+                      : &operand;
+              if (staged->kind == MirOperandKind::Loan) {
+                const MirLoan *inner = body.findLoan(staged->loan);
+                const MirInstruction *innerCall = nullptr;
+                if (inner != nullptr && inner->kind == MirLoanKind::CallResult)
+                  for (const auto &candidate : body.blocks)
+                    for (const auto &instruction : candidate.instructions)
+                      if (instruction.kind == MirInstructionKind::Call &&
+                          instruction.loan && *instruction.loan == inner->id)
+                        innerCall = &instruction;
+                if (innerCall != nullptr) {
+                  checkCall(*innerCall, depth + 1);
+                  continue;
+                }
+              }
+              const auto source =
+                  mir_detail::borrowSourceForOperand(body, operand);
+              const auto canonical =
+                  source ? borrowSourceForPlace(body, *source, 0) : source;
+              const auto *place =
+                  canonical ? body.findPlace(*canonical) : nullptr;
+              if (place == nullptr || place->root != MirPlaceRootKind::Binding)
+                continue;
+              if (formal && place->binding == formal->binding)
+                continue;
+              outside = *canonical;
+            }
+          };
+      const auto *producer = producerCall(loan->producedBy);
+      if (producer != nullptr)
+        checkCall(*producer, 0);
+      // Unless a consumed or borrowed receiver's stored group relays its
+      // owners (their regions are proved by the receiver's field mapping),
+      // every further owner the returned loan publishes is the formal too.
+      if (!outside && (producer == nullptr ||
+                       producer->borrowOrigin != BorrowOriginKind::Receiver))
+        for (const auto &dependency : loan->additionalDependencies) {
+          if (dependency.source == 0)
+            continue;
+          const auto canonical =
+              borrowSourceForPlace(body, dependency.source, 0);
+          const auto *place = canonical ? body.findPlace(*canonical) : nullptr;
+          if (place != nullptr &&
+              (place->root == MirPlaceRootKind::Symbol ||
+               (place->root == MirPlaceRootKind::Binding && formal &&
+                place->binding == formal->binding)))
+            continue;
+          outside = canonical.value_or(dependency.source);
+          break;
+        }
+      if (outside) {
+        MirVerificationResult rejected = verificationFailure(
+            body, instance.id,
+            "argument-dependent return borrows a call argument outside its "
+            "summarized formal parameter",
+            block.id);
+        if (!rejected.errors.empty())
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Supplier,
+              .loan = *block.terminator.returnLoan};
+        return rejected;
+      }
+    }
     if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
         !instance.returnBorrowParameters.empty()) {
       // Each supplier is one formal, or one lane of a formal pack.

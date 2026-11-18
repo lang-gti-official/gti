@@ -470,6 +470,15 @@ local, or of a part the reference's own region does not cover, supplies no
 named region (GTI-S2127). A method relays a stored reference or receiver
 storage through a local alias the same way.
 
+For the same reason, returning a local reference returns whatever its
+initializer may designate. `int& k = either(keep, other); return k;` may
+return `other`, so it is checked exactly as `return either(keep, other);`:
+every supplier of the call, including one reached through a further alias,
+an init-statement binding or a nested call, must outlive the result's region
+(GTI-S2127). With an elided result region, each must be the summarized
+parameter, never another parameter or a local (GTI-S2017). Using such a
+reference inside the body needs no such proof.
+
 A method result written in a region its class binds names the receiver's
 stored fields in that region. When nothing in the class stores the region,
 as in a callable pattern `class Local<R&<result>(R&<result>)>` with

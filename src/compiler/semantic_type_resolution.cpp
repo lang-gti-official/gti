@@ -5774,6 +5774,148 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
          requestSession.deferredPackCallResults.contains(call)))
       return;
   }
+  // Every supplier the returned value carries must be one the contract
+  // admits, not only the one its primary path names: a reference bound to a
+  // call result carries each argument that call borrows, and a result that
+  // may be any of them may be any of them at run time.
+  if (function != nullptr && function->declaration != nullptr &&
+      (contract->origin == BorrowOriginKind::Argument ||
+       contract->origin == BorrowOriginKind::Receiver)) {
+    const auto &formals = function->bodyDeclaration()->parameters();
+    std::vector<SymbolId> formalSymbols(formals.size(), 0);
+    for (std::size_t index = 0; index < formals.size(); ++index)
+      if (const auto *binding = semanticModel.findBinding(formals[index]))
+        formalSymbols[index] = binding->symbol;
+    std::vector<std::size_t> admitted = function->returnBorrowParameters;
+    if (contract->origin == BorrowOriginKind::Argument)
+      admitted.push_back(function->returnBorrowParameter);
+    struct Supplier {
+      SemanticLoanPlace place;
+      const Expr *site = nullptr;
+    };
+    std::vector<Supplier> suppliers;
+    // Whether the value carries more than one supplier; a single path is
+    // the ordinary return proof's alone.
+    bool several = false;
+    std::unordered_set<const Expr *> seen;
+    std::function<void(const Expr *)> collect = [&](const Expr *expression) {
+      if (expression == nullptr || !seen.insert(expression).second)
+        return;
+      if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+        return collect(alias);
+      if (const auto *group = exprAs<Grouping>(expression))
+        return collect(group->expression().get());
+      if (const auto *comma = exprAs<Binary>(expression);
+          comma != nullptr && comma->oper().kind == TokenKind::COMMA)
+        return collect(comma->right().get());
+      if (const auto *variable = exprAs<Variable>(expression)) {
+        const Symbol *symbol = resolve(variable->name());
+        if (symbol == nullptr)
+          return;
+        if (symbol->bindingKind == SemanticBindingKind::Parameter) {
+          suppliers.push_back(
+              {SemanticLoanPlace{.root = toolingSymbolFor(*symbol)},
+               expression});
+          return;
+        }
+        if (symbol->bindingKind == SemanticBindingKind::LocalVariable &&
+            symbol->type.kind == SemanticType::Reference &&
+            symbol->retainedDependency != nullptr) {
+          suppliers.push_back({symbol->retainedDependency->place, expression});
+          for (const auto &further :
+               symbol->retainedDependency->additionalDependencies) {
+            suppliers.push_back({further.place, expression});
+            several = true;
+          }
+        }
+        // A reference binding is never rebound: it carries what its
+        // initializer borrows, including a call's further suppliers.
+        if (symbol->bindingKind == SemanticBindingKind::LocalVariable &&
+            symbol->type.kind == SemanticType::Reference &&
+            symbol->variableDeclaration != nullptr)
+          collect(symbol->variableDeclaration->initializer().get());
+        return;
+      }
+      const auto *call = exprAs<Call>(expression);
+      const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
+      if (resolved == nullptr ||
+          (resolved->borrowOrigin != BorrowOriginKind::Argument &&
+           resolved->borrowOrigin != BorrowOriginKind::Receiver))
+        return;
+      std::vector<std::size_t> positions = resolved->borrowArguments;
+      if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+          positions.empty())
+        positions.push_back(resolved->borrowArgument);
+      several |= positions.size() > 1 ||
+                 resolved->borrowOrigin == BorrowOriginKind::Receiver;
+      const std::size_t count = resolvedCallArgumentCount(*call, resolved);
+      for (const std::size_t position : positions) {
+        if (position >= count || position >= resolved->parameterTypes.size() ||
+            resolved->parameterTypes[position].kind != SemanticType::Reference)
+          continue;
+        const ExprPtr *argument =
+            resolvedCallArgument(*call, resolved, position);
+        if (argument == nullptr || !*argument)
+          continue;
+        const Expr *inner = argument->get();
+        while (const auto *group = exprAs<Grouping>(inner))
+          inner = group->expression().get();
+        // An owned local passed by reference is the supplier itself.
+        if (const auto *variable = exprAs<Variable>(inner)) {
+          const Symbol *symbol = resolve(variable->name());
+          if (symbol != nullptr &&
+              symbol->bindingKind == SemanticBindingKind::LocalVariable &&
+              symbol->type.kind != SemanticType::Reference) {
+            suppliers.push_back(
+                {SemanticLoanPlace{.root = toolingSymbolFor(*symbol)}, inner});
+            continue;
+          }
+        }
+        collect(inner);
+      }
+    };
+    collect(value.get());
+    if (!several)
+      suppliers.clear();
+    for (const auto &supplier : suppliers) {
+      if (supplier.place.receiver || supplier.place.root == 0)
+        continue;
+      const auto formal = std::find(formalSymbols.begin(), formalSymbols.end(),
+                                    supplier.place.root);
+      std::string escaping;
+      if (formal != formalSymbols.end()) {
+        const auto index =
+            static_cast<std::size_t>(formal - formalSymbols.begin());
+        if (std::find(admitted.begin(), admitted.end(), index) !=
+            admitted.end())
+          continue;
+        escaping = "parameter '" + formals[index].name.lexeme +
+                   "', which the result's borrow contract does not name";
+      } else {
+        const SymbolRecord *record =
+            semanticModel.database().findSymbol(supplier.place.root);
+        if (record == nullptr || record->kind != SymbolKind::LocalVariable ||
+            record->type.kind == SemanticType::Reference)
+          continue;
+        escaping =
+            "local '" + record->name + "', whose storage ends with this call";
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, expressionToken(value),
+          "Returned " + std::string(description) + " may borrow " + escaping +
+              ".");
+      if (supplier.site != nullptr && supplier.site != value.get())
+        diagnostic.related.push_back(
+            {tokenSpan(expressionToken(*supplier.site)),
+             "This supplier reaches the returned value."});
+      diagnostic.hints.emplace_back(
+          "Every argument a returned call result borrows, directly or through "
+          "a local reference bound to it, must be one of the result's "
+          "suppliers; return a value that borrows only those.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+  }
   const ExprPtr *physicalOrigin = &value;
   std::unordered_set<const Expr *> visitedOrigins;
   while (physicalOrigin != nullptr && *physicalOrigin &&

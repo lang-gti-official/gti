@@ -3369,6 +3369,38 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     }
     return result;
   };
+  // A loan that leaves the body never depends on storage the body owns: a
+  // returned or escaping loan's further sources are reached through a
+  // reference (a formal's referent, or what one designates), never a local
+  // or by-value object the return destroys.
+  for (const MirLoan &loan : body.loans) {
+    if (loan.kind != MirLoanKind::Return && !loan.escapes)
+      continue;
+    for (const auto &dependency : loan.additionalDependencies) {
+      const MirPlace *place = body.findPlace(dependency.source);
+      if (place == nullptr || place->root != MirPlaceRootKind::Binding)
+        continue;
+      const bool throughReference = std::any_of(
+          place->projections.begin(), place->projections.end(),
+          [](const auto &projection) {
+            return projection.kind == MirProjectionKind::Dereference ||
+                   projection.kind == MirProjectionKind::RawDereference;
+          });
+      // A reference binding names its referent; a formal is the caller's
+      // argument. Only an object this body declares dies with it.
+      const bool referenceOrFormal = std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return base.root == MirPlaceRootKind::Binding &&
+                   base.binding == place->binding && base.projections.empty() &&
+                   (base.initiallyAvailable ||
+                    base.type.kind == SemanticType::Reference);
+          });
+      if (!throughReference && !referenceOrFormal)
+        return failure(body, owner,
+                       "escaping loan " + std::to_string(loan.id) +
+                           " depends on body-owned storage");
+    }
+  }
   for (const MirLoan &loan : body.loans) {
     if (loan.parent == 0) {
       continue;
@@ -3429,9 +3461,18 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   dependency != loan.additionalDependencies.end() &&
                   dependency->access == AccessMode::ReadOnly &&
                   sourcePlace->root == MirPlaceRootKind::Binding &&
-                  sourcePlace->projections.size() == 1 &&
+                  !sourcePlace->projections.empty() &&
                   sourcePlace->projections.front().kind ==
                       MirProjectionKind::Dereference &&
+                  // The referent or a part of it, never through a further
+                  // reference it stores.
+                  std::all_of(
+                      std::next(sourcePlace->projections.begin()),
+                      sourcePlace->projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind == MirProjectionKind::Field ||
+                               projection.kind == MirProjectionKind::Index;
+                      }) &&
                   std::any_of(
                       body.places.begin(), body.places.end(),
                       [&](const MirPlace &formal) {

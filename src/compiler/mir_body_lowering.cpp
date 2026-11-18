@@ -14845,17 +14845,29 @@ private:
           // the checked descendant call-result address before its loan ends.
           // A call result that also borrows further suppliers (a stored
           // class region's parameter lanes) is no alias of the owner loan.
+          const bool furtherSuppliers =
+              transient != nullptr && retained != nullptr &&
+              transient->kind == MirLoanKind::CallResult &&
+              !transient->additionalDependencies.empty() &&
+              std::any_of(transient->additionalDependencies.begin(),
+                          transient->additionalDependencies.end(),
+                          [&](const MirLoanDependency &dependency) {
+                            return dependency.source != 0 &&
+                                   !retained->protectsSource(dependency.source);
+                          });
+          // A shared alias of a reference already carrying such a call
+          // result carries that same loan, every supplier included.
+          if (furtherSuppliers && !transient->carriers.empty() &&
+              bindingReferenceAccess(binding) == AccessMode::ReadOnly &&
+              transient->access == AccessMode::ReadOnly) {
+            bindCarrier(existing, binding);
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
+          }
           if (transient == nullptr || retained == nullptr ||
               bindingReferenceAccess(binding) != AccessMode::ReadOnly ||
-              (transient->kind == MirLoanKind::CallResult &&
-               !transient->additionalDependencies.empty() &&
-               std::any_of(transient->additionalDependencies.begin(),
-                           transient->additionalDependencies.end(),
-                           [&](const MirLoanDependency &dependency) {
-                             return dependency.source != 0 &&
-                                    !retained->protectsSource(
-                                        dependency.source);
-                           })) ||
+              furtherSuppliers ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, reuseLoan, valueId,
                                           bindingReferenceAccess(binding)) &&

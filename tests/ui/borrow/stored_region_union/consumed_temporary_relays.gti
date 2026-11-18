@@ -59,6 +59,11 @@ int&<a> mut_writer<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) 
 int&<a> mut_writer_alias<lifetime a>(mut Box&<a> mine, int&<a> fallback, bool stored) {
   return Writer(mine).pick_alias(stored, fallback);
 }
+// A lane may be a part of a shared formal's referent.
+int lane_field<lifetime a>(mut Box&<a> mine, Box&<a> other) {
+  int& kept = Reader(mine).pick(false, other.value);
+  return kept;
+}
 // A reference binding keeps the result past the consumed temporary too.
 int bound<lifetime a>(mut Box&<a> mine, int&<a> fallback) {
   int& kept = Reader(mine).pick(true, fallback);
@@ -77,6 +82,8 @@ int main() {
   if (mut_writer(mine, fallback, true) != 9) { return 5; }
   if (mut_writer_alias(mine, fallback, false) != 7) { return 6; }
   if (bound(mine, fallback) != 97) { return 7; }
+  Box other{4};
+  if (lane_field(mine, other) != 4) { return 9; }
   // The result names the caller's storage, not a copy.
   int& seen = mut_reader(mine, fallback, true);
   int before = seen;
