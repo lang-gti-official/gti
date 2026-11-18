@@ -1806,7 +1806,7 @@ risk = "shared"
 # Directory-runner infrastructure owns its checks and every source shard.
 [[area]]
 area = "source-test-runner"
-paths = ["tests/runner/", "tests/gti_test.cmake", "scripts/convert_runtime_wrappers.py"]
+paths = ["tests/runner/", "tests/gti_test.cmake"]
 owners = ["^gti_test_ui(_shard_[1-4])?$"]
 consumers = ["cmake_test_ownership", "test_throughput_registration"]
 risk = "system"

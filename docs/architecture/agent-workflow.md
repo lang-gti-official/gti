@@ -934,7 +934,7 @@ its tests and `cpp-backend.yml` were removed on 2026-11-16
 ([test-suite redesign](../plans/test-suite-redesign.md)), and no test builds
 or runs it. Harness mode tables come from `tests/backend_modes.py`: LLVM at
 the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by default. The shard runner
-sets it per test set (`TEST_SET_LEVELS`): `O0` for `gate`, `full` and
+sets it per test set (`TEST_SET_LEVELS`): `O0` for `full` and
 `darwin`, `O0,O3` for the slow sets and `O3` for the re-run sets. The `slow`
 CTest label is assigned in one place, `gti_slow_test_patterns` in
 `tests/TestThroughput.cmake`; the per-commit sets exclude it, and
@@ -944,10 +944,7 @@ inventory exactly once. `slow.yml` proves its own sets the same way with
 Long aggregates (`allocator_raw_audit_independence`) are
 also registered as per-suite or per-source entries; a sharded run executes the parts and
 skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
-across workers instead of one 16–54-minute test ending a shard alone. The
-`gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
-shipped-default (c++23) or primary entry still runs, and the generated-C++
-corpus censuses; the `full` set runs everything. Every registered test carries
+across workers instead of one 16–54-minute test ending a shard alone. Every registered test carries
 its observed duration as a CTest `COST` ordering hint from
 `tests/ci_test_durations.json` (`tests/TestThroughput.cmake`), which
 `validation_checks.py durations` refreshes from JUnit reports, keeping the

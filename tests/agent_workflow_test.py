@@ -1457,15 +1457,13 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("draft", lint, "merge_group")
 
-    def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
-        slow = {"failure_metadata", "llvm_dispatch_execution", "instance_reuse", "instance_reuse_0"}
+    def test_shard_inventory_runs_split_parts_instead_of_aggregates(self):
+        slow = {"failure_metadata", "llvm_dispatch_execution"}
         sensitive = {"other_runtime", "llvm_backend_scalar", "llvm_dispatch_execution"}
         registered = {"smoke", "allocator_raw_audit_independence", "allocator_raw_audit_independence_a",
-                      "allocator_raw_audit_independence_b",
-                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "other_runtime",
-                      "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution",
-                      *validation.GATE_EXCLUDED}
-        aggregates = {"allocator_raw_audit_independence", "instance_reuse"}
+                      "allocator_raw_audit_independence_b", "other", "other_runtime",
+                      "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution"}
+        aggregates = {"allocator_raw_audit_independence"}
 
         def inventory(test_set, names=registered, darwin=None):
             return validation.shard_inventory(names, test_set, darwin, slow, sensitive)
@@ -1474,7 +1472,6 @@ class ValidationChecks(unittest.TestCase):
         # The aggregates are replaced by their registered parts; slow-labelled
         # tests leave for the daily slow tier.
         self.assertNotIn("allocator_raw_audit_independence", full)
-        self.assertNotIn("instance_reuse", full)
         self.assertEqual(full, registered - aggregates - slow)
         # The slow tier runs exactly the slow-labelled tests (O0 and O3) and
         # re-runs the per-commit level-sensitive harnesses at O3.
@@ -1485,12 +1482,8 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(validation.TEST_SET_LEVELS["slow"], "O0,O3")
         self.assertEqual(validation.TEST_SET_LEVELS["o3"], "O3")
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
-        alone = {"smoke", "allocator_raw_audit_independence", "other", *validation.GATE_EXCLUDED}
+        alone = {"smoke", "allocator_raw_audit_independence", "other"}
         self.assertIn("allocator_raw_audit_independence", validation.shard_inventory(alone, "full"))
-        gate = inventory("gate")
-        self.assertEqual(gate, full - validation.GATE_EXCLUDED)
-        self.assertTrue(gate < full)
-        self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
         # macOS runs only the platform-specific inventory: listed names and prefixed families.
         listed = (("llvm_",), {"other"})
         darwin = inventory("darwin", darwin=listed)
@@ -1500,9 +1493,7 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(inventory("darwin-o3", darwin=listed), {"llvm_backend_scalar"})
         with self.assertRaises(ValueError):
             inventory("darwin", darwin=((), {"missing"}))  # stale names fail the shard
-        with self.assertRaises(ValueError):
-            validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
-        for retired in ("nightly", "cpp"):
+        for retired in ("nightly", "cpp", "gate"):
             with self.assertRaises(ValueError):
                 inventory(retired)
 
