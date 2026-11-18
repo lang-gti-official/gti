@@ -48,7 +48,6 @@
   "call_result_publication": 10.3,
   "call_result_publication_runtime": 0.8,
   "charconv_runtime_boundary": 0.0,
-  "checked_integer_overflow_runtime": 48.4,
   "checked_owner_replacement_runtime": 12.2,
   "ci_cache": 0.2,
   "ci_release": 3.4,

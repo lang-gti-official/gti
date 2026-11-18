@@ -4085,8 +4085,10 @@ overflow flags. Other compilers, or a build defining
 `GTI_PORTABLE_OVERFLOW_CHECKS`, use the portable limit comparisons, which
 compute the same predicate. Each caller stores its result only on success, so
 an overflowing operation publishes nothing and reports the same code and
-detail. `checked_integer_overflow_runtime` compares both paths at O0 and O3
-against exact arithmetic. MIR operations, safety discharges and failure
+detail. `tests/ui/runtime/checked_overflow/` (O0) and its `tests/slow` O3
+copies compare the LLVM backend's checks against exact arithmetic; the
+preamble's portable path belongs to the frozen C++ backend and is no longer
+run. MIR operations, safety discharges and failure
 metadata are unchanged; this is a backend spelling of the same checked
 operation.
 

@@ -2333,13 +2333,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(stdlib_include_sweep PROPERTIES TIMEOUT 600)
   add_test(
-    NAME checked_integer_overflow_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/checked_integer_overflow_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(checked_integer_overflow_runtime PROPERTIES TIMEOUT 300)
-  add_test(
     NAME binary64_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/binary64_runtime_test.py"

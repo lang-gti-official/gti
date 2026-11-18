@@ -324,7 +324,6 @@ paths = [
 owners = [
   "binary64_pipeline",
   "binary64_runtime",
-  "checked_integer_overflow_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
@@ -803,7 +802,6 @@ owners = [
   "failure_descriptor_backend",
 ]
 consumers = [
-  "checked_integer_overflow_runtime",
   "fixed_array_oob_write_runtime",
   "llvm_hosted_execution",
 ]
