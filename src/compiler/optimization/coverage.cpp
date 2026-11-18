@@ -800,7 +800,8 @@ std::string mirOptimizationBarrierReason(const MirProgram &program,
       !optimizationCoverage(instruction.intrinsic).classified()) {
     add("unclassified MIR operation");
   }
-  const MirEffectTraits effect = effects(program, instruction);
+  const MirEffectTraits effect = body ? effects(program, *body, instruction)
+                                      : effects(program, instruction);
   if (instruction.rawMemoryAccess ||
       instruction.unsafeOperation != UnsafeOperationKind::None)
     add("unsafe/raw-memory access");
