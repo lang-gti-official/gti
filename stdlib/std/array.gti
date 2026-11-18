@@ -85,6 +85,16 @@ public:
 export class array<T, uint64_t N> {
   mut T values[N];
 
+  constexpr bool lexicographically_before(array<T, N>& other, bool inclusive)
+      requires std::totally_ordered<T> {
+    for (mut size_t index = 0; index < N; ++index) {
+      if (!(this.values[index] == other.values[index])) {
+        return this.values[index] < other.values[index];
+      }
+    }
+    return inclusive;
+  }
+
 public:
   using iterator = detail::array_mut_iterator<T, N>;
   using const_iterator = detail::array_iterator<T, N>;
@@ -102,6 +112,41 @@ public:
 
   constexpr bool empty() {
     return N == 0;
+  }
+
+  /// Compare corresponding elements by equality, without moving them.
+  constexpr bool operator==(array<T, N>& other)
+      requires std::equality_comparable<T> {
+    for (mut size_t index = 0; index < N; ++index) {
+      if (!(this.values[index] == other.values[index])) { return false; }
+    }
+    return true;
+  }
+
+  constexpr bool operator!=(array<T, N>& other)
+      requires std::equality_comparable<T> {
+    return !(this == other);
+  }
+
+  /// The first pair of unequal elements determines lexicographic ordering.
+  constexpr bool operator<(array<T, N>& other)
+      requires std::totally_ordered<T> {
+    return this.lexicographically_before(other, false);
+  }
+
+  constexpr bool operator<=(array<T, N>& other)
+      requires std::totally_ordered<T> {
+    return this.lexicographically_before(other, true);
+  }
+
+  constexpr bool operator>(array<T, N>& other)
+      requires std::totally_ordered<T> {
+    return other.lexicographically_before(this, false);
+  }
+
+  constexpr bool operator>=(array<T, N>& other)
+      requires std::totally_ordered<T> {
+    return other.lexicographically_before(this, true);
   }
 
   constexpr detail::array_iterator<T, N> begin() {
