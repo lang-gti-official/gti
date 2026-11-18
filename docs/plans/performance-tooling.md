@@ -29,22 +29,74 @@ rejects incomplete captures, changed input inventories and tampered artifacts.
 Use identical input/stdlib paths for each compiler, retaining the baseline
 source checkout throughout the campaign; no identity normalization is allowed.
 
-The retained baseline covers all 207 single-file root examples (414 O0/O2
-captures) and 463 materialized coverage-provider inputs (926 captures).
-The non-throwing outcome slice matches all 1,340 retained plans, outcomes, IR
-and objects byte-for-byte. Later slices additionally capture the 23 positive
-admission fixtures; the six frontend rejection fixtures have no admission plan
-and are verified with the ordinary test runner. Full comparisons for the index,
-memo/replay and coverage-key slices are still in progress. Focused memo tests
-inject a wrong answer and a reordered trace; coverage-index tests compare all
-context distinctions and detect a forged index. These checks supplement the
-whole-corpus comparisons; they do not replace them.
+### Equivalence evidence
 
-Executable equivalence, complete owning-gate evidence, and the O0/O2
-wall/CPU/RSS/admission/backend measurements remain acceptance work. The capture
-tool intentionally repeats
-backend planning to collect independent IR and object artifacts: performance
-measurements must use ordinary compiler invocations and time traces instead.
+The retained inventories are 207 single-file root examples (414 O0/O2
+captures), 463 materialized coverage-provider inputs (926 captures), and 23
+positive admission UI fixtures (46 captures). The six frontend rejection
+fixtures have no admission plan and pass with the ordinary test runner. A
+separate inventory audit found 65 admission fixtures under
+`tests/slow/llvm/admission`; their 130 O0/O2 captures are also required. Their
+supplemental comparison is pending, so the completed 1,386 captures must not
+be described as the entire admission test inventory.
+
+Each completed comparison checks actual retained bytes for the full ordered
+plan, outcome, LLVM IR and object, with `GTI_COMPILER_VALIDATION=1`. Linked
+executable comparisons relink both retained objects using the recorded
+production direct-link command, a fixed native compiler and runtime archive,
+and the same temporary input/output paths. The resulting binaries are compared
+byte-for-byte and retained. These comparisons do not execute the programs.
+
+| Slice | PR | Candidate | Completed plan/IR/object comparisons | Linked example binaries |
+| --- | --- | --- | --- | --- |
+| Telemetry and evidence | [567](https://github.com/lang-gti-official/gti/pull/567) | `7c1c162204e68cbd689856195914b76075528b49` | Baseline retained | Baseline retained |
+| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | 1,340 against baseline; additional admission inputs pending | All 414 identical |
+| Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,386 identical to reconciled parent | All 414 identical |
+| Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,386 identical to index parent | All 414 identical |
+| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,386 identical to memo parent | Pending |
+
+The final candidate also matches the original baseline on all 1,340 example
+and registered-coverage captures. The first example baseline was recorded at
+`b330a043a03086fc4f736322e6f9c32c2b3d394a`; the subsequent telemetry checkpoint
+extends the harness to preserve library exports and provider setup. All slices
+use the same frozen input and standard-library paths. The index slice's exact
+parent is `f82859a95e263821ac6d6a300ec7e2be7a807260`, following an upstream
+reconciliation; it is not compared only against an older, different parent.
+
+Focused memo tests inject a wrong answer and a reordered trace; coverage-index
+tests compare all context distinctions and detect a forged index. These checks
+supplement the corpus comparisons. The final owning/consumer checks and the
+additional 65 admission inputs remain pending. Full integration validation is
+CI's responsibility and has not been claimed by these local results.
+
+### Measurement protocol and pending acceptance
+
+The capture tool intentionally repeats backend planning to collect independent
+IR and object artifacts. Its duration is not a compile-time benchmark.
+Measurements instead use ordinary executable compilation with validation
+cross-checks disabled and exactly one `llvm-admission` and `gti-backend`
+time-trace region. They record wall time, child CPU time and peak resident set,
+and compare the actual resulting executable bytes.
+
+The queued target run uses five interleaved measured baseline/candidate pairs
+after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. The queued
+corpus run measures all 207 examples at both levels in one paired pass; it will
+be reported as descriptive corpus data, not as a repeated-sample estimate.
+Sources, example helpers, execution profiles, standard library, runtime archive
+and native compiler are fixed and checked again at completion. Compiler binary
+hashes and clean source revisions are retained with the raw samples.
+
+The timing baseline is `7c1c162204e68cbd689856195914b76075528b49`, and the
+candidate is `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb`. Between those revisions,
+the index branch also incorporated the structural concept-fact fix in
+[552](https://github.com/lang-gti-official/gti/pull/552). That upstream change
+does not alter backend/admission source, but total wall/CPU/RSS differences
+must not be attributed exclusively to admission without accounting for it.
+The exact admission plans and generated artifacts above remain equal.
+
+No final timing or memory result is available yet. The at-least-2x admission
+target, the 5% peak-RSS limit, final measurements and follow-up decisions remain
+open; the implementation campaign is not complete.
 
 ## Current Status and Evidence Policy (2026-10-28)
 
