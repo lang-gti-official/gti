@@ -179,7 +179,11 @@ GTI_UNIT_TEST(test_runner) {
         "duplicate compiler identities must be rejected before execution");
   options = TestRunOptions{};
   options.jobs = 2;
-  options.timeout = 150ms;
+  // The children are this whole test binary. Under ASan on a hosted runner
+  // its start-up alone can exceed 150 ms, which made b_fast time out too
+  // (sanitizer run 44244953877); a_slow never exits, so the limit only has to
+  // be long enough for b_fast to start and finish.
+  options.timeout = 2s;
   TestSuiteCommand timed{"suite", executable, {"a_slow", "b_fast"}};
   bool cancel = false;
   auto cancelledOptions = options;

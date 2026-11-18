@@ -899,7 +899,8 @@ def gti_test_tiers_contract(root):
     # The sanitizer verdict covers an instrumented gti_test_ui run.
     compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
     step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
-    assert "if: matrix.kind == 'libraries'" in step and "timeout-minutes: 120" in step
+    # Runs after a failed library test too: its findings are independent.
+    assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step and "timeout-minutes: 120" in step
     assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
     assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
     assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
