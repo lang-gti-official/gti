@@ -627,6 +627,23 @@ computed once: the answer, or the rejection it rethrows. Only a finished
 top-level query is recorded, because its outcome depends on the type's whole
 reachable storage graph and never on another query's path.
 
+Admission time traces separate `llvm-admission`, `llvm-admission-closure`,
+`llvm-admission-dispatch-proofs` and `llvm-admission-inventory`. Under
+`GTI_COMPILER_VALIDATION`, the plan also retains query counters: hierarchy
+queries/hits/rejections, native-value queries/memo hits, and type/cleanup
+walks/replays. The current uncached native and inventory walks report zero
+memo hits/replays. Hierarchy counters belong to the immutable program's scope;
+a plan takes a delta so enclosing backend scopes do not contribute old work.
+The counters are observational and absent in ordinary compilation.
+
+`printLlvmAdmissionPlan` emits an ordered inspection containing closure kind,
+required bodies, all coverage uses (including source, body/block/instruction,
+required/executable flags, shape and occurrence count), first unsupported use
+and limitation. It preserves exact identities and excludes counters and timings.
+`gti-test --llvm-admission-evidence` retains this dump alongside LLVM IR and
+object bytes for RFC 0007 equivalence comparisons; it is not a persistent
+admission certificate or an executable cache key.
+
 ## Generated Items
 
 Every generated family has a target-independent contract:

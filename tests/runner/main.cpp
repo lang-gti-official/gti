@@ -147,6 +147,8 @@ void usage(std::ostream &out) {
          "                [--opt O0|O3] [--isolate] [--gti PATH] [--lsp PATH]\n"
          "                [--json FILE] [--junit FILE] [--slowest N]\n"
          "                [--cpu-budget SECONDS] [--list] [--tidy]\n"
+         "       gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY "
+         "O0|O2\n"
          "Runs every test under tests/ui, tests/project and tests/lsp (or\n"
          "--root DIR). A positional argument that names a file or directory\n"
          "selects it; any other selects tests whose path contains it.\n"
@@ -622,6 +624,14 @@ std::string jsonString(const std::string &text) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "--llvm-admission-evidence") {
+    if (argc != 5) {
+      std::cerr << "usage: gti-test --llvm-admission-evidence SOURCE "
+                   "NEW_OUTPUT_DIRECTORY O0|O2\n";
+      return 2;
+    }
+    return gti_test::writeAdmissionEvidence(argv[0], argv[2], argv[3], argv[4]);
+  }
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];

@@ -1,6 +1,7 @@
 #include "atomic_types.h"
 #include "gti/llvm_admission.h"
 #include "gti/mir_effects.h"
+#include "gti/support.h"
 
 #include "../mir_verification_queries.h"
 #include "closure_environment.h"
@@ -22,6 +23,7 @@
 
 #include <functional>
 #include <iomanip>
+#include <locale>
 #include <map>
 #include <memory>
 #include <set>
@@ -167,11 +169,14 @@ bool arrayProjection(const MirBody &body, const MirPlace &place) {
 class NativeValues final {
 public:
   NativeValues(const MirProgram &program, const TargetInfo &nativeTarget,
-               std::function<bool(const SemanticType &)> pointee)
+               std::function<bool(const SemanticType &)> pointee,
+               LlvmAdmissionStatistics *statistics)
       : program(program), nativeTarget(nativeTarget),
-        pointee(std::move(pointee)) {}
+        pointee(std::move(pointee)), statistics(statistics) {}
 
   bool operator()(const SemanticType &type) const {
+    if (statistics)
+      ++statistics->nativeValueQueries;
     // `visiting` and `payloads` hold the current inline containment path. An
     // owner's pointee lives behind a handle, so it starts a new path, and a
     // class or payload enum reached again beneath an owner (a node owning its
@@ -326,6 +331,7 @@ private:
   const MirProgram &program;
   const TargetInfo &nativeTarget;
   std::function<bool(const SemanticType &)> pointee;
+  LlvmAdmissionStatistics *statistics;
 };
 
 // Representation facts never grant an operation permission. Gather every
@@ -348,12 +354,15 @@ public:
   };
 
   StaticDispatchProofs(const LlvmAdmissionPlan &plan,
-                       VerifiedLoweredProgram input)
+                       VerifiedLoweredProgram input,
+                       LlvmAdmissionStatistics *statistics)
       : plan(plan), input(std::move(input)), program(plan.program().mir()),
-        natives(plan.program().mir(), plan.program().target(),
-                [this](const SemanticType &pointee) {
-                  return pointeeMetadata(pointee) || mutexPointee(pointee);
-                }) {
+        natives(
+            plan.program().mir(), plan.program().target(),
+            [this](const SemanticType &pointee) {
+              return pointeeMetadata(pointee) || mutexPointee(pointee);
+            },
+            statistics) {
     for (const auto address : plan.requiredBodies()) {
       const auto &body = *findMirBody(program, address);
       native_llvm::Placement placement(body);
@@ -2952,15 +2961,19 @@ class Inventory final {
 public:
   Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
             StaticDispatchProofs &dispatchProofs,
-            const TargetInfo &nativeTarget)
+            const TargetInfo &nativeTarget, LlvmAdmissionStatistics *statistics)
       : uses(uses), program(program), dispatchProofs(dispatchProofs),
         nativeTarget(nativeTarget),
-        natives(program, nativeTarget, [this](const SemanticType &pointee) {
-          // A mutex-bearing pointee has its own admitted representation,
-          // whose native identity the allocation holds in place.
-          return this->dispatchProofs.metadata(pointee).has_value() ||
-                 this->ownedMutexPointee(pointee);
-        }) {}
+        natives(
+            program, nativeTarget,
+            [this](const SemanticType &pointee) {
+              // A mutex-bearing pointee has its own admitted representation,
+              // whose native identity the allocation holds in place.
+              return this->dispatchProofs.metadata(pointee).has_value() ||
+                     this->ownedMutexPointee(pointee);
+            },
+            statistics),
+        statistics(statistics) {}
 
   std::optional<MirBodyAddress> body;
   SourceSpan source;
@@ -5016,6 +5029,8 @@ public:
   }
 
   void type(const SemanticType &root, bool concretePackMetadata = false) {
+    if (statistics)
+      ++statistics->typeWalks;
     if (concretePackMetadata) {
       if (root.kind != SemanticType::TypePack || !root.concretePack)
         throw std::logic_error(
@@ -5164,6 +5179,8 @@ public:
   }
 
   void cleanup(const MirDropType &root) {
+    if (statistics)
+      ++statistics->cleanupWalks;
     std::vector<const MirDropType *> pending{&root};
     while (!pending.empty()) {
       const auto &drop = *pending.back();
@@ -6156,6 +6173,7 @@ private:
   StaticDispatchProofs &dispatchProofs;
   const TargetInfo &nativeTarget;
   NativeValues natives;
+  LlvmAdmissionStatistics *statistics;
   std::map<Key, std::size_t> indices;
   // Owner pointees whose mutex-storage representation is being decided.
   mutable std::vector<SemanticType> ownedMutexPointees;
@@ -6207,13 +6225,75 @@ std::string LlvmAdmissionPlan::limitation() const {
   return message.str();
 }
 
+void printLlvmAdmissionPlan(std::ostream &out, const LlvmAdmissionPlan &plan) {
+  // Use a private stream: callers' boolalpha, precision, locale or integer
+  // base must not change an equivalence artifact.
+  std::ostringstream text;
+  text.imbue(std::locale::classic());
+  text << "llvm-admission-v1\nclosure "
+       << (plan.closure() == LlvmAdmissionClosure::AllExecutableBodies
+               ? "all-executable-bodies"
+               : "sealed-entry-dependencies")
+       << '\n';
+  for (const auto &body : plan.requiredBodies())
+    text << "body " << coverage(body.kind).name << '/' << body.owner << '\n';
+  const auto *unsupported = plan.firstUnsupported();
+  std::size_t ordinal = 0;
+  for (const auto &use : plan.requirements()) {
+    text << "use " << ordinal++ << ' ' << use.entry->key() << " shape ";
+    if (use.implementedShape)
+      text << use.implementedShape->key();
+    else
+      text << '-';
+    text << " body ";
+    if (use.body)
+      text << coverage(use.body->kind).name << '/' << use.body->owner;
+    else
+      text << '-';
+    text << " block " << use.block << " instruction " << use.instruction
+         << " occurrences " << use.occurrences << " required " << use.required
+         << " executable " << use.executable << " source "
+         << std::quoted(use.source.source) << ' ' << use.source.start << ' '
+         << use.source.end << ' ' << use.source.line << " first-unsupported "
+         << (&use == unsupported) << '\n';
+  }
+  text << "admitted " << plan.admitted() << "\nlimitation "
+       << std::quoted(plan.limitation()) << '\n';
+  out << text.str();
+}
+
+void printLlvmAdmissionStatistics(std::ostream &out,
+                                  const LlvmAdmissionStatistics &statistics) {
+  std::ostringstream text;
+  text.imbue(std::locale::classic());
+  text << "llvm-admission-statistics-v1\n"
+       << "hierarchy-queries " << statistics.hierarchyQueries << '\n'
+       << "hierarchy-cache-hits " << statistics.hierarchyCacheHits << '\n'
+       << "hierarchy-rejections " << statistics.hierarchyRejections << '\n'
+       << "native-value-queries " << statistics.nativeValueQueries << '\n'
+       << "native-value-memo-hits " << statistics.nativeValueMemoHits << '\n'
+       << "type-walks " << statistics.typeWalks << '\n'
+       << "type-walk-replays " << statistics.typeWalkReplays << '\n'
+       << "cleanup-walks " << statistics.cleanupWalks << '\n'
+       << "cleanup-walk-replays " << statistics.cleanupWalkReplays << '\n';
+  out << text.str();
+}
+
 LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                                     LlvmBackendOptions options) {
+  const PhaseTimeScope admissionTime("llvm-admission");
   LlvmAdmissionPlan plan(std::move(program), options);
+  if (loweredProgramSealValidation())
+    plan.statistics_.emplace();
+  auto *statistics = plan.statistics_ ? &*plan.statistics_ : nullptr;
   const auto &input = plan.program();
   const auto &mir = input.mir();
   const native_llvm::HierarchyStorageScope hierarchyStorage(mir);
-  const auto closure = native_llvm::reachableProgram(input);
+  const auto before = hierarchyStorage.statistics();
+  const auto closure = [&] {
+    const PhaseTimeScope closureTime("llvm-admission-closure");
+    return native_llvm::reachableProgram(input);
+  }();
   plan.closure_ = closure.conservative
                       ? LlvmAdmissionClosure::AllExecutableBodies
                       : LlvmAdmissionClosure::SealedEntryDependencies;
@@ -6227,8 +6307,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         closure.contains(body.identity.address))
       plan.bodies.push_back(body.identity.address);
   }
-  StaticDispatchProofs dispatchProofs(plan, plan.input);
-  Inventory inventory(plan.uses, mir, dispatchProofs, input.target());
+  auto dispatchProofs = [&] {
+    const PhaseTimeScope dispatchTime("llvm-admission-dispatch-proofs");
+    return StaticDispatchProofs(plan, plan.input, statistics);
+  }();
+  const PhaseTimeScope inventoryTime("llvm-admission-inventory");
+  Inventory inventory(plan.uses, mir, dispatchProofs, input.target(),
+                      statistics);
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind(),
                 input.embeddingPlan() &&
@@ -6558,6 +6643,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   for (const auto &declaration : input.declarations()) {
     inventory.source = declaration.source;
     inventory.add(declaration.kind);
+  }
+  if (statistics) {
+    const auto after = hierarchyStorage.statistics();
+    statistics->hierarchyQueries = after.queries - before.queries;
+    statistics->hierarchyCacheHits = after.hits - before.hits;
+    statistics->hierarchyRejections = after.rejections - before.rejections;
   }
   return plan;
 }

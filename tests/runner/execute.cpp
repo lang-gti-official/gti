@@ -11,6 +11,7 @@
 #include "gti/frontend.h"
 #include "gti/frontend_cache.h"
 #include "gti/lexer.h"
+#include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/optimization/report.h"
 #include "gti/parser.h"
@@ -33,7 +34,10 @@
 #include <cmath>
 #include <csignal>
 #include <exception>
+#include <fstream>
 #include <functional>
+#include <iomanip>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <regex>
@@ -44,6 +48,102 @@
 namespace fs = std::filesystem;
 
 namespace gti_test {
+
+int writeAdmissionEvidence(const char *self, const fs::path &source,
+                           const fs::path &output,
+                           const std::string &optimization) {
+  try {
+    if (optimization != "O0" && optimization != "O2")
+      throw std::invalid_argument("admission evidence requires O0 or O2");
+    if (!fs::is_regular_file(source))
+      throw std::invalid_argument("admission evidence requires a source file");
+    if (!fs::create_directory(output))
+      throw std::invalid_argument("admission output directory already exists");
+    const auto write = [&](const char *name, const std::string &contents) {
+      std::ofstream file(output / name, std::ios::binary);
+      file << contents;
+      file.close();
+      if (!file)
+        throw std::runtime_error(std::string("cannot write evidence: ") + name);
+    };
+    const auto layout = lang::driver::discoverToolchainLayout(self);
+    const auto request = lang::driver::CompilationRequest(
+                             fs::absolute(source), layout.standardLibrary,
+                             lang::TargetInfo::host(),
+                             optimization == "O0" ? lang::OptimizationLevel::O0
+                                                  : lang::OptimizationLevel::O2,
+                             lang::CppStandard::Cpp23)
+                             .withBackend(lang::BackendKind::Llvm)
+                             .withDefinitionClosure();
+    class EvidenceBackend final : public lang::Backend {
+    public:
+      std::function<void(lang::LoweredProgram)> inspect;
+      std::string_view name() const override {
+        return "llvm-admission-evidence";
+      }
+      lang::BackendArtifact generate(lang::LoweredProgram program) override {
+        inspect(std::move(program));
+        return {};
+      }
+    } backend;
+    backend.inspect = [&](lang::LoweredProgram program) {
+      std::vector<lang::LoweredProgramIssue> issues;
+      auto verified = lang::verifiedLoweredProgram(program, issues);
+      if (!verified)
+        throw std::logic_error("admission evidence lost verified input");
+      auto options = lang::driver::llvmBackendOptions(request);
+      try {
+        const auto plan = lang::planLlvmAdmission(*verified, options);
+        std::ostringstream dump;
+        lang::printLlvmAdmissionPlan(dump, plan);
+        write("plan.txt", dump.str());
+        std::ostringstream statistics;
+        if (plan.statistics())
+          lang::printLlvmAdmissionStatistics(statistics, *plan.statistics());
+        else
+          statistics << "validation-disabled\n";
+        write("statistics.txt", statistics.str());
+        if (!plan.admitted()) {
+          write("outcome.txt",
+                "admission-rejected\n" + plan.limitation() + "\n");
+          return;
+        }
+        options.textualIr = true;
+        write("module.ll",
+              lang::LlvmBackend(options).generate(program).contents);
+        options.textualIr = false;
+        write("module.o",
+              lang::LlvmBackend(options).generate(program).contents);
+        write("outcome.txt", "admitted\n");
+      } catch (const lang::BackendUnsupportedError &failure) {
+        // Rejections thrown while planning are evidence too. Other failures,
+        // including an internal validation mismatch, must fail the harness.
+        std::ostringstream rejection;
+        rejection << "backend-rejected\n"
+                  << std::quoted(failure.what()) << '\n';
+        if (failure.location()) {
+          const auto &span = *failure.location();
+          rejection << "source " << std::quoted(span.source) << ' '
+                    << span.start << ' ' << span.end << ' ' << span.line
+                    << '\n';
+        }
+        write("outcome.txt", rejection.str());
+      }
+    };
+    const auto result = lang::driver::compileWithBackend(request, backend);
+    if (!result.succeeded()) {
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      if (result.backendFailureDetails)
+        std::cerr << *result.backendFailureDetails << '\n';
+      return 1;
+    }
+    return 0;
+  } catch (const std::exception &failure) {
+    std::cerr << "gti-test admission evidence: " << failure.what() << '\n';
+    return 1;
+  }
+}
 
 const char *statusName(Status status) {
   switch (status) {

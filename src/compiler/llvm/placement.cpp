@@ -3,6 +3,7 @@
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
+#include "gti/lowered_program.h"
 #include "gti/mir_effects.h"
 #include "memory_types.h"
 #include "mutexes.h"
@@ -807,6 +808,8 @@ struct HierarchyStorageScope::Outcomes {
   const MirProgram *program;
   std::unordered_map<std::size_t, std::vector<Outcome>> buckets;
   std::size_t size = 0;
+  bool measure = loweredProgramSealValidation();
+  HierarchyStorageScope::Statistics statistics;
 };
 
 namespace {
@@ -831,16 +834,27 @@ std::size_t HierarchyStorageScope::cachedTypes() const {
   return outcomes ? outcomes->size : previous->size;
 }
 
+HierarchyStorageScope::Statistics HierarchyStorageScope::statistics() const {
+  return outcomes ? outcomes->statistics : previous->statistics;
+}
+
 bool containsHierarchyStorage(const MirProgram &program,
                               const SemanticType &type) {
   auto *outcomes = activeHierarchyOutcomes;
   if (outcomes == nullptr || outcomes->program != &program)
     return computeHierarchyStorage(program, type);
+  if (outcomes->measure)
+    ++outcomes->statistics.queries;
   auto &bucket = outcomes->buckets[outcomeHash(type)];
   for (const auto &outcome : bucket)
     if (outcome.type == type) {
-      if (outcome.rejection)
+      if (outcomes->measure)
+        ++outcomes->statistics.hits;
+      if (outcome.rejection) {
+        if (outcomes->measure)
+          ++outcomes->statistics.rejections;
         std::rethrow_exception(outcome.rejection);
+      }
       return outcome.result;
     }
   // Only a completed top-level query is recorded. Its outcome depends on the
@@ -855,8 +869,11 @@ bool containsHierarchyStorage(const MirProgram &program,
   const bool result = outcome.result;
   bucket.push_back(std::move(outcome));
   ++outcomes->size;
-  if (rejection)
+  if (rejection) {
+    if (outcomes->measure)
+      ++outcomes->statistics.rejections;
     std::rethrow_exception(rejection);
+  }
   return result;
 }
 

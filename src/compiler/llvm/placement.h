@@ -62,6 +62,13 @@ public:
   // The number of distinct types whose outcome this scope holds.
   [[nodiscard]] std::size_t cachedTypes() const;
 
+  struct Statistics {
+    std::size_t queries = 0;
+    std::size_t hits = 0;
+    std::size_t rejections = 0;
+  };
+  [[nodiscard]] Statistics statistics() const;
+
   struct Outcomes;
 
 private:

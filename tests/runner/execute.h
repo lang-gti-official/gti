@@ -15,6 +15,13 @@
 
 namespace gti_test {
 
+// Test-only corpus evidence over the production driver/lowered-program path.
+// The output directory must not already exist.
+int writeAdmissionEvidence(const char *self,
+                           const std::filesystem::path &source,
+                           const std::filesystem::path &output,
+                           const std::string &optimization);
+
 enum class Status { Pass, Fail, Ice, Crash, Timeout, Skip };
 
 [[nodiscard]] const char *statusName(Status status);

@@ -82,6 +82,21 @@ int main() {
 
 ### Snapshots: when the output is the point
 
+For backend admission equivalence experiments, the test-only command
+`gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY O0|O2` compiles one
+ordinary source file through the production driver and saves the complete,
+ordered plan (`plan.txt`), separate validation counters (`statistics.txt`),
+admission result (`outcome.txt`), LLVM IR (`module.ll`) and object (`module.o`).
+Set `GTI_COMPILER_VALIDATION=1` for counters. Rejected inputs retain the first
+unsupported use and limitation; frontend failures and internal compiler errors
+fail the command. The output directory must be new, preventing stale output
+from making an incomplete run appear successful. Compare the same source and
+stdlib paths, target, compiler configuration and optimization level across
+builds; no source identities or coverage counts are normalized. Counters are
+observations and are deliberately excluded from byte-equivalence comparisons.
+This command does not run the executable or establish performance evidence:
+it emits IR and object bytes separately and repeats backend planning.
+
 `//@ snapshot: KIND` (repeatable, one per kind) adds an output check after the
 test's other expectations pass. `--bless` writes the sibling expected file;
 tidy rejects an expected file without its directive, a directive without its
