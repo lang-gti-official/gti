@@ -36,9 +36,11 @@ captures), 463 materialized coverage-provider inputs (926 captures), and 23
 positive admission UI fixtures (46 captures). The six frontend rejection
 fixtures have no admission plan and pass with the ordinary test runner. A
 separate inventory audit found 65 admission fixtures under
-`tests/slow/llvm/admission`; their 130 O0/O2 captures are also required. Their
-supplemental comparison is pending, so the completed 1,386 captures must not
-be described as the entire admission test inventory.
+`tests/slow/llvm/admission`. Their additional 130 O0/O2 captures are complete
+for the baseline, every optimization slice and the reconciled index parent;
+all 130 are admitted by each compiler. Every before/after comparison of these
+supplemental plans, outcomes, IR and objects is byte-identical. The full
+equivalence inventory therefore contains 1,516 captures per compiler.
 
 Each completed comparison checks actual retained bytes for the full ordered
 plan, outcome, LLVM IR and object, with `GTI_COMPILER_VALIDATION=1`. Linked
@@ -50,13 +52,13 @@ byte-for-byte and retained. These comparisons do not execute the programs.
 | Slice | PR | Candidate | Completed plan/IR/object comparisons | Linked example binaries |
 | --- | --- | --- | --- | --- |
 | Telemetry and evidence | [567](https://github.com/lang-gti-official/gti/pull/567) | `7c1c162204e68cbd689856195914b76075528b49` | Baseline retained | Baseline retained |
-| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | 1,340 against baseline; additional admission inputs pending | All 414 identical |
-| Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,386 identical to reconciled parent | All 414 identical |
-| Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,386 identical to index parent | All 414 identical |
-| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,386 identical to memo parent | Pending |
+| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | 1,470 against baseline; 46 positive UI admission captures pending | All 414 identical |
+| Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,516 identical to reconciled parent | All 414 identical |
+| Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,516 identical to index parent | All 414 identical |
+| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,516 identical to memo parent | Pending |
 
-The final candidate also matches the original baseline on all 1,340 example
-and registered-coverage captures. The first example baseline was recorded at
+The final candidate also matches the original baseline on all 1,470 example,
+registered-coverage and supplemental slow-admission captures. The first example baseline was recorded at
 `b330a043a03086fc4f736322e6f9c32c2b3d394a`; the subsequent telemetry checkpoint
 extends the harness to preserve library exports and provider setup. All slices
 use the same frozen input and standard-library paths. The index slice's exact
@@ -65,8 +67,10 @@ reconciliation; it is not compared only against an older, different parent.
 
 Focused memo tests inject a wrong answer and a reordered trace; coverage-index
 tests compare all context distinctions and detect a forged index. These checks
-supplement the corpus comparisons. The final owning/consumer checks and the
-additional 65 admission inputs remain pending. Full integration validation is
+supplement the corpus comparisons. The non-throwing slice's final owning checks
+passed: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
+CLI workflow, 29 admission UI fixtures and scalar/owner native smoke at O0.
+Other slices' final owning/consumer checks remain pending. Full integration validation is
 CI's responsibility and has not been claimed by these local results.
 
 ### Measurement protocol and pending acceptance
@@ -144,6 +148,30 @@ still queued during those rebuilds.
 The at-least-2x target on all four named programs, the peak-RSS acceptance,
 remaining repeated measurements, and follow-up decisions remain open. The
 implementation campaign is not complete.
+
+### Follow-up decisions
+
+- Keep the type index local to a sealed admission plan. Moving it onto mutable
+  MIR would require an explicit sealing/invalidation contract and measurements
+  of consumers outside admission. The current index shares one exact lookup
+  policy within the plan without extending its lifetime or phase authority.
+- Keep the complete inventory, including unreachable bodies. Skipping those
+  bodies would change ordered coverage evidence and is outside this RFC's
+  equivalence contract. Such a change needs a separate decision defining what
+  dormant-body evidence means before implementation or performance acceptance.
+- Keep the inspection API in `gti-test`, with the source/provenance-aware
+  capture script as its corpus client. No public compiler switch or new
+  standalone test registration is required.
+- Keep the original acceptance target: at least 2x admission speedup and at
+  most 5% higher peak RSS on each of the four named programs at both levels.
+  Aggregate corpus speedup does not substitute for those individual results.
+- Do not add another `representationShape` or `classShape` answer cache in
+  this implementation. Whole-walk replay already avoids repeated shape work
+  in matching contexts, and the index removes the class scan. A further cache
+  remains a profiling-led follow-up: establish material residual cost, prove
+  all target/program/context dependencies in its key, then repeat the same
+  validation-mode and full-plan equivalence checks. The measurements here do
+  not claim a function-level attribution of the remaining admission cost.
 
 ## Current Status and Evidence Policy (2026-10-28)
 
