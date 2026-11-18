@@ -9887,7 +9887,12 @@ and ownership maps, manifests), less the reasoned exemptions in
 `tests/TestThroughput.cmake` to exactly that rule, checks that every module a
 `tests/` or `scripts/` file imports and every bare harness name in an
 expectation table exists, and the job fails on a skipped or unrun labelled
-entry. These checks fail before integration when a change deletes or adds a
+entry. In a local checkout it also rejects any file under `tests/ui`,
+`tests/lsp`, `tests/project`, `tests/slow` or `tests/unit` that Git ignores:
+an unanchored `Testing/` pattern once matched `tests/ui/stdlib/testing/` on
+the case-insensitive macOS disk, and `git add` skipped those tests without a
+word. A fresh CI checkout cannot hold such a file, so this check matters where
+the label is run before a hand-off. These checks fail before integration when a change deletes or adds a
 file they cross-reference; post-integration full validation used to be the
 first place they ran with the change. Full integration retains the system-LLVM fast checks and Linux
 system-LLVM installed consumers, and requires production packaging, its installed

@@ -11,7 +11,11 @@ cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
-Testing/
+# CTest's output directory, when ctest runs at the checkout root. Build trees
+# (/build*/ above) already cover their own. Anchored: unanchored, it also
+# matched the tests/ui/stdlib/testing/ source directory on a case-insensitive
+# disk, and git add skipped its tests (scripts/tree_consistency.py checks).
+/Testing/
 
 # Compiled objects, libraries, and executables.
 *.o
