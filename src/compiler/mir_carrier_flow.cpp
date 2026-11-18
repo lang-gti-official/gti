@@ -73,6 +73,17 @@ struct AnalysisContext {
   // Public queries solve the reachable call graph before consuming these
   // summaries. Provisional iteration facts never escape that solver.
   std::map<HirFunctionInstanceId, MirRetainingStoreEffects> callEffects;
+  // Constructor and cleanup summaries read the call summaries above. They
+  // are reused only while those are unchanged: every call-summary change
+  // advances the generation, so provisional fixed-point facts never persist.
+  std::size_t generation = 0;
+  std::map<HirConstructorInstanceId,
+           std::pair<std::size_t, MirRetainingStoreEffects>>
+      constructorEffects;
+  std::map<HirConstructorInstanceId, std::pair<std::size_t, bool>>
+      localConstructions;
+  std::map<HirDestructorInstanceId, std::pair<std::size_t, bool>>
+      privateCleanups;
 };
 MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                           bool symbolicSummary = false);
@@ -156,11 +167,22 @@ bool join(std::optional<std::vector<T>> &into,
     into.reset();
     return true;
   }
-  const auto previous = *into;
+  if (from->empty())
+    return false;
+  // Facts are kept as sorted unique sets; adding elements is a change
+  // exactly when the normalized set grows.
+  bool changed = false;
+  if (!std::is_sorted(into->begin(), into->end()) ||
+      std::adjacent_find(into->begin(), into->end()) != into->end()) {
+    std::sort(into->begin(), into->end());
+    into->erase(std::unique(into->begin(), into->end()), into->end());
+    changed = true;
+  }
+  const auto before = into->size();
   into->insert(into->end(), from->begin(), from->end());
   std::sort(into->begin(), into->end());
   into->erase(std::unique(into->begin(), into->end()), into->end());
-  return *into != previous;
+  return changed || into->size() != before;
 }
 template <class Key>
 bool mergeMap(std::map<Key, Fact> &into, const std::map<Key, Fact> &from) {
@@ -520,16 +542,33 @@ bool privateCleanupEffects(const MirDropType &recipe,
   if (!program || mirDropHasPolymorphicCleanup(recipe))
     return false;
   for (const auto target : mirDropDestructorTargets(recipe)) {
+    if (const auto cached = context.privateCleanups.find(target);
+        cached != context.privateCleanups.end() &&
+        cached->second.first == context.generation) {
+      if (!cached->second.second)
+        return false;
+      continue;
+    }
     const auto *destructor = program->findDestructorInstance(target);
     if (!destructor ||
         destructor->definitionKind != MirDefinitionKind::Source ||
         destructor->body.kind != MirBodyKind::Destructor ||
         !context.activeDestructors.insert(target).second)
       return false;
+    // A summary computed inside another construction or cleanup may be cut
+    // short by a recursion guard; remember only top-level summaries.
+    const bool topLevel = context.activeDestructors.size() == 1 &&
+                          context.activeConstructors.empty();
+    const auto generation = context.generation;
     const auto cleanup = deriveFlow(destructor->body, context);
     context.activeDestructors.erase(target);
+    const auto remember = [&](bool admitted) {
+      if (topLevel && generation == context.generation)
+        context.privateCleanups[target] = {generation, admitted};
+      return admitted;
+    };
     if (!cleanup.effectsComplete)
-      return false;
+      return remember(false);
     for (const auto &[site, targets] : cleanup.storeTargets) {
       (void)site;
       for (const auto &destination : targets) {
@@ -542,9 +581,10 @@ bool privateCleanupEffects(const MirDropType &recipe,
                                  place.binding == destination.identity &&
                                  place.initiallyAvailable;
                         }))
-          return false;
+          return remember(false);
       }
     }
+    remember(true);
   }
   return true;
 }
@@ -619,6 +659,103 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         initial.expiredRoots.emplace(root, empty());
       }
     }
+  // SSA value facts are needed only while the value can still be read.
+  // Carrying every dead value through every later block makes each block's
+  // state grow with the body, and the fixed point quadratic in its length.
+  // Drop facts for values that are not live into an edge's target. Uses
+  // without a block (a value-rooted place, a dynamic index) keep the value
+  // live everywhere, and an incomplete use index disables the pruning.
+  std::vector<std::vector<MirValueId>> liveIn;
+  std::vector<bool> alwaysLive;
+  if (body.valueUses.size() == body.values.size() && !body.blocks.empty()) {
+    const std::size_t blockCount = body.blocks.size();
+    alwaysLive.assign(body.values.size() + 1, false);
+    std::vector<std::set<MirValueId>> uses(blockCount + 1), defs(blockCount + 1);
+    bool indexed = true;
+    for (const auto &block : body.blocks) {
+      if (block.id == 0 || block.id > blockCount) {
+        indexed = false;
+        break;
+      }
+      for (const auto &parameter : block.parameters)
+        defs[block.id].insert(parameter.value);
+      for (const auto &instruction : block.instructions)
+        if (instruction.result)
+          defs[block.id].insert(*instruction.result);
+    }
+    for (const auto &valueUses : body.valueUses)
+      for (const auto &use : valueUses) {
+        if (use.value == 0 || use.value > body.values.size())
+          continue;
+        if (use.block == 0 || use.block > blockCount)
+          alwaysLive[use.value] = true;
+        else if (!defs[use.block].contains(use.value))
+          uses[use.block].insert(use.value);
+      }
+    const auto successors = [&](const MirBlock &block) {
+      std::vector<MirBlockId> next;
+      const auto &end = block.terminator;
+      switch (end.kind) {
+      case MirTerminatorKind::Goto:
+      case MirTerminatorKind::ContinueFailure:
+        next.push_back(end.target);
+        break;
+      case MirTerminatorKind::Branch:
+      case MirTerminatorKind::Invoke:
+        next.push_back(end.target);
+        next.push_back(end.elseTarget);
+        break;
+      case MirTerminatorKind::Switch:
+        next.push_back(end.target);
+        for (const auto &target : end.switchTargets)
+          next.push_back(target.target);
+        break;
+      default:
+        break;
+      }
+      return next;
+    };
+    if (indexed) {
+      std::vector<std::set<MirValueId>> live(blockCount + 1);
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        for (auto block = body.blocks.rbegin(); block != body.blocks.rend();
+             ++block) {
+          std::set<MirValueId> in = uses[block->id];
+          for (const auto target : successors(*block))
+            if (target != 0 && target <= blockCount)
+              for (const auto value : live[target])
+                if (!defs[block->id].contains(value))
+                  in.insert(value);
+          if (in.size() != live[block->id].size()) {
+            live[block->id] = std::move(in);
+            changed = true;
+          }
+        }
+      }
+      liveIn.resize(blockCount + 1);
+      for (std::size_t index = 1; index <= blockCount; ++index)
+        liveIn[index].assign(live[index].begin(), live[index].end());
+    } else {
+      alwaysLive.clear();
+    }
+  }
+  const auto pruneDeadValues = [&](State &incoming, MirBlockId target) {
+    if (liveIn.empty() || target == 0 || target >= liveIn.size())
+      return;
+    const auto &liveValues = liveIn[target];
+    const auto dead = [&](MirValueId value) {
+      return value < alwaysLive.size() && !alwaysLive[value] &&
+             !std::binary_search(liveValues.begin(), liveValues.end(), value);
+    };
+    std::erase_if(incoming.values,
+                  [&](const auto &entry) { return dead(entry.first); });
+    std::erase_if(incoming.expiredValues,
+                  [&](const auto &entry) { return dead(entry.first); });
+    std::erase_if(incoming.aliases,
+                  [&](const auto &entry) { return dead(entry.first); });
+  };
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
     const auto id = current.id;
@@ -1237,15 +1374,31 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return false;
         const auto *constructor =
             program->findConstructorInstance(*instruction.constructorTarget);
-        if (!constructor ||
-            constructor->definitionKind != MirDefinitionKind::Source ||
+        if (!constructor)
+          return false;
+        if (const auto cached =
+                context.localConstructions.find(constructor->id);
+            cached != context.localConstructions.end() &&
+            cached->second.first == context.generation)
+          return cached->second.second;
+        if (constructor->definitionKind != MirDefinitionKind::Source ||
             constructor->body.kind != MirBodyKind::Constructor ||
             !context.activeConstructors.insert(constructor->id).second)
           return false;
+        // Only a top-level summary is free of recursion-guard cutoffs.
+        const bool topLevel = context.activeConstructors.size() == 1 &&
+                              context.activeDestructors.empty();
+        const auto generation = context.generation;
         const auto construction = deriveFlow(constructor->body, context);
         context.activeConstructors.erase(constructor->id);
+        const auto remember = [&](bool admitted) {
+          if (topLevel && generation == context.generation)
+            context.localConstructions[constructor->id] = {generation,
+                                                           admitted};
+          return admitted;
+        };
         if (!construction.effectsComplete)
-          return false;
+          return remember(false);
         for (const auto &[site, targets] : construction.storeTargets) {
           (void)site;
           for (const auto &target : targets) {
@@ -1256,10 +1409,10 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                           constructor->parameterBindings.end(),
                           target.identity) !=
                     constructor->parameterBindings.end())
-              return false;
+              return remember(false);
           }
         }
-        return true;
+        return remember(true);
       }();
       // Reading a constructor input does not make the fresh object's fields
       // retain it. Reconstruct the actual receiver publications, just as a
@@ -1807,6 +1960,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         }
       }
       // Edge parameters bind simultaneously, including loop-carried swaps.
+      // Their facts are read from the full state before pruning below.
       std::vector<Fact> argumentFacts;
       std::vector<Fact> expiredArguments;
       std::vector<Aliases> argumentAliases;
@@ -1827,6 +1981,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
              operandRead(body, incoming, argument, true));
       }
       result.complete = result.complete && result.exits[id].has_value();
+      pruneDeadValues(incoming, target);
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         incoming.values[next->parameters[index].value] =
             std::move(argumentFacts[index]);
@@ -2141,8 +2296,27 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
 }
 
 MirRetainingStoreEffects
+deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
+                                 AnalysisContext &context);
+MirRetainingStoreEffects
 deriveConstructorEffects(const MirConstructorInstance &constructor,
                          AnalysisContext &context) {
+  if (const auto cached = context.constructorEffects.find(constructor.id);
+      cached != context.constructorEffects.end() &&
+      cached->second.first == context.generation)
+    return cached->second.second;
+  // Only a top-level summary is free of recursion-guard cutoffs.
+  const bool topLevel = context.activeConstructors.empty() &&
+                        context.activeDestructors.empty();
+  const auto generation = context.generation;
+  auto result = deriveConstructorEffectsUncached(constructor, context);
+  if (topLevel && generation == context.generation)
+    context.constructorEffects[constructor.id] = {generation, result};
+  return result;
+}
+MirRetainingStoreEffects
+deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
+                                 AnalysisContext &context) {
   if (constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.body.kind != MirBodyKind::Constructor ||
       !context.activeConstructors.insert(constructor.id).second)
@@ -2264,6 +2438,7 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
     context.callEffects.emplace(
         id, MirRetainingStoreEffects{.returnedOrigins = std::vector<Root>{},
                                      .complete = function != nullptr});
+    ++context.generation;
     if (function)
       discover.push_back(id);
   };
@@ -2357,6 +2532,7 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
         current.returnedOrigins == next.returnedOrigins)
       continue;
     current = std::move(next);
+    ++context.generation;
     for (const auto caller : callers[id])
       if (queued.insert(caller).second)
         pending.push_back(caller);
@@ -2366,8 +2542,39 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
 
 struct MirCarrierAnalysis::Impl {
   AnalysisContext context;
+  // Set while a MirCarrierAnalysisScope holds the program immutable.
+  bool memoize = false;
+  std::set<const MirBody *> programBodies;
+  std::map<std::pair<const MirBody *, bool>, MirCarrierFlow> flows;
   explicit Impl(const MirProgram &program) : context{.program = &program} {}
 };
+
+namespace {
+thread_local MirCarrierAnalysis *activeCarrierAnalysis = nullptr;
+} // namespace
+
+MirCarrierAnalysisScope::MirCarrierAnalysisScope(MirCarrierAnalysis &analysis)
+    : previous(activeCarrierAnalysis) {
+  auto &impl = *analysis.implementation;
+  if (!impl.memoize) {
+    impl.memoize = true;
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(*impl.context.program))
+      if (const MirBody *body = findMirBody(*impl.context.program, address))
+        impl.programBodies.insert(body);
+  }
+  activeCarrierAnalysis = &analysis;
+}
+
+MirCarrierAnalysisScope::~MirCarrierAnalysisScope() {
+  activeCarrierAnalysis = previous;
+}
+
+MirCarrierAnalysis *activeMirCarrierAnalysis(const MirProgram &program) {
+  return activeCarrierAnalysis && &activeCarrierAnalysis->program() == &program
+             ? activeCarrierAnalysis
+             : nullptr;
+}
 
 MirCarrierAnalysis::MirCarrierAnalysis(const MirProgram &program)
     : implementation(std::make_unique<Impl>(program)) {}
@@ -2379,11 +2586,21 @@ const MirProgram &MirCarrierAnalysis::program() const {
 
 MirCarrierFlow MirCarrierAnalysis::flow(const MirBody &body,
                                         bool includeBlockEntries) {
-  auto &context = implementation->context;
+  auto &impl = *implementation;
+  const bool memoized =
+      impl.memoize && impl.programBodies.contains(&body);
+  if (memoized)
+    if (const auto found = impl.flows.find({&body, includeBlockEntries});
+        found != impl.flows.end())
+      return found->second;
+  auto &context = impl.context;
   context.includeBlockEntries = false;
   solveCallEffects(body, context);
   context.includeBlockEntries = includeBlockEntries;
-  return deriveFlow(body, context);
+  auto result = deriveFlow(body, context);
+  if (memoized)
+    impl.flows.emplace(std::pair{&body, includeBlockEntries}, result);
+  return result;
 }
 
 MirRetainingStoreEffects
@@ -2400,6 +2617,9 @@ MirCarrierAnalysis::retainingStores(HirFunctionInstanceId id) {
 MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
                                     const MirProgram *program,
                                     bool includeBlockEntries) {
+  if (program && activeCarrierAnalysis &&
+      &activeCarrierAnalysis->program() == program)
+    return activeCarrierAnalysis->flow(body, includeBlockEntries);
   AnalysisContext context{.program = program};
   solveCallEffects(body, context);
   context.includeBlockEntries = includeBlockEntries;

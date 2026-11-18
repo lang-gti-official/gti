@@ -305,7 +305,12 @@ bool fieldContractFunction(const MirProgram &program,
 class TextContracts {
 public:
   explicit TextContracts(const MirProgram &program)
-      : program(program), carrierAnalysis(program),
+      : program(program), ownAnalysis(activeMirCarrierAnalysis(program)
+                                          ? nullptr
+                                          : std::make_unique<MirCarrierAnalysis>(
+                                                program)),
+        carrierAnalysis(ownAnalysis ? *ownAnalysis
+                                    : *activeMirCarrierAnalysis(program)),
         returnSummaries(program.functionInstances().size()) {}
 
   MirVerificationResult verify();
@@ -329,7 +334,9 @@ public:
 
 private:
   const MirProgram &program;
-  MirCarrierAnalysis carrierAnalysis;
+  // Whole-program verification's analysis when this runs inside it.
+  std::unique_ptr<MirCarrierAnalysis> ownAnalysis;
+  MirCarrierAnalysis &carrierAnalysis;
   MirVerificationResult result;
   // The program is read-only throughout this verifier. Retain every Stored
   // dependency in inventory order, including duplicates; filtering this

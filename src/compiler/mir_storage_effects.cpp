@@ -308,7 +308,13 @@ analyzePersistentStorageEffects(const MirProgram &program,
                    persistent.end());
   if (persistent.empty())
     return {};
-  MirCarrierAnalysis carrierAnalysis(program);
+  // Reuse whole-program verification's analysis (and its call summaries)
+  // when this query runs inside it.
+  std::optional<MirCarrierAnalysis> ownAnalysis;
+  MirCarrierAnalysis *activeAnalysis = activeMirCarrierAnalysis(program);
+  if (!activeAnalysis)
+    activeAnalysis = &ownAnalysis.emplace(program);
+  MirCarrierAnalysis &carrierAnalysis = *activeAnalysis;
   const auto isPersistent = [&](SymbolId symbol) {
     return std::binary_search(persistent.begin(), persistent.end(), symbol);
   };

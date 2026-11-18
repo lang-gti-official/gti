@@ -24225,6 +24225,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
   }
 
   MirCarrierAnalysis carrierAnalysis(program);
+  const MirCarrierAnalysisScope carrierScope(carrierAnalysis);
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {

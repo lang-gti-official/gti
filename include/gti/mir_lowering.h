@@ -84,7 +84,8 @@ private:
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,
                bool includeHostedStartup,
-               const MirProgram *retainingProgram = nullptr);
+               const MirProgram *retainingProgram = nullptr,
+               MirCarrierAnalysis *sharedRetainingAnalysis = nullptr);
 
   [[nodiscard]] static MirBody lowerBody(
       const HirProgram &program, const FailureMetadata &failureMetadata,

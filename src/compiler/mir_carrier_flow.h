@@ -139,8 +139,29 @@ public:
   retainingStores(HirFunctionInstanceId function);
 
 private:
+  friend class MirCarrierAnalysisScope;
   struct Impl;
   std::unique_ptr<Impl> implementation;
+};
+
+// While alive on this thread, deriveMirCarrierFlow over the analysis's
+// program reuses its call summaries, and each flow of one of the program's
+// own bodies is computed once. Only for a program that does not change while
+// the scope is alive (whole-program verification); a body outside the
+// program (an edited copy, for example) is always analysed afresh.
+// The analysis a live MirCarrierAnalysisScope holds over `program`, if any.
+[[nodiscard]] MirCarrierAnalysis *
+activeMirCarrierAnalysis(const MirProgram &program);
+
+class MirCarrierAnalysisScope {
+public:
+  explicit MirCarrierAnalysisScope(MirCarrierAnalysis &analysis);
+  ~MirCarrierAnalysisScope();
+  MirCarrierAnalysisScope(const MirCarrierAnalysisScope &) = delete;
+  MirCarrierAnalysisScope &operator=(const MirCarrierAnalysisScope &) = delete;
+
+private:
+  MirCarrierAnalysis *previous = nullptr;
 };
 
 // Reconstruct source-body effects from MIR writes and entry provenance.
