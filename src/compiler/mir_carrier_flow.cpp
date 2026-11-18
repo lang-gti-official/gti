@@ -99,62 +99,75 @@ public:
   using key_type = K;
   using mapped_type = V;
   using value_type = std::pair<K, V>;
-  using iterator = typename std::vector<value_type>::iterator;
-  using const_iterator = typename std::vector<value_type>::const_iterator;
+  using Items = std::vector<value_type>;
+  using iterator = typename Items::iterator;
+  using const_iterator = typename Items::const_iterator;
 
-  [[nodiscard]] iterator begin() { return items.begin(); }
-  [[nodiscard]] iterator end() { return items.end(); }
-  [[nodiscard]] const_iterator begin() const { return items.begin(); }
-  [[nodiscard]] const_iterator end() const { return items.end(); }
-  [[nodiscard]] std::size_t size() const { return items.size(); }
-  [[nodiscard]] bool empty() const { return items.empty(); }
+  // Copies share their entries until one of them is modified: most blocks
+  // leave most of the carried state unchanged.
+  [[nodiscard]] iterator begin() { return own().begin(); }
+  [[nodiscard]] iterator end() { return own().end(); }
+  [[nodiscard]] const_iterator begin() const { return view().begin(); }
+  [[nodiscard]] const_iterator end() const { return view().end(); }
+  [[nodiscard]] std::size_t size() const { return view().size(); }
+  [[nodiscard]] bool empty() const { return view().empty(); }
   [[nodiscard]] iterator find(const K &key) {
-    const auto found = lower(key);
+    auto &items = own();
+    const auto found = lower(items, key);
     return found != items.end() && !(key < found->first) ? found : items.end();
   }
   [[nodiscard]] const_iterator find(const K &key) const {
-    const auto found = lower(key);
+    const auto &items = view();
+    const auto found = lower(items, key);
     return found != items.end() && !(key < found->first) ? found : items.end();
   }
   [[nodiscard]] bool contains(const K &key) const {
-    return find(key) != items.end();
+    return find(key) != view().end();
   }
   template <class... Arguments>
   std::pair<iterator, bool> emplace(const K &key, Arguments &&...arguments) {
-    auto found = lower(key);
+    auto &items = own();
+    auto found = lower(items, key);
     if (found != items.end() && !(key < found->first))
       return {found, false};
     found = items.emplace(found, key, V(std::forward<Arguments>(arguments)...));
     return {found, true};
   }
   V &operator[](const K &key) { return emplace(key).first->second; }
-  iterator erase(iterator position) { return items.erase(position); }
+  iterator erase(iterator position) { return own().erase(position); }
   template <class Predicate> void eraseIf(Predicate predicate) {
-    std::erase_if(items, predicate);
+    if (std::none_of(view().begin(), view().end(), predicate))
+      return;
+    std::erase_if(own(), predicate);
   }
   // Union in one ordered pass: keys only in `incoming` are added with their
   // value, and keys on both sides join. Returns whether this map changed.
   template <class Join>
   bool unionWith(const FlatMap &incoming, Join &&joinValues) {
+    if (shared == incoming.shared)
+      return false;
     bool changed = false;
-    std::vector<value_type> merged;
-    merged.reserve(items.size() + incoming.items.size());
-    auto left = items.begin();
-    auto right = incoming.items.begin();
-    while (left != items.end() || right != incoming.items.end()) {
-      if (right == incoming.items.end() ||
-          (left != items.end() && left->first < right->first)) {
-        merged.push_back(std::move(*left++));
-      } else if (left == items.end() || right->first < left->first) {
+    Items merged;
+    const auto &mine = view();
+    const auto &theirs = incoming.view();
+    merged.reserve(mine.size() + theirs.size());
+    auto left = mine.begin();
+    auto right = theirs.begin();
+    while (left != mine.end() || right != theirs.end()) {
+      if (right == theirs.end() ||
+          (left != mine.end() && left->first < right->first)) {
+        merged.push_back(*left++);
+      } else if (left == mine.end() || right->first < left->first) {
         merged.push_back(*right++);
         changed = true;
       } else {
-        changed = joinValues(left->second, right->second) || changed;
-        merged.push_back(std::move(*left++));
+        merged.push_back(*left++);
+        changed = joinValues(merged.back().second, right->second) || changed;
         ++right;
       }
     }
-    items = std::move(merged);
+    if (changed)
+      shared = std::make_shared<Items>(std::move(merged));
     return changed;
   }
   // Path join in one ordered pass: a key absent from either side becomes
@@ -162,47 +175,58 @@ public:
   // both sides join their values. Returns whether this map changed.
   template <class Join>
   bool joinPaths(const FlatMap &incoming, Join &&joinValues) {
+    if (shared == incoming.shared)
+      return false;
     bool changed = false;
-    std::vector<value_type> merged;
-    merged.reserve(std::max(items.size(), incoming.items.size()));
-    auto left = items.begin();
-    auto right = incoming.items.begin();
-    while (left != items.end() || right != incoming.items.end()) {
-      if (right == incoming.items.end() ||
-          (left != items.end() && left->first < right->first)) {
-        if (left->second) {
-          left->second.reset();
+    Items merged;
+    const auto &mine = view();
+    const auto &theirs = incoming.view();
+    merged.reserve(std::max(mine.size(), theirs.size()));
+    auto left = mine.begin();
+    auto right = theirs.begin();
+    while (left != mine.end() || right != theirs.end()) {
+      if (right == theirs.end() ||
+          (left != mine.end() && left->first < right->first)) {
+        merged.push_back(*left++);
+        if (merged.back().second) {
+          merged.back().second.reset();
           changed = true;
         }
-        merged.push_back(std::move(*left++));
-      } else if (left == items.end() || right->first < left->first) {
+      } else if (left == mine.end() || right->first < left->first) {
         merged.emplace_back(right->first, V{});
         ++right;
         changed = true;
       } else {
-        changed = joinValues(left->second, right->second) || changed;
-        merged.push_back(std::move(*left++));
+        merged.push_back(*left++);
+        changed = joinValues(merged.back().second, right->second) || changed;
         ++right;
       }
     }
-    items = std::move(merged);
+    if (changed)
+      shared = std::make_shared<Items>(std::move(merged));
     return changed;
   }
 
 private:
-  [[nodiscard]] iterator lower(const K &key) {
+  [[nodiscard]] const Items &view() const {
+    static const Items none;
+    return shared ? *shared : none;
+  }
+  [[nodiscard]] Items &own() {
+    if (!shared)
+      shared = std::make_shared<Items>();
+    else if (shared.use_count() > 1)
+      shared = std::make_shared<Items>(*shared);
+    return *shared;
+  }
+  template <class Container>
+  [[nodiscard]] static auto lower(Container &items, const K &key) {
     return std::lower_bound(items.begin(), items.end(), key,
                             [](const value_type &item, const K &probe) {
                               return item.first < probe;
                             });
   }
-  [[nodiscard]] const_iterator lower(const K &key) const {
-    return std::lower_bound(items.begin(), items.end(), key,
-                            [](const value_type &item, const K &probe) {
-                              return item.first < probe;
-                            });
-  }
-  std::vector<value_type> items;
+  std::shared_ptr<Items> shared;
 };
 
 struct State {
