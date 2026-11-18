@@ -1,0 +1,31 @@
+// A relayed class-region result keeps its external owner borrowed against mutation.
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> pick<lifetime h>(Window<h> c) { return c.get(); }
+int main() { mut int x = 7; int& r = pick(Window(x)); x = 3; return r; }  //~ ERROR GTI-S2017

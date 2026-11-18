@@ -222,11 +222,12 @@ int main() {
                   "GTI-B0003", "requires passive program storage"},
         Rejection{"thread_local mut int total;", "GTI-B0003",
                   "requires passive program storage"},
-        // Source-owned global cleanup is rejected by semantics before
-        // compiled-unit admission. Keep that earlier safety boundary.
+        // Hosted programs accept source-owned global cleanup, but a compiled
+        // library has no program shutdown, so compiled-unit admission must
+        // still reject the root's source cleanup recipe.
         Rejection{"class Guard { public: Guard() = default; ~Guard() {} }; "
-                  "Guard guard; mut int total;",
-                  "GTI-S2061", "requires source or owning cleanup"}}) {
+                  "Guard guard{}; mut int total;",
+                  "GTI-B0003", "requires passive program storage"}}) {
     write(source, "export module numbers; " + std::string(test.storage) +
                       " export int choose(int x) { return total + x; }");
     const auto rejected = buildCompiledScalarLibrary(
