@@ -110,6 +110,11 @@ it emits IR and object bytes separately and repeats backend planning.
 `scripts/llvm_admission_evidence.py capture` runs this over all root examples
 or an explicit input manifest at O0/O2; `compare` verifies retained bytes,
 input identities and complete case inventories without accepting a new baseline.
+Explicit input items may also record `execution-profile`, a relative `stdlib`
+directory, and `program: {kind: "library", exports: [{function, symbol}]}`
+beside `source`. These are the original provider's settings, not inferred
+substitutes. The capture hashes every selected library and compares the
+settings as well as the artifacts; different export sets cannot be equivalent.
 
 `//@ snapshot: KIND` (repeatable, one per kind) adds an output check after the
 test's other expectations pass. `--bless` writes the sibling expected file;

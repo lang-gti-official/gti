@@ -13,7 +13,12 @@ The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
 capture --runner BUILD/gti-test --output NEW_DIRECTORY --validation` captures
 all single-file root examples at O0/O2; `--inputs MANIFEST.json` names an
-explicit JSON array of repository-relative source paths for other corpora.
+explicit JSON array of source paths or configured inputs for other corpora.
+`prepare-coverage --root ROOT --build BUILD --output NEW_DIRECTORY` materializes
+the registered coverage providers using their own setup routines, preserving
+execution profiles, library exports and private test overlays. It records source
+and provider provenance; a case without a named coverage group uses its
+provider-owned context rather than an inferred profile.
 Multi-file project examples and embedded UI sections need their own explicit
 input setup; the default capture does not claim those as covered. The tool
 retains raw artifacts, input identities, checksums, command failures, and a

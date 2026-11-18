@@ -627,12 +627,14 @@ std::string jsonString(const std::string &text) {
 
 int main(int argc, char **argv) {
   if (argc > 1 && std::string_view(argv[1]) == "--llvm-admission-evidence") {
-    if (argc != 5) {
+    if (argc < 5) {
       std::cerr << "usage: gti-test --llvm-admission-evidence SOURCE "
-                   "NEW_OUTPUT_DIRECTORY O0|O2\n";
+                   "NEW_OUTPUT_DIRECTORY O0|O2 [--execution-profile PROFILE] "
+                   "[--library FUNCTION=SYMBOL ...]\n";
       return 2;
     }
-    return gti_test::writeAdmissionEvidence(argv[0], argv[2], argv[3], argv[4]);
+    return gti_test::writeAdmissionEvidence(argv[0], argv[2], argv[3], argv[4],
+                                            {argv + 5, argv + argc});
   }
   Options options;
   for (int index = 1; index < argc; ++index) {
