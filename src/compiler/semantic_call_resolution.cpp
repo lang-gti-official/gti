@@ -1649,17 +1649,21 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
       return fact && fact->freeCallQuery &&
              fact->memberName == name->name().lexeme;
     }
-    return requirement.conceptId != 0 && requirement.conceptId <= concepts.size() &&
-           std::any_of(concepts[requirement.conceptId - 1].structuralConstraints.begin(),
-                       concepts[requirement.conceptId - 1].structuralConstraints.end(),
-                       [&](const RegisteredConcept::StructuralPattern &pattern) {
-                         return pattern.freeCallQuery &&
-                                pattern.memberName == name->name().lexeme;
-                       });
+    return requirement.conceptId != 0 &&
+           requirement.conceptId <= concepts.size() &&
+           std::any_of(
+               concepts[requirement.conceptId - 1]
+                   .structuralConstraints.begin(),
+               concepts[requirement.conceptId - 1].structuralConstraints.end(),
+               [&](const RegisteredConcept::StructuralPattern &pattern) {
+                 return pattern.freeCallQuery &&
+                        pattern.memberName == name->name().lexeme;
+               });
   };
   if (std::none_of(requirementScopes.begin(), requirementScopes.end(),
                    [&](const auto &scope) {
-                     return std::any_of(scope.begin(), scope.end(), mayProveCall);
+                     return std::any_of(scope.begin(), scope.end(),
+                                        mayProveCall);
                    }))
     return false;
 
@@ -1677,9 +1681,10 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
     bool exact = true;
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
       const auto *info = semanticModel.findExpression(*call.arguments()[index]);
-      exact &= exprAs<Variable>(call.arguments()[index].get()) &&
-               fact.arguments[index].arguments.front() == argumentTypes[index] &&
-               info && info->category == ValueCategory::Place;
+      exact &=
+          exprAs<Variable>(call.arguments()[index].get()) &&
+          fact.arguments[index].arguments.front() == argumentTypes[index] &&
+          info && info->category == ValueCategory::Place;
     }
     if (!exact)
       continue;
@@ -1697,10 +1702,9 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
     // Provisional type information only. The concrete body uses the ordinary
     // call resolver and records a real target before HIR is constructed.
     semanticModel.record(
-        call, ResolvedCallInfo{
-                  .returnType = proof->arguments.back(),
-                  .parameterTypes = {proof->arguments.begin(),
-                                     proof->arguments.end() - 1}});
+        call, ResolvedCallInfo{.returnType = proof->arguments.back(),
+                               .parameterTypes = {proof->arguments.begin(),
+                                                  proof->arguments.end() - 1}});
     currentType = callExpressionType(proof->arguments.back());
     return true;
   }
@@ -1712,9 +1716,10 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
       selected == 0)
     return reject("The requirement does not select an exact read-only "
                   "free-function overload for this call.");
-  std::erase_if(callee.overloads, [selected](const CallableCandidate &candidate) {
-    return candidate.id != selected;
-  });
+  std::erase_if(callee.overloads,
+                [selected](const CallableCandidate &candidate) {
+                  return candidate.id != selected;
+                });
   if (callee.overloads.empty())
     return reject("The overload selected by the requirement is not visible "
                   "at this call.");

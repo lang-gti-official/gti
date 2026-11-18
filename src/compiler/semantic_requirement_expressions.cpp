@@ -563,14 +563,13 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
-    SemanticConstraintGuidance *guidance,
-    FunctionId *selectedFreeCall) const -> bool {
+    SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const
+    -> bool {
   return constraintQueryAttempts(reason, guidance, [&] {
     if (selectedFreeCall)
       *selectedFreeCall = 0;
-    return expressionRequirementSatisfiedOnce(query, inputArguments, reason,
-                                              lookupScope, guidance,
-                                              selectedFreeCall);
+    return expressionRequirementSatisfiedOnce(
+        query, inputArguments, reason, lookupScope, guidance, selectedFreeCall);
   });
 }
 
@@ -578,8 +577,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
-    SemanticConstraintGuidance *guidance,
-    FunctionId *selectedFreeCall) const -> bool {
+    SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const
+    -> bool {
   if (!chargeRequirementQueryTypes(inputArguments)) {
     if (reason)
       *reason = "Expression requirements exceed the 16384-node type-expansion "
@@ -618,8 +617,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
         "The required expression has incomplete explicit type arguments.");
   const bool cacheable =
       !selectedFreeCall && !query.inferredResult() && !query.borrowedFrom() &&
-      !query.iteration() &&
-      !macroContext(query.keyword()) &&
+      !query.iteration() && !macroContext(query.keyword()) &&
       std::all_of(arguments.begin(), arguments.end(), closedPrimitive) &&
       primitiveQueryExpression(query.expression().get(), query);
   if (cacheable) {
@@ -852,13 +850,15 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
                   "'-> int&<parameter>'.");
   if (selectedFreeCall) {
     const auto *call = exprAs<Call>(resultExpression);
-    const auto *selected = call ? worker->semanticModel.findCall(*call) : nullptr;
+    const auto *selected =
+        call ? worker->semanticModel.findCall(*call) : nullptr;
     if (selected && selected->declaration && selected->function != 0 &&
         selected->intrinsic == IntrinsicKind::None &&
         selected->declaration->genericParameters().empty() &&
-        selected->declaration->parameters().size() == call->arguments().size() &&
-        std::ranges::equal(selected->parameterTypes, arguments.first(
-                               query.parameters().size()))) {
+        selected->declaration->parameters().size() ==
+            call->arguments().size() &&
+        std::ranges::equal(selected->parameterTypes,
+                           arguments.first(query.parameters().size()))) {
       *selectedFreeCall = selected->function;
     }
   }
