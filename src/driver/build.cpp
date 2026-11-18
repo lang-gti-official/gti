@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -2584,11 +2585,21 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
                                errorMessage);
 }
 
-// A single atomically published record binds the input key and payload digest
-// to the object, without recording any executable or native dependency.
-std::optional<std::string>
-readCompilationObject(const std::filesystem::path &entry, std::string_view key,
-                      std::optional<std::string> &warning) {
+// One atomic, checksummed record preserves the ordered object list without
+// recording any executable or native dependency. Lengths delimit binary bytes.
+std::string compilationObjectsPayload(const std::vector<std::string> &objects) {
+  std::string payload = std::to_string(objects.size()) + "\n";
+  for (const auto &object : objects) {
+    payload += std::to_string(object.size()) + "\n";
+    payload += object;
+  }
+  return payload;
+}
+
+std::optional<std::vector<std::string>>
+readCompilationObjects(const std::filesystem::path &entry, std::string_view key,
+                       std::size_t expectedObjects,
+                       std::optional<std::string> &warning) {
   std::error_code error;
   if (!std::filesystem::is_regular_file(entry, error))
     return std::nullopt;
@@ -2598,10 +2609,33 @@ readCompilationObject(const std::filesystem::path &entry, std::string_view key,
   const auto headerSize = key.size() + digestLength;
   if (record && record->size() > headerSize && record->starts_with(key)) {
     const auto bytes = std::string_view(*record);
-    if (digestText(bytes.substr(headerSize)) ==
-        bytes.substr(key.size(), digestLength)) {
-      record->erase(0, headerSize);
-      return record;
+    auto payload = bytes.substr(headerSize);
+    if (digestText(payload) == bytes.substr(key.size(), digestLength)) {
+      const auto length = [&]() -> std::optional<std::size_t> {
+        const auto end = payload.find('\n');
+        if (end == std::string_view::npos || end == 0)
+          return std::nullopt;
+        std::size_t value = 0;
+        const auto parsed =
+            std::from_chars(payload.data(), payload.data() + end, value);
+        if (parsed.ec != std::errc{} || parsed.ptr != payload.data() + end)
+          return std::nullopt;
+        payload.remove_prefix(end + 1);
+        return value;
+      };
+      const auto count = length();
+      if (count && *count != 0 && *count == expectedObjects) {
+        std::vector<std::string> objects;
+        for (std::size_t index = 0; index < *count; ++index) {
+          const auto size = length();
+          if (!size || *size == 0 || *size > payload.size())
+            break;
+          objects.emplace_back(payload.substr(0, *size));
+          payload.remove_prefix(*size);
+        }
+        if (objects.size() == *count && payload.empty())
+          return objects;
+      }
     }
   }
   warning = "gti: ignored corrupt compiled GTI object cache entry '" +
@@ -4342,18 +4376,18 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         if (const auto key =
                 buildCacheKey(request, compilationInputs, *request.cache(),
                               linkIdentityPlan, error, policyDetail, true)) {
-          objectEntry = request.cache()->root / "compile-object-v1" / *key;
+          objectEntry = request.cache()->root / "compile-object-v2" / *key;
           if (const auto diagnostic = managedPathDiagnostic(
                   *request.managedOutput(), *objectEntry, false)) {
             result.status = ExecutableBuildStatus::OutputDirectoryFailure;
             result.driverDiagnostic = diagnostic;
             return result;
           }
-          if (auto object = readCompilationObject(*objectEntry, *key,
-                                                  result.cache.warning)) {
+          if (auto object = readCompilationObjects(*objectEntry, *key, 1,
+                                                   result.cache.warning)) {
             result.compilation.artifact =
                 BackendArtifact{.kind = BackendArtifactKind::Object,
-                                .contents = std::move(*object),
+                                .objects = std::move(*object),
                                 .extension = ".o"};
             result.compilation.sources = std::move(compilationInputs.sources);
             result.compilation.diagnostics =
@@ -5142,7 +5176,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   // bytes. Preserve warning output and test catalogs by recompiling others.
   if (objectEntry && !reusedObject && result.compilation.diagnostics.empty() &&
       result.compilation.testCases.empty()) {
-    const auto &object = result.compilation.artifact->contents;
+    const auto object =
+        compilationObjectsPayload(result.compilation.artifact->objects);
     const auto pathError =
         managedPathDiagnostic(*request.managedOutput(), *objectEntry, true);
     std::string error;
