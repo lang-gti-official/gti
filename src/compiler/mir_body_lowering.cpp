@@ -9090,6 +9090,54 @@ private:
     return std::nullopt;
   }
 
+  // Whether a record can carry owner dependencies in its value without
+  // static borrowed-state traits: a text, reference or callable field, an
+  // open type, or such a type argument, directly or through nested records.
+  [[nodiscard]] bool mayHoldValueDependencies(const SemanticType &type,
+                                              std::size_t depth = 0) const {
+    if (depth > 16)
+      return true;
+    switch (type.kind) {
+    case SemanticType::StringView:
+    case SemanticType::CString:
+    case SemanticType::Reference:
+    case SemanticType::Lambda:
+    case SemanticType::TypeParameter:
+    case SemanticType::Unknown:
+      return true;
+    case SemanticType::Array:
+      return std::any_of(type.arguments.begin(), type.arguments.end(),
+                         [&](const SemanticType &argument) {
+                           return mayHoldValueDependencies(argument, depth + 1);
+                         });
+    case SemanticType::Class:
+    case SemanticType::Enum:
+      break;
+    default:
+      return false;
+    }
+    if (std::any_of(type.arguments.begin(), type.arguments.end(),
+                    [&](const SemanticType &argument) {
+                      return mayHoldValueDependencies(argument, depth + 1);
+                    }))
+      return true;
+    if (type.kind != SemanticType::Class)
+      return true;
+    const auto &classes = program.classInstances();
+    const auto owner =
+        std::find_if(classes.begin(), classes.end(),
+                     [&](const auto &item) { return item.type == type; });
+    if (owner == classes.end() || !owner->bases.empty() ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::None)
+      return true;
+    return std::any_of(owner->fields.begin(), owner->fields.end(),
+                       [&](const HirClassField &field) {
+                         return field.info.traits.containsBorrowedState ||
+                                mayHoldValueDependencies(field.info.type,
+                                                         depth + 1);
+                       });
+  }
+
   [[nodiscard]] bool borrowsCarrierStorage(const HirValue &value) const {
     if (value.info.category != ValueCategory::Place)
       return false;
@@ -9140,7 +9188,8 @@ private:
           value.info.type.kind == SemanticType::Lambda) &&
          (value.info.traits.containsBorrowedState ||
           (!byValueArgumentOrigin &&
-           mirTypeMayHoldDependencies(value.info.type, value.info.traits)))))
+           mirTypeMayHoldDependencies(value.info.type, value.info.traits) &&
+           mayHoldValueDependencies(value.info.type)))))
       return true;
     // Erasure removes the visible referent layout, not the addressable
     // shell's lifetime or its inherited owners. Preserve the selected
@@ -20407,7 +20456,7 @@ private:
                               const auto found =
                                   bindingLoans.find(formal->binding);
                               return found != bindingLoans.end() &&
-                                     found->second == transient;
+                                     found->second.exact() == transient;
                             });
             const bool validTail =
                 function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
