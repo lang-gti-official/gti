@@ -1,0 +1,17 @@
+// Nested enums carrying shared or exclusive references end their loans at scope end.
+//@ run-pass
+enum Shared { empty, value(int& owner) };
+enum SharedOuter { empty, wrapped(Shared inner) };
+enum Exclusive { empty, value(mut int& owner) };
+enum ExclusiveOuter { empty, wrapped(Exclusive inner) };
+int main() {
+  mut int owner = 3;
+  {
+    auto shared = SharedOuter::wrapped(Shared::value(owner));
+  }
+  {
+    auto exclusive = ExclusiveOuter::wrapped(Exclusive::value(owner));
+  }
+  owner = 19;
+  return owner == 19 ? 0 : 1;
+}

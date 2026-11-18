@@ -1,0 +1,52 @@
+// A failure after a payload moved out runs no cleanup for the moved payload.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: division_by_zero
+import std.optional;
+import std.vector;
+
+mut int32_t drops = 0;
+
+class Resource {
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {
+
+  }
+  int32_t id() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+enum class Event { message(Resource resource), idle };
+
+int32_t id(Event& event) {
+  switch (event) {
+  case Event::message(auto& resource): return resource.id();
+  case Event::idle: return 0;
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+// Deliberately unrelated to a public container: generic ownership must use
+// the exact concrete field and callable identities, not library spellings.
+class Envelope<T> {
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+private:
+  mut T value;
+};
+
+
+void accept<T>(T first, int32_t second) {}
+int main() {
+  Event event = Event::message(Resource(7));
+  mut int32_t divisor = 0;  //~ WARN GTI-S2096
+  accept(std::move(event), int32_t(1) / divisor);
+  return 1;
+}

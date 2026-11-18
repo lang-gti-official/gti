@@ -1,3 +1,8 @@
+// A thread-local fixed array of owning enums destroys its payloads in reverse order after main returns.
+//@ run-pass
+//@ stdout: 0
+//@ stdout: 4
+//@ stdout: 3
 import std.string;
 
 class Token {

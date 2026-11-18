@@ -161,7 +161,6 @@
   "general_requires_runtime": 21.0,
   "generic_enum_instances_runtime": 38.1,
   "generic_owner_callable_variants_runtime": 0.8,
-  "generic_payload_enum_runtime": 53.2,
   "glfw_3_4_c_oracle": 2.1,
   "global_class_storage_runtime": 0.4,
   "gti_test_examples": 84.0,

@@ -1,3 +1,77 @@
+// Fixed arrays of owning enums construct, move, assign and clean up each payload exactly once, also on failure.
+//@ run-pass
+//@ revisions: a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12
+//@[a0] stdout: 2
+//@[a0] stdout: 1
+//@[a0] stdout: 9
+//@[a1] args: case
+//@[a1] stdout: 2
+//@[a1] stdout: 1
+//@[a1] stdout: 9
+//@[a1] run-fail
+//@[a1] exit-code: 70
+//@[a1] stderr-contains: main.gti:97: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[a2] args: case case
+//@[a2] stdout: 2
+//@[a2] stdout: 1
+//@[a2] stdout: 9
+//@[a2] run-fail
+//@[a2] exit-code: 70
+//@[a2] stderr-contains: main.gti:116: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[a3] args: case case case
+//@[a3] stdout: 3
+//@[a3] stdout: 2
+//@[a3] stdout: 1
+//@[a3] stdout: 9
+//@[a4] args: case case case case
+//@[a4] stdout: 1
+//@[a4] stdout: 2
+//@[a4] stdout: 9
+//@[a5] args: case case case case case
+//@[a5] stdout: 1
+//@[a5] stdout: 2
+//@[a5] stdout: 3
+//@[a5] stdout: 9
+//@[a6] args: case case case case case case
+//@[a6] stdout: 8
+//@[a6] stdout: 2
+//@[a6] stdout: 1
+//@[a6] stdout: 9
+//@[a7] args: case case case case case case case
+//@[a7] stdout: 2
+//@[a7] stdout: 1
+//@[a7] stdout: 9
+//@[a7] run-fail
+//@[a7] exit-code: 70
+//@[a7] stderr-contains: main.gti:105: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[a8] args: case case case case case case case case
+//@[a8] stdout: 2
+//@[a8] stdout: 1
+//@[a8] stdout: 9
+//@[a9] args: case case case case case case case case case
+//@[a9] stdout: 2
+//@[a9] stdout: 1
+//@[a9] stdout: 9
+//@[a9] run-fail
+//@[a9] exit-code: 70
+//@[a9] stderr-contains: main.gti:136: runtime error[GTI-R0007]: index_out_of_bounds in fixed_array
+//@[a10] args: case case case case case case case case case case
+//@[a10] stdout: 2
+//@[a10] stdout: 1
+//@[a10] stdout: 9
+//@[a11] args: case case case case case case case case case case case
+//@[a11] stdout: 3
+//@[a11] stdout: 2
+//@[a11] stdout: 1
+//@[a11] stdout: 9
+//@[a11] run-fail
+//@[a11] exit-code: 70
+//@[a11] stderr-contains: main.gti:97: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[a12] args: case case case case case case case case case case case case
+//@[a12] stdout: 1
+//@[a12] stdout: 2
+//@[a12] stdout: 3
+//@[a12] stdout: 9
 import std.string;
 import std.vector;
 import std.memory;

@@ -1,7 +1,16 @@
+// A failing payload destructor during container cleanup still destroys the remaining payloads.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+//@ stdout: 9
+//@ stderr-contains: division_by_zero
 import std.optional;
 import std.vector;
 
 mut int32_t drops = 0;
+mut int32_t zero = 0;
 
 class Resource {
 public:
@@ -10,6 +19,7 @@ public:
   ~Resource() {
     drops = drops + 1;
     std::println(this.identity);
+    if (this.identity == 2) { int32_t checked = int32_t(1) / zero; }
   }
   int32_t id() { return this.identity; }
 private:
@@ -39,29 +49,12 @@ private:
   mut T value;
 };
 
-void exercise() {
-  Event source = relay(Event::message(Resource(1)));
-  mut Envelope<Event> packet = Envelope<Event>(std::move(source));
-  packet.replace(Event::message(Resource(2)));
-  if (id(packet.get()) != 2) { std::println(99); }
-  Event extracted = std::move(packet).extract();
-
-  mut std::vector<Event> events{};
-  events.push_back(std::move(extracted));
-  events.push_back(Event::idle);
-  events.push_back(Event::message(Resource(3)));
-  events.reserve(std::size_t(12));
-  mut int32_t total = 0;
-  for (auto& event : events) { total = total + id(event); }
-  if (total != 5) { std::println(99); }
-
-  mut std::optional<Event> selected =
-      std::optional<Event>(Event::message(Resource(4)));
-  if (id(selected.value()) != 4) { std::println(99); }
-  selected.reset();
-}
 
 int main() {
-  exercise();
-  return drops == 4 ? 0 : 1;
+  Resource caller = Resource(9);
+  mut std::vector<Event> events{};
+  events.push_back(Event::message(Resource(1)));
+  events.push_back(Event::message(Resource(2)));
+  events.push_back(Event::message(Resource(3)));
+  return 0;
 }
