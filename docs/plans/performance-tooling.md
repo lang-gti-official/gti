@@ -114,10 +114,25 @@ individual example's relative change. Values are baseline / candidate.
 Aggregate admission time is 5.68x lower at both levels. The largest peak-RSS
 reading rises 1.61% at O0 and 0.19% at O2. Seven individual single-pair readings
 nevertheless exceed a 5% RSS increase (5.33% to 8.40%); the largest is
-`namespace_regex.gti` at O0. Those seven sources are being repeated at both
-levels with five measured pairs and one warm-up. The original readings are
-retained; these exploratory repeats do not replace the corpus data or narrow
-the four-program acceptance workload.
+`namespace_regex.gti` at O0. A completed exploratory follow-up repeated all
+seven sources at both levels, with five measured pairs after one warm-up.
+None reproduced a greater-than-5% increase: median per-compile peak-RSS changes
+ranged from -1.53% to +1.24%; comparing the largest measured peak of each
+variant gave -0.28% to +1.38%. All resulting executables were byte-identical,
+and the fixed-input checks passed. These repeats do not establish that every
+future measurement will stay below 5%; they show no persistent increase of
+that size in this follow-up. The original readings remain in the corpus data,
+and these post-hoc repeats do not replace the four-program acceptance workload.
+
+| Follow-up source | O0 median peak RSS change | O2 median peak RSS change |
+| --- | ---: | ---: |
+| 041-owner-dependencies | -0.08% | +0.25% |
+| 103-resource-exchange | +0.56% | +0.50% |
+| 143-checked-container-iteration | +0.67% | +0.32% |
+| 144-checked-view-iteration | +0.67% | +0.01% |
+| 158-multi-parameter-concepts | +1.22% | +1.24% |
+| 180-compact-source-owners | +0.74% | +1.18% |
+| namespace_regex | -1.53% | -0.01% |
 
 These measurements came from a shared development machine. Two short coverage
 probe rebuilds overlapped part of the corpus run; their before/after hashes
