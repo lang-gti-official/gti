@@ -20,6 +20,7 @@
 #include "text.h"
 #include "thread_lifecycle.h"
 #include "threads.h"
+#include "type_index.h"
 
 #include <functional>
 #include <iomanip>
@@ -168,10 +169,12 @@ bool arrayProjection(const MirBody &body, const MirPlace &place) {
 // its pointee is decided by `pointee`, so hierarchy pointees use metadata.
 class NativeValues final {
 public:
-  NativeValues(const MirProgram &program, const TargetInfo &nativeTarget,
+  NativeValues(const MirProgram &program,
+               const native_llvm::AdmissionTypeIndex &types,
+               const TargetInfo &nativeTarget,
                std::function<bool(const SemanticType &)> pointee,
                LlvmAdmissionStatistics *statistics)
-      : program(program), nativeTarget(nativeTarget),
+      : program(program), types(types), nativeTarget(nativeTarget),
         pointee(std::move(pointee)), statistics(statistics) {}
 
   bool operator()(const SemanticType &type) const {
@@ -220,7 +223,7 @@ public:
                selected.arguments[0].kind != SemanticType::Unknown &&
                selected.arguments[0].kind != SemanticType::TypeParameter;
       if (selected.kind == SemanticType::Enum) {
-        if (const auto *payload = program.findPayloadEnum(selected)) {
+        if (const auto *payload = types.payloadEnum(selected)) {
           if (crossedPayloads.contains(payload))
             return true;
           if (!payloads.insert(payload).second)
@@ -232,9 +235,7 @@ public:
           payloads.erase(payload);
           return valid;
         }
-        return std::any_of(
-            program.integralEnums().begin(), program.integralEnums().end(),
-            [&](const auto &entry) { return entry.type == selected; });
+        return types.integralEnum(selected) != nullptr;
       }
       if (selected.kind == SemanticType::Array)
         return selected.arguments.size() == 1 &&
@@ -252,10 +253,10 @@ public:
           return false;
         const auto &pointeeType = selected.arguments[0];
         if (pointeeType.kind == SemanticType::Class)
-          for (const auto &owner : program.classInstances())
-            if (owner.type == pointeeType && visiting.contains(owner.id))
-              return !owner.polymorphic && !owner.abstract &&
-                     owner.compilerCapability ==
+          for (const auto *owner : types.classes(pointeeType))
+            if (visiting.contains(owner->id))
+              return !owner->polymorphic && !owner->abstract &&
+                     owner->compilerCapability ==
                          CompilerCapabilityTypeKind::None;
         // An owner transports its handle, not the pointee's object bytes.
         // Exact hierarchy layout can therefore establish representation here;
@@ -276,12 +277,11 @@ public:
       if (selected.kind != SemanticType::Class)
         return false;
       const MirClassInstance *owner = nullptr;
-      for (const auto &candidate : program.classInstances())
-        if (candidate.type == selected) {
-          if (owner)
-            return false;
-          owner = &candidate;
-        }
+      for (const auto *candidate : types.classes(selected)) {
+        if (owner)
+          return false;
+        owner = candidate;
+      }
       if (native_llvm::nativeAtomicElement(program, selected))
         return true;
       if (!owner)
@@ -329,6 +329,7 @@ public:
 
 private:
   const MirProgram &program;
+  const native_llvm::AdmissionTypeIndex &types;
   const TargetInfo &nativeTarget;
   std::function<bool(const SemanticType &)> pointee;
   LlvmAdmissionStatistics *statistics;
@@ -355,10 +356,12 @@ public:
 
   StaticDispatchProofs(const LlvmAdmissionPlan &plan,
                        VerifiedLoweredProgram input,
+                       const native_llvm::AdmissionTypeIndex &types,
                        LlvmAdmissionStatistics *statistics)
       : plan(plan), input(std::move(input)), program(plan.program().mir()),
+        types(types),
         natives(
-            plan.program().mir(), plan.program().target(),
+            plan.program().mir(), types, plan.program().target(),
             [this](const SemanticType &pointee) {
               return pointeeMetadata(pointee) || mutexPointee(pointee);
             },
@@ -597,7 +600,7 @@ public:
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
            (type.arguments.front().kind == SemanticType::Class ||
             (type.arguments.front().kind == SemanticType::Enum &&
-             program.findPayloadEnum(type.arguments.front()))) &&
+             types.payloadEnum(type.arguments.front()))) &&
            contains(type.arguments.front());
   }
   bool related(const SemanticType &type) const {
@@ -698,7 +701,7 @@ public:
     // A payload enum holds one complete object per payload field of its
     // active alternative; every alternative's storage must be represented.
     if (type.kind == SemanticType::Enum) {
-      const auto *payload = program.findPayloadEnum(type);
+      const auto *payload = types.payloadEnum(type);
       if (!payload || !contains(type))
         return {};
       for (const auto &variant : payload->variants)
@@ -911,7 +914,7 @@ public:
         unreference(operand.type).kind == SemanticType::Enum) {
       const auto &target = unreference(operand.type);
       const auto *place = body.findPlace(operand.place);
-      if (!program.findPayloadEnum(target) || !place || place->type != target ||
+      if (!types.payloadEnum(target) || !place || place->type != target ||
           place->foreignStorage || place->capture ||
           !payloadPlace(body, *place))
         return {};
@@ -1103,6 +1106,7 @@ private:
   const LlvmAdmissionPlan &plan;
   VerifiedLoweredProgram input;
   const MirProgram &program;
+  const native_llvm::AdmissionTypeIndex &types;
   // Non-hierarchy field representations use the same rules as values.
   NativeValues natives;
   std::vector<SemanticType> pointeeVisits;
@@ -1125,12 +1129,11 @@ private:
   }
   const MirClassInstance &instance(const SemanticType &type) const {
     const MirClassInstance *result = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (result)
-          throw std::logic_error("LLVM dispatch type has repeated identity");
-        result = &candidate;
-      }
+    for (const auto *candidate : types.classes(type)) {
+      if (result)
+        throw std::logic_error("LLVM dispatch type has repeated identity");
+      result = candidate;
+    }
     if (!result)
       throw BackendUnsupportedError("LLVM dispatch type has no exact class");
     return *result;
@@ -1258,7 +1261,7 @@ private:
       return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
              metadataStorage(type.arguments.front(), path);
     if (type.kind == SemanticType::Enum) {
-      const auto *payload = program.findPayloadEnum(type);
+      const auto *payload = types.payloadEnum(type);
       if (!payload)
         return false;
       for (const auto &variant : payload->variants)
@@ -1568,7 +1571,7 @@ private:
       return false;
     const auto *place = body.findPlace(*stage.destination);
     const auto *payload = place && place->type.kind == SemanticType::Enum
-                              ? program.findPayloadEnum(place->type)
+                              ? types.payloadEnum(place->type)
                               : nullptr;
     if (!place || (place->type.kind != SemanticType::Class && !payload) ||
         place->type != stage.info.type || !contains(place->type))
@@ -2029,7 +2032,7 @@ private:
   // payload enum: containers of complete hierarchy objects.
   bool hierarchyContainer(const SemanticType &type) const {
     if (type.kind == SemanticType::Enum)
-      return program.findPayloadEnum(type) != nullptr;
+      return types.payloadEnum(type) != nullptr;
     // A closure environment holds its by-value captures as complete objects.
     if (type.kind == SemanticType::Lambda)
       return true;
@@ -2039,8 +2042,7 @@ private:
       leaf = &leaf->arguments.front();
     return type.kind == SemanticType::Array &&
            (leaf->kind == SemanticType::Class ||
-            (leaf->kind == SemanticType::Enum &&
-             program.findPayloadEnum(*leaf)));
+            (leaf->kind == SemanticType::Enum && types.payloadEnum(*leaf)));
   }
   bool freshConstruction(MirBodyAddress address, const MirBody &body,
                          const native_llvm::Placement &placement,
@@ -2956,12 +2958,13 @@ private:
 class Inventory final {
 public:
   Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
+            const native_llvm::AdmissionTypeIndex &types,
             StaticDispatchProofs &dispatchProofs,
             const TargetInfo &nativeTarget, LlvmAdmissionStatistics *statistics)
-      : uses(uses), program(program), dispatchProofs(dispatchProofs),
-        nativeTarget(nativeTarget),
+      : uses(uses), program(program), types(types),
+        dispatchProofs(dispatchProofs), nativeTarget(nativeTarget),
         natives(
-            program, nativeTarget,
+            program, types, nativeTarget,
             [this](const SemanticType &pointee) {
               // A mutex-bearing pointee has its own admitted representation,
               // whose native identity the allocation holds in place.
@@ -3096,12 +3099,11 @@ public:
     if (!origin || origin->type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == origin->type) {
-        if (owner)
-          return false;
-        owner = &candidate;
-      }
+    for (const auto *candidate : types.classes(origin->type)) {
+      if (owner)
+        return false;
+      owner = candidate;
+    }
     return owner &&
            owner->compilerCapability ==
                CompilerCapabilityTypeKind::MutexStorage &&
@@ -3114,10 +3116,9 @@ public:
   // that integer's representation. A payload enum carries a tag and stays
   // outside this rule.
   bool integralEnumPointee(const SemanticType &type) const {
-    const auto *sealed = type.kind == SemanticType::Enum
-                             ? program.findIntegralEnum(type)
-                             : nullptr;
-    return sealed && !program.findPayloadEnum(type) &&
+    const auto *sealed =
+        type.kind == SemanticType::Enum ? types.integralEnum(type) : nullptr;
+    return sealed && !types.payloadEnum(type) &&
            constantIntegerDomain(sealed->underlyingType).has_value();
   }
   bool integralEnumAddress(const SemanticType &type) const {
@@ -3273,7 +3274,7 @@ public:
         stage.parameterTypes.size() != 1 ||
         stage.parameterTypes[0] != stage.operands[0].type)
       return false;
-    const auto *sealed = program.findIntegralEnum(stage.operands[0].type);
+    const auto *sealed = types.integralEnum(stage.operands[0].type);
     return sealed && sealed->underlyingType == stage.info.type &&
            isPassiveScalarValueType(stage.info.type);
   }
@@ -3305,9 +3306,9 @@ public:
         type.arrayLengthParameterId)
       return false;
     const auto &element = type.arguments.front();
-    const auto *sealed = program.findIntegralEnum(element);
+    const auto *sealed = types.integralEnum(element);
     return element.kind == SemanticType::Enum && sealed &&
-           !program.findPayloadEnum(element) &&
+           !types.payloadEnum(element) &&
            constantIntegerDomain(sealed->underlyingType).has_value() &&
            nativeValue(element);
   }
@@ -3373,7 +3374,7 @@ public:
       return leaf->arguments.size() == 1 && mutexShape(leaf->arguments[0])
                  ? Shape::NativeOwnedMutexStorage
                  : Shape::NativeUniqueOwnership;
-    if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
+    if (leaf->kind == SemanticType::Enum && types.payloadEnum(*leaf) &&
         nativeValue(type))
       return Shape::NativePayloadStorage;
     if ((leaf->kind == SemanticType::FunctionItem ||
@@ -3384,19 +3385,15 @@ public:
                  ? Shape::CallableMetadata
                  : Shape::NativeCallableStorage;
     if (leaf->kind == SemanticType::Class && nativeValue(type)) {
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == *leaf; });
-      if (owner != program.classInstances().end() &&
-          native_llvm::sharedOwnerRepresentation(program, *owner))
+      const auto matches = types.classes(*leaf);
+      const auto *owner = matches.empty() ? nullptr : matches.front();
+      if (owner && native_llvm::sharedOwnerRepresentation(program, *owner))
         return Shape::NativeSharedOwnership;
-      if (owner != program.classInstances().end() &&
-          owner->compilerCapability ==
-              CompilerCapabilityTypeKind::FunctionPointer)
+      if (owner && owner->compilerCapability ==
+                       CompilerCapabilityTypeKind::FunctionPointer)
         return Shape::NativeCallableStorage;
-      return owner != program.classInstances().end() && owner->unionLayout
-                 ? Shape::NativeUnionStorage
-                 : Shape::NativeClassStorage;
+      return owner && owner->unionLayout ? Shape::NativeUnionStorage
+                                         : Shape::NativeClassStorage;
     }
     return {};
   }
@@ -3636,10 +3633,9 @@ public:
   const MirClassInstance *nativeClass(const SemanticType &type) const {
     if (type.kind != SemanticType::Class || !representedValue(type))
       return nullptr;
-    for (const auto &owner : program.classInstances())
-      if (owner.type == type &&
-          owner.compilerCapability == CompilerCapabilityTypeKind::None)
-        return &owner;
+    for (const auto *owner : types.classes(type))
+      if (owner->compilerCapability == CompilerCapabilityTypeKind::None)
+        return owner;
     return nullptr;
   }
   bool nativeClassPointee(const SemanticType &type) const {
@@ -3774,7 +3770,7 @@ public:
   // the selected address unchanged. Hierarchy-related and capability
   // payloads fail the storage witness and stay closed.
   bool nativePayloadPointee(const SemanticType &type) const {
-    return type.kind == SemanticType::Enum && program.findPayloadEnum(type) &&
+    return type.kind == SemanticType::Enum && types.payloadEnum(type) &&
            nativeValue(type) && classShape(type) == Shape::NativePayloadStorage;
   }
   bool payloadPointerArithmetic(const MirInstruction &stage) const {
@@ -4191,12 +4187,11 @@ public:
   bool opaqueReferent(const SemanticType &type) const {
     if (type.kind != SemanticType::Class)
       return false;
-    return std::any_of(program.classInstances().begin(),
-                       program.classInstances().end(),
-                       [&](const auto &instance) {
-                         return instance.type == type &&
-                                instance.compilerCapability ==
-                                    CompilerCapabilityTypeKind::ErasedObject;
+    const auto matches = types.classes(type);
+    return std::any_of(matches.begin(), matches.end(),
+                       [](const auto *instance) {
+                         return instance->compilerCapability ==
+                                CompilerCapabilityTypeKind::ErasedObject;
                        });
   }
   bool passiveNonEnumReference(const SemanticType &type) const {
@@ -4230,9 +4225,8 @@ public:
     // its elements are reached only through checked array projection.
     if (textViewArray(scalar) || integralEnumArray(scalar))
       return true;
-    return scalar.kind == SemanticType::Enum &&
-           program.findIntegralEnum(scalar) &&
-           !program.findPayloadEnum(scalar) && nativeValue(scalar);
+    return scalar.kind == SemanticType::Enum && types.integralEnum(scalar) &&
+           !types.payloadEnum(scalar) && nativeValue(scalar);
   }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
@@ -4291,12 +4285,11 @@ public:
     if (type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (owner)
-          return false;
-        owner = &candidate;
-      }
+    for (const auto *candidate : types.classes(type)) {
+      if (owner)
+        return false;
+      owner = candidate;
+    }
     if (owner &&
         (owner->kind == ClassKind::Class || owner->kind == ClassKind::Struct) &&
         owner->compilerCapability == CompilerCapabilityTypeKind::None &&
@@ -4323,12 +4316,11 @@ public:
     if (type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (owner)
-          return false;
-        owner = &candidate;
-      }
+    for (const auto *candidate : types.classes(type)) {
+      if (owner)
+        return false;
+      owner = candidate;
+    }
     return owner && (owner->cAbiRecord || owner->cAbiLayout) &&
            !owner->cOpaqueHandle && !owner->unionLayout &&
            owner->compilerCapability == CompilerCapabilityTypeKind::None &&
@@ -5045,11 +5037,11 @@ public:
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
       pending.pop_back();
-      if (program.findPayloadEnum(type))
+      if (types.payloadEnum(type))
         add(Shape::PayloadEnum, representationShape(type));
       if (type.kind == SemanticType::Class)
-        for (const auto &owner : program.classInstances())
-          if (owner.type == type && owner.unionLayout)
+        for (const auto *owner : types.classes(type))
+          if (owner->unionLayout)
             add(Shape::NativeUnion, classShape(type));
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
@@ -5388,8 +5380,7 @@ public:
       const auto nativeConditions = [&](const auto &conditions) {
         return std::all_of(
             conditions.begin(), conditions.end(), [&](const auto &condition) {
-              const auto *payload =
-                  program.findPayloadEnum(condition.enumeration);
+              const auto *payload = types.payloadEnum(condition.enumeration);
               return payload && condition.variant < payload->variants.size() &&
                      nativeValue(condition.enumeration);
             });
@@ -6166,6 +6157,7 @@ private:
                          std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
   const MirProgram &program;
+  const native_llvm::AdmissionTypeIndex &types;
   StaticDispatchProofs &dispatchProofs;
   const TargetInfo &nativeTarget;
   NativeValues natives;
@@ -6300,6 +6292,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   auto *statistics = plan.statistics_ ? &*plan.statistics_ : nullptr;
   const auto &input = plan.program();
   const auto &mir = input.mir();
+  const native_llvm::AdmissionTypeIndex types(mir, statistics != nullptr);
   const native_llvm::HierarchyStorageScope hierarchyStorage(mir);
   const auto before = hierarchyStorage.statistics();
   const auto closure = [&] {
@@ -6321,10 +6314,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   }
   auto dispatchProofs = [&] {
     const PhaseTimeScope dispatchTime("llvm-admission-dispatch-proofs");
-    return StaticDispatchProofs(plan, plan.input, statistics);
+    return StaticDispatchProofs(plan, plan.input, types, statistics);
   }();
   const PhaseTimeScope inventoryTime("llvm-admission-inventory");
-  Inventory inventory(plan.uses, mir, dispatchProofs, input.target(),
+  Inventory inventory(plan.uses, mir, types, dispatchProofs, input.target(),
                       statistics);
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind(),

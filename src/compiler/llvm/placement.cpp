@@ -8,6 +8,7 @@
 #include "memory_types.h"
 #include "mutexes.h"
 #include "threads.h"
+#include "type_hash.h"
 
 #include <algorithm>
 #include <set>
@@ -810,23 +811,6 @@ computeHierarchyStorage(const MirProgram &program, const SemanticType &type) {
           {}};
 }
 
-[[nodiscard]] std::size_t outcomeHash(const SemanticType &type) {
-  // Only a bucket selector: equal types collide, and lookup confirms the
-  // complete type with operator==.
-  std::size_t hash = static_cast<std::size_t>(type.kind);
-  const auto mix = [&](std::size_t value) {
-    hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
-  };
-  mix(type.classId);
-  mix(type.enumId);
-  mix(type.lambdaId);
-  mix(type.arrayLength);
-  mix(type.arguments.size());
-  for (const auto &argument : type.arguments)
-    mix(outcomeHash(argument));
-  return hash;
-}
-
 } // namespace
 
 struct HierarchyStorageScope::Outcomes {
@@ -877,7 +861,7 @@ HierarchyStorageOutcome classifyHierarchyStorage(const MirProgram &program,
     return computeHierarchyStorage(program, type);
   if (outcomes->measure)
     ++outcomes->statistics.queries;
-  auto &bucket = outcomes->buckets[outcomeHash(type)];
+  auto &bucket = outcomes->buckets[TypeBucketHash{}(type)];
   for (const auto &outcome : bucket)
     if (outcome.type == type) {
       if (outcomes->measure) {

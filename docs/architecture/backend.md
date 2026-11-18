@@ -637,6 +637,17 @@ failure on disagreement. Only a finished
 top-level query is recorded, because its outcome depends on the type's whole
 reachable storage graph and never on another query's path.
 
+Each admission plan builds one read-only `AdmissionTypeIndex` after obtaining
+its sealed program. Native-value, dispatch and inventory queries share it; no
+index survives the plan or observes mutable MIR. Structural hashes only choose
+buckets: complete `SemanticType` equality decides every lookup. Class matches
+retain all duplicates in original order so each consumer keeps its previous
+unique/first/any-match rule. Payload and integral enums retain their existing
+first-match lookup rule. Validation mode compares every indexed answer,
+including absence, with the original linear scans and reports an internal
+compiler error naming the query and type on disagreement. Indexing changes
+neither containment-path checks nor coverage ordering or occurrence counts.
+
 Admission time traces separate `llvm-admission`, `llvm-admission-closure`,
 `llvm-admission-dispatch-proofs` and `llvm-admission-inventory`. Under
 `GTI_COMPILER_VALIDATION`, the plan also retains query counters: hierarchy
