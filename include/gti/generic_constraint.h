@@ -43,6 +43,7 @@ enum class GenericConstraintKind : std::uint8_t {
 enum class StructuralConstraintKind : std::uint8_t {
   None,
   ReadMember,
+  FreeCall,
   Iteration,
   EnumUnderlying,
 };

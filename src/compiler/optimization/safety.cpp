@@ -17,6 +17,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -39,13 +40,79 @@ namespace {
          effect.reorderable;
 }
 
-struct Evidence {
+struct EvidenceIds {
   std::vector<MirBlockId> blocks;
   std::vector<MirInstructionId> instructions;
   std::vector<MirValueId> values;
   std::vector<MirPlaceId> places;
 
-  friend bool operator==(const Evidence &, const Evidence &) = default;
+  friend bool operator==(const EvidenceIds &, const EvidenceIds &) = default;
+};
+
+// Facts copied between control-flow paths usually carry unchanged evidence.
+// Share those sorted IDs until a path actually contributes another witness.
+class Evidence {
+public:
+  template <typename T> void insert(std::vector<T> EvidenceIds::*field, T id) {
+    if (id == 0)
+      return;
+    if (ids_ && ids_.use_count() != 1) {
+      const auto &values = (*ids_).*field;
+      if (std::binary_search(values.begin(), values.end(), id))
+        return;
+    }
+    optimization_detail::insertEvidenceId(writable().*field, id);
+  }
+
+  void merge(const Evidence &other) {
+    if (!other.ids_ || ids_ == other.ids_)
+      return;
+    if (!ids_) {
+      ids_ = other.ids_;
+      return;
+    }
+
+    const auto &src = *other.ids_;
+    if (ids_.use_count() != 1) {
+      const auto includes = [](const auto &all, const auto &part) {
+        return std::includes(all.begin(), all.end(), part.begin(), part.end());
+      };
+      if (includes(ids_->blocks, src.blocks) &&
+          includes(ids_->instructions, src.instructions) &&
+          includes(ids_->values, src.values) &&
+          includes(ids_->places, src.places))
+        return;
+    }
+    auto &dst = writable();
+    optimization_detail::mergeEvidenceIds(dst.blocks, src.blocks);
+    optimization_detail::mergeEvidenceIds(dst.instructions, src.instructions);
+    optimization_detail::mergeEvidenceIds(dst.values, src.values);
+    optimization_detail::mergeEvidenceIds(dst.places, src.places);
+  }
+
+  EvidenceIds release() && {
+    if (!ids_)
+      return {};
+    auto ids = std::move(ids_);
+    if (ids.use_count() == 1)
+      return std::move(*ids);
+    return *ids;
+  }
+
+  friend bool operator==(const Evidence &left, const Evidence &right) {
+    return left.ids_ == right.ids_ ||
+           (left.ids_ && right.ids_ && *left.ids_ == *right.ids_);
+  }
+
+private:
+  EvidenceIds &writable() {
+    if (!ids_)
+      ids_ = std::make_shared<EvidenceIds>();
+    else if (ids_.use_count() != 1)
+      ids_ = std::make_shared<EvidenceIds>(*ids_);
+    return *ids_;
+  }
+  std::shared_ptr<EvidenceIds> ids_;
 };
 
 struct IntegerFact {
@@ -568,7 +635,7 @@ using PlaceThresholds = std::map<MirPlaceId, IntegerFact>;
 
 struct BlockTransfer {
   AbstractState output;
-  std::map<MirInstructionId, AbstractState> before;
+  std::optional<AbstractState> beforeInvoke;
 };
 
 [[nodiscard]] int compare(CheckedIntegerValue left, CheckedIntegerValue right) {
@@ -610,26 +677,23 @@ void appendUnique(std::vector<T> &target, const std::vector<T> &source) {
 }
 
 void add(Evidence &evidence, MirBlockId block) {
-  optimization_detail::insertEvidenceId(evidence.blocks, block);
+  evidence.insert(&EvidenceIds::blocks, block);
 }
 
 void addInstruction(Evidence &evidence, MirInstructionId instruction) {
-  optimization_detail::insertEvidenceId(evidence.instructions, instruction);
+  evidence.insert(&EvidenceIds::instructions, instruction);
 }
 
 void addValue(Evidence &evidence, MirValueId value) {
-  optimization_detail::insertEvidenceId(evidence.values, value);
+  evidence.insert(&EvidenceIds::values, value);
 }
 
 void addPlace(Evidence &evidence, MirPlaceId place) {
-  optimization_detail::insertEvidenceId(evidence.places, place);
+  evidence.insert(&EvidenceIds::places, place);
 }
 
 [[nodiscard]] Evidence merged(Evidence left, const Evidence &right) {
-  optimization_detail::mergeEvidenceIds(left.blocks, right.blocks);
-  optimization_detail::mergeEvidenceIds(left.instructions, right.instructions);
-  optimization_detail::mergeEvidenceIds(left.values, right.values);
-  optimization_detail::mergeEvidenceIds(left.places, right.places);
+  left.merge(right);
   return left;
 }
 
@@ -7527,7 +7591,7 @@ transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     // evidence) for each instruction on every fixpoint iteration.
     if (block.terminator.kind == MirTerminatorKind::Invoke &&
         block.terminator.invokeInstruction == instruction.id) {
-      result.before.insert_or_assign(instruction.id, state);
+      result.beforeInvoke = state;
     }
     applyInstruction(body, aliases, block, instruction, state, thresholds,
                      closedCalls, address);
@@ -7985,18 +8049,12 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
   }
 }
 
-struct Edge {
-  MirBlockId target = 0;
-  std::size_t ordinal = 0;
-  AbstractState state;
-};
-
-[[nodiscard]] std::vector<Edge> outgoingEdges(
-    const MirBody &body, const MirBlock &block, const BlockTransfer &transfer,
+[[nodiscard]] std::vector<MirForwardDataflowEdge<AbstractState>> outgoingEdges(
+    const MirBody &body, const MirBlock &block, BlockTransfer &&transfer,
     const MirPlaceAliasEscapeAnalysis &aliases,
     const MirProgram *program = nullptr, MirBodyAddress address = {}) {
   const MirTerminator &terminator = block.terminator;
-  std::vector<Edge> result;
+  std::vector<MirForwardDataflowEdge<AbstractState>> result;
   const auto append = [&](MirBlockId target,
                           const std::vector<MirOperand> &arguments,
                           std::size_t ordinal, AbstractState state, bool refine,
@@ -8021,14 +8079,14 @@ struct Edge {
   };
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
-    append(terminator.target, terminator.targetArguments, 0, transfer.output,
-           false, false);
+    append(terminator.target, terminator.targetArguments, 0,
+           std::move(transfer.output), false, false);
     break;
   case MirTerminatorKind::Branch:
     append(terminator.target, terminator.targetArguments, 0, transfer.output,
            true, true);
-    append(terminator.elseTarget, terminator.elseArguments, 1, transfer.output,
-           true, false);
+    append(terminator.elseTarget, terminator.elseArguments, 1,
+           std::move(transfer.output), true, false);
     break;
   case MirTerminatorKind::Switch:
     append(terminator.target, terminator.targetArguments, 0, transfer.output,
@@ -8041,7 +8099,13 @@ struct Edge {
     }
     break;
   case MirTerminatorKind::Invoke: {
-    AbstractState success = transfer.output;
+    // The exceptional edge sees the pre-instruction state. Preserve the
+    // existing fallback for an unmatched invoke before refining the normal
+    // edge.
+    AbstractState failure = transfer.beforeInvoke
+                                ? std::move(*transfer.beforeInvoke)
+                                : transfer.output;
+    AbstractState &success = transfer.output;
     const auto detector =
         std::find_if(block.instructions.begin(), block.instructions.end(),
                      [&](const auto &instruction) {
@@ -8060,10 +8124,8 @@ struct Edge {
     }
     append(terminator.target, terminator.targetArguments, 0, std::move(success),
            false, false);
-    const auto before = transfer.before.find(terminator.invokeInstruction);
     append(terminator.elseTarget, terminator.elseArguments, 1,
-           before == transfer.before.end() ? transfer.output : before->second,
-           false, false);
+           std::move(failure), false, false);
     break;
   }
   default:
@@ -8725,17 +8787,11 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
       body, std::move(entry),
       [&](const MirBlock &block, const AbstractState &incoming) {
-        const BlockTransfer transfer = transferBlock(
-            body, aliases, block, incoming, thresholds, closedCalls, address);
-        std::vector<MirForwardDataflowEdge<AbstractState>> result;
-        for (Edge &edge : outgoingEdges(
-                 body, block, transfer, aliases,
-                 closedCalls ? &closedCalls->program : nullptr, address)) {
-          result.push_back({.target = edge.target,
-                            .ordinal = edge.ordinal,
-                            .state = std::move(edge.state)});
-        }
-        return result;
+        return outgoingEdges(
+            body, block,
+            transferBlock(body, aliases, block, incoming, thresholds,
+                          closedCalls, address),
+            aliases, closedCalls ? &closedCalls->program : nullptr, address);
       },
       [&](AbstractState &target, const AbstractState &incoming,
           MirDataflowMergeContext context) {
@@ -8781,7 +8837,7 @@ solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const std::vector<bool> *wideningBlocks =
       headers.empty() ? nullptr : &headers;
-  const std::vector<AbstractState> initial = solveStatesOnce(
+  std::vector<AbstractState> initial = solveStatesOnce(
       body, aliases, nullptr, entryState, closedCalls, address, wideningBlocks);
   if (initial.empty()) {
     return {};
@@ -8844,15 +8900,16 @@ void appendProof(MirSafetyAnalysis &analysis, MirBodyAddress address,
     return;
   }
   add(evidence, block.id);
+  EvidenceIds ids = std::move(evidence).release();
   analysis.proofs.push_back(
       {.body = address,
        .block = block.id,
        .instruction = instruction.id,
        .discharge = {.family = family, .origin = *origin, .outcome = outcome},
-       .relatedBlocks = std::move(evidence.blocks),
-       .relatedInstructions = std::move(evidence.instructions),
-       .relatedValues = std::move(evidence.values),
-       .relatedPlaces = std::move(evidence.places)});
+       .relatedBlocks = std::move(ids.blocks),
+       .relatedInstructions = std::move(ids.instructions),
+       .relatedValues = std::move(ids.values),
+       .relatedPlaces = std::move(ids.places)});
 }
 
 void collectProofs(MirBodyAddress address, const MirBody &body,

@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string_view>
 
 namespace lang::native_llvm {
 
@@ -40,6 +41,23 @@ namespace lang::native_llvm {
 [[nodiscard]] bool uniqueOwnerPointee(const MirProgram &program,
                                       const SemanticType &pointee);
 
+// A complete exclusion query: Unknown carries the same static reason as the
+// throwing API, and must never be read as an exclusion proof.
+struct HierarchyStorageOutcome {
+  enum class Kind { Contains, Excludes, Unknown };
+  Kind kind = Kind::Unknown;
+  std::string_view reason;
+
+  [[nodiscard]] bool contains() const { return kind == Kind::Contains; }
+  [[nodiscard]] bool known() const { return kind != Kind::Unknown; }
+  bool operator==(const HierarchyStorageOutcome &) const = default;
+};
+
+// Does not throw BackendUnsupportedError for unknown storage. Allocation and
+// compiler-integrity failures still propagate; they are not negative answers.
+[[nodiscard]] HierarchyStorageOutcome
+classifyHierarchyStorage(const MirProgram &program, const SemanticType &type);
+
 // Exclusion only: inline hierarchy state cannot use ordinary object-byte
 // transport. Indirections transport addresses, not their referents. Unknown,
 // missing or cyclic storage fails closed; false is never inferred from it.
@@ -48,10 +66,10 @@ namespace lang::native_llvm {
                                             const SemanticType &type);
 
 // While open on a thread, containsHierarchyStorage computes each type's
-// outcome for this exact immutable program once: the answer, or the rejection
-// it replays with the same message. A nested scope for the same program
-// reuses the open outcomes. Queries about any other program, and every query
-// outside a scope, compute the same answers directly.
+// outcome for this exact immutable program once: Contains, Excludes, or Unknown
+// with its original reason. Validation mode recomputes cache hits. A nested
+// scope for the same program reuses the open outcomes. Queries about any other
+// program, and every query outside a scope, compute the same answers directly.
 class HierarchyStorageScope final {
 public:
   explicit HierarchyStorageScope(const MirProgram &program);
@@ -61,6 +79,13 @@ public:
 
   // The number of distinct types whose outcome this scope holds.
   [[nodiscard]] std::size_t cachedTypes() const;
+
+  struct Statistics {
+    std::size_t queries = 0;
+    std::size_t hits = 0;
+    std::size_t rejections = 0;
+  };
+  [[nodiscard]] Statistics statistics() const;
 
   struct Outcomes;
 

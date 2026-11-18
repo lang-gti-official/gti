@@ -2249,7 +2249,14 @@ processes. Include-fix trials of such a compilation run without the cache.
 
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
-  the program's declaration list. A `SemanticPreambleKey` names the analysis
+  the program's declaration list. For bounded editor analysis the prefix can
+  include imported module interfaces when the entry comes last, source
+  ownership is known, no implementation units participate, and every
+  untrusted import declares a named module without visibility of the entry.
+  These modules retain ordinary body checking and can demand trusted bodies.
+  If checking this prefix fails, construction retries the leading trusted
+  declarations and adoption checks the remaining declarations normally.
+  A `SemanticPreambleKey` names the analysis
   configuration, every prefix unit by identity, path, digests and exact
   parsed declarations, and the whole source graph by unit identity and
   import/re-export edges (registration publishes each declaration's visibility per

@@ -556,6 +556,13 @@ consumers = [
 ]
 
 [[area]]
+area = "llvm-admission-evidence"
+risk = "system"
+paths = ["scripts/llvm_admission_evidence.py"]
+owners = ["gti_test_ui", "gti_unit_tests"]
+consumers = ["llvm_coverage_evidence", "llvm_coverage_exhaustiveness"]
+
+[[area]]
 area = "llvm-abi-layout"
 risk = "system"
 paths = [

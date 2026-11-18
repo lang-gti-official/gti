@@ -49,12 +49,7 @@ const MirClassInstance *exactClass(const MirProgram &program,
 // storage itself crosses a task box only through its generated relocation and
 // cleanup recipes, which admission checks for each boxed type.
 bool exactInlineStorage(const MirProgram &program, const SemanticType &type) {
-  try {
-    static_cast<void>(containsHierarchyStorage(program, type));
-    return true;
-  } catch (const BackendUnsupportedError &) {
-    return false;
-  }
+  return classifyHierarchyStorage(program, type).known();
 }
 
 bool threadCallMetadata(const MirProgram &program,

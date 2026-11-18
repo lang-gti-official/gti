@@ -7201,20 +7201,6 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
       return contract;
     case ExplicitLifetimeResult::Kind::Region:
-      // A class region nothing in the class stores is supplied only by the
-      // parameters written in it, exactly as a method's own binder is.
-      if (lifetime.classBinder &&
-          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
-        if (ownerClass != 0 && !staticMember)
-          contract.origin = BorrowOriginKind::Receiver;
-        return contract;
-      }
-      if (lifetime.parameters.empty()) {
-        contract.missing = true;
-        return contract;
-      }
-      // A region on a result this instance makes owned
-      // (neither a reference nor a conditional borrow carrier) is inert.
       const bool arrayInput =
           std::any_of(parameterTypes.begin(), parameterTypes.end(),
                       [](const SemanticType &parameter) {
@@ -7229,15 +7215,13 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       const bool inlineTextResult =
           inlineTextStorage(returnType) &&
           (returnType.kind == SemanticType::Array || arrayInput);
-      if (!reference && !isBorrowReturningType(returnType) && !inlineTextResult)
-        return contract;
-      {
-        // A region written on a supplier this instance makes owned supplies
-        // nothing, and a mutable result needs a supplier that can grant
-        // mutable access. Over a pack this selects its borrowing elements.
-        std::vector<SemanticType> expanded;
-        for (const SemanticType &type : parameterTypes)
-          SemanticType::appendExpandedArgument(expanded, type);
+      // A region written on a supplier this instance makes owned supplies
+      // nothing, and a mutable result needs a supplier that can grant
+      // mutable access. Over a pack this selects its borrowing elements.
+      std::vector<SemanticType> expanded;
+      for (const SemanticType &type : parameterTypes)
+        SemanticType::appendExpandedArgument(expanded, type);
+      const auto regionSuppliers = [&] {
         std::vector<std::size_t> suppliers;
         for (const std::size_t position : lifetime.parameters) {
           if (position >= expanded.size()) {
@@ -7264,6 +7248,34 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
                mutableExternal || borrowAccess(type) == AccessMode::Mutable))
             suppliers.push_back(position);
         }
+        return suppliers;
+      };
+      // A class region is supplied by the receiver's fields stored in it and,
+      // when the class stores it, also by every parameter lane written in
+      // it: the union, as `choose<lifetime a>` names both of its inputs. A
+      // class region nothing in the class stores is supplied only by the
+      // parameters written in it, exactly as a method's own binder is.
+      if (lifetime.classBinder &&
+          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
+        if (ownerClass != 0 && !staticMember) {
+          contract.origin = BorrowOriginKind::Receiver;
+          if (!lifetime.parameters.empty() &&
+              (reference || isBorrowReturningType(returnType) ||
+               inlineTextResult))
+            contract.parameters = regionSuppliers();
+        }
+        return contract;
+      }
+      if (lifetime.parameters.empty()) {
+        contract.missing = true;
+        return contract;
+      }
+      // A region on a result this instance makes owned
+      // (neither a reference nor a conditional borrow carrier) is inert.
+      if (!reference && !isBorrowReturningType(returnType) && !inlineTextResult)
+        return contract;
+      {
+        std::vector<std::size_t> suppliers = regionSuppliers();
         if (suppliers.empty()) {
           contract.missing = true;
           return contract;

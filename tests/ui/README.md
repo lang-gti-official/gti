@@ -6,6 +6,13 @@ with a `// ` line saying what it checks, and use the cheapest proof that would
 catch the bug: `check-pass`/`check-fail` (frontend through verified MIR) unless
 the behaviour only shows at run time.
 
+`gti-test --list-evidence` lists the selected cases as JSON lines with their
+path, parsed mode, execution profile and compatibility with the hosted LLVM
+coverage probe. It applies the same filtering and sharding as execution and
+does not run tests. The coverage audit uses it to bind UI-source claims to
+their actual registered execution shard; ordinary test authors need no
+evidence registration.
+
 ```gti
 // An undefined name is rejected.
 int main() {
@@ -84,6 +91,33 @@ requires a matching related diagnostic note; missing notes cannot be blessed.
 - CPU limits: 2 s check, 5 s build/run; over half that, use `tests/slow/` + `//@ slow`.
 
 ### Snapshots: when the output is the point
+
+For backend admission equivalence experiments, the test-only command
+`gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY O0|O2` compiles one
+ordinary source file through the production driver and saves the complete,
+ordered plan (`plan.txt`), separate validation counters (`statistics.txt`),
+admission result (`outcome.txt`), LLVM IR (`module.ll`) and object (`module.o`).
+Set `GTI_COMPILER_VALIDATION=1` for counters. Rejected inputs retain the first
+unsupported use and limitation; frontend failures and internal compiler errors
+fail the command. The output directory must be new, preventing stale output
+from making an incomplete run appear successful. Compare the same source and
+stdlib paths, target, compiler configuration and optimization level across
+builds; no source identities or coverage counts are normalized. Counters are
+observations and are deliberately excluded from byte-equivalence comparisons.
+The command honors the runner's execution-profile defaults and configuration
+flags. It rejects unsupported multi-file, overlay, cross-target, limit, native,
+prelude and raw-audit configurations instead of silently capturing another
+program configuration.
+This command does not run the executable or establish performance evidence:
+it emits IR and object bytes separately and repeats backend planning.
+`scripts/llvm_admission_evidence.py capture` runs this over all root examples
+or an explicit input manifest at O0/O2; `compare` verifies retained bytes,
+input identities and complete case inventories without accepting a new baseline.
+Explicit input items may also record `execution-profile`, a relative `stdlib`
+directory, and `program: {kind: "library", exports: [{function, symbol}]}`
+beside `source`. These are the original provider's settings, not inferred
+substitutes. The capture hashes every selected library and compares the
+settings as well as the artifacts; different export sets cannot be equivalent.
 
 `//@ snapshot: KIND` (repeatable, one per kind) adds an output check after the
 test's other expectations pass. `--bless` writes the sibling expected file;
