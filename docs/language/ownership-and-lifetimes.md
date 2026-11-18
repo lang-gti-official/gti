@@ -465,9 +465,13 @@ borrow of any subset of them; callers keep every named supplier borrowed.
 A local reference bound to a supplier relays it, also as a call argument:
 `Box& local = box; return pass(local);` returns a borrow of `box`'s referent.
 A reference binding is never rebound (assigning to it writes the referent),
-so the alias keeps the region of the place it was bound to. An alias of a
-local, or of a part the reference's own region does not cover, supplies no
-named region (GTI-S2127). A method relays a stored reference or receiver
+so the alias keeps the region of the place it was bound to. An alias of
+what a stored reference holds (`Box& local = holder.ref;` with
+`Holder<a>& holder`) has the region the parameter's type binds for that
+reference, `a`, not the parameter's own. A region call passed as the
+argument of another, `return pass(same(box));`, is supplied by its own
+suppliers. An alias of a local, or of a part the reference's own region does
+not cover, supplies no named region (GTI-S2127). A method relays a stored reference or receiver
 storage through a local alias the same way.
 
 A method result written in a region its class binds names the receiver's

@@ -552,6 +552,14 @@ struct ClosedCallRound {
   const MirProgramCaptureSummaries *captures = nullptr;
   std::map<MirBodyAddress, MirLocalCaptureAnalysis, MirBodyAddressLess>
       *localCaptureCache = nullptr;
+  // Each round analyzes one immutable body. Build its predecessor table only
+  // if a cleanup needs to follow an invoke edge. Replay owns a separate round.
+  std::optional<MirInvokeContinuations> invokeContinuations;
+  const MirInvokeContinuations &continuationsFor(const MirBody &body) {
+    if (!invokeContinuations)
+      invokeContinuations = mirInvokeContinuations(body);
+    return *invokeContinuations;
+  }
   // Capture facts of the body this round analyzes.
   const MirLocalCaptureAnalysis *localCaptures = nullptr;
 };
@@ -4486,7 +4494,7 @@ void invalidateClosedCallInputs(
     return false;
   for (const auto &block : function->body.blocks)
     for (const auto &instruction : block.instructions) {
-      const auto effect = effects(program, instruction);
+      const auto effect = effects(program, function->body, instruction);
       if (!effect.writesPlace)
         continue;
       if (instruction.kind != MirInstructionKind::Assign ||
@@ -7271,7 +7279,8 @@ void applyInstructionCore(
       if (event.kind == MirLifecycleEventKind::Drop && !event.target && drop &&
           place && drop->place == place->id &&
           drop->dropType.type == place->type &&
-          mirDropFollowsDefiniteMove(body, block, drop->id, instruction.id)) {
+          mirDropFollowsDefiniteMove(body, closedCalls->continuationsFor(body),
+                                     block, drop->id, instruction.id)) {
         // Verified moved-from cleanup retires the shell but cannot invoke
         // its destructor. Reuse the lifecycle owner's proof; a live or
         // partially moved object still takes its ordinary cleanup barrier.
@@ -10542,13 +10551,13 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       if (instruction.tombstone || inertLifecycleMarker(instruction))
         continue;
       const InstructionSite site{&block, &instruction};
-      if (independentLayoutQuery(instruction, effects(program, instruction)))
+      const auto effect = effects(program, body, instruction);
+      if (independentLayoutQuery(instruction, effect))
         continue;
       if (initializesReturnedReferenceCarrier(program, body, instruction))
         continue;
       const auto terminal =
           intrinsicTerminalFailureOutcome(instruction.intrinsic);
-      const auto terminalEffects = effects(program, body, instruction);
       if (terminal && instruction.intrinsic != IntrinsicKind::Panic &&
           instruction.kind == MirInstructionKind::Call &&
           instruction.info.type == SemanticType::Void &&
@@ -10565,11 +10574,10 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
               1 &&
           instruction.definedFailure.localOrigins.front().outcomes.front() ==
               *terminal &&
-          !terminalEffects.readsPlace && !terminalEffects.writesPlace &&
-          !terminalEffects.readsUnknownMemory &&
-          !terminalEffects.writesUnknownMemory &&
-          !terminalEffects.invokesRuntime && !terminalEffects.invokesUserCode &&
-          !terminalEffects.allocates && !terminalEffects.maySynchronize)
+          !effect.readsPlace && !effect.writesPlace &&
+          !effect.readsUnknownMemory && !effect.writesUnknownMemory &&
+          !effect.invokesRuntime && !effect.invokesUserCode &&
+          !effect.allocates && !effect.maySynchronize)
         continue;
       if (instruction.kind == MirInstructionKind::Call ||
           instruction.kind == MirInstructionKind::Construct) {
@@ -10642,7 +10650,6 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       if (isMirStructuralPayloadExtraction(program, instruction) &&
           !privateTransfer)
         return {};
-      const auto effect = effects(program, instruction);
       if (instruction.rawMemoryAccess ||
           instruction.unsafeOperation != UnsafeOperationKind::None ||
           effect.writesUnknownMemory || effect.readsUnknownMemory ||
@@ -10946,7 +10953,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
     if (block.terminator.kind == MirTerminatorKind::Return)
       exits.push_back(block.id);
     for (const auto &instruction : block.instructions) {
-      const auto effect = effects(program, instruction);
+      const auto effect = effects(program, body, instruction);
       std::optional<RelocatedPrefixSummary> selected;
       const InstructionSite site{&block, &instruction};
       if (instruction.intrinsic == IntrinsicKind::ObjectRelocateRange &&
@@ -11184,12 +11191,13 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
         return {};
 
   const auto vacantReceiverField = [&](const MirInstruction &instruction) {
+    if (!construction || instruction.kind != MirInstructionKind::Initialize)
+      return false;
     const auto *destination = instruction.destination
                                   ? body.findPlace(*instruction.destination)
                                   : nullptr;
-    const auto effect = effects(program, instruction);
-    return construction && instruction.kind == MirInstructionKind::Initialize &&
-           destination && destination->root == MirPlaceRootKind::This &&
+    const auto effect = effects(program, body, instruction);
+    return destination && destination->root == MirPlaceRootKind::This &&
            !destination->projections.empty() &&
            std::all_of(destination->projections.begin(),
                        destination->projections.end(),
@@ -11261,7 +11269,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
              independentValueParameter(&program, address, *destination)))
           continue;
       }
-      const auto effect = effects(program, instruction);
+      const auto effect = effects(program, body, instruction);
       if (const auto width = processScalarWriteWidth(&program, instruction)) {
         if (*width && !addWidth(*width))
           return {};
