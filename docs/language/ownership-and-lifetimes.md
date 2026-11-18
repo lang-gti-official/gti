@@ -474,16 +474,42 @@ suppliers. An alias of a local, or of a part the reference's own region does
 not cover, supplies no named region (GTI-S2127). A method relays a stored reference or receiver
 storage through a local alias the same way.
 
+For the same reason, returning a local reference returns whatever its
+initializer may designate. `int& k = either(keep, other); return k;` may
+return `other`, so it is checked exactly as `return either(keep, other);`:
+every supplier of the call, including one reached through a further alias,
+an init-statement binding or a nested call, must outlive the result's region
+(GTI-S2127). With an elided result region, each must be the summarized
+parameter, never another parameter or a local (GTI-S2017). Using such a
+reference inside the body needs no such proof.
+
 A method result written in a region its class binds names the receiver's
 stored fields in that region. When nothing in the class stores the region,
 as in a callable pattern `class Local<R&<result>(R&<result>)>` with
 `R&<result> invoke(R&<result> value)`, the parameters written in it are its
-suppliers, exactly as for a method's own binder. A class that also stores
-the region does not yet combine its receiver fields with such parameters;
-returning the parameter there remains rejected. The body may return any
-borrow it reaches through a stored reference of that region: the field itself,
-a field of a method result on it (`this.nodes.at(i).value`), or the result of
-a call whose suppliers it binds to reference parameters (`pass(this.box)`).
+suppliers, exactly as for a method's own binder. When the class does store
+the region, its suppliers are the union of the receiver's fields stored in it
+and every parameter lane written in it, as `choose` names both of its inputs:
+
+```gti
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+};
+```
+
+A caller keeps the receiver's stored referents and every such argument
+borrowed while the result is live, so writing `fallback` or mutating the
+table then is GTI-S2017, and a temporary or local argument cannot let the
+result escape. A parameter in another region still cannot supply it. The
+body may return any borrow it reaches through a stored reference of that
+region: the field itself, a field of a method result on it
+(`this.nodes.at(i).value`), or the result of a call whose suppliers it binds
+to reference parameters (`pass(this.box)`).
 A borrow supplies the region of the first stored reference it crosses, as
 the receiver binds it: a `Pair<a, b>` field's `second` holds `b`, and a field
 of a base `Base<b>` holds `b`. A borrow through a reference in another
@@ -674,8 +700,6 @@ accepts are still rejected, never the reverse:
 - A region cannot travel through a type argument: `transform` with a mapper
   returning `int&<static>` is rejected (GTI-S2022), unlike Rust's
   `Result::map` over a `U` that carries a lifetime.
-- A result region cannot name both the receiver's stored region and a
-  parameter (`int&<a> operator()(int&<a> input) &&` in `C<lifetime a>`).
 - A relay through more than one stored reference of a by-value carrier
   (`c.referent.next`) is a GTI-S2085 supplier rejection.
 - A carrier from a virtual call cannot serve as a temporary receiver

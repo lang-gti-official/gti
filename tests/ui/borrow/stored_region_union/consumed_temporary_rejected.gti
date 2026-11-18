@@ -1,0 +1,19 @@
+// A shared caller reference cannot lend a consumed temporary an exclusive stored reference.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Writer<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Writer(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+};
+int&<a> shared_writer<lifetime a>(Box&<a> mine, int&<a> fallback) {
+  return Writer(mine).pick(true, fallback);  //~ ERROR GTI-S2012
+  //~^ ERROR GTI-S2017
+}
+int main() { return 0; }
