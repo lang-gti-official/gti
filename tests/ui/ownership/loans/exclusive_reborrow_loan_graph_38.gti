@@ -1,0 +1,11 @@
+// Exclusive reborrow loan graph: caller-owned ancestry must not replace the declared return owner.
+class Cell {
+public:
+  Cell() = default;
+  mut int& invalid(mut int& other) mut {
+    mut int& parent = other;
+    mut int& child = parent;
+    return child;  //~ ERROR GTI-S2017
+  }
+};
+int main() { return 0; }

@@ -1,0 +1,22 @@
+// Owned pipeline: owned expected results and terminal mappers lower.
+//@ check-pass
+import std.panic;
+struct Resource {
+  int id;
+  Resource(int value) : id(value) {}
+  ~Resource() { std::println(id); }
+};
+expected<Resource, Resource> read(bool fail) {
+  if (fail) { return unexpected(Resource(2)); }
+  return Resource(1);
+}
+Resource required(bool fail) { return read(fail).expect("required"); }
+int consume(Resource value) { return value.id; }
+[[noreturn]] void terminal(Resource value) { std::panic("terminal"); }
+int main() {
+  auto resource = read(false).expect("local");
+  auto returned = required(false);
+  auto skipped = read(true).transform(terminal);
+  return consume(read(false).expect("argument")) + resource.id + returned.id +
+      skipped.error().id - 5;
+}

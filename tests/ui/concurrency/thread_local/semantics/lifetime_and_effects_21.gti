@@ -1,0 +1,5 @@
+// Lifetime and effects: constructors, operators, aggregate relays, forwarding and cleanup preserve persistent-loan protection.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct View { int& item; View(int& source) : item(source) {} }; int read(View view) { modify(); return view.item; } int main() { return read(View(value)); }  //~ ERROR GTI-S2045

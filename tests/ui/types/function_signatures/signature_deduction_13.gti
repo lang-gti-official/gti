@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: void local<T>() { mut T value; } int main() { local<void>(); return 0; }.
+void local<T>() { mut T value; } int main() { local<void>(); return 0; }  //~ ERROR GTI-S2000

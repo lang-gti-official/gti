@@ -1,0 +1,8 @@
+// Callbacks: the program is accepted.
+//@ check-pass
+int main() {
+  mut int value = 4;
+  mut auto change = [mut &value]() -> void { value += 1; };
+  change();
+  return value - 5;
+}

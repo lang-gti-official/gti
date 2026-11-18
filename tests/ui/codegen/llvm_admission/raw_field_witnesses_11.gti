@@ -1,0 +1,3 @@
+// Raw field witnesses: raw projection type verification preserves readonly, padded, nested-array and base fields.
+//@ check-pass
+class Parent { public: int value = 7;  public: Parent() = default; }; class Child : public Parent { public: int extra = 2;  public: Child() = default; }; int main() { Child object{}; unsafe { const Child* pointer = &object; return pointer->value - 7; } }

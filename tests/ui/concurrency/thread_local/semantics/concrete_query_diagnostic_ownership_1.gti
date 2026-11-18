@@ -1,0 +1,9 @@
+// Concrete query diagnostic ownership: a failed required constant retains only its canonical discovery and evaluation errors.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+constexpr uint64_t depth<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return depth<N - 1>() + 1; }  //~ ERROR GTI-S2105
+}
+constexpr uint64_t invalid = depth<200>();  //~ ERROR GTI-S2057
+int main() { return int32_t(invalid); }

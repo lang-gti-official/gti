@@ -1,0 +1,4 @@
+import std.string;
+int main() {
+  std::println("success-program-output"); return 0;
+}

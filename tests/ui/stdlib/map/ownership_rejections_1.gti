@@ -1,0 +1,67 @@
+// std::map rejects key writes, live loans across mutation, copies of the container or exclusive cursors, and invalid comparators.
+//@ check-fail
+import std.map;
+
+namespace case_immutable_key {
+int entry() {
+  mut std::map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  for (mut auto& entry : values) { entry.first = 9; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+namespace case_copy_container {
+int entry() {
+  std::map<int, int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_mutable_comparator {
+class Compare {
+public: bool operator()(int& a, int& b) mut { return a < b; }
+public:
+  Compare() = default;
+};
+int entry() { std::map<int, int, Compare> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+namespace case_wrong_comparator_result {
+class Compare {
+public: int operator()(int& a, int& b) { return 0; }
+public:
+  Compare() = default;
+};
+int entry() { std::map<int, int, Compare> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+namespace case_copy_exclusive_iterator {
+int entry() {
+  mut std::map<int, int> values{};
+  auto first = values.begin_mut();
+  auto copied = first;  //~ ERROR GTI-S2003
+  return (*copied).second;
+}
+}
+
+namespace case_copy_nested_exclusive_result {
+int entry() {
+  mut std::map<int, int> values{};
+  auto result = values.insert(1, 2);
+  auto copied = result;  //~ ERROR GTI-S2003
+  return copied.first->second;
+}
+}
+
+namespace case_nested_result_key_immutable {
+int entry() {
+  mut std::map<int, int> values{};
+  mut auto result = values.insert(1, 2);
+  result.first->first = 3;  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+int main() { return 0; }

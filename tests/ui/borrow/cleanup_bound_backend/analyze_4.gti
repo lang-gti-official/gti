@@ -1,0 +1,47 @@
+// Analyze: external guard reference and complete carrier transfers remain valid.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource { int value = 7;  public: Resource() = default; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+
+Resource& external(Guard& guard) { return guard.read(); }
+Guard& externalShell(Guard& guard) { return guard; }
+Guard acquire(Resource& resource) {
+  Guard guard{resource};
+  return std::move(guard);
+}
+Guard forward(Guard guard) { return std::move(guard); }
+Guard implicit(Resource& resource) { Guard guard{resource}; return guard; }
+class Outer {
+  Guard guard;
+public:
+  Outer(Guard guard) : guard(std::move(guard)) {}
+  ~Outer() { observed = 1; }
+};
+Outer outer(Resource& resource) {
+  // The moved-from guard retires without its destructor; the unmoved witness
+  // still runs cleanup that can fail while the returned result is pending.
+  Guard guard{resource};
+  Guard witness{resource};
+  Outer result{std::move(guard)};
+  return std::move(result);
+}
+void nestedParents(mut Resource& resource, Guard& unrelated) {
+  Guard guard{resource};
+  Outer result{std::move(guard)};
+  int keep = unrelated.read().value;
+}
+int main() {
+  Resource resource{};
+  auto guard = acquire(resource);
+  int read = external(guard).value;
+  auto moved = forward(std::move(guard));
+  return read - 7;
+}

@@ -19,8 +19,10 @@ repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 case "$(uname -s)" in
   Linux)
     # A hosted runner starts with ~14 GiB free; a sanitizer link of the full
-    # tree needs more. Drop preinstalled toolchains GTI never uses.
-    if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+    # tree needs more. Drop preinstalled toolchains GTI never uses. A job that
+    # only configures (GTI_CI_CONFIGURE_ONLY=1, the gate's tree-consistency
+    # run) builds nothing and skips the minute and a half this takes.
+    if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted && "${GTI_CI_CONFIGURE_ONLY:-}" != 1 ]]; then
       sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
         /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift
       df -h / | tail -n 1

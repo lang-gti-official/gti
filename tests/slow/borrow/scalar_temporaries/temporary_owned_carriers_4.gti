@@ -1,0 +1,7 @@
+// Temporary owned carriers: formatted print accepts a view of a temporary filename.
+//@ check-pass
+//@ slow
+import std.filesystem;
+import std.format;
+int main() { auto entry = std::filesystem::path("/tmp/example.txt");
+  std::println("entry {}", entry.filename().view()); return 0; }

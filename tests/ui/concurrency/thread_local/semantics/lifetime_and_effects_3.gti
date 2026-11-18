@@ -1,0 +1,3 @@
+// Lifetime and effects: transitive storage mutation conflicts with retained or call-scoped loans independently of declaration order.
+//@ execution-profile: concurrent
+thread_local mut int value = 0; void modify() { value = 2; } int use(int& input) { modify(); return input; } int main() { return use(value); }  //~ ERROR GTI-S2045

@@ -1,0 +1,19 @@
+// Attributes: [[attribute]] on a class and an attribute type with a constructor are rejected.
+import std.meta;
+namespace tags {
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
+[[attribute]] struct skip { public: skip() = default; };
+[[attribute]] struct width { uint64_t bytes; };
+struct plain { int x = 0;  public: plain() = default; };
+}
+
+[[attribute]] class owner { public: int x = 0;  public: owner() = default; };  //~ ERROR GTI-S2113
+namespace tags {
+[[attribute]] struct withctor { int x; withctor(int v) : x(v) {} };
+}
+struct B {
+  [[tags::withctor(1)]] int b = 2;  //~ ERROR GTI-S2113
+public:
+  B() = default;
+};
+int main() { return 0; }

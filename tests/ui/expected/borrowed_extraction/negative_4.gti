@@ -1,0 +1,15 @@
+// Negative: negative extraction case has valid source syntax.
+class Resource {
+  mut int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int read() { return value; }
+  void set(int replacement) mut { value = replacement; }
+};
+expected<Resource&, int> lookup(Resource& owner, bool fail) {
+  if (fail) { return unexpected(9); }
+  return owner;
+}
+expected<Resource&, int> run() { Resource owner{7}; return ?lookup(owner, false); }  //~ ERROR GTI-S2045

@@ -1,0 +1,16 @@
+// Generics: rejected with GTI-S2029.
+class NoDefault {
+  int saved;
+public:
+  NoDefault(int value) : saved(value) {}
+};
+class Leaf<T> {
+public:
+  Leaf() requires std::default_initializable<T> {}
+};
+class Wrapper<T> {
+  Leaf<T> child;
+public:
+  Wrapper() requires std::default_initializable<T> : child(Leaf<T>()) {}
+};
+int main() { Wrapper<NoDefault> object{}; return 0; }  //~ ERROR GTI-S2029

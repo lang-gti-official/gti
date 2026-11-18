@@ -1,0 +1,4 @@
+// Initialization: rejected with GTI-S2105.
+int grow<uint64_t N>() { return grow<N + 1>(); }  //~ ERROR GTI-S2105
+int first = grow<0>();
+int main() { return first; }

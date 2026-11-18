@@ -1,0 +1,194 @@
+// Stepping, advancing or measuring a vector or resource-vector cursor past its bounds fails with GTI-R0016 after cleanup.
+//@ slow
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0016]
+//@ revisions: vector_empty_step vector_forward_end_step vector_reverse_end_step vector_begin_backstep resource_empty_step resource_forward_end_step resource_reverse_end_step resource_begin_backstep vector_advance_past_end vector_advance_before_begin vector_next_past_end vector_prev_before_begin vector_distance_past_end
+//@[vector_empty_step] args: vector_empty_step
+//@[vector_empty_step] stdout: 20
+//@[vector_empty_step] stdout: 10
+//@[vector_forward_end_step] args: vector_forward_end_step
+//@[vector_forward_end_step] stdout: 20
+//@[vector_forward_end_step] stdout: 10
+//@[vector_reverse_end_step] args: vector_reverse_end_step
+//@[vector_reverse_end_step] stdout: 20
+//@[vector_reverse_end_step] stdout: 10
+//@[vector_begin_backstep] args: vector_begin_backstep
+//@[vector_begin_backstep] stdout: 20
+//@[vector_begin_backstep] stdout: 10
+//@[resource_empty_step] args: resource_empty_step
+//@[resource_empty_step] stdout: 20
+//@[resource_empty_step] stdout: 10
+//@[resource_forward_end_step] args: resource_forward_end_step
+//@[resource_forward_end_step] stdout: 20
+//@[resource_forward_end_step] stdout: 10
+//@[resource_reverse_end_step] args: resource_reverse_end_step
+//@[resource_reverse_end_step] stdout: 20
+//@[resource_reverse_end_step] stdout: 10
+//@[resource_begin_backstep] args: resource_begin_backstep
+//@[resource_begin_backstep] stdout: 20
+//@[resource_begin_backstep] stdout: 10
+//@[vector_advance_past_end] args: vector_advance_past_end
+//@[vector_advance_past_end] stdout: 20
+//@[vector_advance_past_end] stdout: 10
+//@[vector_advance_before_begin] args: vector_advance_before_begin
+//@[vector_advance_before_begin] stdout: 20
+//@[vector_advance_before_begin] stdout: 10
+//@[vector_next_past_end] args: vector_next_past_end
+//@[vector_next_past_end] stdout: 20
+//@[vector_next_past_end] stdout: 10
+//@[vector_prev_before_begin] args: vector_prev_before_begin
+//@[vector_prev_before_begin] stdout: 20
+//@[vector_prev_before_begin] stdout: 10
+//@[vector_distance_past_end] args: vector_distance_past_end
+//@[vector_distance_past_end] stdout: 20
+//@[vector_distance_past_end] stdout: 10
+import std.iterator;
+import std.resource;
+import std.resource_vector;
+import std.string;
+import std.vector;
+
+class StepDrop {
+  int id;
+public:
+  StepDrop(int id) : id(id) {}
+  ~StepDrop() { std::println(this.id); }
+};
+
+int vector_empty_step() {
+  StepDrop outer{10};
+  mut std::vector<int> values{}; mut auto cursor = values.begin();  //~ WARN GTI-S2096
+  StepDrop inner{20};
+  ++cursor;
+  return 99;
+}
+
+int vector_forward_end_step() {
+  StepDrop outer{10};
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.end_mut();
+  StepDrop inner{20};
+  ++cursor;
+  return 99;
+}
+
+int vector_reverse_end_step() {
+  StepDrop outer{10};
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.rend_mut();
+  StepDrop inner{20};
+  ++cursor;
+  return 99;
+}
+
+int vector_begin_backstep() {
+  StepDrop outer{10};
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  StepDrop inner{20};
+  --cursor;
+  return 99;
+}
+
+int resource_empty_step() {
+  StepDrop outer{10};
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; mut auto cursor = values.begin();  //~ WARN GTI-S2096
+    StepDrop inner{20};
+    ++cursor;
+  }
+  return 99;
+}
+
+int resource_forward_end_step() {
+  StepDrop outer{10};
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.end_mut();
+    StepDrop inner{20};
+    ++cursor;
+  }
+  return 99;
+}
+
+int resource_reverse_end_step() {
+  StepDrop outer{10};
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.rend_mut();
+    StepDrop inner{20};
+    ++cursor;
+  }
+  return 99;
+}
+
+int resource_begin_backstep() {
+  StepDrop outer{10};
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.begin_mut();
+    StepDrop inner{20};
+    --cursor;
+  }
+  return 99;
+}
+
+int vector_advance_past_end() {
+  StepDrop outer{10};
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  StepDrop inner{20};
+  std::advance(cursor, std::size_t(3));
+  return 99;
+}
+
+int vector_advance_before_begin() {
+  StepDrop outer{10};
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.end_mut();
+  StepDrop inner{20};
+  std::advance(cursor, std::ptrdiff_t(-3));
+  return 99;
+}
+
+int vector_next_past_end() {
+  StepDrop outer{10};
+  std::vector<int> values = {1, 2}; auto cursor = values.begin();
+  StepDrop inner{20};
+  auto moved = std::next(cursor, std::size_t(3));
+  return 99;
+}
+
+int vector_prev_before_begin() {
+  StepDrop outer{10};
+  std::vector<int> values = {1, 2}; auto cursor = std::next(values.begin(), std::ptrdiff_t(2));
+  StepDrop inner{20};
+  auto moved = std::prev(cursor, std::size_t(3));
+  return 99;
+}
+
+int vector_distance_past_end() {
+  StepDrop outer{10};
+  std::vector<int> values = {1, 2}; auto cursor = std::next(values.begin(), std::ptrdiff_t(2));
+  StepDrop inner{20};
+  auto counted = std::distance(cursor, values.begin());
+  return 99;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argv[1] == "vector_empty_step") { return vector_empty_step(); }
+  if (argv[1] == "vector_forward_end_step") { return vector_forward_end_step(); }
+  if (argv[1] == "vector_reverse_end_step") { return vector_reverse_end_step(); }
+  if (argv[1] == "vector_begin_backstep") { return vector_begin_backstep(); }
+  if (argv[1] == "resource_empty_step") { return resource_empty_step(); }
+  if (argv[1] == "resource_forward_end_step") { return resource_forward_end_step(); }
+  if (argv[1] == "resource_reverse_end_step") { return resource_reverse_end_step(); }
+  if (argv[1] == "resource_begin_backstep") { return resource_begin_backstep(); }
+  if (argv[1] == "vector_advance_past_end") { return vector_advance_past_end(); }
+  if (argv[1] == "vector_advance_before_begin") { return vector_advance_before_begin(); }
+  if (argv[1] == "vector_next_past_end") { return vector_next_past_end(); }
+  if (argv[1] == "vector_prev_before_begin") { return vector_prev_before_begin(); }
+  if (argv[1] == "vector_distance_past_end") { return vector_distance_past_end(); }
+  return 1;
+}

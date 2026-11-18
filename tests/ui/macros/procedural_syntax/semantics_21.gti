@@ -1,0 +1,5 @@
+// Semantics: expected procedural diagnostic before code generation.
+// --- main.gti
+import std.syntax; std::syntax::tokens value; int main(){return 0;}  //~ ERROR GTI-S2124 //~ ERROR GTI-S2000
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

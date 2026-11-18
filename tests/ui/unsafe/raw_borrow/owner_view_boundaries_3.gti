@@ -1,0 +1,7 @@
+// Owner view boundaries: shared bridge prevents conflicting owner mutation.
+import std.memory;
+int main() { mut int owner = 7; unsafe {
+  int& view = std::assume_ref(&owner, owner);
+  owner = 8;  //~ ERROR GTI-S2017
+  return view;
+} }

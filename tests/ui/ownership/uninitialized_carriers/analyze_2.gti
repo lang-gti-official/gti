@@ -1,0 +1,32 @@
+// Analyze: aggregate byte carriers retain exact nominal concurrency facts.
+//@ check-pass
+import std.memory;
+import std.string;
+struct Plain { int value = 8;  public: Plain() = default; };
+class Stationary {
+public:
+  Stationary(int value) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
+
+struct RawRecord { int* address = nullptr;  public: RawRecord() = default; };
+[[no_transfer, no_share]] struct AffineRecord { int value = 0;  public: AffineRecord() = default; };
+[[no_share]] struct ExclusiveRecord { int value = 0;  public: ExclusiveRecord() = default; };
+
+int main() {
+  std::uninitialized<expected<Plain, int>> plain{};
+  std::uninitialized<expected<void, Plain>> error{};
+  std::uninitialized<expected<RawRecord, int>> raw{};
+  std::uninitialized<expected<Plain, RawRecord>> raw_error{};
+  std::uninitialized<expected<AffineRecord, int>> affine{};
+  std::uninitialized<expected<ExclusiveRecord, int>> exclusive{};
+  return 0;
+}

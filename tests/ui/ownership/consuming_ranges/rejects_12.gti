@@ -1,0 +1,3 @@
+// Rejects: raw object extraction cannot consume read-only storage.
+import std.memory; int main() { const int* p = nullptr;
+    unsafe { auto value = std::take_at(p); } return 0; }  //~ ERROR GTI-S2003

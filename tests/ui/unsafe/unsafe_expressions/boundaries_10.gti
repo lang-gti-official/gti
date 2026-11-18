@@ -1,0 +1,2 @@
+// Boundaries: unsafe does not upgrade checked reference access.
+int main() { int x = 1; mut int& ref = unsafe { x }; return ref; }  //~ ERROR GTI-S2017

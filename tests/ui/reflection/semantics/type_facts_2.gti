@@ -1,0 +1,34 @@
+// Type facts: transparent source predicates preserve exact trusted facts through namespace aliases, renamed type parameters and ordered relations.
+//@ check-pass
+import std.meta;
+namespace queries {
+  namespace reflected = std::meta;
+  using Boolean = bool;
+  constexpr bool can_copy<T>() {
+    return reflected::is_copy_constructible<T>();
+  }
+  constexpr bool copied_again<U>() { return can_copy<U>(); }
+  constexpr Boolean aliased_result<T>() { return can_copy<T>(); }
+  constexpr bool can_transfer<T>() { return reflected::is_transferable<T>(); }
+  constexpr bool representation<E, U>() {
+    return reflected::is_enum_underlying<E, U>();
+  }
+}
+concept snapshot<T> = queries::copied_again<T>();
+concept snapshot_alias<Boolean> = queries::aliased_result<Boolean>();
+concept portable<T> = queries::can_transfer<T>();
+concept represented_by<E, U> = queries::representation<E, U>();
+T copy_value<T>(T& value) requires snapshot<T> { return value; }
+T alias_copy<T>(T& value) requires snapshot_alias<T> { return value; }
+void needs_transfer<std::transferable T>(T& value) {}
+void relay<T>(T& value) requires portable<T> { needs_transfer<T>(value); }
+U underlying<E, U>(E value) requires represented_by<E, U> {
+  return std::to_underlying<U, E>(value);
+}
+enum class Code : uint16_t { none = 0, failed = 1 };
+int main() {
+  int32_t value = 7;
+  relay(value);
+  return copy_value(value) - alias_copy(value) +
+         int(underlying<Code, uint16_t>(Code::none));
+}

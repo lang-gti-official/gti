@@ -1,0 +1,9 @@
+// Importing every capability-family module without using it builds natively under the concurrent profile.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.atomic;
+import std.mutex;
+import std.memory;
+import std.thread;
+import std.cthread;
+int main() { return 0; }

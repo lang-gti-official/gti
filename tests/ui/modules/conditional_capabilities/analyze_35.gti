@@ -1,0 +1,45 @@
+// Analyze: formatting conditional attributes preserves their meaning and is idempotent.
+//@ check-pass
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() {}
+  ~Reviewed() {}
+};
+[[no_transfer]] struct Affine {
+  int id = 0;
+public:
+  Affine() = default;
+};
+[[no_share]] struct Exclusive {
+  int id = 0;
+public:
+  Exclusive() = default;
+};
+enum Packet<T> {
+  item(T value)
+};
+enum Metadata<T> {
+  item(int value)
+};
+void consume<std::transferable T>(T value) {}
+void observe<std::shareable T>(T& value) {}
+void relay<std::transferable T>(T value) {
+  consume(Reviewed<T>());
+}
+
+int main() {
+  consume(Reviewed<int>());
+  consume(Reviewed<Reviewed<int>>());
+  consume(Reviewed<Exclusive>());
+  consume(Reviewed<expected<Exclusive, int>>());
+  consume(Reviewed<Packet<int>>());
+  consume(Reviewed<Packet<Exclusive>>());
+  consume(Reviewed<Metadata<Affine>>());
+  Reviewed<Affine> shared{};
+  observe(shared);
+  Reviewed<Packet<Affine>> shared_packet{};
+  observe(shared_packet);
+  relay(1);
+  return 0;
+}

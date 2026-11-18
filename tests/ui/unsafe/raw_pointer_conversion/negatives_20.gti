@@ -1,0 +1,7 @@
+// Negatives: conditional retains contradictory possibility remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+using E = void*; using P = uint64_t*;
+void test(bool choose) { mut int a = 0; mut uint64_t b = 0;
+E e = choose ? E(&a) : E(&b); P p = P(e); }  //~ WARN GTI-S2102 //~ WARN GTI-S2102
+int main() { return 0; }

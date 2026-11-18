@@ -1,0 +1,10 @@
+// Restricted member operators: read-only dereference may yield an independent copyable value.
+//@ check-pass
+class ValueHandle {
+  int value = 7;
+public:
+  int operator*() { return this.value; }
+public:
+  ValueHandle() = default;
+};
+int main() { ValueHandle handle{}; return *handle - 7; }

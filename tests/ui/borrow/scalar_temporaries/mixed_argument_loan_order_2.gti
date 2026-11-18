@@ -1,0 +1,15 @@
+// Mixed argument loan order: constructor initializer interleaves multiple temporary and reference arguments.
+//@ check-pass
+struct Holder {
+  int value;
+  Holder(int value) : value(value) {}
+  int& get() { return this.value; }
+};
+int divide(int& left, int& right) { return left / right; }
+int combine(int& a, int& b, int& c, int& d) { return a / b + c / d; }
+
+struct Use {
+  int result;
+  Use(Holder& h) : result(combine(42, h.get(), 6, h.get())) {}
+};
+int main() { Holder h{2}; Use result{h}; return result.result - 24; }

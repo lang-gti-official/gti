@@ -1,0 +1,19 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+import std.functional;
+class table<K, H> {
+  H hasher;
+public:
+  table(H h) requires std::read_callable<H, K, uint64_t> : hasher(std::move(h)) {}
+  uint64_t slot(K key, uint64_t n) requires std::read_callable<H, K, uint64_t> {
+    return this.hasher(key) % n;
+  }
+};
+struct id_hash {
+  id_hash() = default;
+  uint64_t operator()(int& v) { return uint64_t(v); }
+};
+int main() {
+  table<int, id_hash> t{id_hash()};
+  return t.slot(9, uint64_t(4)) == uint64_t(1) ? 0 : 1;
+}

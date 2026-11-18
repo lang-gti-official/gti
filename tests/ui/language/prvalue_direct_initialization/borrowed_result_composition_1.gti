@@ -1,0 +1,22 @@
+// Borrowed result composition: nested direct initialization preserves mixed owners independent of factory declaration order.
+//@ check-pass
+class Update {
+  int& step;
+  mut int& value;
+public:
+  Update(int& step, mut int& value) : step(step), value(value) {}
+  void apply() mut { this.value += this.step; }
+};
+Update<a> relay<lifetime a>(int&<a> step, mut int&<a> value) {
+  return Update(Update((view(step, value))));
+}
+Update<a> view<lifetime a>(int&<a> step, mut int&<a> value) { return Update(step, value); }
+
+int main() {
+  int step = 4;
+  mut int value = 3;
+  mut Update result{Update((relay(step, value)))};
+  result.apply();
+  value += 1;
+  return value == 8 ? 0 : 1;
+}

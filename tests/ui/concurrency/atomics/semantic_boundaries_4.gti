@@ -1,0 +1,8 @@
+// Semantic boundaries: the public atomic value should be move-only.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<int32_t> first{1};
+  std::atomic<int32_t> second = first;  //~ ERROR GTI-S2003
+  return 0;
+}

@@ -1,0 +1,21 @@
+// Alias constructor value arguments: alias construction from a function name lowers through MIR.
+//@ check-pass
+import std.functional;
+class Tag {
+  int64_t value;
+public:
+  Tag<F>(F item) : value(int64_t(7)) {}
+  int64_t read() { return this.value; }
+};
+using T = Tag;
+using C = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+
+T make_tag() { return T(triple); }
+C make_pointer() { return C(triple); }
+int main() {
+  T tag = T(triple);
+  C pointer = C(triple);
+  return int(make_tag().read() + tag.read() + make_pointer()(int64_t(1)) +
+             pointer(int64_t(1))) - 20;
+}

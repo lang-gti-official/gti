@@ -1,0 +1,11 @@
+// Stored callables: std::weak_ptr preserves local payload lifetime checks for std::shared_ptr<Raw>.
+import std.memory;
+[[no_transfer, no_share]] struct Local { public: Local() = default; };
+struct Raw { int* pointer = nullptr; public: Raw() = default; };
+void retain<F>(F callback) {}
+int main() {
+std::weak_ptr<std::shared_ptr<Raw>> owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));  //~ ERROR GTI-S2046
+  return 0;
+}

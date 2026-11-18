@@ -103,7 +103,9 @@ def test_entries(paths, root=ROOT):
     plan = policy.plan([p for p in paths if library(p)], policy.load_map(root / "tests/ownership.toml"), root)
     if plan["uncovered"] or plan["unowned"]:
         raise ValueError("source library has no reviewed ownership coverage")
-    entries = {"compiler_pipeline", "stdlib_surface", "stdlib_surface_manifest"}
+    # gti_test_ui runs tidy, tests/project and tests/lsp; its shards
+    # gti_test_ui_<i> run tests/ui, where the library's cases live.
+    entries = {"^gti_test_ui(_[0-9]+)?$", "stdlib_surface", "stdlib_surface_manifest"}
     entries.update(row["test"] for tier in plan["selection"].values() for row in tier)
     executables, tests = policy.registered_tests(root)
     # Resolve changed GTI fixtures to their registered Python harnesses. Unknown

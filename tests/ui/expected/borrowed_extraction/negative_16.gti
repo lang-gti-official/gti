@@ -1,0 +1,18 @@
+// Negative: negative extraction case has valid source syntax.
+class Resource {
+  mut int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int read() { return value; }
+  void set(int replacement) mut { value = replacement; }
+};
+expected<Resource&, int> lookup(Resource& owner, bool fail) {
+  if (fail) { return unexpected(9); }
+  return owner;
+}
+
+int run() { Resource owner{7}; auto source = lookup(owner, false);
+  Resource& alias = std::move(source).expect("required");
+  return alias.read() + source.value().read(); }  //~ ERROR GTI-S2018

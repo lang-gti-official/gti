@@ -1,0 +1,3 @@
+// Restoring_exchange: self-alias, immutable storage and outstanding loans are rejected.
+import std.utility;
+int main() { mut int x = 1; int& borrowed = x; std::exchange(x, 2); return borrowed; return 0; }  //~ ERROR GTI-S2009 //~ WARN GTI-S2095

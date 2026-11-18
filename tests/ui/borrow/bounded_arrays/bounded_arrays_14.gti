@@ -1,0 +1,2 @@
+// Bounded arrays: call alias uses valid existing syntax.
+void change(mut int[2]& x, int[2]& y) {} int main() { mut int a[2] = {1,2}; change(a,a); return 0; }  //~ ERROR GTI-S2017

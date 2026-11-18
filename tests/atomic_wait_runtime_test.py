@@ -1,11 +1,48 @@
 #!/usr/bin/env python3
 """Safe wait/notify under every native mode the backend policy selects."""
 from pathlib import Path
+import pathlib
+import subprocess
 import sys
 import tempfile
 
-from atomic_runtime_test import build, execute
 from backend_modes import is_cpp_mode, native_modes
+
+
+def execute(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"command returned {result.returncode}\n"
+            f"command: {command}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+    return result
+
+
+def build(
+    compiler: pathlib.Path,
+    source: pathlib.Path,
+    output: pathlib.Path,
+    *,
+    flags: list[str],
+) -> None:
+    execute(
+        [
+            str(compiler),
+            "--execution-profile",
+            "concurrent",
+            *flags,
+            str(source),
+            "-o",
+            str(output),
+        ]
+    )
 
 
 def main() -> None:

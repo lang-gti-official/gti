@@ -1,0 +1,23 @@
+// Analyze: bitwise range relocation forms verified MIR.
+//@ check-pass
+import std.memory;
+import std.string;
+struct Plain { int value = 8;  public: Plain() = default; };
+class Stationary {
+public:
+  Stationary(int value) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
+
+void transfer(Plain* destination, Plain* source, std::size_t count) {
+  unsafe { std::relocate_range_at(destination, source, count); }
+}
+int main() { transfer(nullptr, nullptr, std::size_t(0)); return 0; }

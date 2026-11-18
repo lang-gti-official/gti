@@ -1,0 +1,6 @@
+// Semantics: shared LSP hover distinguishes procedural declarations.
+//@ check-pass
+// --- main.gti
+import std.syntax; #macro(proc) std::syntax::expr inspect(std::syntax::tokens input) { return std::syntax::parse(input); } int main(){return 0;}
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

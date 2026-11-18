@@ -1,0 +1,3 @@
+// Boundaries: unsafe cannot consume a checked borrowed owner.
+import std.memory;
+int main() { auto p = std::make_unique<int>(1); auto& ref = *p; auto q = unsafe { std::move(p) }; return ref; }  //~ WARN GTI-S2100 //~ ERROR GTI-S2017

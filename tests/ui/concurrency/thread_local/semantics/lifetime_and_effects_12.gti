@@ -1,0 +1,4 @@
+// Lifetime and effects: a local TLS declaration outlives its declaring function.
+//@ check-pass
+//@ execution-profile: concurrent
+int& current() { thread_local int value = 1; return value; } int main() { int& borrowed = current(); return borrowed; }

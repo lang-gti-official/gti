@@ -1,0 +1,24 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+struct Box<T> { mut T value; };
+enum Message<T> { empty, item(T value), boxed(Box<T> value) };
+Message<int> make_message() { return Message<int>::item(7); }
+int read(Message<int>& message) {
+  switch (message) {
+    case Message<int>::empty: return 0;
+    case Message<int>::item(value): return value;
+    case Message<int>::boxed(auto& value): return value.value;
+  }
+}
+int read(Message<bool>& message) {
+  switch (message) {
+    case Message<bool>::empty: return 0;
+    case Message<bool>::item(value): return value ? 1 : 0;
+    case Message<bool>::boxed(auto& value): return value.value ? 1 : 0;
+  }
+}
+int main() {
+  auto left = make_message();
+  auto right = Message<bool>::item(true);
+  return read(left) + read(right) - 8;
+}

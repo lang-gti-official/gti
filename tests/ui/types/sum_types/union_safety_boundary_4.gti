@@ -1,0 +1,2 @@
+// Union safety boundary: union declarations should not hide an active-field choice.
+union Bad { int value = 1; }; int main() { return 0; }  //~ ERROR GTI-S2066

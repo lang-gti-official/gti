@@ -1,0 +1,17 @@
+// Scalar prefix before owned field move: scalar parameter followed by an owning field is valid source.
+//@ check-pass
+class Payload { public: Payload() {} ~Payload() {} };
+class Box {
+  int identity;
+  mut Payload payload;
+public:
+  Box(int identity, Payload payload)
+      : identity(identity), payload(std::move(payload)) {}
+};
+struct Other { int foreign = 0;  public: Other() = default; };
+int main() {
+  Payload payload{};
+  Box box{8, std::move(payload)};
+  Other other{};
+  return 0;
+}

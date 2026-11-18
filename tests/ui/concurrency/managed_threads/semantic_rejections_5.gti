@@ -1,0 +1,9 @@
+// Semantic rejections: borrowed-thread-capture.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  std::string_view text = "borrowed";
+  auto task = [text]() -> void {};
+  auto started = std::thread::start(std::move(task));  //~ ERROR GTI-S2084
+  return 0;
+}

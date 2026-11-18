@@ -1,0 +1,13 @@
+// Single failure edge stays unshared: the single-edge fixture lowers.
+//@ check-pass
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {}
+};
+int32_t checked(int32_t value, int32_t divisor) { return value / divisor; }
+int32_t run(int32_t divisor) {
+  Guard a = Guard();
+  return checked(1, divisor);
+}
+int main() { return run(1) - 1; }

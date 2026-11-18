@@ -1,0 +1,22 @@
+// Persistent class alias boundaries: safe persistent class references reject hidden alias mutation through all optimizer-control paths.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+class Meter {
+public:
+  mut int count;
+  Meter(int value) : count(value) {}
+  int read() { return this.count; }
+  void set() mut { this.count = 9; }
+};
+thread_local mut Meter meter{1};
+void direct() { meter.count = 9; }
+void forwarded() { direct(); }
+void method() { meter.set(); }
+void reference() { mut Meter& alias = meter; alias.count = 9; }
+void scalar_reference() { mut int& alias = meter.count; alias = 9; }
+void assign(mut int& value) { value = 9; }
+void reborrow() { mut Meter& alias = meter; assign(alias.count); }
+int initialize() { direct(); return 0; }
+class Trigger { public: int value = initialize(); Trigger() {} };
+void initializer() { Trigger value{}; }
+int inspect(Meter& borrowed) { int before = borrowed.read(); direct(); return before + borrowed.read(); } int main() { return inspect(meter); }  //~ ERROR GTI-S2045

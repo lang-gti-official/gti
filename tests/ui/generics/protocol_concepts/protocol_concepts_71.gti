@@ -1,0 +1,15 @@
+// Protocol concepts: rejected with GTI-S2029.
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class holder<std::copy_constructible T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+for <T> concept wrapped<holder<T>> {  //~ ERROR GTI-S2029
+  using value_type = T;
+  T unwrap(holder<T> value) { return value.item; }  //~ ERROR GTI-S2029
+};
+int main() { return 0; }

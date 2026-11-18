@@ -21,6 +21,7 @@ import unittest.mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import agent_workflow as module
+import tree_consistency
 import validation_checks as validation
 from validation_batch import Batches
 git = module.git
@@ -221,9 +222,9 @@ class DeclaredTests(unittest.TestCase):
             "Validation:\n- T1: " + ", ".join(f"t{i:03}" for i in range(validation.DECLARED_LIMIT + 5)))
         self.assertEqual(len(names), validation.DECLARED_LIMIT)
         self.assertTrue(any("at most" in problem for problem in problems))
-        document = {"tests": [{"name": "registered"}, {"name": "compiler_pipeline"},
+        document = {"tests": [{"name": "registered"}, {"name": "gti_test_ui"},
                               {"name": "off", "properties": [{"name": "DISABLED", "value": True}]}]}
-        selected, problems = validation.runnable_declared(document, ["registered", "compiler_pipeline",
+        selected, problems = validation.runnable_declared(document, ["registered", "gti_test_ui",
                                                                      "off", "missing"])
         self.assertEqual(selected, ["registered"])
         self.assertEqual(len(problems), 2)
@@ -269,7 +270,7 @@ class DeclaredTests(unittest.TestCase):
                       ["python3", "scripts/validation_checks.py", "focused", "--build", "build", "--plan", "plan.json"],
                       ["python3", "-c", "print('-R not_a_ctest_pattern')"]]
             names = ["llvm_scalar_execution", "llvm_class_execution", "lsp_protocol", "planned_owner",
-                     "compiler_pipeline", "llvm_place_execution", "not_a_ctest_pattern"]
+                     "gti_test_ui", "llvm_place_execution", "not_a_ctest_pattern"]
             self.assertEqual(validation.uncovered_declarations(names, checks, directory),
                              ["llvm_place_execution", "not_a_ctest_pattern"])
 
@@ -1459,11 +1460,12 @@ class ValidationChecks(unittest.TestCase):
     def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
         slow = {"failure_metadata", "llvm_dispatch_execution", "instance_reuse", "instance_reuse_0"}
         sensitive = {"other_runtime", "llvm_backend_scalar", "llvm_dispatch_execution"}
-        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
+        registered = {"smoke", "allocator_raw_audit_independence", "allocator_raw_audit_independence_a",
+                      "allocator_raw_audit_independence_b",
                       "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "other_runtime",
                       "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution",
                       *validation.GATE_EXCLUDED}
-        aggregates = {"compiler_pipeline", "instance_reuse"}
+        aggregates = {"allocator_raw_audit_independence", "instance_reuse"}
 
         def inventory(test_set, names=registered, darwin=None):
             return validation.shard_inventory(names, test_set, darwin, slow, sensitive)
@@ -1471,7 +1473,7 @@ class ValidationChecks(unittest.TestCase):
         full = inventory("full")
         # The aggregates are replaced by their registered parts; slow-labelled
         # tests leave for the daily slow tier.
-        self.assertNotIn("compiler_pipeline", full)
+        self.assertNotIn("allocator_raw_audit_independence", full)
         self.assertNotIn("instance_reuse", full)
         self.assertEqual(full, registered - aggregates - slow)
         # The slow tier runs exactly the slow-labelled tests (O0 and O3) and
@@ -1483,12 +1485,11 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(validation.TEST_SET_LEVELS["slow"], "O0,O3")
         self.assertEqual(validation.TEST_SET_LEVELS["o3"], "O3")
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
-        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
-        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
+        alone = {"smoke", "allocator_raw_audit_independence", "other", *validation.GATE_EXCLUDED}
+        self.assertIn("allocator_raw_audit_independence", validation.shard_inventory(alone, "full"))
         gate = inventory("gate")
         self.assertEqual(gate, full - validation.GATE_EXCLUDED)
         self.assertTrue(gate < full)
-        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
         self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
         # macOS runs only the platform-specific inventory: listed names and prefixed families.
         listed = (("llvm_",), {"other"})
@@ -1693,14 +1694,18 @@ class ValidationChecks(unittest.TestCase):
     def test_ci_automation_paths_name_real_files_that_ci_runs(self):
         # A name for a missing harness would let a future file of that name
         # skip native CI without review, so the inventory names only real
-        # scripts and exactly the harnesses the workflow-regression job runs.
+        # scripts and harnesses the workflow-regression job runs: each is the
+        # command of a tree-consistency entry, the label that job runs.
         root = Path(__file__).resolve().parents[1]
         for name in validation.AUTOMATION_SCRIPTS:
             self.assertTrue((root / "scripts" / name).is_file(), name)
         workflow = (root / ".github/workflows/ci.yml").read_text()
         job = workflow.split("  automation-tests:", 1)[1].split("\n  formatting:", 1)[0]
-        executed = set(re.findall(r"python3 tests/([A-Za-z0-9_]+_test\.py)", job))
-        self.assertEqual(validation.AUTOMATION_TESTS, executed)
+        self.assertIn("-L '^tree-consistency$'", job)
+        self.assertNotIn("cmake --build", job)
+        commands = tree_consistency.harness_files(root)
+        executed = {harness for name in tree_consistency.listed(root) for harness in commands.get(name, [])}
+        self.assertLessEqual(validation.AUTOMATION_TESTS, executed)
         for name in validation.AUTOMATION_TESTS:
             self.assertTrue((root / "tests" / name).is_file(), name)
 
@@ -1797,16 +1802,16 @@ class ValidationChecks(unittest.TestCase):
                              ["run " + name for name in expected])
 
     def test_automation_job_harnesses_are_classified_as_automation(self):
-        _, script = CIEnvironment.step("automation-tests", "Verify workflow, batch, preservation and resource rules")
-        harnesses = re.findall(r"^python3 tests/([A-Za-z0-9_]+_test\.py)\b", script, re.M)
+        harnesses = sorted(validation.AUTOMATION_TESTS)
         self.assertIn("ownership_map_test.py", harnesses)
         self.assertIn("plan_checks_test.py", harnesses)
         for harness in harnesses:
             with self.subTest(harness=harness):
                 self.assertTrue((ROOT / "tests" / harness).is_file())
-                self.assertIn(harness, validation.AUTOMATION_TESTS)
                 expected = "full" if "tests/" + harness in validation.FULL_VALIDATION_FILES else "automation"
                 self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), expected)
+        # A labelled harness outside the automation set still needs native CI.
+        self.assertEqual(validation.ci_mode({}, ["tests/semantic_header_boundary_test.py"]), "full")
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
@@ -1922,49 +1927,28 @@ class CIEnvironment(unittest.TestCase):
             self.assertEqual(execute(False), "")
         self.assertIn("GTI_EVENT_PATH: ${{ github.event_path }}", step)
 
-    @unittest.skipIf(os.name == "nt", "The ubuntu-24.04 bootstrap uses POSIX tools")
-    def test_workflow_bootstrap_supplies_real_cmake_ctest_and_make(self):
-        _, script = self.step("automation-tests", "Install workflow test prerequisites")
-        binaries = {name: shutil.which(name) for name in ("cmake", "ctest", "make")}
-        self.assertTrue(all(binaries.values()), "Local verification requires CMake, CTest and Make")
-        with tempfile.TemporaryDirectory(prefix="gti-ci-bootstrap-") as temporary:
-            root = Path(temporary)
-            tools = root / "tools"
-            tools.mkdir()
-            calls = root / "apt-calls.json"
-            sudo = tools / "sudo"
-            # Intercept package installation locally; expose the real tools only
-            # when the workflow requests their actual Debian package names.
-            sudo.write_text(f"#!{sys.executable}\nimport json, pathlib, sys\n"
-                            f"tools=pathlib.Path({str(tools)!r})\nlog=pathlib.Path({str(calls)!r})\n"
-                            f"binaries={binaries!r}\n"
-                            "args=sys.argv[1:]\nassert args[0]=='apt-get'\n"
-                            "calls=json.loads(log.read_text()) if log.exists() else []\n"
-                            "calls.append(args)\nlog.write_text(json.dumps(calls))\n"
-                            "if args[1]=='install':\n"
-                            " for package, names in {'cmake':['cmake','ctest'],'make':['make']}.items():\n"
-                            "  if package in args:\n"
-                            "   for name in names: (tools/name).symlink_to(binaries[name])\n")
-            sudo.chmod(0o755)
-            env = dict(os.environ, PATH=str(tools))
-            with self.assertRaises(FileNotFoundError):
-                subprocess.run(["cmake", "--version"], env=env, check=True)
-            subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", script],
-                           cwd=root, env=env, check=True, capture_output=True, timeout=30)
-            installed = json.loads(calls.read_text())
-            self.assertEqual(installed[0], ["apt-get", "update"])
-            self.assertTrue(any(row[:2] == ["apt-get", "install"] and
-                                {"cmake", "make"} <= set(row) for row in installed))
-            (root / "CMakeLists.txt").write_text(
-                'cmake_minimum_required(VERSION 3.20)\nproject(CIBootstrap NONE)\n'
-                'enable_testing()\nadd_custom_target(workflow_fixture)\n'
-                f'add_test(NAME ci_bootstrap COMMAND "{sys.executable}" -c "pass")\n')
-            for argv in (["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Unix Makefiles"],
-                         ["cmake", "--build", str(root / "build"), "--target", "workflow_fixture"],
-                         ["ctest", "--test-dir", str(root / "build"), "--no-tests=error", "--output-on-failure"]):
-                subprocess.run(argv, cwd=root, env=env, check=True, capture_output=True, timeout=30)
+    def test_workflow_job_runs_the_label_from_a_configure_only_tree(self):
+        # The workflow-regression job runs the tree-consistency label from a
+        # configure-only tree: the reviewed toolchain supplies CMake, CTest,
+        # Ninja and Make, the configure precedes the run, nothing is built, and
+        # the run is checked for skipped or missing entries afterwards.
         job = (ROOT / ".github/workflows/ci.yml").read_text().split("  automation-tests:\n", 1)[1].split("  formatting:\n", 1)[0]
-        self.assertLess(job.index("Install workflow test prerequisites"), job.index("python3 tests/agent_workflow_test.py"))
+        ordered = ["bash scripts/configure_ci_toolchain.sh", "cmake -S . -B build -G Ninja",
+                   'git config --global user.name "GTI CI"', "ctest --test-dir build",
+                   "python3 scripts/tree_consistency.py run --build build --junit"]
+        positions = [job.index(text) for text in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('GTI_CI_CONFIGURE_ONLY: "1"', job)
+        self.assertIn("--no-tests=error", job)
+        self.assertNotIn("cmake --build", job)
+        self.assertNotIn("python3 tests/", job, "harnesses run through the label, not by name")
+        toolchain = (ROOT / "scripts/configure_ci_toolchain.sh").read_text()
+        install = toolchain.split("apt_get install", 1)[1].split("cc=gcc-14", 1)[0]
+        for package in ("build-essential", "cmake", "ninja-build"):
+            self.assertIn(package, install)
+        # Configuring only skips the disk clearance a build needs, nothing else.
+        self.assertEqual(toolchain.count("GTI_CI_CONFIGURE_ONLY"), 2)
+        self.assertIn('"${GTI_CI_CONFIGURE_ONLY:-}" != 1 ]]; then', toolchain)
 
 
 class BatchLifecycle(unittest.TestCase):

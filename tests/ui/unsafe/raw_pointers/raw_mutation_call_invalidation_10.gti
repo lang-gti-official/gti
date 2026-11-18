@@ -1,0 +1,15 @@
+// Raw mutation call invalidation: value parameter cleanup prevents direct-assertion purity proof.
+//@ raw-pointer-audit: strict
+struct Owner { mut int value = 1;  public: Owner() = default; };
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
+unsafe mut int&<a> borrow<lifetime a>(int* address, mut Owner&<a> owner, Cleanup cleanup) {
+  return *address;  //~ ERROR GTI-S2055 //~ ERROR GTI-S2017
+}
+int main() {
+  mut Owner owner{};
+  int* address = &owner.value;
+  unsafe {
+    { mut int& value = borrow(address, owner, Cleanup()); value = 2; }
+    return *address;  //~ ERROR GTI-S2102
+  }
+}

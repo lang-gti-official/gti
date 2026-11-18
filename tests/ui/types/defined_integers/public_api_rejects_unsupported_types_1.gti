@@ -1,0 +1,3 @@
+// Public api rejects unsupported types: floating arguments should not enter the integer API.
+import std.numeric;
+int main() { [[discard]] std::wrapping_add(float(1), float(2)); return 0; }  //~ ERROR GTI-S2012

@@ -1,0 +1,14 @@
+// Place composition: a read-only operator parameter borrows a fresh sentinel temporary.
+//@ check-pass
+import std.iterator;
+class End { public: End() = default; };
+class Cursor {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& end) { return true; }
+public:
+  Cursor() = default;
+};
+int main(){ Cursor cursor{}; bool compared = cursor != End(); return compared ? 0 : 1; }

@@ -1,0 +1,14 @@
+// Class assertions: complete: an instance formed only by constant evaluation is still rejected by its class assertion.
+import std.meta;
+class Tag<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void tag");  //~ ERROR GTI-S2079
+public:
+  constexpr Tag() {}
+};
+constexpr int32_t tag<T>() {
+  Tag<T> value = Tag<T>();
+  return 1;
+}
+static_assert(tag<int32_t>() == 1);
+static_assert(tag<void>() == 1);  //~ ERROR GTI-S2057
+int main() { return 0; }

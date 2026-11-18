@@ -1,0 +1,2 @@
+// Destructors and active drop state: source identifiers must not collide with generated lifecycle names.
+class Collision { mut bool __gti_lifecycle_active_1 = true; };  //~ ERROR GTI-L0008

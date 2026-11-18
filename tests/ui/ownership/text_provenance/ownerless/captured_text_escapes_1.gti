@@ -1,0 +1,58 @@
+// Captured text escapes: captured text escapes are rejected at source.
+import std.string;
+import std.functional;
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+class Label {
+public:
+  mut std::string_view text;
+  Label() : text("") {}
+  void set(std::string_view text) mut { this.text = text; }
+};
+enum class Message { text(std::string_view value), none };
+mut std::string_view kept = "";
+void keep(std::string_view text) { kept = text; }
+std::string_view same(std::string_view text) { return text; }
+Token make(std::string_view text) { return Token(text, 1); }
+std::string_view call<F>(F view) { return view(); }
+
+std::string_view direct(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  return f();  //~ ERROR GTI-S2045
+}
+std::string_view bound(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  std::string_view held = f();
+  return held;  //~ ERROR GTI-S2045
+}
+std::string_view looped(std::string_view v) {
+  std::string_view fixed = "fixed";
+  auto f = [fixed]() -> std::string_view { return fixed; };
+  mut std::string_view out = "x";
+  for (mut int i = 0; i < 2; i += 1) {
+    if (i == 1) { return out; }  //~ ERROR GTI-S2045
+    out = f();
+  }
+  return "y";
+}
+std::string_view relayed(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  return same(f());  //~ ERROR GTI-S2045
+}
+std::string_view nested(std::string_view v) {
+  auto inner = [v]() -> std::string_view { return v; };
+  auto outer = [inner]() -> std::string_view { return inner(); };
+  return outer();  //~ ERROR GTI-S2045
+}
+std::string_view immediate(std::string_view v) {
+  return [v]() -> std::string_view { return v; }();  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

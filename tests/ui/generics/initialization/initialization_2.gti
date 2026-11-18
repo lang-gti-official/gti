@@ -1,0 +1,8 @@
+// Initialization: rejected with GTI-S2068.
+int read<uint64_t N>() {
+  if constexpr (N == 0) { return 4; }
+  else { return later; }
+}
+int first = read<1>();  //~ ERROR GTI-S2068
+int later = 8;
+int main() { return first; }

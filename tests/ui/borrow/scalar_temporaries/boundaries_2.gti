@@ -1,0 +1,2 @@
+// Boundaries: mutable scalar reference.
+void write(mut int& value) { value = 1; } int main() { write(42); return 0; }  //~ ERROR GTI-S2017

@@ -1,0 +1,56 @@
+// Schedules: ephemeral carrier has verified MIR: mut Counter owner{}; bool value = amount(-1) > 0 && service(owner).read() == 4; return value ? 1 : 0;.
+//@ check-pass
+struct Counter { mut int value = 4;  public: Counter() = default; };
+class Service {
+  mut Counter& counter;
+public:
+  Service(mut Counter& source) : counter(source) {}
+  int read() { return this.counter.value; }
+  void advance(int amount) mut { this.counter.value += amount; }
+};
+Service service(mut Counter& source) { return Service(source); }
+class Group {
+  Counter& input;
+  mut Counter& left;
+  mut Counter& right;
+public:
+  Group(Counter& source, mut Counter& a, mut Counter& b)
+      : input(source), left(a), right(b) {}
+  void advance(int amount) mut {
+    this.left.value += amount;
+    this.right.value += this.input.value;
+  }
+};
+int amount(int divisor) { return 4 / divisor; }
+mut Counter global_owner{};
+class Trace {
+  int divisor;
+public:
+  Trace(int value) : divisor(value) {}
+  ~Trace() { int result = 1 / this.divisor; }
+};
+class FallibleService {
+  mut Counter& counter;
+  Trace lifetime;
+public:
+  FallibleService(mut Counter& source, int divisor)
+      : counter(source), lifetime(Trace(1)) { int result = 1 / divisor; }
+  int read() { return this.counter.value; }
+};
+int conditional(mut Counter& owner, bool take) {
+  int result = take ? service(owner).read() : 0;
+  return result;
+}
+expected<int, int> maybe_amount(bool fail) {
+  if (fail) { return unexpected(7); }
+  return 2;
+}
+expected<int, int> expected_call(mut Counter& owner, bool fail) {
+  service(owner).advance(?maybe_amount(fail));
+  return owner.value;
+}
+
+int main() {
+mut Counter decoy{}; decoy.value = 1;
+mut Counter owner{}; bool value = amount(-1) > 0 && service(owner).read() == 4; return value ? 1 : 0;
+}

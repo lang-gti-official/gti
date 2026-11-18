@@ -90,13 +90,15 @@ def artifact_contract(root):
     jobs = [gate_job(sha, name=n) for n in names]
     assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
 
-    def evidence(run=run, jobs=jobs, assets=assets):
+    def evidence(run=run, jobs=jobs, assets=assets, earlier=None):
         def request(path):
             if "/workflows/full-validation.yml/" in path:
                 return {"workflow_runs": [run] if run.get("path") == artifacts.FULL_VALIDATION_WORKFLOW else []}
             if "/workflows/ci.yml/" in path:
                 return {"workflow_runs": [run] if run.get("path") == ".github/workflows/ci.yml" else []}
             if "/jobs?" in path:
+                if "/attempts/1/" in path:
+                    return {"jobs": jobs if earlier is None else earlier}
                 assert "/attempts/2/" in path, path
                 return {"jobs": jobs}
             return {"artifacts": assets, "total_count": len(assets)}
@@ -130,6 +132,34 @@ def artifact_contract(root):
         {"assets": assets[:1]},
         {"assets": [{**a, "expired": True} for a in assets]},
         {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
+    ]
+    # validation-retry.yml re-runs only jobs that never got a runner: attempt
+    # 2 lists copies of attempt 1's green package jobs (new ids, the original
+    # execution's times and runner), and their archives keep attempt 1's name.
+    # Nightly then publishes attempt 1's packages, never a mix of attempts.
+    def executed(job, index):
+        return {**job, "started_at": f"2026-11-17T18:{index:02d}:00Z",
+                "completed_at": f"2026-11-17T19:{index:02d}:00Z", "runner_id": 1000 + index}
+    carried = [executed(job, index) for index, job in enumerate(jobs)]
+    first = [{**job, "conclusion": "cancelled", "runner_id": 0} if job["name"].startswith("Integration (darwin")
+             else job for job in carried]
+    attempt_one = [{**asset, "name": asset["name"].replace("-2", "-1")} for asset in assets]
+    assert evidence(jobs=carried, assets=attempt_one, earlier=first) == {"run_id": "7", "run_attempt": "1"}
+    assert evidence(jobs=carried, assets=[*attempt_one, *assets], earlier=first)["run_attempt"] == "2", \
+        "a re-run of every job publishes its own packages"
+    package = next(index for index, job in enumerate(jobs) if job["name"] == "Release package (darwin-arm64)")
+    rerun = [{**job, "started_at": "2026-11-17T21:00:00Z"} if index == package else job
+             for index, job in enumerate(carried)]
+    rejected += [
+        # The latest package job is another execution than the one that built the archive.
+        {"jobs": rerun, "assets": attempt_one, "earlier": first},
+        # The archive's attempt did not pass that package job.
+        {"jobs": carried, "assets": attempt_one,
+         "earlier": [{**job, "conclusion": "failure"} if job["name"].startswith("Release package") else job
+                     for job in first]},
+        # The platforms were built in different attempts.
+        {"jobs": carried, "assets": [attempt_one[0], assets[1]], "earlier": first},
+        {"jobs": carried, "assets": [*attempt_one, attempt_one[0]], "earlier": first},
     ]
     for options in rejected:
         try:
@@ -433,6 +463,14 @@ def nightly_contract(root):
     report = integration["report"]
     assert "issues: write" in report and "full_validation_report.py" in report
     assert "needs.verdict.result != 'cancelled'" in report
+    # A run red only for want of runners is left to validation-retry.yml; any
+    # doubt (a broken deferral step) still reports.
+    defer = report.split("name: Leave a run that only lacked runners to the retry", 1)[1].split("- name:", 1)[0]
+    assert "validation_retry.py defer" in defer and "continue-on-error: true" in defer
+    assert "if: needs.verdict.result != 'success'" in defer and '--attempt "${GITHUB_RUN_ATTEMPT}"' in defer
+    assert "actions: read" in report and "actions: write" not in full, "full validation never re-runs itself"
+    issue = report.split("name: Open, update or close the main-broken issue", 1)[1]
+    assert "if: steps.retry.outputs.deferred != 'true'" in issue
     publish = sections["publish"]
     assert "needs: select" in publish
     assert "run-id: ${{ needs.select.outputs.run_id }}" in publish
@@ -541,11 +579,10 @@ def sanitizer_contract(root):
         assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
             "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
     compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
-    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
-        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "{kind: libraries, index: 1, count: 1}" in compiler
+    assert "kind: compiler" not in compiler and "compiler_pipeline" not in compiler, \
+        "the compiler aggregate's partitions left with the aggregate"
     assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
-    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
-        "the compiler partitions re-configure only their timeout, keeping the cached configure"
     assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
         '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
         "sanitizer trees keep line tables only; full debug information exhausted runner disk"
@@ -635,6 +672,185 @@ def slow_tier_contract(root):
     assert "needs.source.outputs.nightly == 'true'" in report
     # The release requirement reads both daily verdicts.
     assert set(train.DAILY_TIERS) == {"sanitizers", "slow"}
+
+
+def retry_contract(root):
+    """validation-retry.yml re-runs, once, only the full-validation jobs that
+    never got a runner, from main's own scripts; only its retry job can write
+    Actions, and its decision is the one the report job defers to."""
+    text = (root / ".github/workflows/validation-retry.yml").read_text()
+    full = (root / ".github/workflows/full-validation.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  workflow_run:\n    workflows: [Full validation]\n    types: [completed]\n" in header
+    assert re.search(r"^name: Full validation$", full, re.MULTILINE), "the trigger names full validation's workflow"
+    for trigger in ("push:", "pull_request", "schedule", "workflow_dispatch", "merge_group"):
+        assert trigger not in header, trigger
+    assert "\npermissions:\n  contents: read\n" in header and "cancel-in-progress: false" in header
+    assert not re.search(r"secrets\.[A-Za-z]", text)
+    sections = jobs(text)
+    assert list(sections) == ["retry", "report"], list(sections)
+    writes = {name: re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE) for name, body in sections.items()}
+    assert writes == {"retry": ["actions"], "report": ["issues"]}, writes
+    retry, report = sections["retry"], sections["report"]
+    for condition in ("github.repository == 'lang-gti-official/gti'", "workflow_run.conclusion == 'failure'",
+                      "workflow_run.head_branch == 'main'", "workflow_run.event == 'push'",
+                      "workflow_run.event == 'workflow_dispatch'"):
+        assert condition in retry, condition
+    assert "ref: main" in retry and "persist-credentials: false" in retry, "main's own scripts decide"
+    assert "validation_retry.py request" in retry and '--attempt "${GTI_RUN_ATTEMPT}"' in retry
+    assert "needs.retry.result == 'failure'" in report and "full_validation_report.py" in report
+    assert "--status failed" in report and "validation_retry.py" not in report
+    for body in sections.values():
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+                assert "${{" not in line, line
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", text, re.MULTILINE):
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+    # The script's decisions over the recorded starved run, and its view of
+    # the jobs agrees with what nightly requires.
+    run([sys.executable, str(root / "scripts/validation_retry.py"), "--self-test"], root, True)
+    sys.path.insert(0, str(root / "scripts"))
+    retry_script = load_module(root / "scripts/validation_retry.py", "validation_retry_contract")
+    artifacts = load_module(root / "scripts/release_artifacts.py", "release_artifacts_retry_contract")
+    assert retry_script.WORKFLOW == artifacts.FULL_VALIDATION_WORKFLOW
+    assert retry_script.MAX_ATTEMPTS == 2, "one automatic retry; a re-run's completion may raise no event"
+    names = ["Validation plan", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
+             *(f"Integration ({p} {i}/{n})" for p, n in artifacts.integration_shards().items() for i in range(n))]
+    assert all(retry_script.required({"name": name}) for name in names)
+    assert not any(retry_script.required({"name": name}) for name in
+                   ("Tip toolchain", "Full validation verdict", "Report main status"))
+    for name in names[1:]:
+        assert f"name: {name.split(' (')[0]} (" in full, name
+    assert "name: Validation plan" in full
+
+
+def gti_test_tiers_contract(root):
+    """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
+    puts them: the PR gate and merge queue run gti_test_ui, every tests/ui
+    shard, gti_test_examples and gti_unit_tests on Linux, and gti_test_ui,
+    gti_unit_tests and one tests/ui shard chosen from the commit on macOS, with
+    per-case JUnit, and hold changed cases to half their limit (gti_test_ui is
+    the runner, tidy, tests/project and tests/lsp; gti_test_ui_<i> shard
+    tests/ui); full validation runs them all on both platforms; the daily slow
+    tier runs tests/slow and the --isolate run; the sanitizer verdict includes an
+    instrumented gti_test_ui run."""
+    workflows = root / ".github/workflows"
+    ci = (workflows / "ci.yml").read_text()
+    fast = jobs(ci)["fast"]
+    # gti_test_ui and its tests/ui shards gti_test_ui_<i> (tests/gti_test.cmake).
+    tiers = "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"
+    rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), rotate: ([0-9]+), "
+                      r"gate: '([a-z0-9_|()?\[\]+-]+)'\}", fast)
+    assert sorted(platform for platform, _, _ in rows) == ["darwin", "linux"], rows
+    # Linux runs every tier; macOS the platform entries plus one rotating
+    # tests/ui shard, and full validation's darwin set runs the rest there.
+    assert {platform: (int(rotate), gate) for platform, rotate, gate in rows} == {
+        "linux": (0, tiers), "darwin": (1, "gti_test_ui|gti_unit_tests")}, rows
+    selection = fast.split("name: Select this commit's gti-test entries", 1)[1].split("- name:", 1)[0]
+    assert "validation_checks.py gate-tests --build build" in selection and '--sha "${GITHUB_SHA}"' in selection
+    assert "GTI_GATE: ${{ matrix.gate }}" in selection and "GTI_ROTATE: ${{ matrix.rotate }}" in selection
+    checks = load_module(root / "scripts/validation_checks.py", "validation_checks_tiers_contract")
+    registered = ["gti_test_ui", "gti_test_examples", "gti_unit_tests", "llvm_backend_cli",
+                  *(f"gti_test_ui_{index}" for index in range(1, 9))]
+    assert checks.gate_tests(registered, tiers, 0, "0" * 40) == (tiers, [])
+    covered = set()
+    for prefix in range(8):
+        pattern, chosen = checks.gate_tests(registered, "gti_test_ui|gti_unit_tests", 1, f"{prefix:012x}" + "0" * 28)
+        selected = {name for name in registered if re.fullmatch("^(" + pattern + ")$", name)}
+        assert len(chosen) == 1 and selected == {"gti_test_ui", "gti_unit_tests", *chosen}, (pattern, selected)
+        covered |= set(chosen)
+    assert covered == {f"gti_test_ui_{index}" for index in range(1, 9)}, "the shard rotates through all eight"
+    for gate, rotate, sha in (("gti_test_ui|gti_unit_tests", 9, "0" * 40), ("nothing", 0, "0" * 40),
+                              ("gti_test_ui", 1, "HEAD")):
+        try:
+            checks.gate_tests(registered, gate, rotate, sha)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(("accepted a bad gate selection", gate, rotate, sha))
+    # The declared re-run never repeats what the gate ran, and macOS keeps
+    # only the darwin set, as full validation does.
+    darwin = checks.darwin_set(root)
+    assert checks.declared_scope(["gti_test_ui_3", "llvm_backend_cli", "execution_coverage"], "darwin",
+                                 "gti_test_ui|gti_unit_tests|gti_test_ui_3", darwin) == (
+        ["llvm_backend_cli"], ["gti_test_ui_3"], ["execution_coverage"])
+    assert checks.declared_scope(["gti_test_ui_3", "execution_coverage"], "linux", tiers, darwin) == (
+        ["execution_coverage"], ["gti_test_ui_3"], [])
+    code = "\n".join(line for line in fast.splitlines() if not line.lstrip().startswith("#"))
+    assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
+    assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
+                   "name: Run the gti-test tiers",
+                   "name: Hold new and modified gti-test cases to half their limit",
+                   "name: Re-run the tests this pull request declares", "name: Upload gti-test reports"],
+            "the tiers run after fast feedback, then the budget, then declared tests")
+    step = fast.split("name: Run the gti-test tiers", 1)[1].split("- name:", 1)[0]
+    assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in step and '-R "^(${GTI_GATE_TESTS})$"' in step
+    declared = fast.split("name: Re-run the tests this pull request declares", 1)[1].split("- name:", 1)[0]
+    assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in declared
+    assert '--platform "${GTI_PLATFORM}" --ran "${GTI_GATE_TESTS}"' in declared
+    # A discarded queue candidate releases its runner before the build.
+    stale = fast.split("name: Skip a merge group the queue has already discarded", 1)[1].split("- uses:", 1)[0]
+    assert "if: github.event_name == 'merge_group'" in stale and 'git ls-remote --exit-code' in stale
+    assert fast.index("name: Skip a merge group") < fast.index("uses: actions/checkout@")
+    assert "--output-on-failure" in step and '--output-junit "${RUNNER_TEMP}/gti-test/ctest.xml"' in step
+    budget = fast.split("name: Hold new and modified gti-test cases to half their limit", 1)[1]
+    budget = budget.split("- name:", 1)[0]
+    assert "if: github.event_name == 'pull_request' && matrix.platform == 'linux'" in budget
+    assert 'GTI_TEST_TIME_SCALE: "2"' in budget, "hosted runners scale limits as the gti_test_ui entry does"
+    # Advisory until calibrated: over-budget cases are warnings, not failures.
+    assert 'run: python3 scripts/gti_test_budget.py build/gti-test HEAD^1 --jobs "${GTI_TEST_JOBS}"' in budget
+    assert "continue-on-error" not in budget, "the advisory script decides what fails, not the step"
+    script = (root / "scripts/gti_test_budget.py").read_text()
+    assert '"--changed", base' in script and "::warning file=" in script and "GITHUB_STEP_SUMMARY" in script
+    upload = fast.split("name: Upload gti-test reports", 1)[1].split("- name:", 1)[0]
+    assert "if: always()" in upload and "path: ${{ runner.temp }}/gti-test/*.xml" in upload
+    for line in fast.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest", "mkdir")):
+            assert "${{" not in line, line
+    # The entries' registration: per-case JUnit only when CI asks for it.
+    cmake = (root / "tests/gti_test.cmake").read_text()
+    assert 'set(GTI_TEST_REPORT_DIRECTORY "" CACHE PATH' in cmake
+    for name in ("gti_test_ui", "gti_test_examples", "gti_test_slow", "gti_test_isolate"):
+        assert f"gti_test_report({name} {name}_report)" in cmake, name
+    assert "gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)" in cmake
+    shards = int(re.search(r"set\(gti_test_ui_shards ([0-9]+)\)", cmake).group(1))
+    shard_names = {f"gti_test_ui_{index}" for index in range(1, shards + 1)}
+    assert "add_test(NAME gti_test_slow" in cmake and "add_test(NAME gti_test_isolate" in cmake
+    assert '"^gti_test_(slow|isolate)$"' in (root / "tests/TestThroughput.cmake").read_text(), \
+        "the slow-tier gti-test entries carry the slow label"
+    # Full validation: Linux runs every registered per-commit test; macOS runs
+    # the gti-test entries through the darwin list.
+    darwin = json.loads((root / "tests/ci_darwin_tests.json").read_text())["tests"]
+    assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} | shard_names <= set(darwin)
+    assert not {"gti_test_slow", "gti_test_isolate"} & set(darwin)
+    # The committed seeds, not the working file: full validation overwrites the
+    # working table with the newest refreshed artifact, which predates any entry
+    # this change adds and never gains the slow-tier names.
+    seeded = subprocess.run(["git", "show", "HEAD:tests/ci_test_durations.json"], cwd=root,
+                            capture_output=True, text=True, timeout=30, check=False)
+    durations = json.loads(seeded.stdout if seeded.returncode == 0 else
+                           (root / "tests/ci_test_durations.json").read_text())["seconds"]
+    for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate",
+                 *sorted(shard_names)):
+        assert name in durations, f"{name} has no shard-balancing duration"
+    # The slow tier reports its gti-test cases per case.
+    slow = jobs((workflows / "slow.yml").read_text())["shards"]
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/shard/gti-test"' in slow
+    assert "${{ runner.temp }}/shard/gti-test/*.xml" in slow
+    # The sanitizer verdict covers an instrumented gti_test_ui run.
+    compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
+    step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
+    assert "if: matrix.kind == 'libraries'" in step and "timeout-minutes: 120" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
+    assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
+    assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
+    # The compiler-API checks that left the aggregate for tests/unit keep a
+    # sanitized run in the library subset.
+    assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
+    assert "${{ runner.temp }}/sanitizers-gti-test.xml" in compiler
 
 
 def ordered(body, items, message):
@@ -828,7 +1044,7 @@ def workflow_contract(root):
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
-        "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml"]
+        "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -891,9 +1107,14 @@ def change_review_contract(root):
     assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha }}") in job
     assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
+    # The review script's own regression harness runs in the gate as a
+    # tree-consistency entry, from a tree that is configured but not built.
     automation = jobs(ci)["automation-tests"]
-    assert ("python3 tests/stdlib_surface_review_test.py "
-            "scripts/check_stdlib_surface_review.py") in automation
+    assert "-L '^tree-consistency$'" in automation and "cmake --build" not in automation
+    sys.path.insert(0, str(root / "scripts"))
+    import tree_consistency
+    assert "stdlib_surface_review_policy" in tree_consistency.listed(root)
+    assert "stdlib_surface_review_test.py" in tree_consistency.harness_files(root)["stdlib_surface_review_policy"]
     # Execute the fork step: a base that main advanced past still yields the
     # candidate's fork point, and an absent base falls back to HEAD^.
     step = job.split("      - name: Find where the candidate forked\n", 1)[1]
@@ -1433,6 +1654,8 @@ def main():
     llvm_pin_contract(root)
     sanitizer_contract(root)
     slow_tier_contract(root)
+    gti_test_tiers_contract(root)
+    retry_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

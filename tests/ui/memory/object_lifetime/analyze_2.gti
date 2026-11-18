@@ -1,0 +1,3 @@
+// Analyze: public destruction requires explicit unsafe permission, with no unsafe fix-it.
+import std.memory;
+int main() { int* p = nullptr; std::destroy_at(p); return 0; }  //~ ERROR GTI-S2055

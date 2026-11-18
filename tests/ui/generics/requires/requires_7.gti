@@ -1,0 +1,24 @@
+// General requires: symbolic declaration metadata and existing expression proofs compose.
+//@ check-pass
+import std.meta;
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(input) {}
+  T& operator*() { return value; }
+};
+constexpr bool has_reference_result<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") {
+      found = member.result().is_reference();
+    }
+  }
+  return found;
+}
+constexpr bool readable_expression<T>() {
+  return requires(T&<cell> cell) { { *cell } -> auto&<cell>; };
+}
+concept readable_cell<T> = has_reference_result<T>() && readable_expression<T>();
+int consume<readable_cell C>(C& cell) { return 1; }
+int forward<T>(Cell<T>& cell) { return consume(cell); }
+int main() { Cell<int> value{1}; return forward(value) - 1; }

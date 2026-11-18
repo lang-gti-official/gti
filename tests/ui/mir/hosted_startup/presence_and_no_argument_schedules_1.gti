@@ -1,0 +1,3 @@
+// Presence and no argument schedules: a program without an entry should have no hosted-startup MIR.
+//@ check-pass
+int helper() { return 1; }

@@ -1,0 +1,20 @@
+// Ownership semantic foundation: ownership metadata source should pass the frontend.
+//@ check-pass
+struct Counter {
+  mut int value = 0;
+  void bump() mut { this.value += 1; }
+public:
+  Counter() = default;
+};
+
+int identity(int value) { return value; }
+
+int main() {
+  int fixed = 1;
+  mut int changing = 2;
+  mut Counter counter = Counter();
+  int grouped = (fixed);
+  changing++;
+  counter.bump();
+  return identity(changing);
+}

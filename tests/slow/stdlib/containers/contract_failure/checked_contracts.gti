@@ -1,0 +1,181 @@
+// Checked map and unordered_map contracts fail with their precise report and run the caller's cleanup.
+//@ slow
+//@ run-pass
+//@ revisions: argument_check map_missing map_arrow_overflow unordered_missing unordered_end_dereference unordered_end_increment success unordered_page_cleanup unordered_page_construction argument_negative argument_nan argument_infinity
+//@[argument_check] args: argument_check
+//@[argument_check] run-fail
+//@[argument_check] exit-code: 70
+//@[argument_check] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[argument_check] stdout: cleaned
+//@[map_missing] args: map_missing
+//@[map_missing] run-fail
+//@[map_missing] exit-code: 70
+//@[map_missing] stderr-contains: : runtime error[GTI-R0015]: key_not_found in key_lookup
+//@[map_missing] stdout: cleaned
+//@[map_arrow_overflow] args: map_arrow_overflow
+//@[map_arrow_overflow] run-fail
+//@[map_arrow_overflow] exit-code: 70
+//@[map_arrow_overflow] stderr-contains: : runtime error[GTI-R0001]: integer_overflow in addition
+//@[map_arrow_overflow] stdout: cleaned
+//@[unordered_missing] args: unordered_missing
+//@[unordered_missing] run-fail
+//@[unordered_missing] exit-code: 70
+//@[unordered_missing] stderr-contains: : runtime error[GTI-R0015]: key_not_found in key_lookup
+//@[unordered_missing] stdout: cleaned
+//@[unordered_end_dereference] args: unordered_end_dereference
+//@[unordered_end_dereference] run-fail
+//@[unordered_end_dereference] exit-code: 70
+//@[unordered_end_dereference] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[unordered_end_dereference] stdout: cleaned
+//@[unordered_end_increment] args: unordered_end_increment
+//@[unordered_end_increment] run-fail
+//@[unordered_end_increment] exit-code: 70
+//@[unordered_end_increment] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[unordered_end_increment] stdout: cleaned
+//@[success] args: success
+//@[success] stdout: cleaned
+//@[unordered_page_cleanup] args: unordered_page_cleanup
+//@[unordered_page_cleanup] run-fail
+//@[unordered_page_cleanup] exit-code: 70
+//@[unordered_page_cleanup] stderr-contains: : runtime error[GTI-R0015]: key_not_found in key_lookup
+//@[unordered_page_construction] args: unordered_page_construction
+//@[unordered_page_construction] run-fail
+//@[unordered_page_construction] exit-code: 70
+//@[unordered_page_construction] stderr-contains: : runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[argument_negative] args: argument_negative
+//@[argument_negative] run-fail
+//@[argument_negative] exit-code: 70
+//@[argument_negative] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[argument_negative] stdout: cleaned
+//@[argument_nan] args: argument_nan
+//@[argument_nan] run-fail
+//@[argument_nan] exit-code: 70
+//@[argument_nan] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[argument_nan] stdout: cleaned
+//@[argument_infinity] args: argument_infinity
+//@[argument_infinity] run-fail
+//@[argument_infinity] exit-code: 70
+//@[argument_infinity] stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@[argument_infinity] stdout: cleaned
+import std.map;
+import std.memory;
+import std.string;
+import std.unordered_map;
+import std.cmath;
+import std.vector;
+
+class Guard {
+  std::unique_ptr<int> token;
+public:
+  Guard() : token(std::make_unique<int>(7)) {}
+  ~Guard() { if (this.token != nullptr) std::println("cleaned"); }
+};
+class EntryGuard {
+  int id;
+public:
+  EntryGuard(int id) : id(id) {}
+  EntryGuard(EntryGuard& other) = delete;
+  EntryGuard(EntryGuard&& other) = default;
+  ~EntryGuard() { std::println(this.id); }
+};
+class FailingEntry {
+  EntryGuard member;
+public:
+  FailingEntry(int id, int divisor) : member(EntryGuard(id)) {
+    int checked = 1 / divisor;
+  }
+};
+
+int argument_check() {
+  Guard guard{};
+  mut std::unordered_map<int, int> values{}; values.max_load_factor(0.0);
+  return 0;
+}
+
+int map_missing() {
+  Guard guard{};
+  std::map<int, int> values{}; int key = 1; [[discard]] values.at(key);
+  return 0;
+}
+
+int map_arrow_overflow() {
+  Guard guard{};
+  mut std::map<int, int> values{}; mut auto result = values.insert(1, 2147483647); result.first->second() += 1;
+  return 0;
+}
+
+int unordered_missing() {
+  Guard guard{};
+  std::unordered_map<int, int> values{}; int key = 1; [[discard]] values.at(key);
+  return 0;
+}
+
+int unordered_end_dereference() {
+  Guard guard{};
+  std::unordered_map<int, int> values{}; auto end = values.begin(); int value = (*end).second;
+  return 0;
+}
+
+int unordered_end_increment() {
+  Guard guard{};
+  std::unordered_map<int, int> values{}; mut auto end = values.begin(); ++end;
+  return 0;
+}
+
+int success() {
+  Guard guard{};
+  mut std::unordered_map<int, int> values{}; values.max_load_factor(0.5); [[discard]] values.insert(1, 2); int key = 1; [[discard]] values.at(key);
+  return 0;
+}
+
+int unordered_page_cleanup() {
+  Guard guard{};
+  mut std::unordered_map<int, EntryGuard> values{};
+  for (mut int i = 0; i < 65; i++) { [[discard]] values.try_emplace(i, i); }
+  int replaced = 16; [[discard]] values.erase(replaced);
+  [[discard]] values.try_emplace(replaced, 116);
+  int missing = 1000; [[discard]] values.at(missing);
+  return 0;
+}
+
+int unordered_page_construction() {
+  Guard guard{};
+  mut std::unordered_map<int, FailingEntry> values{};
+  for (mut int i = 0; i < 65; i++) { [[discard]] values.try_emplace(i, i, 1); }
+  [[discard]] values.try_emplace(65, 65, 0);
+  return 0;
+}
+
+int argument_negative() {
+  Guard guard{};
+  mut std::unordered_map<int, int> values{}; values.max_load_factor(-0.5);
+  return 0;
+}
+
+int argument_nan() {
+  Guard guard{};
+  mut std::unordered_map<int, int> values{}; values.max_load_factor(std::sqrt(-1.0));
+  return 0;
+}
+
+int argument_infinity() {
+  Guard guard{};
+  mut std::unordered_map<int, int> values{}; values.max_load_factor(std::exp(1000.0));
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argv[1] == "argument_check") { return argument_check(); }
+  if (argv[1] == "map_missing") { return map_missing(); }
+  if (argv[1] == "map_arrow_overflow") { return map_arrow_overflow(); }
+  if (argv[1] == "unordered_missing") { return unordered_missing(); }
+  if (argv[1] == "unordered_end_dereference") { return unordered_end_dereference(); }
+  if (argv[1] == "unordered_end_increment") { return unordered_end_increment(); }
+  if (argv[1] == "success") { return success(); }
+  if (argv[1] == "unordered_page_cleanup") { return unordered_page_cleanup(); }
+  if (argv[1] == "unordered_page_construction") { return unordered_page_construction(); }
+  if (argv[1] == "argument_negative") { return argument_negative(); }
+  if (argv[1] == "argument_nan") { return argument_nan(); }
+  if (argv[1] == "argument_infinity") { return argument_infinity(); }
+  return 1;
+}

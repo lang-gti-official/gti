@@ -1,0 +1,7 @@
+// Staged input boundaries: later input may mutate storage disjoint from an earlier binding.
+//@ check-pass
+thread_local mut int32_t first = 1;
+thread_local mut int32_t second = 2;
+int32_t change() { second = 9; return 3; }
+int32_t read(int32_t& input, int32_t copied) { return input + copied; }
+int main() { return read(first, change()); }

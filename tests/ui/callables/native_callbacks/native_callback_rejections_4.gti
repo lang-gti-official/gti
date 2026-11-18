@@ -1,0 +1,9 @@
+// Native callback rejections: member-callback.gti should be rejected by the native callback semantic boundary.
+using Callback = (int32_t) -> int32_t;
+class Owner {
+public:
+  static int32_t transform(int32_t value) { return value; }
+public:
+  Owner() = default;
+};
+int main() { Callback callback = Owner::transform; return 0; }  //~ ERROR GTI-S2076

@@ -1,0 +1,21 @@
+// Borrowing captures: capture-disjoint-field-alias.
+//@ check-pass
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  {
+    mut auto swap = [mut &pair]() -> void {
+      mut int& left = pair.left;
+      int saved = left;
+      left = pair.right;
+      pair.right = saved;
+    };
+    swap();
+  }
+  return pair.left == 3 && pair.right == 2 ? 0 : 1;
+}

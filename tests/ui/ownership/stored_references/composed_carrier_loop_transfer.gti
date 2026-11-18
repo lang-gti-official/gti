@@ -1,0 +1,27 @@
+// Composed carrier function transfer: a loop-local carrier transfer retires its exact loan on each iteration without leaking statement acknowledgement state.
+//@ check-pass
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  for (mut int index = 0; index < 2; index++) {
+    Context current{step, left, right};
+    mut Context active = forward_context<Context>(std::move(current));
+    active.update();
+  }
+  return left.value + right.value - 8;
+}

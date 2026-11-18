@@ -1,0 +1,4 @@
+// Storage payload admission: moving owner-dependent text into a local value's field keeps its owner loan.
+import std.string;
+struct Holder { std::string_view text; };
+int main() { mut std::string owner{"owned"}; std::string_view view = owner.view(); Holder value{.text = std::move(view)}; owner.clear(); return int(value.text.size()); }  //~ ERROR GTI-S2017

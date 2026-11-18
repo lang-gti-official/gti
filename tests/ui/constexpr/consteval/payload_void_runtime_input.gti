@@ -1,0 +1,4 @@
+// A consteval void call with a runtime argument is rejected.
+//@ check-fail
+consteval void validate(int value) { int checked = 100 / value; }
+int main() { int runtime = 5; validate(runtime); return 0; }  //~ ERROR GTI-S2057

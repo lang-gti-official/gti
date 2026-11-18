@@ -1,0 +1,13 @@
+// Transfer qualified callables: nonempty-pack-task.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<int>());  //~ ERROR GTI-S2084
+  return started ? 0 : 1;
+}

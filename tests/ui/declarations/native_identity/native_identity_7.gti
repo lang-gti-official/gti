@@ -1,0 +1,8 @@
+// Native identity: rejected with GTI-S2003.
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+int main() { mut Celsius value{1}; value = 5; return value.read(); }  //~ ERROR GTI-S2003

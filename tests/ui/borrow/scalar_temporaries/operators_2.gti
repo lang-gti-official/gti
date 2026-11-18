@@ -1,0 +1,4 @@
+// Operators: scalar operator temporary argument.
+//@ check-pass
+class Counter { public: int value; Counter(int v) : value(v) {} int operator+(int& other) { return this.value + other; } };
+int main() { Counter a{7}; return (a + 35) - 42; }

@@ -1,0 +1,44 @@
+// std::map rejects key writes, live loans across mutation, copies of the container or exclusive cursors, and invalid comparators.
+//@ check-fail
+import std.map;
+
+namespace case_live_iterator {
+int entry() {
+  mut std::map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  auto first = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return (*first).second;
+}
+}
+
+namespace case_live_value {
+int entry() {
+  mut std::map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  int key = 1;
+  int& value = values.at(key);
+  [[discard]] values.erase(key);  //~ ERROR GTI-S2017
+  return value;
+}
+}
+
+namespace case_overlap_exclusive_iterator {
+int entry() {
+  mut std::map<int, int> values{};
+  auto first = values.begin_mut();
+  [[discard]] values.size();  //~ ERROR GTI-S2017
+  return (*first).second;
+}
+}
+
+namespace case_nested_result_invalidation {
+int entry() {
+  mut std::map<int, int> values{};
+  auto result = values.insert(1, 2);
+  values.clear();  //~ ERROR GTI-S2017
+  return result.first->second;
+}
+}
+
+int main() { return 0; }

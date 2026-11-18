@@ -1,0 +1,10 @@
+// Pointer layout does not require pointee layout: one-level pointer layout should be known without laying out its ordinary or generic pointee.
+//@ check-pass
+class Opaque { public: Opaque() = default; };
+
+uint64_t pointer_layout<T>() { return sizeof(T*); }
+
+int main() {
+  uint64_t class_pointer_size = sizeof(Opaque*);
+  return int32_t(pointer_layout<Opaque>() - class_pointer_size);
+}

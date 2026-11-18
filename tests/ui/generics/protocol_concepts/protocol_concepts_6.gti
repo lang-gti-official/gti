@@ -1,0 +1,8 @@
+// Protocol concepts: rejected with GTI-S2049 (`unknown` renamed `undeclared_constraint`: an undefined common name pays import-suggestion trials, issue #500).
+concept C<T> { int first(T& v); int second(T& v); };
+struct Box<T> {};
+for <T> concept C<Box<T>> requires undeclared_constraint<T> {  //~ ERROR GTI-S2049
+  int first(Box<T>& v) { return 0; }
+  int second(Box<T>& v) { return 0; }
+};
+int main() { return 0; }

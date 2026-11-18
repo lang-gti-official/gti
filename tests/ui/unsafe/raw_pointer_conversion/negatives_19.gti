@@ -1,0 +1,6 @@
+// Negatives: conditional retains contradictory possibility remains unchecked with audit Off.
+//@ check-pass
+using E = void*; using P = uint64_t*;
+void test(bool choose) { mut int a = 0; mut uint64_t b = 0;
+E e = choose ? E(&a) : E(&b); P p = P(e); }
+int main() { return 0; }

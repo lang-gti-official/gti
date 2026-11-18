@@ -1,0 +1,4 @@
+// A read-only callback parameter may borrow each by-value text-view element for the duration of its call.
+import std.string;
+import std.algorithm;
+class RefCounter { public: void operator()(char& value) mut {}  public: RefCounter() = default; }; int main() { std::string_view view = "abc"; auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }

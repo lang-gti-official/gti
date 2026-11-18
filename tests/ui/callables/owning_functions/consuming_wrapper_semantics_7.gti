@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: target parameter types must match signature.
+import std.functional;
+import std.memory;
+int main() { std::function<int(bool) &&> callback{[](int value) -> int { return value; }}; return 0; }  //~ ERROR GTI-S2003

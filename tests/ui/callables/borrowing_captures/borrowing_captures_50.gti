@@ -1,0 +1,8 @@
+// Borrowing captures: invocation-pointer-owning-result is rejected with a user diagnostic, not an ICE.
+import std.functional;
+import std.string;
+std::string label(int value) { return std::string("label"); }
+int main() {
+  std::function_ptr<std::string(int)> pointer{label};  //~ ERROR GTI-S2093
+  return 0;
+}

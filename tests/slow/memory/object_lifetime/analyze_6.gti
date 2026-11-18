@@ -1,0 +1,19 @@
+// Analyze: raw construction preserves generated copy and owning movement.
+//@ check-pass
+//@ slow
+import std.memory;
+import std.string;
+struct Record { int number = 4;  public: Record() = default; };
+int main() {
+  Record record{};
+  Record* copy = nullptr;
+  std::string text{"owned"};
+  std::string* moved = nullptr;
+  unsafe {
+    std::construct_at(copy, record);
+    std::construct_at(moved, std::move(text));
+    std::destroy_at(copy);
+    std::destroy_at(moved);
+  }
+  return 0;
+}

@@ -1,0 +1,13 @@
+// Generics: the program is accepted.
+//@ check-pass
+class Adapter<R(Args...)> {
+public:
+  Adapter() {}
+  void operator()(Args... args) {}
+};
+class Holder<Args...> {
+  Adapter<void(Args...)> child;
+public:
+  Holder() : child(Adapter<void(Args...)>()) {}
+};
+int main() { Holder<int, bool> pair{}; Holder<> empty{}; return 0; }

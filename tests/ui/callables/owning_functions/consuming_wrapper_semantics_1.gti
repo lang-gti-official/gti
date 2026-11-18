@@ -1,0 +1,16 @@
+// Consuming wrapper semantics: public consuming signatures support explicit moves, clone and move-only targets.
+//@ check-pass
+import std.functional;
+import std.memory;
+
+class Increment { public: int operator()(int value) && { return value + 1; }  public: Increment() = default; };
+int main() {
+  std::function<int(int) &&> callback{Increment()};
+  auto copy = callback.clone();
+  int first = std::move(callback)(2);
+  int second = std::move(copy)(3);
+  auto resource = std::make_unique<int>(5);
+  std::move_only_function<int() &&> owned{
+      [value = std::move(resource)]() -> int { return *value; }};
+  return first + second + std::move(owned)() - 12;
+}

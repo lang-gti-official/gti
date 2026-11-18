@@ -1,0 +1,31 @@
+// Consuming payload patterns: the moved switch subject stays moved on every path, including tag-only arms.
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+int main() {
+  data value = make(1);
+  switch (std::move(value)) {
+  case data::some:
+    break;
+  default:
+    break;
+  }
+  switch (value) {  //~ ERROR GTI-S2018
+  case data::some:
+    return 1;
+  default:
+    return 0;
+  }
+}

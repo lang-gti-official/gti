@@ -1,0 +1,4 @@
+// A false concept value fails a static assertion.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+static_assert(sized<int>);  //~ ERROR GTI-S2079 Static assertion failed

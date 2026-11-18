@@ -1,0 +1,8 @@
+import "api/processing.gti";
+int main() {
+  mut processing::Envelope value{};
+  processing::Envelope& read = value;
+  mut processing::Envelope& write = processing::edit(value);
+  write.packet.point.x = 4;
+  return read.packet.point.x;
+}

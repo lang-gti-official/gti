@@ -1,0 +1,24 @@
+// Borrowing captures: mutable-restoration-helper-alias.
+//@ check-pass
+import std.memory;
+struct Writer {
+  mut int& value;
+  Writer(mut int& source) : value(source) {}
+  void increment() mut { this.value += 1; }
+};
+unsafe mut Writer& restore_writer(mut std::erased_object& object) {
+  unsafe {
+    mut Writer& restored = std::restore_mut<Writer>(object);
+    return restored;
+  }
+}
+int main() {
+  mut int value = 4;
+  mut Writer writer{value};
+  mut std::erased_object& object = std::erase_mut(writer);
+  unsafe {
+    mut Writer& restored = restore_writer(object);
+    restored.increment();
+  }
+  return value - 5;
+}

@@ -1,0 +1,2 @@
+// Invalid: invalid discard contract must reject.
+[[discardable]] int value = 1;  //~ ERROR GTI-P0001

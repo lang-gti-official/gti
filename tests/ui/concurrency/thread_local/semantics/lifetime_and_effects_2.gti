@@ -1,0 +1,2 @@
+// Lifetime and effects: transitive storage mutation conflicts with retained or call-scoped loans independently of declaration order.
+mut int value = 0; void modify() { value = 2; } int main() { mut int& borrowed = value; modify(); return borrowed; }  //~ ERROR GTI-S2045

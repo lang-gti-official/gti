@@ -1,0 +1,22 @@
+// Discarded cleanup-free class results preserve calls and failure cleanup, and a branch-only receiver result published into its MIR destination is not mistaken for a discarded one.
+//@ run-pass
+//@ stdout: 7
+//@ stdout: 8
+import std.string;
+
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.value); }
+};
+
+[[discardable]] Resource acquire() { return Resource(7); }
+
+int main() {
+  acquire(); // The unused owner must be destroyed at this semicolon.
+  std::println(8);
+  return 0;
+}

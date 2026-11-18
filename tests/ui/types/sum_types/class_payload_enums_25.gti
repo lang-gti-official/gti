@@ -1,0 +1,16 @@
+// Class payload enums: capture movement leaves the source unavailable.
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum holder { one(resource value), none };
+
+int main() {
+  auto source = holder::one(resource());
+  auto first = [value = std::move(source)]() -> int { return 0; };
+  auto second = [value = std::move(source)]() -> int { return 0; };  //~ ERROR GTI-S2018
+  return 0;
+}

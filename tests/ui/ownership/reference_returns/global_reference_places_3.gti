@@ -1,0 +1,8 @@
+// Global reference places: a conflicting unqualified-global read should be rejected by semantic loan analysis before MIR lowering.
+mut int value = 1;
+
+int main() {
+  mut int& alias = value;
+  int copy = value;  //~ ERROR GTI-S2017 Cannot read storage while an overlapping mutable borrow
+  return alias + copy;
+}

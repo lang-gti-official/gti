@@ -1,0 +1,41 @@
+// Positive: cleanup-owning child reborrows an incoming receiver field.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item) : item(std::move(item)) {}
+};
+
+class MutGuard {
+  mut int& target;
+public:
+  MutGuard(mut int& target) : target(target) {}
+  ~MutGuard() { this.target += 1; }
+};
+class Parent {
+  mut int& target;
+public:
+  Parent(mut int& target) : target(target) {}
+  void apply() mut { MutGuard child{this.target}; }
+
+};
+
+void apply(mut Parent& parent) { parent.apply(); }
+int main() { mut int value = 7;
+  { mut Parent parent{value}; apply(parent); }
+  return value - 8;
+}

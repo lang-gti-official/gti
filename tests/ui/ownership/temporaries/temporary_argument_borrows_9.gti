@@ -1,0 +1,5 @@
+// Temporary argument borrows: ordinary ambiguity should remain authoritative within the ephemeral-borrow fallback tier.
+class Report { public: Report() {} };
+int inspect(Report& report) { return 1; }
+int inspect<T>(T& report) { return 2; }
+int main() { return inspect(Report()); }  //~ ERROR GTI-S2013

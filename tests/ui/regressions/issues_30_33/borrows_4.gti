@@ -1,0 +1,3 @@
+// Borrows: borrowed array mutability, escape and live-loan rules are unchanged.
+struct Grid { mut int cells[2] = {};  public: Grid() = default; }; struct Frame { mut Grid grid{};  public: Frame() = default; };
+int main() { mut Frame frame{}; int& held = frame.grid.cells[0]; frame.grid.cells[0] = 1; return held; }  //~ ERROR GTI-S2017

@@ -1,0 +1,78 @@
+// Linear cleanup scaling: early returns: scaling fixture lowers.
+//@ check-pass
+mut int32_t zero = 0;
+class Owner {
+  int32_t divisor;
+public:
+  Owner(int32_t divisor) : divisor(10 / divisor) {}
+  ~Owner() { int32_t checked = 10 / this.divisor; }
+};
+void step(int32_t at) {
+  if (at == zero) {
+    int32_t failure = 1 / zero;
+  }
+}
+int32_t run(int32_t divisor) {
+  Owner owner1 = Owner(divisor);
+  step(1);
+  if (divisor == 10) { return 1; }
+  Owner owner2 = Owner(divisor);
+  step(2);
+  if (divisor == 20) { return 2; }
+  Owner owner3 = Owner(divisor);
+  step(3);
+  if (divisor == 30) { return 3; }
+  Owner owner4 = Owner(divisor);
+  step(4);
+  if (divisor == 40) { return 4; }
+  Owner owner5 = Owner(divisor);
+  step(5);
+  if (divisor == 50) { return 5; }
+  Owner owner6 = Owner(divisor);
+  step(6);
+  if (divisor == 60) { return 6; }
+  Owner owner7 = Owner(divisor);
+  step(7);
+  if (divisor == 70) { return 7; }
+  Owner owner8 = Owner(divisor);
+  step(8);
+  if (divisor == 80) { return 8; }
+  Owner owner9 = Owner(divisor);
+  step(9);
+  if (divisor == 90) { return 9; }
+  Owner owner10 = Owner(divisor);
+  step(10);
+  if (divisor == 100) { return 10; }
+  Owner owner11 = Owner(divisor);
+  step(11);
+  if (divisor == 110) { return 11; }
+  Owner owner12 = Owner(divisor);
+  step(12);
+  if (divisor == 120) { return 12; }
+  Owner owner13 = Owner(divisor);
+  step(13);
+  if (divisor == 130) { return 13; }
+  Owner owner14 = Owner(divisor);
+  step(14);
+  if (divisor == 140) { return 14; }
+  Owner owner15 = Owner(divisor);
+  step(15);
+  if (divisor == 150) { return 15; }
+  Owner owner16 = Owner(divisor);
+  step(16);
+  if (divisor == 160) { return 16; }
+  Owner owner17 = Owner(divisor);
+  step(17);
+  if (divisor == 170) { return 17; }
+  Owner owner18 = Owner(divisor);
+  step(18);
+  if (divisor == 180) { return 18; }
+  Owner owner19 = Owner(divisor);
+  step(19);
+  if (divisor == 190) { return 19; }
+  Owner owner20 = Owner(divisor);
+  step(20);
+  if (divisor == 200) { return 20; }
+  return 0;
+}
+int main() { return run(1); }

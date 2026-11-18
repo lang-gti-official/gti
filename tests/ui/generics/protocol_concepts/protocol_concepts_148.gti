@@ -1,0 +1,7 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept C<P> { typename result<T>; };
+struct Policy {};
+struct Pair<A, B> {};
+for concept C<Policy> {
+  using result<T> = Pair<C<Policy>::result<Pair<T, T>>, C<Policy>::result<Pair<T, T>>>;  //~ ERROR GTI-S2123 //~ ERROR GTI-S2123
+};

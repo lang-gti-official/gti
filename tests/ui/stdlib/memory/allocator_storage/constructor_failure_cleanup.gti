@@ -1,0 +1,38 @@
+// A failing element constructor argument cleans up already constructed elements.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: cleanup
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: integer_overflow
+//@ stderr-contains: addition
+//@ stderr-contains: constructor-failure-cleanup.gti
+// --- constructor-failure-cleanup.gti
+import std.memory;
+
+class probe {
+  int32_t value;
+
+public:
+  probe(int32_t input) : value(input) {}
+
+  probe(probe& other) = delete;
+  probe(probe&& other) = default;
+
+  ~probe() {
+    std::print("cleanup\n");
+  }
+};
+
+int32_t fail_value() {
+  return int32_t(2147483647) + int32_t(1);
+}
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<probe>(std::size_t(2));
+  if (!allocated) { return 1; }
+  mut std::storage<probe> values = std::move(allocated).value();
+  values.construct(std::size_t(0), probe(int32_t(5)));
+  values.construct(std::size_t(1), probe(fail_value()));
+  return 2;
+}

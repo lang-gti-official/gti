@@ -1,0 +1,3 @@
+// Negative: mutable place.
+#macro assign(int destination) { destination = 7; }
+int main() { assign!(4); return 0; }  //~ ERROR GTI-S2002

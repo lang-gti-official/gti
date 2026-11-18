@@ -1,0 +1,5 @@
+// Diagnostics: a non-sequence operand is rejected.
+int main() {
+  constexpr for (auto x : 42) { }  //~ ERROR GTI-S2107
+  return 0;
+}

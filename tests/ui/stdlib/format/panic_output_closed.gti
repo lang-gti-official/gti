@@ -1,0 +1,92 @@
+// Output to a stdout whose only reader closed before launch: try_ forms
+// report write_failed, panicking forms panic after cleanup, and a cleanup
+// that prints fails during cleanup. (From panic_adoption_runtime_test.py,
+// modes 8-17.)
+//@ run-pass
+//@ stdout-closed
+//@ revisions: try_println println_io raw_io integer_io try_print cleanup_output
+//@[try_println] args: x x x x x x x x
+//@[try_println] stderr-contains: inner
+//@[println_io] run-fail
+//@[println_io] args: x x x x x x x x x
+//@[println_io] exit-code: 70
+//@[println_io] stderr-contains: panic_output_closed.gti:40: runtime error[GTI-R0017]: panic: "Output failed: stdout write failed"
+//@[raw_io] run-fail
+//@[raw_io] args: x x x x x x x x x x
+//@[raw_io] exit-code: 70
+//@[raw_io] stderr-contains: panic_output_closed.gti:43: runtime error[GTI-R0017]: panic: "Output failed: stdout write failed"
+//@[integer_io] run-fail
+//@[integer_io] args: x x x x x x x x x x x
+//@[integer_io] exit-code: 70
+//@[integer_io] stderr-contains: panic_output_closed.gti:46: runtime error[GTI-R0017]: panic: "Output failed: stdout write failed"
+//@[try_print] args: x x x x x x x x x x x x
+//@[try_print] stderr-contains: inner
+//@[cleanup_output] run-fail
+//@[cleanup_output] args: x x x x x x x x x x x x x
+//@[cleanup_output] exit-code: 70
+//@[cleanup_output] stderr-contains: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017]
+// --- panic_output_closed.gti
+import std.cstdio;
+import std.format;
+import std.string;
+import std.vector;
+
+extern "C" {
+  void gti_test_unbuffer_stdout();
+}
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() {
+    // Cleanup stays observable when stdout has failed.
+    if (id == 1) {
+      [[discard]] std::try_write_stderr("outer\n");
+    } else {
+      [[discard]] std::try_write_stderr("inner\n");
+    }
+  }
+};
+
+struct OutputCleanup {
+  ~OutputCleanup() {
+    std::print("cleanup");
+  }
+public:
+  OutputCleanup() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  gti_test_unbuffer_stdout();
+  Guard outer{1};
+  Guard inner{2};
+  if (argc == 9) {
+    auto result = std::try_runtime_println("write {}", 1);
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 10;
+  }
+  if (argc == 10) {
+    std::runtime_println("write {}", 1); // println-io
+  }
+  if (argc == 11) {
+    std::print("raw"); // raw-io
+  }
+  if (argc == 12) {
+    std::println(42); // integer-io
+  }
+  if (argc == 13) {
+    auto result = std::try_print("raw");
+    return !result && result.error() == std::print_errc::write_failed ? 0 : 11;
+  }
+  if (argc == 14) {
+    OutputCleanup cleanup{};
+    [[discard]] std::runtime_format("{");
+  }
+  return 99;
+}
+// --- panic_adoption_io.cpp
+#include <cstdio>
+
+// Small buffered writes fail at once rather than at process exit.
+extern "C" void gti_test_unbuffer_stdout() {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+}

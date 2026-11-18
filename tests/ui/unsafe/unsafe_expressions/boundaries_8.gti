@@ -1,0 +1,2 @@
+// Boundaries: statement syntax is not an assignment target.
+int main() { mut int x = 1; unsafe { x } = 2; return x; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

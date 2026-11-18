@@ -1,0 +1,22 @@
+// Instance cleanup cache: isolated concrete cleanup facts do not conflict with disjoint TLS loans in either query order.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    int fourth = 3;
+    int fifth = 4;
+    return first + second + third + fourth + fifth;
+  } else {
+    bool seen = inspect(Cleanup());
+    return seen ? 1 : 0;
+  }
+}
+int main() { int& borrowed = other; int first = selected<0>(); int second = selected<1>(); return borrowed + first + second; }

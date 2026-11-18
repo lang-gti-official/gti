@@ -1,0 +1,9 @@
+// Initialization: the program is accepted.
+//@ check-pass
+int read<uint64_t N>() {
+  if constexpr (N == 0) { int local = 4; return local; }
+  else { return later; }
+}
+int first = read<0>();
+int later = 8;
+int main() { return first - 4; }

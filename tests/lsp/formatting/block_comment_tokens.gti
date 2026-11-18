@@ -1,0 +1,13 @@
+// A block comment is one comment token per line, including its continuation
+// lines, and a `/*` inside a string literal is not a comment.
+// (block_comment_lsp_test.py; token lengths are not asserted.)
+//@ token @open: comment
+//@ token @continuation: comment
+//@ token @trailing: comment
+//@ token @quoted: string
+int main() {
+  /*^open*//* first 😀 line
+/*^continuation*/     second line */
+  std::string_view text = "/*^quoted*//* not a comment */";
+  return 0; /*^trailing*//* trailing */
+}

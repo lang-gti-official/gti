@@ -1,0 +1,6 @@
+// Pack fold storage effects: a later TLS fixed input's initializer cannot violate an earlier shared or exclusive fixed input before the fold invocation.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t first = 1;
+thread_local mut int32_t other = 2;
+int32_t initialize() { return first; } thread_local mut int32_t later = initialize(); void leaf<T>(mut int32_t& input, int32_t& second, T& element) {} void folded<Args...>(Args... args) { (leaf(first, later, args), ...); } int main() { folded(1); return 0; }  //~ ERROR GTI-S2045

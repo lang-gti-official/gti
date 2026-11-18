@@ -1,0 +1,3 @@
+// A pair with an unhashable member does not satisfy std::hashing.
+//@ check-fail
+import std.functional; import std.utility; struct Opaque { Opaque() = default; }; int main() { auto p = std::make_pair(Opaque(), 1); std::default_hash<std::pair<Opaque, int>> h{}; h(p); return 0; }  //~ ERROR GTI-S2029

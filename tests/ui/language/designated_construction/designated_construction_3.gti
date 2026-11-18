@@ -1,0 +1,2 @@
+// Designated construction: an untyped designated argument must explain the missing context.
+struct Point { int x; }; int read(Point value) { return value.x; } int main() { /* 😀 */ return read({.x = 1}); }  //~ ERROR GTI-S2091

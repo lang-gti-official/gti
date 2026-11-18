@@ -1,0 +1,14 @@
+// Phase3: method and constructor indices out of range are rejected.
+import std.meta;
+class Counter {
+public:
+  Counter(uint32_t start) : value(start) {}
+  uint32_t get() { return this.value; }
+private:
+  mut { uint32_t value; }
+};
+int main() {
+  std::meta::method<Counter, 5> missing{};
+  std::meta::constructor<Counter, 3> absent{};
+  return int(missing.parameter_count() + absent.parameter_count());  //~ ERROR GTI-S2111 //~ ERROR GTI-S2111
+}

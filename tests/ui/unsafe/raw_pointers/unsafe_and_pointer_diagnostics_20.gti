@@ -1,0 +1,10 @@
+// Unsafe and pointer diagnostics: an unsafe scope should not leak into a nested callable.
+int main() {
+  mut int32_t value = 1;
+  mut int32_t* pointer = nullptr;
+  unsafe {
+    pointer = &value;
+    auto read = [pointer]() -> int32_t { return *pointer; };  //~ ERROR GTI-S2055
+    return read();
+  }
+}

@@ -1,0 +1,21 @@
+// Mutable temporary receivers: unsupported temporary receivers should retain precise compiler diagnostics while immutable named objects remain rejected.
+class InvalidReceiver {
+public:
+  InvalidReceiver() : value(0) {}
+  void reset() mut {}
+  mut int& expose() mut { return this.value; }
+
+private:
+  mut int value;
+};
+
+int main() {
+  InvalidReceiver fixed = InvalidReceiver();
+  fixed.reset();  //~ ERROR GTI-S2000
+  mut InvalidReceiver moved = InvalidReceiver();
+  std::move(moved).reset();
+  bool choose = true;
+  (choose ? InvalidReceiver() : InvalidReceiver()).reset();
+  [[discard]] InvalidReceiver().expose();  //~ ERROR GTI-S2081
+  return 0;
+}

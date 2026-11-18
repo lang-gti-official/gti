@@ -1,0 +1,38 @@
+// An override keeps its root's relay in its own instance of the root's class.
+//@ run-pass
+//@ stdout: owned
+//@ stdout: literal
+//@ stdout: owned
+import std.string;
+// An override's text result keeps its root's contract in the override's
+// instance of the root's class: under a generic root that relays its
+// argument, an override relays it or returns a literal.
+class Picker<T> {
+public:
+  int n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+class Literal : public Picker<std::string_view> {
+public:
+  Literal() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return "literal"; }
+};
+class Same<T> : public Picker<T> {
+public:
+  Same() : Picker<T>() {}
+  T pick(T a) override { return a; }
+};
+int main() {
+  std::string owner{"owned"};
+  Picker<std::string_view> base{};
+  Literal literal{};
+  Same<std::string_view> same{};
+  Picker<std::string_view>& first = base;
+  Picker<std::string_view>& second = literal;
+  Picker<std::string_view>& third = same;
+  std::println(first.pick(owner.view()));
+  std::println(second.pick(owner.view()));
+  std::println(third.pick(owner.view()));
+  return 0;
+}

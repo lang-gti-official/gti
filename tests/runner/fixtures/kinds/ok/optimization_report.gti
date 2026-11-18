@@ -1,0 +1,20 @@
+// The optimizer's remarks: an exact interface receiver is dispatched
+// directly at O3.
+//@ snapshot: optimization-report
+//@ opt: O3
+//@ reason: exact-receiver dispatch runs in the optimizing pipeline
+// CHECK: gti-opt: GTI MIR optimization remarks (O3)
+// CHECK: applied [exact-receiver-dispatch/exact-receiver]
+// CHECK: gti-opt: safety operations
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+int apply(int value) {
+  Increment concrete{};
+  Operation& selected = concrete;
+  return selected.run(value);
+}
+int main() { return apply(40) - 41; }

@@ -1,0 +1,3 @@
+// Hierarchy storage exclusion: cyclic inline source cannot acquire a verified executable seal.
+             struct Recursive { Recursive value; };  //~ ERROR GTI-S2082
+             int main() { Recursive value{}; return 0; }

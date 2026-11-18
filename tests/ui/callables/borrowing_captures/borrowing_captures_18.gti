@@ -1,0 +1,26 @@
+// Borrowing captures: restore-through-ordinary-helper-chain.
+//@ check-pass
+import std.memory;
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+int main() {
+  int value = 9;
+  Reader reader{value};
+  std::erased_object& erased = std::erase_ref(reader);
+  unsafe {
+    Reader& restored = forward<Reader>(erased);
+    return restored.read() - 9;
+  }
+}
+unsafe T& forward<T>(std::erased_object& object) {
+  unsafe {
+    T& restored = restore<T>(object);
+    return restored;
+  }
+}
+unsafe T& restore<T>(std::erased_object& object) {
+  unsafe { return std::restore_ref<T>(object); }
+}

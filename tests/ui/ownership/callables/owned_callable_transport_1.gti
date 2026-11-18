@@ -1,0 +1,42 @@
+// Owned callable transport: exact generic callable return and owner-field transport should reach valid MIR.
+//@ check-pass
+mut int cleanup_count = 0;
+
+class DropTracer {
+  int value;
+
+public:
+  DropTracer(int value) : value(value) {}
+  ~DropTracer() { cleanup_count++; }
+  int read() { return this.value; }
+};
+
+class CallableOwner<T> {
+  T value;
+
+public:
+  CallableOwner(T value) : value(std::move(value)) {}
+};
+
+T relay<T>(T value) { return std::move(value); }
+
+// The unmoved witness's cleanup can fail while the returned owner is pending;
+// the moved-from parameter shell retires without a destructor.
+CallableOwner<T> own<T>(T value, DropTracer witness) {
+  return CallableOwner<T>(std::move(value));
+}
+
+void transport() {
+  DropTracer tracer = DropTracer(7);
+  auto operation = [owned = std::move(tracer)]() -> int {
+    return owned.read();
+  };
+  auto returned = relay(std::move(operation));
+  if (returned() != 7) { return; }
+  auto owner = own(std::move(returned), DropTracer(1));
+}
+
+int main() {
+  transport();
+  return cleanup_count - 2;
+}

@@ -1,0 +1,17 @@
+// Formal text field relays: a relayed field holding a local owner's view cannot escape.
+import std.string;
+std::string_view relay(std::string_view value) { return value; }
+class Label {
+public:
+  std::string_view text;
+  Label() : text("label") {}
+  Label(std::string_view text) : text(text) {}
+};
+std::string_view field_relay(Label& label) { return relay(label.text); }
+
+std::string_view leak() {
+  std::string owner{"dynamic"};
+  Label label{owner.view()};
+  return field_relay(label);  //~ ERROR GTI-S2045
+}
+int main() { return int(leak().size()); }

@@ -1,0 +1,13 @@
+// Known raw pointer origins: raw provenance must reuse nonlexical loan endpoints.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() {
+  mut int value = 7;
+  unsafe {
+    auto pointer = &value;
+    int& loan = value;
+    int before = loan;
+    *pointer = before + 2;
+    return *pointer;
+  }
+}

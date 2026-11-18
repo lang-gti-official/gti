@@ -1,0 +1,9 @@
+// Shape witnesses: raw pointer arrays use passive value storage.
+//@ build-pass
+//@ slow
+int main() {
+  mut int value = 1;
+  int* pointers[2][2] = {{&value, nullptr}, {nullptr, &value}};
+  int* copy[2][2] = pointers;
+  return copy[1][1] == &value ? 0 : 1;
+}

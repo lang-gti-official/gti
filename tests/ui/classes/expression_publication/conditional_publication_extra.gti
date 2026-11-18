@@ -1,0 +1,15 @@
+// Conditional_class_publication: conditional native inputs have valid MIR.
+//@ check-pass
+[[c_abi]] union Data { uint64_t number; uint8_t bytes[16]; };
+extern "C" { Data obtain(); }
+struct Wrapper {
+  Data data;
+  unsafe Wrapper(Data input) : data(input) {}
+  uint64_t number() { unsafe { return this.data.number; } }
+};
+int main() {
+  Data data = obtain();
+  unsafe {
+    return (true ? Wrapper(data) : Wrapper(data)).number() == uint64_t(42) ? 0 : 1;
+  }
+}

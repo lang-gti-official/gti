@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Input {
+  Input(int&<static> input) {}
+  Input(int input, bool ignored = true) {}
+};
+int main() { int value = 7; Input valid{value}; return 0; }

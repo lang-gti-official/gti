@@ -1,0 +1,4 @@
+// Invalid declarations: passive TLS requires no managed drain in a library unit (the C++ test also applied the definition closure; under --isolate that path builds and requires a main).
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local int state = 1; int read() { return state; }

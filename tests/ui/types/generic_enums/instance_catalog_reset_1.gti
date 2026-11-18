@@ -1,0 +1,3 @@
+// Instance catalog reset: concrete enum reset fixture is valid.
+//@ check-pass
+enum Event<T> { idle, item(T value) }; int main() { auto event = Event<int>::item(7); return 0; }

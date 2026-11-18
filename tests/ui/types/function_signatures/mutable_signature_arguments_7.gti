@@ -1,0 +1,2 @@
+// Mutable signature arguments: mut signature metadata requires a reference without guessing an edit.
+using Bad = void(mut int);  //~ ERROR GTI-S2093 //~ ERROR GTI-S2030

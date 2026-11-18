@@ -1,0 +1,95 @@
+// A failing temporary constructor argument drops the user receiver exactly once.
+//@ run-pass
+//@ revisions: phase0 phase1 phase2 phase3 phase4 phase5
+//@[phase0] stdout: receiver
+//@[phase0] stdout: 11
+//@[phase0] stdout: receiver
+//@[phase0] stdout: 12
+//@[phase0] stdout: receiver
+//@[phase0] stdout: 13
+//@[phase0] stdout: /foo/bar.txt
+//@[phase1] run-fail
+//@[phase1] exit-code: 70
+//@[phase1] args: phase
+//@[phase1] stderr-contains: temporary_constructor_argument_user_drop_gap.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase2] run-fail
+//@[phase2] exit-code: 70
+//@[phase2] args: phase phase
+//@[phase2] stdout: 11
+//@[phase2] stderr-contains: temporary_constructor_argument_user_drop_gap.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase3] run-fail
+//@[phase3] exit-code: 70
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: receiver
+//@[phase3] stdout: 11
+//@[phase3] stderr-contains: temporary_constructor_argument_user_drop_gap.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase4] run-fail
+//@[phase4] exit-code: 70
+//@[phase4] args: phase phase phase phase
+//@[phase4] stdout: receiver
+//@[phase4] stdout: 11
+//@[phase4] stderr-contains: temporary_constructor_argument_user_drop_gap.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase5] run-fail
+//@[phase5] exit-code: 70
+//@[phase5] args: phase phase phase phase phase
+//@[phase5] stdout: receiver
+//@[phase5] stdout: 11
+//@[phase5] stderr-contains: temporary_constructor_argument_user_drop_gap.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- temporary_constructor_argument_user_drop_gap.gti
+import std.string;
+import std.vector;
+
+// Former backend gap: source-destructor fields now use MIR-owned publication
+// and failure-aware rollback. Keep the original receiver/argument composition
+// as a passing regression beside the simpler temporary-argument fixture.
+
+void checked(int32_t divisor) {
+  int32_t value = 7 / divisor;
+}
+
+class Owned {
+  int32_t identity;
+public:
+  Owned(int32_t value) : identity(value) { checked(value); }
+  ~Owned() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+class Receiver {
+  Owned owned;
+public:
+  Receiver(Owned value, int32_t divisor) : owned(std::move(value)) {
+    checked(divisor);
+  }
+  ~Receiver() { std::println("receiver"); }
+  int32_t read() { return this.owned.read(); }
+  int32_t add(int32_t value) mut { return this.owned.read() + value; }
+  int32_t fail() { checked(0); return 0; }
+};
+
+class Text {
+  std::string data;
+public:
+  Text(std::string value) : data(value.clone()) {}
+  std::string get() { return this.data.clone(); }
+};
+
+int32_t observe(Receiver& value) { return value.read(); }
+int32_t fail_argument() { checked(0); return 0; }
+int32_t fail_borrowed(Receiver& value) { checked(0); return value.read(); }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) { return Receiver(Owned(0), 1).read(); }
+  if (argc == 3) { return Receiver(Owned(11), 0).read(); }
+  if (argc == 4) { return Receiver(Owned(11), 1).fail(); }
+  if (argc == 5) { return Receiver(Owned(11), 1).add(fail_argument()); }
+  if (argc == 6) { return fail_borrowed(Receiver(Owned(11), 1)); }
+
+  if (Receiver(Owned(11), 1).read() != 11) { return 1; }
+  if ((Receiver(Owned(12), 1)).add(3) != 15) { return 2; }
+  if (observe(Receiver(Owned(13), 1)) != 13) { return 3; }
+  // The original failure: owning constructor argument, temporary receiver,
+  // owning method result, and immediate by-value output in one expression.
+  std::println(Text(std::string("/foo/bar.txt")).get());
+  return 0;
+}

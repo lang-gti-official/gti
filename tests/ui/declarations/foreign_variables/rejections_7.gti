@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { mut string text; } int main() { return 0; }.
+extern "C" { mut string text; } int main() { return 0; }  //~ ERROR GTI-S2033 //~ ERROR GTI-S2054

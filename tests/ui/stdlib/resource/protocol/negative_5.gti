@@ -1,0 +1,10 @@
+// Negative: zero capacity does not admit unchecked external element loans.
+import std.resource;
+import std.memory;
+
+struct Borrowed { int& value; Borrowed(int& value) : value(value) {} };
+int main() {
+  std::allocator allocator{};
+  auto result = allocator.try_storage<Borrowed>(std::size_t(0));  //~ ERROR GTI-S2029
+  return 0;
+}

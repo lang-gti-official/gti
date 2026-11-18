@@ -1,0 +1,21 @@
+// Reading an empty optional reports GTI-R0008 at the standard library access.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 73
+//@ stderr-contains: <std/optional>:43: runtime error[GTI-R0008]: empty_owner_access in member_access
+import std.optional;
+
+class optional_cleanup_marker {
+public:
+  optional_cleanup_marker() {}
+  ~optional_cleanup_marker() {
+    std::println(73);
+  }
+};
+
+int main() {
+  optional_cleanup_marker marker{};
+  std::optional<int32_t> empty{};
+  [[discard]] empty.value();
+  return 0;
+}

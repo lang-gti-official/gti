@@ -1,0 +1,13 @@
+// Raw audit certainty: rejected with GTI-S2103.
+//@ analyze-fail
+//@ raw-pointer-audit: strict
+//@ no-prelude
+struct Address {
+  const int* pointer = nullptr;
+  implicit Address() : pointer(nullptr) {}
+};
+Address make_address() { return; }
+int main() {
+  auto address = make_address();
+  unsafe { return *address.pointer; }  //~ ERROR GTI-S2103
+}

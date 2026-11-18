@@ -1,0 +1,13 @@
+// Exclusive reborrow loan graph: std::move should count as call-operand invalidation while an overlapping result remains borrowed.
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+public:
+  Box() = default;
+};
+int consume(int& observed, Box moved) { return observed + moved.value; }
+int run(mut Box parent) {
+  return consume(parent.read(), std::move(parent));  //~ ERROR GTI-S2017 call operand mutates storage borrowed
+}
+int main() { return run(Box()) - 4; }

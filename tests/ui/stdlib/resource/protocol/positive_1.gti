@@ -1,0 +1,26 @@
+// Positive: two cleanup-bearing fields preserve their distinct paths to one formal.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+struct Owner { int value = 42;  public: Owner() = default; };
+class Handle {
+  Owner& owner;
+public:
+  Handle(Owner& owner) : owner(owner) {}
+  int read() { return this.owner.value; }
+};
+class Guard {
+  Handle handle;
+public:
+  Guard(Handle handle) : handle(handle) {}
+  ~Guard() { int observed = this.handle.read(); }
+};
+class Pair {
+  Guard first;
+  Guard second;
+public:
+  Pair(Handle handle) : first(Guard(handle)), second(Guard(handle)) {}
+};
+void use(Handle handle) { Pair pair{handle}; }
+int main() { Owner owner{}; use(Handle(owner)); return 0; }

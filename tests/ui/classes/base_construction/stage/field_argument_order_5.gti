@@ -1,0 +1,11 @@
+// Field argument order: the base's own argument still executes before its selected constructor.
+//@ check-pass
+mut int observed = 0;
+int observe() { observed = 7; return observed; }
+class Base { public: Base(int value) {}  public: Base() = default; };
+class Derived : public Base {
+  int field;
+public:
+  Derived() : Base(observe()), field(1) {}
+};
+int main() { Derived value{}; return 0; }

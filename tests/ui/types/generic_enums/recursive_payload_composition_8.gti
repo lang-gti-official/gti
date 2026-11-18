@@ -1,0 +1,2 @@
+// Recursive payload composition: inline enum cycles reject with source diagnostics before ownership queries or executable lowering.
+enum Growing<T> { empty, item(Growing<Growing<T>> value) }; int main() { auto value = Growing<int>::empty; return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2105 //~ ERROR GTI-S2003 //~ ERROR GTI-S2105

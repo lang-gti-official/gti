@@ -1,0 +1,34 @@
+// Nested C ABI records, callbacks and opaque handles cross the native boundary.
+//@ run-pass
+// --- main.gti
+struct Container {
+  [[c_abi]] struct Native { int32_t value; };
+  [[c_opaque]] struct Handle;
+public:
+  Container() = default;
+};
+using NativeCallback = (Container::Native) -> int32_t;
+extern "C" {
+  Container::Native make_native();
+  int32_t consume(Container::Native value);
+  NativeCallback native_callback();
+  Container::Handle* native_handle();
+}
+int main() {
+  Container::Native value = make_native();
+  unsafe {
+    Container::Handle* handle = native_handle();
+    if (handle == nullptr) { return 1; }
+    NativeCallback callback = native_callback();
+    return consume(value) + callback(value) - 14;
+  }
+}
+// --- nested_native.c
+#include <stdint.h>
+struct Native { int32_t value; };
+struct Native make_native(void) { return (struct Native){7}; }
+int32_t consume(struct Native value) { return value.value; }
+typedef int32_t (*Callback)(struct Native);
+Callback native_callback(void) { return consume; }
+struct Handle { int32_t value; };
+struct Handle *native_handle(void) { static struct Handle value = {1}; return &value; }

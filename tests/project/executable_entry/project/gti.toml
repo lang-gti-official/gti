@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "entry-test"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+[targets.checks]
+kind = "test"
+root = "src/checks.gti"

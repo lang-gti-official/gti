@@ -1,0 +1,4 @@
+// Pointer bearing c abi: C ABI raw pointers should retain the fixed-layout leaf allowlist.
+struct NativeRecord { int32_t value = 0;  public: NativeRecord() = default; };
+extern "C" { NativeRecord* acquire(); }  //~ ERROR GTI-S2054
+int main() { return 0; }

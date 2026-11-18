@@ -1,0 +1,14 @@
+// Immovable and borrowed results: direct initialization retains a carrier's original external owner.
+//@ check-pass
+class Lens {
+  int& value;
+public:
+  Lens(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+Lens view(int& value) { return Lens(value); }
+int main() {
+  int owner = 4;
+  Lens result = Lens(view(owner));
+  return result.read() - 4;
+}

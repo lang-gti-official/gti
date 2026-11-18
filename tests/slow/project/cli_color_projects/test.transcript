@@ -1,0 +1,118 @@
+// Colour in project commands: --color=always styles check, run, build and
+// test status without touching metadata, build reports, program output or
+// aggregated child summaries; runtime reports colour only by the explicit
+// mode the CLI forwards. (From cli_color_test.py; stdout piped with stderr
+// on a terminal is not expressible here.)
+slow
+env TERM=xterm-256color
+unset NO_COLOR
+$ gti new demo
+$ cd demo
+$ gti --color=always metadata
+stdout: "name"
+!stdout: \e
+$ cp ../main_variant.gti src/main.gti
+$ gti check --progress=never --color=always
+stdout: \e[1;32mChecked
+$ gti run --progress=never --color=always -- --color=never
+stdout: --color=never
+stderr: \e[1;36mRunning
+stderr: \e[1;32mBuilt
+$ gti build --progress=never --color=always --build-report report.json
+$ cat report.json
+!stdout: \e
+$ sh -c "cat ../second_target.toml >> gti.toml"
+$ gti build --progress=never --all --jobs 2 --no-cache --color=always
+stdout: 2 warnings
+stdout: \e[1;33mwarning[GTI-S2096]
+$ cp ../broken.gti src/main.gti
+$ gti build --progress=never --all --jobs 2 --no-cache --color=always
+? 65
+stdout: 2 errors, 0 warnings
+stderr: \e[1;31merror[GTI-
+stderr: \e[1;31mfailed\e[0m with exit code 65
+$ cd ../tests
+$ gti test --progress=never
+? 7
+stderr: Test result: 1 passed, 1 failed
+stdout: failure-program-output
+stdout: success-program-output
+!stderr: \e
+$ gti test --progress=never --color=always
+? 7
+!stdout: \e
+stderr: \e[1;36mBuilding test\e[0m a_failure
+stderr: \e[1;36mTesting\e[0m b_success
+stderr: \e[1;31mFailed\e[0m a_failure (exit code 7)
+stderr: \e[1;32mPassed\e[0m b_success
+stderr: \e[1;32m1 passed\e[0m, \e[1;31m1 failed\e[0m
+$ gti test --progress=never --color=never
+? 7
+!stderr: \e
+env NO_COLOR=1
+$ gti test --progress=never --color=auto
+? 7
+!stderr: \e
+env TERM=dumb
+$ gti test b_success --progress=never --color always
+stdout: success-program-output
+stderr: \e[1;32m1 passed\e[0m
+!stderr: failed
+unset NO_COLOR
+env TERM=xterm-256color
+$ gti test a_failure --progress=never --color=always
+? 7
+stderr: \e[1;32m0 passed\e[0m, \e[1;31m1 failed\e[0m
+$ cp ../broken.gti failure.gti
+$ gti test --progress=never --color=always
+? 65
+stderr: \e[1;31merror[GTI-
+!stderr: Testing
+!stderr: Test result:
+$ cd ../runtime
+$ gti run --progress=never --color=never
+? 70
+$ gti run --no-build --progress=never --color=never
+? 70
+stdout: before-panic
+stderr: runtime error[GTI-R0017]: panic: "colour test panic"
+!stderr: \e
+env NO_COLOR=1
+env TERM=dumb
+env GTI_COLOR=never
+$ gti run --no-build --progress=never --color=always
+? 70
+stderr: \e[1;31mruntime error[GTI-R0017]\e[0m
+unset NO_COLOR
+env TERM=xterm-256color
+env GTI_COLOR=always
+$ gti run --no-build --progress=never --color=never
+? 70
+!stderr: \e
+$ gti run --no-build --progress=never --color=auto
+? 70
+!stderr: \e
+$ gti run --no-build --progress=never --color=always --color=never
+? 70
+!stderr: \e
+$ gti run --no-build --progress=never
+? 70
+stderr: \e[1;31mruntime error[GTI-R0017]\e[0m
+$ gti test --progress=never --color=never
+? 70
+stdout: before-bounds
+stdout: before-panic
+stderr: runtime error[GTI-R0007]
+stderr: Test result: 0 passed, 2 failed
+!stderr: \e
+env NO_COLOR=1
+env GTI_COLOR=never
+$ gti test --progress=never --color=always
+? 70
+stderr: \e[1;31mruntime error[GTI-R0007]\e[0m
+stderr: \e[1;31mruntime error[GTI-R0017]\e[0m
+unset NO_COLOR
+unset GTI_COLOR
+$ tty: gti run --no-build --progress=never
+? 70
+stdout: \e[1;31mruntime error[GTI-R0017]\e[0m

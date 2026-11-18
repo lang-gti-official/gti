@@ -1,0 +1,34 @@
+// Reference payloads: rejected with GTI-S2067.
+//@ analyze-fail
+enum Slot { item(int& value), empty };
+Slot borrow_slot(int& owner, bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(owner);
+}
+enum Edit { item(mut int& value), empty };
+Edit edit_slot(mut int& owner) { return Edit::item(owner); }
+int sum_parameter(Slot& slot, int count) {
+  mut int total = 0;
+  mut int index = 0;
+  while (index < count) {
+    index += 1;
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: continue;
+    }
+  }
+  return total;
+}
+
+int main() {
+  int owner = 3;
+  mut auto slot = borrow_slot(owner, true);
+  mut int total = 0;
+  for (mut int index = 0; index < 2; index += 1) {
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;  //~ ERROR GTI-S2067
+    case Slot::empty: return 1;
+    }
+  }
+  return total;
+}

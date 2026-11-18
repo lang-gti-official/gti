@@ -1,0 +1,28 @@
+// General requires: iteration requirements reuse loop analysis and export generic proofs.
+//@ check-pass
+import std.vector;
+concept readable<R> = requires(R& range) { for (auto& element : range) {} };
+concept ints<R> = requires(R& range) { for (int& element : range) {} };
+concept editable<R> = requires(mut R& range) { for (mut int& element : range) {} };
+int sum<R>(R& range) requires ints<R> {
+  mut int total = 0;
+  for (int& element : range) { total += element; }
+  return total;
+}
+void clear<R>(mut R& range) requires editable<R> {
+  for (mut int& element : range) { element = 0; }
+}
+struct Empty { public: Empty() = default; };
+int main() {
+  static_assert(requires(int[3]& range) { for (auto& element : range) {} });
+  static_assert(requires(mut int[3]& range) { for (mut int& element : range) {} });
+  static_assert(!(requires(int[3]& range) { for (mut int& element : range) {} }));
+  static_assert(!(requires(int[3]& range) { for (bool& element : range) {} }));
+  static_assert(!(requires(Empty& range) { for (auto& element : range) {} }));
+  static_assert(requires(std::vector<int>& range) { for (auto& element : range) {} });
+  mut std::vector<int> values{};
+  values.push_back(3);
+  int result = sum(values);
+  clear(values);
+  return result == 3 ? 0 : 1;
+}

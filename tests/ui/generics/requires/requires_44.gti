@@ -1,0 +1,12 @@
+// General requires: type-only constant arguments do not admit polymorphic objects diagnostic.
+class Virtual {
+public:
+  constexpr Virtual() {}  //~ ERROR GTI-S2057
+  virtual int value() { return 7; }
+};
+struct Holder<T> {
+  T value;
+  constexpr Holder() : value(T()) {}  //~ ERROR GTI-S2029
+};
+constexpr int construct() { Holder<Virtual> holder{}; return 1; }  //~ ERROR GTI-S2057
+int main() { static_assert(construct() == 1); return 0; }

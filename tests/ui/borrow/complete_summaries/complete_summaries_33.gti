@@ -1,0 +1,7 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Box<T> { empty, item(T value) };
+Box<T> factory<T>(T value) { return Box<T>::item(value); }
+Box<int> integer() { return factory(4); }
+Box<bool> boolean() { return factory(true); }
+int main() { auto first = integer(); auto second = boolean(); return 0; }

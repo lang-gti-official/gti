@@ -1,0 +1,10 @@
+// Class payload enums: an unused generic owning alternative must have an exact concrete class lifecycle row.
+//@ check-pass
+class resource<T> {
+  T value;
+public:
+  resource(T value) : value(value) {}
+  ~resource() {}
+};
+enum class holder { one(resource<int32_t> value), none };
+int main() { return 0; }

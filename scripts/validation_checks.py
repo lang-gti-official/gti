@@ -13,7 +13,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-SMOKE = "compiler_pipeline"
+SMOKE = "gti_test_ui"
 MARKER = re.compile(r"<!-- gti-validation-component: ([^\n]+) -->")
 BATCH_DIRECTORY = ".gti-validation/batches/"
 TIERS = {"T1", "T2", "T3"}
@@ -31,7 +31,8 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # Only orchestration workflows with workflow-regression coverage can skip native CI.
 # Build, packaging and integration workflows (including unknown additions) stay full.
 AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
-                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
+                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml",
+                        ".github/workflows/validation-retry.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
                          "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
@@ -40,9 +41,12 @@ AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "build_window.py", "bounded_log.py",
                       "cut_release.py", "check_release_version.py", "check_stdlib_surface_review.py",
-                      "rollup.py", "release_train.py", "full_validation_report.py"}
-# Exactly the existing harnesses that CI's workflow-regression job runs. The
-# batch and validation scripts are covered by agent_workflow_test.
+                      "rollup.py", "release_train.py", "full_validation_report.py", "validation_retry.py"}
+# Harnesses whose own changes need no native CI: each is the command of a
+# tree-consistency entry, which CI's workflow-regression job runs on every
+# candidate (agent_workflow_test checks this). Other labelled harnesses guard
+# compiler sources and still classify as full. The batch and validation
+# scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "stdlib_surface_review_test.py",
                     "ci_resources_test.py",
@@ -555,7 +559,6 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
 # maps to the prefix its parts share; an aggregate is dropped only when its
 # parts are registered.
 SHARDED_AGGREGATES = {
-    "compiler_pipeline": "compiler_pipeline_",
     "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
     "body_analysis_order": "body_analysis_order_",
     "instance_reuse": "instance_reuse_",
@@ -857,13 +860,41 @@ def runnable_declared(document, names):
     return selected, problems
 
 
-def run_declared(build, names, jobs=4, log=None):
+def declared_scope(names, platform=None, ran=None, darwin=None):
+    """(kept, already_ran, linux_only): which declared names this job re-runs.
+
+    A name the job's gate pattern `ran` already selected passed moments ago on
+    the same build, so it is not repeated. On macOS only the `darwin` set is
+    re-run (`darwin` is (prefixes, names) from tests/ci_darwin_tests.json),
+    as in full validation: Linux proves the rest once."""
+    gate = re.compile("^(" + ran + ")$") if ran else None
+    kept, already, linux_only = [], [], []
+    for name in names:
+        if gate and gate.fullmatch(name):
+            already.append(name)
+        elif platform == "darwin" and darwin is not None and not (
+                name == SMOKE or name in darwin[1] or name.startswith(tuple(darwin[0]))):
+            linux_only.append(name)
+        else:
+            kept.append(name)
+    return kept, already, linux_only
+
+
+def run_declared(build, names, jobs=4, log=None, platform=None, ran=None, root=None):
     """Re-run the declared tests this build registers by exact name; a failure of one fails.
 
-    Unregistered or disabled names are reported as advisory and skipped."""
+    Unregistered or disabled names are reported as advisory and skipped; so are
+    names declared_scope leaves out, with the reason."""
     document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
     selected, problems = runnable_declared(document, names)
     advisory("Declared tests", problems)
+    selected, already, linux_only = declared_scope(
+        selected, platform, ran, darwin_set(root) if platform == "darwin" and root else None)
+    if already:
+        print("Declared tests the gate already ran in this job: " + ", ".join(already))
+    if linux_only:
+        print("Declared tests outside the darwin set (tests/ci_darwin_tests.json), proved on Linux: "
+              + ", ".join(linux_only))
     if not selected:
         return []
     pattern = "^(" + "|".join(re.escape(name) for name in selected) + ")$"
@@ -874,6 +905,31 @@ def run_declared(build, names, jobs=4, log=None):
                        check=True, stdout=log, stderr=subprocess.STDOUT)
         results(report, set(selected), set(selected))
     return selected
+
+
+GATE_UI_SHARD = re.compile(r"gti_test_ui_([1-9][0-9]*)\Z")
+
+
+def gate_tests(registered, gate, rotate, sha):
+    """The CTest pattern a fast-checks job runs: its row's `gate` list plus `rotate`
+    of the registered tests/ui shards gti_test_ui_<i>, chosen from the commit.
+
+    Linux's row already names every shard (rotate 0). macOS runs the entries
+    that differ on the platform and `rotate` consecutive shards starting at
+    the commit's hash modulo the shard count, so successive candidates cover
+    every shard while each runs only a fraction; post-integration full
+    validation runs all of them on macOS."""
+    if not SHA.fullmatch(sha or ""):
+        raise ValueError("gate-tests needs the full commit SHA")
+    pattern = re.compile("^(" + gate + ")$")
+    if not any(pattern.fullmatch(name) for name in registered):
+        raise ValueError("The gate list matches no registered test: " + gate)
+    shards = sorted((int(match.group(1)) for name in registered if (match := GATE_UI_SHARD.fullmatch(name))))
+    if not 0 <= rotate <= len(shards) or (rotate and not shards):
+        raise ValueError(f"Cannot rotate {rotate} of {len(shards)} registered tests/ui shards")
+    start = int(sha[:12], 16) % len(shards) if shards else 0
+    chosen = [f"gti_test_ui_{shards[(start + offset) % len(shards)]}" for offset in range(rotate)]
+    return "|".join([gate, *chosen]), chosen
 
 
 # CMake writes each argument either quoted ("...") or as a bracket argument
@@ -980,6 +1036,15 @@ def main(argv=None):
     declared.add_argument("--event", required=True)
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
+    declared.add_argument("--platform", choices=("linux", "darwin"),
+                          help="this job's platform: macOS re-runs only the darwin set")
+    declared.add_argument("--ran", help="the CTest pattern this job's gate already ran; not repeated")
+    selection = sub.add_parser("gate-tests", help="the CTest pattern a fast-checks job runs")
+    selection.add_argument("--build", required=True)
+    selection.add_argument("--gate", required=True)
+    selection.add_argument("--rotate", type=int, default=0)
+    selection.add_argument("--sha", required=True)
+    selection.add_argument("--output", help="GITHUB_OUTPUT file to append `pattern=` to")
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
     smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
@@ -1030,8 +1095,21 @@ def main(argv=None):
         names, problems = parse_declared(pr.get("body"))
         advisory("Validation block", problems)
         if args.build:
-            names = run_declared(Path(args.build).resolve(), names, args.jobs)
+            names = run_declared(Path(args.build).resolve(), names, args.jobs, platform=args.platform,
+                                 ran=args.ran, root=root)
         print("GTI_DECLARED_TESTS=" + json.dumps(names))
+        return
+    if args.command == "gate-tests":
+        document = json.loads(subprocess.check_output(
+            ["ctest", "--test-dir", str(Path(args.build).resolve()), "--show-only=json-v1"], text=True))
+        pattern, chosen = gate_tests([row["name"] for row in document.get("tests", [])],
+                                     args.gate, args.rotate, args.sha)
+        if chosen:
+            print("tests/ui shards for this commit: " + ", ".join(chosen))
+        if args.output:
+            with open(args.output, "a", encoding="utf-8") as stream:
+                stream.write(f"pattern={pattern}\n")
+        print("GTI_GATE_TESTS=" + pattern)
         return
     if args.command == "merge-shards":
         reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]

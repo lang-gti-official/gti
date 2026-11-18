@@ -1,0 +1,24 @@
+// Expansion: a private field is inaccessible through reflection outside its class.
+import std.meta;
+class Secret {
+  uint32_t hidden = 1;
+public:
+  uint32_t shown = 2;
+  constexpr uint64_t total() {
+    mut uint64_t sum = 0;
+    constexpr for (auto field : std::meta::fields_of<Secret>()) {
+      sum = sum + uint64_t(field.get(this));
+    }
+    return sum;
+  }
+public:
+  Secret() = default;
+};
+int main() {
+  Secret secret{};
+  mut uint32_t sum = 0;
+  constexpr for (auto field : std::meta::fields_of<Secret>()) {
+    sum = sum + field.get(secret);  //~ ERROR GTI-S2007
+  }
+  return int(sum);
+}

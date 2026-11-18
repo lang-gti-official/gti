@@ -1,0 +1,21 @@
+// Parameter payload reference returns: a mutable payload pattern returns through a mutable parameter.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+mut int32_t& slot(mut wrap& value) {
+  switch (value) {
+  case wrap::one(mut auto& item): return item;
+  case wrap::two(mut auto& item): return item;
+  }
+}
+int main() { mut wrap w = wrap::two(3); slot(w) = 5; return slot(w) - 5; }

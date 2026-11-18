@@ -1,0 +1,25 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+namespace shapes {
+concept sized<T> {
+  typename size_type;
+  size_type size(T& value);
+};
+class Square {
+public:
+  int side;
+  Square(int length) : side(length) {}
+};
+}
+namespace adapters {
+for concept shapes::sized<shapes::Square> {
+  using size_type = int;
+  int size(shapes::Square& value) { return value.side * value.side; }
+};
+}
+int main() {
+  shapes::Square square{3};
+  shapes::sized<shapes::Square>::size_type area =
+      shapes::sized<shapes::Square>::size(square);
+  return area - 9;
+}

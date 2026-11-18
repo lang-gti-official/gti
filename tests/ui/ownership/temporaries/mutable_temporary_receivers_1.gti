@@ -1,0 +1,61 @@
+// Mutable temporary receivers: direct constructor and GTI-call temporaries should lower to verified receiver borrows.
+//@ check-pass
+class Probe {
+public:
+  Probe(int initial) : value(initial) {}
+
+  int update(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+
+  int inspect() { return 1; }
+  int inspect() mut { return 2; }
+
+private:
+  mut int value;
+};
+
+class Observer {
+public:
+  Observer() {}
+  int read() { return 3; }
+};
+
+class Invoker {
+public:
+  Invoker() {}
+  int operator()() { return 4; }
+  int operator()() mut { return 5; }
+};
+
+class GenericProbe<T> {
+public:
+  GenericProbe(T initial) : value(initial) {}
+
+  T replace(T replacement) mut {
+    this.value = replacement;
+    return this.value;
+  }
+
+private:
+  mut T value;
+};
+
+Probe make_probe() {
+  return Probe(0);
+}
+
+int consume(int value) {
+  return value;
+}
+
+int main() {
+  int updated = Probe(4).update(3);
+  int inspected = make_probe().inspect();
+  int observed = Observer().read();
+  int invoked = Invoker()();
+  int generic = GenericProbe<int>(6).replace(7);
+  int nested = consume((Probe(8)).update(1));
+  return updated + inspected + observed + invoked + generic + nested;
+}

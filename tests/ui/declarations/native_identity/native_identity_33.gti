@@ -1,0 +1,3 @@
+// Native identity: rejected with GTI-P0001.
+struct Bad { unsafe implicit Bad(int value) {} };  //~ ERROR GTI-P0001
+int main() { return 0; }

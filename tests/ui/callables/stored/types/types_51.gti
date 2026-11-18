@@ -1,0 +1,8 @@
+// Stored callables: owned pack rejects borrowed capture after an ordinary argument before MIR.
+void accept<Args...>(Args... args) {}
+int main() {
+  std::string_view text = "borrowed";
+  auto operation = [text]() -> int { return 1; };
+  accept(7, std::move(operation));  //~ ERROR GTI-S2046
+  return 0;
+}

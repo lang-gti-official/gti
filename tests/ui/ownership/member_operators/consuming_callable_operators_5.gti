@@ -1,0 +1,44 @@
+// Consuming callable operators: direct, nested, and mutable-fallback calls retain moved nominal receivers through full-expression cleanup.
+//@ check-pass
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+
+class DirectCleanupCallable {
+public:
+  DirectCleanupCallable() {}
+  ~DirectCleanupCallable() {}
+  int operator()() && { return 1; }
+};
+
+class NestedCleanupCallable<T> {
+  T value;
+public:
+  NestedCleanupCallable(T initial) : value(std::move(initial)) {}
+  int operator()() && { return 2; }
+};
+
+class CleanupMutableFallback {
+  Cleanup cleanup = Cleanup();
+public:
+  int operator()(int amount) mut { return amount; }
+public:
+  CleanupMutableFallback() = default;
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int main() {
+  DirectCleanupCallable direct{};
+  int first = std::move(direct)();
+  NestedCleanupCallable<Cleanup> nested =
+      NestedCleanupCallable<Cleanup>(Cleanup());
+  int second = std::move(nested)();
+  CleanupMutableFallback fallback{};
+  int third = std::move(fallback)(3);
+  return first + second + third;
+}

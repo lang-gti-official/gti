@@ -1,0 +1,8 @@
+// Recursive payload composition: an error adapter is an ordinary class that a generic payload owner accepts.
+//@ check-pass
+enum Event<T> { empty, item(T value) };
+int keep<T>(T error) {
+  auto value = Event<T>::empty;
+  return 0;
+}
+int main() { return keep(unexpected(1)); }

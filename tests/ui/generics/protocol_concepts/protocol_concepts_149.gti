@@ -1,0 +1,36 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept storage<P> {
+  typename tag;
+  typename buffer<Element>;
+  typename pair<Left, Right>;
+};
+struct Heap {};
+struct Inline {};
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(std::move(input)) {}
+  T get() requires std::copyable<T> { return this.value; }
+};
+struct Slots<T> {
+  T value;
+  Slots(T input) : value(std::move(input)) {}
+  T get() requires std::copyable<T> { return this.value; }
+};
+struct Duo<A, B> {
+  A first; B second;
+  Duo(A one, B two) : first(std::move(one)), second(std::move(two)) {}
+};
+for concept storage<Heap> {
+  using tag = int;
+  using buffer<Item> = Cell<Item>;
+  using pair<X, Y> = Duo<X, Y>;
+};
+for concept storage<Inline> {
+  using tag = bool;
+  using buffer<Value> = Slots<Value>;
+  using pair<X, Y> = Duo<Y, X>;
+};
+concept reads<C, E> = requires(C& item) { { item.get() } -> E; };
+using Value = storage<Heap>::buffer<int>;
+int main() { return 0; }

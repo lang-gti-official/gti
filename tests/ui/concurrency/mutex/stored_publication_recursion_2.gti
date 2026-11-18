@@ -1,0 +1,20 @@
+// Stored publication recursion: ordinary readonly inputs gain no mutable reference authority.
+//@ execution-profile: concurrent
+class Lease {
+  mut int& value;
+public:
+  Lease(mut int& value) : value(value) {}
+  ~Lease() {}
+};
+class Holder {
+  int& value;
+public:
+  Holder(int& value) : value(value) {}
+  void use() { Lease lease{this.value}; }  //~ ERROR GTI-S2012
+};
+int main() {
+  int value = 7;
+  Holder holder{value};
+  holder.use();
+  return 0;
+}
