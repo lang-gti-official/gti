@@ -3089,3 +3089,60 @@ GTI_UNIT_TEST(consteval_statement_completion_plans) {
   consteval_completion::testConstevalStatementCompletion();
   return ::failures == 0 ? 0 : 1;
 }
+
+// A consumed carrier's secondary stored owner cannot escape a singleton
+// return contract merely because the primary owner is the declared supplier.
+GTI_UNIT_TEST(singleton_return_supplier_forgery) {
+  const auto frontend = analyzeEmissionFixture(R"(
+class Two<lifetime o> {
+  int&<o> first;
+  int&<o> second;
+public:
+  Two(int&<o> a, int&<o> b) : first(a), second(b) {}
+  int&<o> pick(bool choose) && {
+    if (choose) { return this.first; }
+    return this.second;
+  }
+};
+int&<o> relay<lifetime o>(int&<o> a, int&<o> b) {
+  return Two(a, b).pick(false);
+}
+int main() { return 0; }
+)");
+  if (!frontend.canGenerateCode())
+    return 1;
+  bool exercised = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "relay")
+      continue;
+    expect(function.returnBorrowParameters.size() == 2,
+           "valid relay permits both caller-owned suppliers");
+    auto forged = frontend.mir;
+    auto *changed = const_cast<lang::MirFunctionInstance *>(
+        forged.findFunctionInstance(function.id));
+    changed->returnBorrowParameters.clear();
+    changed->returnBorrowParameter = 0;
+    // The optional complete claim is absent in the legacy contract. Keeping
+    // the old two-supplier claim would make the forged declaration internally
+    // inconsistent and test a different verifier obligation.
+    changed->completeReturnBorrow.reset();
+    // Preserve executable constructor, call and return dependencies. Only the
+    // enclosing contract is narrowed; its secondary owner must be rejected.
+    const auto verified = lang::verifyMirProgram(forged);
+    expect(!verified.valid() &&
+               std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find(
+                                        "full formal dependency set") !=
+                                    std::string::npos;
+                           }),
+           std::string("singleton returned contract independently checks "
+                       "secondary owners") +
+               (verified.valid() ? " (forged MIR was accepted)" : ""));
+    exercised = true;
+  }
+  expect(exercised, "forgery exercises the concrete relay body");
+  return ::failures == 0 ? 0 : 1;
+}

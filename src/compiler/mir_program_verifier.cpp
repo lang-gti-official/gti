@@ -7829,11 +7829,20 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                                          .loan = *block.terminator.returnLoan};
       return rejected;
     }
-    if (!instance.returnBorrowParameters.empty()) {
+    if (!instance.returnBorrowParameters.empty() ||
+        (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+         instance.returnType.kind == SemanticType::Reference)) {
+      // A single-formal contract constrains every owner too: a consumed
+      // carrier can relay several stored owners even when its primary source
+      // matches the declared formal. Field-mapped aggregate contracts retain
+      // their independently reconstructed complete proof below.
       // Each supplier is one formal, or one lane of a formal pack.
       using Supplier = std::pair<HirBindingId, std::size_t>;
       std::set<Supplier> expected;
-      for (const auto parameter : instance.returnBorrowParameters) {
+      auto parameters = instance.returnBorrowParameters;
+      if (parameters.empty())
+        parameters.push_back(instance.returnBorrowParameter);
+      for (const auto parameter : parameters) {
         const auto formal = mir_detail::returnOriginFormal(
             instance.parameterTypes, instance.parameterBindings, parameter);
         if (!formal) {

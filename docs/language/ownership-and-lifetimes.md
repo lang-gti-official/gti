@@ -526,6 +526,15 @@ in the reference's region, so returning it under a stored region is rejected
 call (GTI-S2017, GTI-S2081). Returning a stored region that is not declared to
 outlive the result's region is GTI-S2127, for a method result as for a field.
 
+For a constructed temporary, every constructor argument supplying the selected
+stored region must outlive the enclosing function's result region. A second
+supplier cannot be hidden behind the first, an explicit class region, or a local
+reference bound to the method result. An unrelated region reports GTI-S2127;
+function-owned local storage and by-value scalar parameters report GTI-S2017.
+This does not constrain an unrelated, unselected stored region. MIR independently
+checks every returned owner against the function's supplier contract, including
+contracts naming just one formal parameter.
+
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
 `values` supplies the result, while in

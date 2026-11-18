@@ -1,0 +1,12 @@
+// A by-value parameter is body-owned even when relayed through a temporary.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> relay<lifetime a>(int&<a> keep, int value) {
+  return Two(keep, value).pick(false); //~ ERROR GTI-S2017
+}
+int main() { return 0; }

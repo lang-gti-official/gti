@@ -1,0 +1,12 @@
+// A written temporary region still requires every constructor supplier to outlive it.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> relay<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  return Two<a>(keep, other).pick(false); //~ ERROR GTI-S2127
+}
+int main() { return 0; }

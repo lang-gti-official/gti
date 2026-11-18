@@ -3151,6 +3151,7 @@ private:
                                        const ClassDecl &owner);
   // A returned call whose result region several caller regions supply lives
   // as long as the shortest; each must outlive the declared result region.
+  const Symbol *regionExpressionSymbol(const Variable &variable);
   bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
   // A result in a region the class stores is supplied by the references the
