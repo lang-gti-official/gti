@@ -667,6 +667,15 @@ walk memos and compares all recorded additions before publishing occurrences.
 Disagreement throws a compiler-integrity error naming the query and root type.
 Failed computations never populate a memo table.
 
+Coverage-use lookup hashes the static coverage-entry and shape identities,
+body identity, and required/executable bits. It never iterates that table to
+publish uses: a separate vector preserves first insertion order and the first
+source witness, and every addition increments its occurrence count. Validation
+mode also runs the previous string-keyed map operation and compares both its
+index and first-insertion result. A mismatch is a compiler-integrity failure;
+ordinary builds allocate no string-keyed oracle. The static entry table has one
+stable object per family/name pair, independently checked by the unit suite.
+
 Admission time traces separate `llvm-admission`, `llvm-admission-closure`,
 `llvm-admission-dispatch-proofs` and `llvm-admission-inventory`. Under
 `GTI_COMPILER_VALIDATION`, the plan also retains query counters: hierarchy

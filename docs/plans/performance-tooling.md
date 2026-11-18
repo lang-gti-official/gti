@@ -7,7 +7,9 @@ starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
 is unchanged admission and output, at least 2x faster admission on examples
 091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
 RSS. No speedup is claimed yet. Non-throwing outcomes, plan-local type indexes,
-whole-query memoization/replay, and integer coverage keys remain to implement.
+whole-query memoization/replay, and stable coverage-identity hash keys are
+implemented in separate RFC branches; final equivalence, performance and
+integration evidence remain required before this campaign is complete.
 
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
@@ -27,9 +29,20 @@ rejects incomplete captures, changed input inventories and tampered artifacts.
 Use identical input/stdlib paths for each compiler, retaining the baseline
 source checkout throughout the campaign; no identity normalization is allowed.
 
-Corpus baseline capture, equivalence across each optimization slice, validation
-cross-checks and fault injection, and the O0/O2 wall/CPU/RSS/admission/backend
-measurements remain acceptance work. The capture tool intentionally repeats
+The retained baseline covers all 207 single-file root examples (414 O0/O2
+captures) and 463 materialized coverage-provider inputs (926 captures).
+The non-throwing outcome slice matches all 1,340 retained plans, outcomes, IR
+and objects byte-for-byte. Later slices additionally capture the 23 positive
+admission fixtures; the six frontend rejection fixtures have no admission plan
+and are verified with the ordinary test runner. Full comparisons for the index,
+memo/replay and coverage-key slices are still in progress. Focused memo tests
+inject a wrong answer and a reordered trace; coverage-index tests compare all
+context distinctions and detect a forged index. These checks supplement the
+whole-corpus comparisons; they do not replace them.
+
+Executable equivalence, complete owning-gate evidence, and the O0/O2
+wall/CPU/RSS/admission/backend measurements remain acceptance work. The capture
+tool intentionally repeats
 backend planning to collect independent IR and object artifacts: performance
 measurements must use ordinary compiler invocations and time traces instead.
 
