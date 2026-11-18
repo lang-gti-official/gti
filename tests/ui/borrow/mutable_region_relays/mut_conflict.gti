@@ -1,0 +1,11 @@
+// A composed exclusive result prohibits reading even the other possible owner.
+mut int&<a> choose<lifetime a>(mut int&<a> one, mut int&<a> two, bool first) {
+  if (first) { return one; }
+  return two;
+}
+int main() {
+  mut int one = 1; mut int two = 2;
+  mut int& selected = choose(one, two, true);
+  int read = two; //~ ERROR GTI-S2017
+  return selected + read;
+}

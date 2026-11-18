@@ -8463,9 +8463,6 @@ private:
       if (instance == program.classInstances().end())
         return false;
       visiting.push_back(current);
-      for (const auto &base : instance->bases)
-        if (!base.interface && resolvedTraits(base.type).containsBorrowedState)
-          self(self, base.type);
       for (const auto &field : instance->fields) {
         if (!field.info.traits.containsBorrowedState)
           continue;
@@ -8504,6 +8501,9 @@ private:
         return;
       }
       visiting.push_back(current);
+      for (const auto &base : instance->bases)
+        if (!base.interface && resolvedTraits(base.type).containsBorrowedState)
+          self(self, base.type);
       for (const auto &field : instance->fields) {
         const SemanticType &fieldType = field.info.type;
         prefix.push_back(field.info.symbol);
@@ -18671,6 +18671,7 @@ private:
                 entry ? output.findPlace(entry->source) : nullptr;
             if (entry && entry->kind == MirLoanKind::Parameter &&
                 entry->entry && entry->storedDependency == 0 && source &&
+                source->type.kind == SemanticType::Reference &&
                 source->root == MirPlaceRootKind::Binding &&
                 source->projections.empty()) {
               for (const auto position : function->returnBorrowParameters) {
