@@ -676,7 +676,14 @@ passes; it removes a failing PR and rebuilds the entries behind it. The
 complete suite runs after integration on each main head
 (`full-validation.yml`); a red main is reported in the `main-broken` issue and
 is fixed forward or reverted, and no channel selects a main commit full
-validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+validation has not passed. A run red only because required jobs never got a
+hosted runner (cancelled with zero steps executed) is not reported:
+`validation-retry.yml` re-runs those jobs once when it is the newest run of
+main, and the re-run attempt's own verdict and report decide. A job that
+executed any step is never retried; a superseded or second starved attempt is
+reported like any failure. When the failure is a test that ran and failed and one
+merge carries the blame, `auto-revert.yml` can revert that merge through an
+ordinary queued PR ([automatic revert](#automatic-revert-of-a-red-main)). The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -747,7 +754,8 @@ runtime services and allocation, CMake/toolchain, CI and release workflows,
 test infrastructure) validate alone and are never combined with other
 changes. It is the one source the planner, PR CI and reviewers share: the
 verify-change planner selects from it, CI's workflow regression job
-validates it, and reviewers check a change's evidence against it. Its
+validates it (as the `test_ownership_map` entry of the `tree-consistency`
+label), and reviewers check a change's evidence against it. Its
 selection is a lower bound that the author extends from the changed
 invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
@@ -909,11 +917,11 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, the `gti-test` entries and the PR's declared T0/T1 tests on both) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` on both; every `gti-test` entry on Linux, and on macOS `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit; then the PR's declared T0/T1 tests the gate did not just run, on macOS only those in the `darwin` set) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
-| `workflow_dispatch` on main | full | the same bounded gate, for recovery |
-| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the per-commit inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`; both leave out tests labelled `slow` and run runtime harnesses at `-O0`); its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
+| `merge_group` | full | lint, workflow regressions and system-LLVM `fast` checks on Linux x64, plus macOS arm64 only when the repository variable `GTI_QUEUE_MACOS` is `true`, on the exact candidate (a bounded gate, as rustc and LLVM gate merges); the gate requires exactly the rows the plan scheduled and accepts a Linux-only result here and nowhere else. With the switch off (the default), macOS coverage is the PR's own check and post-integration full validation, so a macOS-only failure caused by the combination of queued PRs reaches main and full validation catches it |
+| `workflow_dispatch` on main | full | the same bounded gate on both platforms, for recovery |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation, one concurrency group per commit (every push starts at once and is never cancelled or replaced by a later push; a repeated dispatch of one commit waits), so runs finish in any order and tip admission, nightly selection and the `main-broken` report order results by main's ancestry: production packaging and installed checks, bundled-release `integration` shards (Linux over the per-commit inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`; both leave out tests labelled `slow` and run runtime harnesses at `-O0`); its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | `schedule` daily, or `workflow_dispatch` (`sanitizers.yml`) | sanitizers | the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer on the commit the `nightly` tag names (or a dispatched commit on main or a `beta/*` line); its `Sanitizer verdict (<commit>)` is release-train evidence for cuts and promotions, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue or nightly |
 | `schedule` daily, or `workflow_dispatch` (`slow.yml`) | slow tier | on the same commit: the `slow`-labelled tests at `-O0` and `-O3` (`--test-set slow`, `darwin-slow`) and an `-O3` re-run of every per-commit runtime harness that follows `tests/backend_modes.py` (`--test-set o3`, `darwin-o3`); its `Slow tier verdict (<commit>)` is the other half of the release train's daily evidence, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue, nightly or `tip` |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
@@ -928,7 +936,7 @@ its tests and `cpp-backend.yml` were removed on 2026-11-16
 ([test-suite redesign](../plans/test-suite-redesign.md)), and no test builds
 or runs it. Harness mode tables come from `tests/backend_modes.py`: LLVM at
 the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by default. The shard runner
-sets it per test set (`TEST_SET_LEVELS`): `O0` for `gate`, `full` and
+sets it per test set (`TEST_SET_LEVELS`): `O0` for `full` and
 `darwin`, `O0,O3` for the slow sets and `O3` for the re-run sets. The `slow`
 CTest label is assigned in one place, `gti_slow_test_patterns` in
 `tests/TestThroughput.cmake`; the per-commit sets exclude it, and
@@ -938,10 +946,7 @@ inventory exactly once. `slow.yml` proves its own sets the same way with
 Long aggregates (`allocator_raw_audit_independence`) are
 also registered as per-suite or per-source entries; a sharded run executes the parts and
 skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
-across workers instead of one 16–54-minute test ending a shard alone. The
-`gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
-shipped-default (c++23) or primary entry still runs, and the generated-C++
-corpus censuses; the `full` set runs everything. Every registered test carries
+across workers instead of one 16–54-minute test ending a shard alone. Every registered test carries
 its observed duration as a CTest `COST` ordering hint from
 `tests/ci_test_durations.json` (`tests/TestThroughput.cmake`), which
 `validation_checks.py durations` refreshes from JUnit reports, keeping the
@@ -1033,7 +1038,10 @@ committed `tests/ci_test_durations.json`; its plan job shares that one table
 with every shard, so all shards of a run compute the same partition. The
 verdict job averages each test's stored seconds with this run's observation
 and uploads the result for the next run, so the table tracks real cost
-without anyone committing it. The first shard on
+without anyone committing it. Overlapping runs never share an artifact: each
+reads one completed earlier run's own `ci-test-durations` and shares its
+choice under its own run's `shard-durations`, so a table never mixes the
+measurements of runs still in progress. The first shard on
 each platform also runs the native smoke, and the first Linux shard checks
 deterministic docgen. The system-LLVM `fast` checks also run in full
 integration; their Linux job retains the installed-library and process-resource
@@ -1091,11 +1099,13 @@ A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the
 owner reproduces the failing tests locally, repairs the change without
 weakening unrelated expectations, verifies and re-queues. The Linux
-workflow-regression job installs CMake (including CTest) and Make explicitly
-before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
-`agent_workflow` executes these shell steps with missing event aliases and an
-initially tool-free PATH. The lightweight job also runs `repository_hosting`,
-the ownership-map coverage check and the planner's tests.
+workflow-regression job installs the reviewed toolchain
+(`configure_ci_toolchain.sh` with `GTI_CI_CONFIGURE_ONLY=1`, which keeps the
+preinstalled toolchains a build would delete), configures without building
+and runs the `tree-consistency` CTest label: `agent_workflow` with its real,
+disposable CMake/CTest batch fixtures, `repository_hosting`, the
+ownership-map coverage check, the planner's tests and every other entry that
+checks the tree against itself without a built compiler.
 
 ### LSP adapter CI classification
 
@@ -1229,6 +1239,68 @@ designated integrator may validate one combined candidate with `batch verify`
 on a remote runner and record that evidence on the PR. Agents never fall back
 to per-PR local full suites. Do not reintroduce advisory CI or administratively
 bypass a server rejection.
+
+### Automatic revert of a red main
+
+`auto-revert.yml` runs `scripts/auto_revert.py` when a full validation of main
+completes, and on dispatch for a given run id. It is switched off by default:
+unless the repository variable `GTI_AUTO_REVERT` is `true`, it writes its
+decision to the job summary and, for a `revert` or `track` decision, a note on
+the `main-broken` issue saying what it would have done, and nothing else. A
+dispatch only writes the summary. The decision is a pure function over facts
+read from the run, its latest attempt's jobs, recent full validation runs of
+main, the red commit's pull request and main's history:
+
+1. **Real failure.** The run is the newest attempt, it failed, and a required
+   job (plan, release package or integration shard) failed in a test step:
+   `Run this shard of the complete release suite`, `Test installed toolchain`
+   or `Verify deterministic API generation`. A job that never got a runner
+   (zero steps), was cancelled after starting, or failed only in another step
+   (job set-up, checkout, toolchain installation, caches, artifact transfer,
+   runner checks) is not evidence; neither is the verdict alone. Unknown step
+   names count as infrastructure, so renaming a step can only make the bot do
+   less (`tests/ci_release_test.py` keeps the names in step with the
+   workflow). When `validation-retry.yml` will re-run starved jobs, the retry
+   decides. A failure only in a build step (configure, build, stage, package)
+   is tracked, never reverted.
+2. **Do not fight a fix.** Nothing happens when a newer main commit
+   containing the red one passed full validation, a commit on main already
+   reverts it (`This reverts commit <sha>` or an `Auto-Revert-Of:` trailer), a
+   revert PR for it is open, or the red commit is itself an automatic revert.
+3. **Attribution.** The red commit must be a pull-request merge whose first
+   parent passed full validation. Otherwise (a push of several queue merges, an
+   unvalidated, cancelled, pending or red parent, a direct commit) it is
+   tracked: a comment on (or a new) `main-broken` issue names the failing jobs
+   and tests and the merges back to the last green main.
+4. **Caps.** At most one automatic revert is open, and at most one is made
+   per 24 hours; beyond that the failure is tracked. A merge that changes
+   `VERSION` (a release cut), a revert that conflicts with current main,
+   changes workflow files (the App has no Workflows permission) or fails
+   `check_release_version.py` or `check_test_freeze.py` is tracked too.
+
+A `revert` is `git revert -m 1` of the merge on current main, made with Git
+plumbing and pushed as `codex/revert-<pr>-<sha10>`, whose message carries
+`Auto-Revert-Of: <sha>`, `Release-Impact: internal` and a `Release-Reason:`
+(no full validation of main containing the merge has passed, so no channel
+carries it). It never changes `VERSION`; a fragment the merge added is removed
+with it. The PR is labelled `auto-revert` and `rollup=never`, its body carries
+a `Validation:` block declaring the failing CTest names as T1 (PR CI re-runs
+them), and the bot registers merge-when-ready for its exact head, so it joins
+the queue alone once its own `CI gate` passes. It does not jump the queue:
+jumping rebuilds every entry already in it, and the App's right to do so is
+unverified. The original PR gets a comment with the failing jobs and tests,
+the run and the revert. Newer pending runs do not hold a revert back: the
+revert still passes PR CI and the queue, and a later green run of a main
+commit containing the merge closes it (`withdraw`). All writes use the rollup
+App token (a PR opened with `GITHUB_TOKEN` would run no CI); `GITHUB_TOKEN`
+only reads, and the writing job is serialized so the caps hold.
+
+**When your PR is reverted.** A merged PR cannot be reopened. Once the
+revert has merged, bring the change back with a fresh PR from the same branch:
+merge `main` into it, revert the revert commit there (otherwise Git treats
+your commits as already merged and the PR changes nothing), fix the failing
+tests and open the new PR. If the failure was not your change's, close the
+revert PR with the evidence before it merges.
 
 ## Retired combined preview
 

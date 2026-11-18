@@ -1,0 +1,5 @@
+// Hover over a class with conditional unsafe capabilities labels them conditional and separates unsafe ownership from thread permission.
+//@ hover @owner: conditional unsafe nominal assertion
+//@ hover @owner: no thread capability granted
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class /*@owner*/Owner<T> { T* pointer = nullptr; };
+int main() { return 0; }

@@ -1,0 +1,9 @@
+// Editor hover infers std::string for an immutable concatenation result.
+//@ hover @result: std::string
+import std.string;
+int main() {
+  std::string suffix = "name";
+  auto /*@result*/result = "hello " + suffix + "!";
+  std::println(result);
+  return 0;
+}

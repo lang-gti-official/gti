@@ -1,0 +1,19 @@
+// Each constexpr-for copy of its body clones empty statements, range-for loops with break, and lambda parameters.
+//@ run-pass
+import std.meta;
+int main() {
+  int32_t[3] values = {1, 2, 3};
+  mut int32_t total = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool>()) {
+    ;
+    for (int32_t value : values) {
+      if (value == 3) {
+        break;
+      }
+      total = total + value;
+    }
+    auto add = [](int32_t value, int32_t extra) -> int32_t { return value + extra; };
+    total = add(total, 1);
+  }
+  return total == 8 ? 0 : 1;
+}

@@ -1,11 +1,66 @@
 # GTI test suite: clean-slate redesign plan
 
-> **Plan status (2026-11-16):** accepted by the owner as the direction for the
-> test suite, with the decisions below. Execution state and phase ownership live
-> in the [test-suite redesign campaign](implementation-sequence.md#test-suite-redesign-campaign-2026-11-16)
-> of the implementation sequence. This document is the design record, kept as
-> written; where it and the owner decisions differ, the decisions win. Like any
-> plan it is not evidence of implementation.
+> **Plan status (2026-11-18): campaign closed by the owner.** The conversion
+> stops here; what remains unconverted is deliberate and frozen. The end state
+> is below; the rest of this document is the design record, kept as written
+> (2026-11-16). Where it and the owner decisions or the end state differ, those
+> win. Like any plan it is not evidence of implementation.
+
+## End state (2026-11-18)
+
+**Landed.** The `gti-test` runner (`tests/runner/`) with check, run, snapshot
+(`mir`, `llvm-ir`, `diagnostics`, `format`), parse, revision, LSP and project
+kinds, `--bless`, `--tidy`, `--isolate`, `--changed` and `--opt O3`; tiers:
+per-commit `-O0`, the daily slow tier (`tests/slow/`, `-O3` re-run,
+`gti_corpus`), daily sanitizers, and the `tip` channel (#426, #432). The PR
+gate runs `gti_test_ui`, its shards, `gti_test_examples` and `gti_unit_tests`
+on Linux and a rotating subset on macOS (#540), plus the `tree-consistency`
+label (#542); `validation-retry.yml` re-runs runner-starved full validation;
+the freeze lint (#429); coverage tooling with a committed baseline (#436).
+
+**Converted.** All 241 `compiler_pipeline` named tests (the aggregate is
+deleted), 170+ shared-harness wrappers, 103 stand-alone C++ test files, about
+65 LSP scripts, and five cost-ordered rounds (#529, #530, #536, #537, #543: 45
+entries, about 3,720 per-commit table-seconds). Source coverage was 89.29%
+lines / 75.54% branches at the `8d4ed461` baseline and 88.94% / 74.90% at
+`58d446c3` after restoration (#539): one file is over the 2-point rule
+(`src/cli/terminal_style.cpp`, colour-output cases that need stdout piped
+while stderr is a terminal) and `tests/coverage_allow.txt` holds two reasoned
+entries. The one-off conversion scripts are deleted.
+
+**Changed from the plan.** The LSP kind keeps one real `gti_lsp` process per
+worker (a fresh one per transcript) rather than driving the state library
+in-process, so `tests/lsp` covers the protocol layer too; the new-test
+over-budget rule (§10) is advisory, not failing, pending hosted-runner CPU
+calibration; `tests/ui` runs as eight CTest entries (`gti_test_ui_1`..`_8`,
+`gti-test --shard i/8` by stable path hash) beside `gti_test_ui`, which runs
+the self-test, tidy, `tests/project` and `tests/lsp`; the C++ backend's tests
+and CI are deleted (owner decision); macOS runs a platform subset per PR.
+
+**Deliberately not done.** About 211 convertible per-commit entries remain
+(about 3,040 table-seconds, 169 of them under 21 s each), led by
+`cli_workflow` (240.5), `lsp_protocol` (196.1) and `project_cli_workflow`
+(183.0), multi-thousand-line installed smoke scripts, then
+`runtime_performance_workloads` (95.0), `llvm_simd_source` (75.0),
+`cli_progress` (71.7), `optimizer_safety` (50.4) and
+`llvm_hosted_cleanup_execution` (49.3). About 250 more stay by design:
+tooling, CI and release scripts, installed-toolchain smokes, genuine C++ unit
+tests, terminal, fake-server, binary-probe and evidence-manifest tests, and the
+mutation machinery. All of them stay frozen: `scripts/check_test_freeze.py`
+rejects a new `tests/**/*_test.py`, `*_tests.cpp` or `add_test(` outside the
+runner's directories, permanently. Runner features the remaining conversions
+would need, none built: `stderr-lacks`; multi-line or ordered stderr matching;
+function-header attributes and class instances in `mir` snapshots; asserting
+that a function has no instance; symbol and string probes of executables;
+stdout piped while stderr is a terminal; platform-conditional transcript
+commands; transcript commands that signal or close a running command; LSP
+watched-file changes; build-fail for GTI-B0003; a debug-profile directive;
+`//@ env:` names outside `[A-Za-z0-9_]`; overlaying the prelude.
+
+**Not yet proven on hosted runners** at closing: the daily sanitizer job on
+the new layout (issue #454 is open from failures on older commits), the retry
+workflow's positive path, and the seeded-bug baseline (first weekly run
+scheduled for 2026-11-22).
 
 ## Owner decisions (2026-11-16)
 
@@ -514,7 +569,7 @@ The owner does not review code, so a visible diff is not sufficient on its own. 
 - Exhaustive error/warning annotation in check tests — an unexpected extra diagnostic fails the test.
 - MIR verification on every accepted program in every check test (it is the compiler's internal consistency check and costs little).
 - At least one run test per run-time language mechanism (destruction order, moves, panics/unwinding, dynamic dispatch, closures, threads, FFI), and the stdlib packages. Ownership and lifetime bugs in this compiler have produced real UB.
-- Both platforms (Linux x86_64, macOS arm64) in the pre tier, because LLVM is the default backend on both and link behaviour differs.
+- Both platforms (Linux x86_64, macOS arm64) in the pre tier, because LLVM is the default backend on both and link behaviour differs. Since 2026-11-18 the macOS pre tier is the platform subset (tidy, runner self-test, `tests/project`, `tests/lsp`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit) and the post tier runs the rest of the pre tier there, as its row allows: hosted macOS runners are scarce enough that full validation lost runs to jobs GitHub never started.
 - The nightly sanitizer run and the nightly `--isolate` run.
 - The conformance holdout and the expectation-change accounting.
 - A smoke of the packaged toolchain before any channel publishes.

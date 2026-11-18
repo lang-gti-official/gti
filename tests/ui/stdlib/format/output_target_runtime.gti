@@ -1,0 +1,13 @@
+// Runtime-pattern convenience output accepts both named and temporary destinations.
+//@ run-pass
+//@ stdout: runtime 9
+//@ stderr-contains: empty
+//@ stderr-contains: temporary
+import std.format;
+int main() {
+  int value = 9;
+  std::runtime_println(std::cout, "runtime {}", value);
+  std::runtime_println(std::cerr, "empty");
+  std::println(std::output_target::standard_error, "temporary");
+  return 0;
+}

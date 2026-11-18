@@ -438,12 +438,20 @@ package provenance and each archive's embedded `BUILD_ID`, then copies the
 archive bytes unchanged to `gti-tip-<platform>.tar.gz` with a matching
 `.sha256` line and a `BUILD_ID` asset: the shape a rolling-channel installer
 expects, and the same bytes nightly serves if it later selects that commit.
-`resolve_release_source.py admit-tip` applies nightly's newer-wins rule against
-`refs/tags/tip`, and the tag moves only through a lease on the value admission
-read. Archives upload before `BUILD_ID`. The job is `continue-on-error`: a
-failed tip publication never changes the run conclusion that nightly selection
-reads. Full validation queues runs and drops superseded pending ones, so tip
-advances once per run that starts, not once per merge.
+Full validation runs every main push at once, in its own per-commit
+concurrency group, so tip jobs of several commits overlap and finish in any
+order. `resolve_release_source.py claim-tip` applies nightly's newer-wins rule
+against `refs/tags/tip`: a commit the published tip already descends from is
+skipped, and the tag moves only through a lease on the value admission read; a
+lease lost to a concurrent claim is decided again rather than forced. A claimed
+publication then waits (`await-tip`) until no older commit's tip job is in
+progress, and stops before each upload once a newer claim names the tag, so
+the newest claim uploads last and the release's archives and `BUILD_ID` belong
+to it. The job has no concurrency group: a job-level group cancels its pending
+job, which would cancel that whole run. Archives upload before `BUILD_ID`. The
+job is `continue-on-error`: a failed tip publication never changes the run
+conclusion that nightly selection reads. Tip advances once per merge whose
+packages pass.
 
 The `tip` release must exist before release immutability is enabled, for the
 same reason as `nightly`: a release published afterwards cannot replace its
@@ -495,9 +503,10 @@ arbitrary PR pass or merge exception still does not.
    in `lang-gti-official/gti`. It takes the newest commit on main's
    first-parent history, searching back from main head as far as the published
    nightly, whose full validation passed, or a dispatched exact 40-hex commit
-   on main. Full validation keeps one run going plus the newest waiting push,
-   so this commit normally trails main by at most one validation cycle and
-   nightly never waits for main to stop moving.
+   on main. Every main push gets its own full validation, started at once, so
+   this commit normally trails main by at most one validation cycle and
+   nightly never waits for main to stop moving. The choice follows main's
+   ancestry, never which run finished last.
    `scripts/resolve_release_source.py select-nightly` requires successful full
    validation for the selected commit and its retained production artifacts: the `push` run of `.github/workflows/full-validation.yml` on
    `main`, or a dispatch of it for commissioning or artifact recovery. PR runs,
@@ -507,7 +516,12 @@ arbitrary PR pass or merge exception still does not.
    an older compiler with a new commit when the selected source has no artifacts.
 3. **Download and verify.** Nightly downloads the artifacts from the selected
    successful CI run and attempt. Their manifest binds source commit, platform,
-   bundled-release configuration, run/attempt and archive checksums. Missing,
+   bundled-release configuration, run/attempt and archive checksums. The run's
+   latest attempt must show every required job green; the attempt nightly
+   downloads from is the one that built both packages, which is older than the
+   latest when only failed jobs were re-run (`validation-retry.yml` re-runs
+   jobs that never got a runner), and then the latest attempt must list those
+   same package executions (`release_artifacts.py package_attempt`). Missing,
    expired, mixed or mismatched artifacts stop publication. Nightly neither
    rebuilds the compiler nor reruns the full suite. A new full CI dispatch on
    main can recover unavailable artifacts while preserving the same validation
@@ -3394,7 +3408,7 @@ available source. A failed dependency stops the application build and preserves
 the failing target and application outputs; previously completed prerequisites
 remain published. Explicit artifacts still require no producer source.
 The [`compiled-dependencies`](../../examples/compiled-dependencies/README.md)
-example and `compiled_dependency_project` gate cover a diamond graph, freshness,
+example and `tests/slow/project/compiled_dependencies` gate cover a diamond graph, freshness,
 receipt mismatches, failures and source-free distribution of the complete closure.
 
 Consumer requests retain whole-program cache bypass; compiled library output reuse

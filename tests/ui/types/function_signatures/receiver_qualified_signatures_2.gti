@@ -1,5 +1,5 @@
 // Receiver qualified signatures: formatting preserves qualified signature semantics.
-//@ check-pass
+//@ format-stable
 using Read = int(int);
 using Mutable = int(int) mut;
 using Once = int(int) &&;

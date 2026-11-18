@@ -1,0 +1,190 @@
+// Owning payload construction publishes fields only after construction, with exact cleanup on parameter, fresh, called and destructor failures.
+//@ run-pass
+//@ stdout: 50
+//@ stdout: 60
+//@ stdout: 70
+//@ stdout: 4
+//@ stdout: 3
+//@ stdout: 5
+//@ stdout: 2
+//@ stdout: 1
+//@ stdout: 9
+//@ revisions: success parameter_field_failure fresh_field_failure destructor_failure secondary_failure called_field_failure called_destructor_failure called_secondary_failure callee_failure callee_secondary_failure
+//@[parameter_field_failure] args: parameter-field-failure
+//@[parameter_field_failure] run-fail
+//@[parameter_field_failure] exit-code: 70
+//@[parameter_field_failure] stdout: 1
+//@[parameter_field_failure] stdout: 9
+//@[parameter_field_failure] stderr-contains: main.gti:98: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[fresh_field_failure] args: fresh-field-failure
+//@[fresh_field_failure] run-fail
+//@[fresh_field_failure] exit-code: 70
+//@[fresh_field_failure] stdout: 2
+//@[fresh_field_failure] stdout: 9
+//@[fresh_field_failure] stderr-contains: main.gti:108: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[destructor_failure] args: destructor-failure
+//@[destructor_failure] run-fail
+//@[destructor_failure] exit-code: 70
+//@[destructor_failure] stdout: 60
+//@[destructor_failure] stdout: 2
+//@[destructor_failure] stdout: 9
+//@[destructor_failure] stderr-contains: main.gti:84: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[secondary_failure] args: secondary-failure
+//@[secondary_failure] run-fail
+//@[secondary_failure] exit-code: 70
+//@[secondary_failure] stdout: 2
+//@[secondary_failure] stderr-contains: main.gti:84: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:108; secondary [GTI-R0002]
+//@[called_field_failure] args: called-field-failure
+//@[called_field_failure] run-fail
+//@[called_field_failure] exit-code: 70
+//@[called_field_failure] stdout: 2
+//@[called_field_failure] stdout: 9
+//@[called_field_failure] stderr-contains: main.gti:124: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[called_destructor_failure] args: called-destructor-failure
+//@[called_destructor_failure] run-fail
+//@[called_destructor_failure] exit-code: 70
+//@[called_destructor_failure] stdout: 70
+//@[called_destructor_failure] stdout: 2
+//@[called_destructor_failure] stdout: 9
+//@[called_destructor_failure] stderr-contains: main.gti:84: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[called_secondary_failure] args: called-secondary-failure
+//@[called_secondary_failure] run-fail
+//@[called_secondary_failure] exit-code: 70
+//@[called_secondary_failure] stdout: 2
+//@[called_secondary_failure] stderr-contains: main.gti:84: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:124; secondary [GTI-R0002]
+//@[callee_failure] args: callee-failure
+//@[callee_failure] run-fail
+//@[callee_failure] exit-code: 70
+//@[callee_failure] stdout: 2
+//@[callee_failure] stdout: 9
+//@[callee_failure] stderr-contains: main.gti:115: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[callee_secondary_failure] args: callee-secondary-failure
+//@[callee_secondary_failure] run-fail
+//@[callee_secondary_failure] exit-code: 70
+//@[callee_secondary_failure] stdout: 2
+//@[callee_secondary_failure] stderr-contains: main.gti:84: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:115; secondary [GTI-R0002]
+import std.optional;
+import std.string;
+import std.vector;
+
+mut int32_t cleanup_divisor = 1;
+mut int32_t helper_divisor = 1;
+
+class Payload {
+  std::optional<std::string> text;
+  int32_t identity;
+public:
+  Payload(int32_t identity)
+      : text(std::optional<std::string>(std::string("event"))), identity(identity) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+};
+
+enum class Event { message(Payload payload), idle };
+
+// Field publication is construction, regardless of whether a payload also
+// supports assignment. Owning enum replacement now reconstructs alternatives.
+class Envelope<T> {
+  T item;
+  int32_t checked;
+public:
+  Envelope(T value, int32_t divisor)
+      : item(std::move(value)), checked(int32_t(1) / divisor) {
+    std::println(50);
+  }
+};
+
+class FreshEnvelope {
+  Event item;
+  int32_t checked;
+public:
+  FreshEnvelope(int32_t identity, int32_t divisor)
+      : item(Event::message(Payload(identity))), checked(int32_t(1) / divisor) {
+    std::println(60);
+  }
+};
+
+Event make_event(int32_t identity) {
+  Payload payload = Payload(identity);
+  int32_t helper_checked = int32_t(1) / helper_divisor;
+  return Event::message(std::move(payload));
+}
+
+class CalledEnvelope {
+  Event item;
+  int32_t checked;
+public:
+  CalledEnvelope(int32_t identity, int32_t divisor)
+      : item(make_event(identity)), checked(int32_t(1) / divisor) {
+    std::println(70);
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+
+void exercise() {
+  Envelope<Event> named = Envelope<Event>(Event::message(Payload(1)), 1);
+  FreshEnvelope fresh = FreshEnvelope(2, 1);
+  CalledEnvelope called = CalledEnvelope(5, 1);
+  mut std::vector<Event> events{};
+  events.push_back(Event::message(Payload(3)));
+  events.reserve(std::size_t(8));
+  mut std::optional<Event> selected =
+      std::optional<Event>(Event::message(Payload(4)));
+  selected.reset();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard caller{};
+  if (argc < 2) {
+    exercise();
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "parameter-field-failure") {
+    Envelope<Event> value = Envelope<Event>(Event::message(Payload(1)), 0);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "fresh-field-failure") {
+    FreshEnvelope value = FreshEnvelope(2, 0);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "destructor-failure") {
+    cleanup_divisor = 0; FreshEnvelope value = FreshEnvelope(2, 1);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "secondary-failure") {
+    cleanup_divisor = 0; FreshEnvelope value = FreshEnvelope(2, 0);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "called-field-failure") {
+    CalledEnvelope value = CalledEnvelope(2, 0);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "called-destructor-failure") {
+    cleanup_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 1);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "called-secondary-failure") {
+    cleanup_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 0);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "callee-failure") {
+    helper_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 1);
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "callee-secondary-failure") {
+    helper_divisor = 0; cleanup_divisor = 0; CalledEnvelope value = CalledEnvelope(2, 1);
+    return 0;
+  }
+  return 100;
+}

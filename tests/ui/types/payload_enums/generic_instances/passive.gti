@@ -1,0 +1,96 @@
+// Passive generic enum instances substitute references and arrays, keep exact instances and scope pattern loans.
+//@ run-pass
+//@ revisions: reference_substitution array_substitution exact_instances scalar_pattern_loans
+//@[reference_substitution] args: reference-substitution
+//@[array_substitution] args: array-substitution
+//@[exact_instances] args: exact-instances
+//@[scalar_pattern_loans] args: scalar-pattern-loans
+import std.string;
+import std.vector;
+
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+namespace case_reference_substitution {
+Event<int32_t&> empty() { return Event<int32_t&>::idle; }
+int32_t inspect(Event<int32_t&>& event) {
+  switch (event) {
+    case Event<int32_t&>::idle: return 0;
+    case Event<int32_t&>::item(value): return value;
+    case Event<int32_t&>::pair(first, second): return first + second;
+  }
+}
+int entry() {
+  int32_t first = 3;
+  int32_t second = 4;
+  auto idle = Event<int32_t&>::idle;
+  auto copied = idle;
+  auto returned = empty();
+  auto item = Event<int32_t&>::item(first);
+  auto pair = Event<int32_t&>::pair(first, second);
+  if (inspect(idle) != 0 || inspect(copied) != 0 || inspect(returned) != 0)
+    return 1;
+  if (inspect(item) != 3 || inspect(pair) != 7) return 2;
+  auto moved = std::move(returned);
+  return inspect(moved);
+}
+}
+
+namespace case_array_substitution {
+int entry() {
+  Event<int32_t[2]> idle = Event<int32_t[2]>::idle;
+  int32_t[2] values = {3, 4};
+  Event<int32_t[2]> event = Event<int32_t[2]>::item(std::move(values));
+  switch (std::move(event)) {
+    case Event<int32_t[2]>::idle: return 1;
+    case Event<int32_t[2]>::item(items): return items[0] + items[1] - 7;
+    case Event<int32_t[2]>::pair(first, second): return 2;
+  }
+}
+}
+
+namespace case_exact_instances {
+T identity<T>(T value) { return value; }
+int entry() {
+  Event<int32_t> first = Event<int32_t>::item(7);
+  Event<int64_t> second = identity(Event<int64_t>::pair(int64_t(4), int64_t(5)));
+  mut int32_t total = 0;
+  switch (first) {
+    case Event<int32_t>::idle: return 1;
+    case Event<int32_t>::item(value): total = value; break;
+    case Event<int32_t>::pair(a, b): return 2;
+  }
+  switch (second) {
+    case Event<int64_t>::idle: return 3;
+    case Event<int64_t>::item(value): return 4;
+    case Event<int64_t>::pair(a, b): return total == 7 && a + b == int64_t(9) ? 0 : 5;
+  }
+}
+}
+
+namespace case_scalar_pattern_loans {
+int entry() {
+  mut Event<int32_t> event = Event<int32_t>::item(1);
+  switch (event) {
+    case Event<int32_t>::idle: return 1;
+    case Event<int32_t>::item(mut auto& value): value = 9; break;
+    case Event<int32_t>::pair(a, b): return 2;
+  }
+  switch (event) {
+    case Event<int32_t>::idle: return 3;
+    case Event<int32_t>::item(auto& value): return value == 9 ? 0 : 4;
+    case Event<int32_t>::pair(a, b): return 5;
+  }
+}
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argv[std::size_t(1)] == "reference-substitution") { return case_reference_substitution::entry(); }
+  if (argv[std::size_t(1)] == "array-substitution") { return case_array_substitution::entry(); }
+  if (argv[std::size_t(1)] == "exact-instances") { return case_exact_instances::entry(); }
+  if (argv[std::size_t(1)] == "scalar-pattern-loans") { return case_scalar_pattern_loans::entry(); }
+  return 100;
+}

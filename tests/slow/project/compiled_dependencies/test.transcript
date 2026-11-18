@@ -1,0 +1,93 @@
+// A compiled-library diamond (base under left and right, under app):
+// `gti check` needs built libraries and writes nothing (not even with no
+// native tools), unchanged libraries are reused, a consumer-only edit
+// rebuilds no library, a dependency edit invalidates its parents, stale and
+// corrupt bundles are repaired, a failed dependency keeps the previous
+// outputs, manifest errors are rejected, metadata lists the dependencies, and
+// a distributed closure builds without producer sources. (From
+// compiled_dependency_project_test.py, at the dev profile instead of
+// --release; the example is examples/compiled-dependencies.)
+slow
+$ cd project
+env CC=$DIR/no-tools/cc
+env CXX=$DIR/no-tools/c++
+$ gti check app
+? 65
+stderr: build its library target first
+$ sh -c "test ! -e build"
+unset CC
+unset CXX
+$ gti build app --verbose
+$ gti run app --no-build
+$ sh -c "test $(find build -name '*.gtilib' | wc -l) -eq 3 && test ! -e api"
+$ sh ../variants/save_bundles.sh ../original
+$ sh ../variants/snapshot.sh ../built.cksum
+$ touch ../built.marker
+env CC=$DIR/no-tools/cc
+env CXX=$DIR/no-tools/c++
+$ gti check app
+stdout: Checked app
+unset CC
+unset CXX
+$ sh ../variants/unchanged.sh ../built.cksum
+$ gti build app --verbose
+stderr: cache hit
+$ sh ../variants/not_newer.sh ../built.marker
+$ sh -c "echo '// consumer-only source edit' >> main.gti"
+$ gti build app --verbose
+$ sh ../variants/not_newer.sh ../built.marker
+$ cp ../variants/base8.gti base.gti
+$ cp ../variants/main48.gti main.gti
+$ gti build app --verbose
+$ gti run app --no-build
+$ sh ../variants/bundles_differ.sh ../original
+$ sh ../variants/save_bundles.sh ../changed
+$ cp ../original/left.gtilib build/stale-left.gtilib
+$ sh -c "cp build/stale-left.gtilib $(find build/gti -name left.gtilib) && rm build/stale-left.gtilib"
+$ gti check app
+? 65
+stderr: dependency artifact digest
+$ gti build app --verbose
+$ sh -c "printf 'broken bundle' > $(find build -name base.gtilib)"
+$ gti build app --verbose
+$ sh ../variants/bundles_same.sh ../changed
+$ cp ../variants/base_broken.gti base.gti
+$ gti build app --verbose
+? 65
+stderr: missing
+$ sh ../variants/bundles_same.sh ../changed app
+$ cp ../variants/base8.gti base.gti
+$ cp gti.toml ../gti.toml.original
+$ cp ../variants/cycle.toml gti.toml
+$ gti build app --verbose
+? 65
+stderr: Compiled dependency cycle
+$ cp ../variants/missing_target.toml gti.toml
+$ gti build app --verbose
+? 65
+stderr: must name a gti-library
+$ cp ../variants/wrong_kind.toml gti.toml
+$ gti build app --verbose
+? 65
+stderr: must name a gti-library
+$ cp ../variants/duplicate_facade.toml gti.toml
+$ gti build app --verbose
+? 65
+stderr: paths must be unique
+$ cp ../variants/duplicate_target.toml gti.toml
+$ gti build app --verbose
+? 65
+stderr: targets must be unique
+$ sh ../variants/bundles_same.sh ../changed app
+$ cp ../gti.toml.original gti.toml
+$ gti metadata
+stdout: "compiledDependencies": [{"target": "left", "interface": "$DIR/project/api/left.gti"}, {"target": "right", "interface": "$DIR/project/api/right.gti"}]
+$ sh ../variants/distribute.sh
+$ cd ../distributed
+$ gti check app
+$ gti build app --verbose
+$ gti run app --no-build
+$ cp ../variants/distributed_incomplete.toml gti.toml
+$ gti check app
+? 65
+stderr: missing compiled dependency artifact

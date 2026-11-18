@@ -1,0 +1,74 @@
+// Annotated test suites: `gti test` discovers [[test]] functions (also
+// through imported and private module units, never from dependency
+// packages), runs each isolated with cleanup, reports panics and signals,
+// keeps the test catalog in the build cache (and repairs a poisoned entry),
+// keeps dispatcher names hygienic, rejects a suite with its own main or no
+// tests, and still runs a legacy main. (From annotated_test_suite_test.py;
+// the debug-symbol cache restoration it checked on macOS and the O3 run are
+// dropped. Invalid [[test]] declarations are tests/ui/declarations/annotated_tests.)
+slow
+$ cd project
+$ gti test --no-cache
+stderr: Test result: 3 passed
+stderr: engine::tests::another_fresh_scene_state ... passed
+stderr: engine::tests::event_value_is_preserved ... passed
+stderr: engine::tests::fresh_scene_state ... passed
+$ gti test --verbose
+$ gti test --verbose
+stderr: cache hit
+stderr: Test result: 3 passed
+$ sh -c "f=$(find build/gti/cache -name metadata | head -1); sed 's/case engine::tests::fresh_scene_state/case engine::tests::wrong_name/' $f > $f.new && mv $f.new $f"
+$ gti test --verbose
+stderr: Test result: 3 passed
+!stderr: wrong_name ...
+$ sh -c "grep -c 'case engine::tests::fresh_scene_state' $(find build/gti/cache -name metadata | head -1)"
+stdout: 1
+$ cp ../variants/isolation.gti tests/main.gti
+$ gti test --no-cache
+? 70
+stderr: sample::a_success ... passed
+stderr: sample::b_panic ... failed
+stderr: isolated panic
+stderr: sample::c_signal ... crashed
+stderr: exit code 137
+stderr: sample::d_after_panic ... passed
+stderr: Test result: 2 passed, 2 failed
+stderr: main.gti:
+stderr: guard-cleaned
+stderr: after-panic-ran
+$ cp ../variants/leaf.gti ../variants/indirect.gti tests/
+$ cp ../variants/graph.gti tests/main.gti
+$ gti test --no-cache
+stderr: leaf::nested ... passed
+stderr: Test result: 2 passed
+$ cp ../variants/graph_private.gti tests/main.gti
+$ gti check engine-tests
+? 65
+stderr: GTI-S2024
+$ sh -c "cat ../variants/modules.toml >> gti.toml"
+$ cp ../variants/module.gti tests/module.gti
+$ cp ../variants/module_root.gti tests/main.gti
+$ gti test --no-cache
+stderr: module_cases::hidden ... passed
+stderr: Test result: 2 passed
+$ cp -R ../helper helper
+$ sh -c "cat ../variants/dependency.toml >> gti.toml"
+$ cp ../variants/dependency_root.gti tests/main.gti
+$ gti test --no-cache
+stderr: Test result: 1 passed
+!stderr: never_run ...
+$ cp ../variants/hygiene.gti tests/main.gti
+$ gti test --no-cache
+stderr: Test result: 4 passed
+$ cp ../variants/with_main.gti tests/main.gti
+$ gti test --no-cache
+? 65
+stderr: entry point
+$ cp ../variants/empty.gti tests/main.gti
+$ gti test --no-cache
+? 65
+stderr: GTI-S2094
+$ cp ../variants/legacy.gti tests/main.gti
+$ gti test --no-cache
+stdout: legacy-ran
+stderr: Test result: 1 passed

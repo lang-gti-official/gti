@@ -1,0 +1,18 @@
+// A live element reference blocks growing a resource prefix, with the raw-pointer audit on.
+//@ slow
+//@ check-fail
+//@ raw-pointer-audit: warn
+import std.resource_vector;
+import std.resource;
+
+int main() {
+  std::process_resource provider{};
+  unsafe {
+    auto binding = std::bind_resource(provider);
+    mut std::resource_vector<int, std::process_resource> values{binding};
+    values.push_back(7);
+    int& selected = values.front();  //~ WARN GTI-S2102 //~ WARN GTI-S2102
+    values.push_back(8);  //~ WARN GTI-S2102 //~ ERROR GTI-S2017
+    return selected;
+  }
+}

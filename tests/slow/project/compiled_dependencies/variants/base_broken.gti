@@ -1,0 +1,1 @@
+export module base; export int base_value() { return missing; }

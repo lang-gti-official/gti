@@ -36,3 +36,32 @@ $ tty: gti warning.gti --emit-mir -o out.mir --progress=never
 !stdout: \e
 $ gti warning.gti --emit-mir -o out.mir --progress=never --color always
 stderr: \e[1;33mwarning[GTI-S2096]
+unset TERM
+env TERM=xterm-256color
+unset NO_COLOR
+$ gti warning.gti --emit-mir -o out.mir --progress=never -- --color=never
+? 64
+stderr: native compiler arguments require executable output
+$ gti warning.gti --emit-mir -o out.mir --progress=never --color=never
+!stderr: \e
+$ gti warning.gti --emit-mir -o out.mir --progress=never --color=always --color=never
+!stderr: \e
+$ gti --color
+? 64
+stderr: --color
+$ gti --color=
+? 64
+stderr: --color
+// An operand that looks like the option is still an output path.
+$ gti warning.gti --emit-mir -o --color=never --color=always --progress=never
+$ ls
+stdout: --color=never
+$ cat out.mir
+!stdout: \e
+$ gti invalid.gti --emit-mir -o out.mir --progress=never --color=always
+? 65
+stderr: \e[1;31merror[GTI-
+stdout: \e[1;31mDiagnostics:
+$ gti duplicate.gti --emit-mir -o out.mir --progress=never --color=always
+? 65
+stderr: \e[1;36mnote\e[0m:

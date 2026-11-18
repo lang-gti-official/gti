@@ -1,0 +1,15 @@
+export module events;
+
+import std.testing;
+export namespace engine::tests {
+  struct Event {
+    int value;
+    Event(int value) : value(value) {}
+  };
+
+  [[test]]
+  void event_value_is_preserved() {
+    Event event{42};
+    std::testing::check(event.value == 42, "Event payload changed");
+  }
+}

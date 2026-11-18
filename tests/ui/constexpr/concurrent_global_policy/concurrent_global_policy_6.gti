@@ -1,4 +1,4 @@
-// Concurrent global policy: the concurrent profile should reject direct pointers, borrowed views, aliases, concrete generic state, native-like opt-outs, cleanup owners, and static fields with deterministic causes.
+// Concurrent global policy rejects state that is not share-capable, including source cleanup owners.
 //@ execution-profile: concurrent
 class RawState { int* address = nullptr;  public: RawState() = default; };
 using RawAlias = RawState;
@@ -20,7 +20,7 @@ std::string_view view = "view";  //~ ERROR GTI-S2060
 RawAlias aliased = RawAlias();  //~ ERROR GTI-S2060
 Box<std::string_view> generic = Box<std::string_view>("view");  //~ ERROR GTI-S2060 'generic' to have a share-capable type
 NativeLikeHandle native = NativeLikeHandle();  //~ ERROR GTI-S2060 'native' to have a share-capable type
-Cleanup cleanup = Cleanup();  //~ ERROR GTI-S2061 Namespace global 'cleanup' has type 'Cleanup'
+Cleanup cleanup = Cleanup(); //~ ERROR GTI-S2060 'cleanup' to have a share-capable type
 class StaticRaw {
 public:
   static int* address = nullptr;  //~ ERROR GTI-S2060

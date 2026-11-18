@@ -1,0 +1,2 @@
+import "api/owning types/model \"quoted\".gti";
+import "api/drawing.gti"; int main() { drawing::Packet packet{}; drawing::Packet copy = drawing::echo(packet); if (packet.status != geometry::Status::ready || copy.status != geometry::Status::ready || drawing::status(copy.status) != geometry::Status::ready) { return 1; } return 0; }

@@ -1511,6 +1511,9 @@ private:
            .nativeRetirement = step.requiresNativeRetirement
                                    ? std::optional{dropTypeFor(info->type)}
                                    : std::nullopt,
+           .sourceCleanup = step.requiresSourceCleanup
+                                ? std::optional{dropTypeFor(info->type)}
+                                : std::nullopt,
            .binding = binding,
            .initializer = initializer,
            .statement = statement});
@@ -3731,6 +3734,12 @@ private:
       if (statement.source == nullptr) {
         continue;
       }
+      // The block enclosing a header init statement shares its statement's
+      // source; the statement itself owns the source's full expressions.
+      if (statement.kind == HirStatementKind::Block &&
+          headerInitializer(statement.source) != nullptr) {
+        continue;
+      }
       const auto *invocation = stmtAs<ExpressionStmt>(statement.source);
       const bool statementOnlyMacro =
           invocation && invocation->expression() &&
@@ -3979,6 +3988,27 @@ private:
                      HirBody &body) {
     if (statement == nullptr) {
       return std::nullopt;
+    }
+    // Semantics scoped a header init statement exactly like the first
+    // statement of a block enclosing the whole statement. HIR publishes that
+    // block, so cleanup, loans and exits use the ordinary block contract.
+    const bool headerInitialized =
+        std::exchange(initializedHeader, nullptr) == statement;
+    if (const StmtPtr *initializer = headerInitializer(statement);
+        initializer != nullptr && !headerInitialized) {
+      std::vector<HirStatementId> statements;
+      if (const auto lowered =
+              lowerStatement(initializer->get(), model, classArguments,
+                             classValueArguments, body))
+        statements.push_back(*lowered);
+      initializedHeader = statement;
+      if (const auto lowered = lowerStatement(statement, model, classArguments,
+                                              classValueArguments, body))
+        statements.push_back(*lowered);
+      return appendStatement({.kind = HirStatementKind::Block,
+                              .source = statement,
+                              .statements = std::move(statements)},
+                             body);
     }
     if (const auto *block = stmtAs<BlockStmt>(statement)) {
       return appendStatement({.kind = HirStatementKind::Block,
@@ -6097,6 +6127,7 @@ private:
     std::optional<HirFunctionInstanceId> functionItemTarget;
     std::optional<HirFunctionInstanceId> contextualConversionTarget;
     std::optional<EnumId> enumOwner;
+    std::optional<ResolvedOperatorInfo> literalTextOperator;
     std::optional<EnumConstant> enumValue;
     std::optional<std::size_t> enumVariant;
     std::optional<std::size_t> payloadIndex;
@@ -6171,8 +6202,63 @@ private:
     } else if (const auto *binary = exprAs<Binary>(raw)) {
       kind = HirValueKind::Binary;
       operation = binary->oper().kind;
-      lowerOperand(binary->left());
-      lowerOperand(binary->right());
+      const auto *resolved = model.findOperator(*raw);
+      if (resolved && resolved->literalText) {
+        // Semantics has proved that every leaf is a literal and every join
+        // is a trusted text operation. Flatten once, without materializing
+        // intermediate owners or reinterpreting source escape spellings.
+        std::string bytes;
+        bytes.reserve(resolved->literalText->size);
+        std::vector<const Expr *> pending{raw};
+        while (!pending.empty()) {
+          const Expr *part = pending.back();
+          pending.pop_back();
+          if (const auto *group = exprAs<Grouping>(part)) {
+            pending.push_back(group->expression().get());
+          } else if (const auto *join = exprAs<Binary>(part)) {
+            pending.push_back(join->right().get());
+            pending.push_back(join->left().get());
+          } else if (const auto *leaf = exprAs<LiteralExpr>(part)) {
+            const auto *text = std::get_if<std::string>(&leaf->value());
+            if (!text) {
+              lifecycleValid = false;
+              return std::nullopt;
+            }
+            bytes.append(*text);
+          } else {
+            lifecycleValid = false;
+            return std::nullopt;
+          }
+        }
+        const auto *factory =
+            model.findFunction(resolved->literalText->factory);
+        if (!factory || bytes.size() != resolved->literalText->size) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        literalTextOperator =
+            ResolvedOperatorInfo{.operandArguments = true,
+                                 .function = factory->id,
+                                 .declaration = factory->declaration,
+                                 .kind = OverloadedOperator::Plus,
+                                 .returnType = factory->returnType,
+                                 .parameterTypes = factory->parameterTypes};
+        for (std::size_t index = 0; index < 2; ++index) {
+          const HirValueId id = nextValueId++;
+          body.values.push_back(
+              {.id = id,
+               .kind = HirValueKind::Literal,
+               .source = raw,
+               .info = {.type = SemanticType::StringView,
+                        .traits = semanticTraits(SemanticType::StringView)},
+               .literal =
+                   Literal{index == 0 ? std::move(bytes) : std::string{}}});
+          operands.push_back(id);
+        }
+      } else {
+        lowerOperand(binary->left());
+        lowerOperand(binary->right());
+      }
     } else if (const ResolvedOperatorInfo *conversion =
                    model.findOperator(*raw);
                conversion != nullptr &&
@@ -6751,7 +6837,7 @@ private:
       }
     }
     const ResolvedOperatorInfo *resolvedValueOperator =
-        model.findOperator(*raw);
+        literalTextOperator ? &*literalTextOperator : model.findOperator(*raw);
     if (resolvedValueOperator == nullptr &&
         (value.kind == HirValueKind::DereferenceSet ||
          value.kind == HirValueKind::IndexSet)) {
@@ -7341,6 +7427,19 @@ private:
     }
     if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
+      if (resolved->operandArguments) {
+        // Both operands of a primitive adapter use ordinary ordered call
+        // staging, including call-scoped readonly temporary borrows.
+        value.kind = kind = HirValueKind::Call;
+        if (auto arguments = orderedArguments(
+                value.operands, resolved->parameterTypes, body,
+                value.operands.size(), resolved->ephemeralBorrowArguments)) {
+          value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                       .arguments = std::move(*arguments)};
+        } else {
+          lifecycleValid = false;
+        }
+      }
       value.parameterTypes = resolved->parameterTypes;
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
@@ -7403,10 +7502,12 @@ private:
           }
         }
         const std::vector<SemanticType> ownerArguments =
-            receiverType.kind == SemanticType::Class ? receiverType.arguments
-                                                     : classArguments;
+            resolved->operandArguments ? std::vector<SemanticType>{}
+            : receiverType.kind == SemanticType::Class ? receiverType.arguments
+                                                       : classArguments;
         const std::vector<CompileTimeValue> ownerValueArguments =
-            receiverType.kind == SemanticType::Class
+            resolved->operandArguments ? std::vector<CompileTimeValue>{}
+            : receiverType.kind == SemanticType::Class
                 ? receiverType.valueArguments
                 : classValueArguments;
         value.functionTarget =
@@ -7793,6 +7894,9 @@ private:
   HirValueId activeResultRegion = 0;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
+  // The if, switch or range for whose header init statement was just lowered
+  // into its enclosing block; its next lowering produces the statement itself.
+  const Stmt *initializedHeader = nullptr;
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;

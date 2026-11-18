@@ -1,0 +1,2 @@
+import std.string;
+[[test]] void shared() { std::println("first-suite"); }

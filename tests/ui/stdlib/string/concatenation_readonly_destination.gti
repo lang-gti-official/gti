@@ -1,0 +1,7 @@
+// Append requires a mutable owning string.
+import std.string;
+int main() {
+  std::string value = "abc";
+  value += "x"; //~ ERROR GTI-S2022
+  return 0;
+}

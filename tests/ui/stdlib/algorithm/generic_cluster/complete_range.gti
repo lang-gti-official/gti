@@ -1,0 +1,96 @@
+// Complete-range algorithms over unrelated user ranges run with verified concrete range plans.
+//@ run-pass
+//@ snapshot: mir
+//@ mir-function: all_of
+//@ mir-function: fill
+//@ mir-function: for_each
+//@ mir-function: measured_size
+// CHECK: range-iterations 1
+// CHECK: range-iterations 1
+// CHECK: range-iterations 1
+// CHECK: range-iterations 1
+// CHECK: range-iterations 1
+// CHECK-NOT: range-iterations 1{{$}}
+// CHECK-NOT: {{ modify }}
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+class number_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+
+public:
+  number_range() = default;
+
+  std::vector<int32_t>::const_iterator begin() {
+    return this.values.begin();
+  }
+
+  std::vector<int32_t>::iterator begin_mut() mut {
+    return this.values.begin_mut();
+  }
+
+  std::vector<int32_t>::sentinel end() {
+    return this.values.end();
+  }
+
+  std::size_t size() {
+    return this.values.size();
+  }
+
+  int32_t at(std::size_t index) {
+    return this.values[index];
+  }
+};
+
+class positive {
+public:
+  bool operator()(int32_t& value) {
+    return value > 0;
+  }
+public:
+  positive() = default;
+};
+
+class sum_values {
+  mut int32_t total = 0;
+
+public:
+  void operator()(int32_t& value) mut {
+    this.total += value;
+  }
+
+  int32_t result() {
+    return this.total;
+  }
+public:
+  sum_values() = default;
+};
+
+std::size_t measured_size<Range>(Range& values)
+    requires std::sized_range<Range> {
+  return values.size();
+}
+
+int main() {
+  mut number_range values = number_range();
+  if (!std::all_of(values, positive())) {
+    return 1;
+  }
+  mut int32_t[3] fixed = {1, 2, 3};
+  if (!std::all_of(fixed, positive())) {
+    return 2;
+  }
+  int32_t replacement = 4;
+  std::fill(values, replacement);
+  std::fill(fixed, replacement);
+  mut sum_values operation = sum_values();  //~ WARN GTI-S2096
+  mut sum_values completed = std::for_each(values, std::move(operation));  //~ WARN GTI-S2096
+  if (completed.result() != 12 || values.at(std::size_t(1)) != 4 ||
+      values.size() != std::size_t(3) ||
+      measured_size(values) != std::size_t(3) ||
+      measured_size(fixed) != std::size_t(3) || fixed[1] != 4) {
+    return 3;
+  }
+  return 0;
+}

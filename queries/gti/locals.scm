@@ -81,6 +81,11 @@
 (lambda_expression) @local.scope
 (block) @local.scope
 (for_statement) @local.scope
+; An init statement's names are scoped to the whole if or switch.
+(if_statement
+  initializer: [(variable_declaration) (structured_binding_declaration) (expression_statement)]) @local.scope
+(switch_statement
+  initializer: [(variable_declaration) (structured_binding_declaration) (expression_statement)]) @local.scope
 (switch_body) @local.scope
 
 (parameter

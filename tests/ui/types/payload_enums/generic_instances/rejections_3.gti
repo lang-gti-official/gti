@@ -1,0 +1,72 @@
+// Generic enum instances reject mismatched construction and arguments, invalid patterns, escaping loans, recursive by-value layout and bare-enum misuse.
+//@ check-fail
+import std.optional;
+import std.vector;
+
+namespace case_move_during_live_pattern_loan {
+mut int32_t drops = 0;
+mut int32_t cleanup_divisor = 1;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+  int32_t id() { return this.identity; }
+};
+
+enum Event<T, uint64_t Channel = 3> { idle, item(T value) };
+
+concept identified<T> = requires(T& value) { { value.id() } -> int32_t; };
+
+int32_t id<T, uint64_t Channel>(Event<T, Channel>& event) requires identified<T> {
+  switch (event) {
+    case Event<T, Channel>::idle: return 0;
+    case Event<T, Channel>::item(auto& value): return value.id();
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+class Envelope<T> {
+  mut T value;
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+};
+
+int entry() {
+  Event<Resource> source = Event<Resource>::item(Resource(1));
+  switch (source) {
+    case Event<Resource>::idle: return 1;
+    case Event<Resource>::item(auto& value):
+      Event<Resource> destination = std::move(source);  //~ ERROR GTI-S2017
+      return value.id();
+  }
+}
+}
+
+namespace case_sibling_exclusive_pattern_loans {
+enum Pair<T> { values(T first, T second) };
+int entry() {
+  mut Pair<int32_t> pair = Pair<int32_t>::values(1, 2);
+  switch (pair) {
+    case Pair<int32_t>::values(mut auto& first, mut auto& second):  //~ ERROR GTI-S2017
+      first = 3;
+      second = 4;
+      return first + second;
+  }
+}
+}
+
+int main() { return 0; }

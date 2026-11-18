@@ -1439,6 +1439,12 @@ member's owner class (the temporary's own class or one of its bases) and the
 table selects the override, through the transformed status ABI when the family
 is failure-capable. The emitter allocates no storage for a by-value receiver
 here.
+A temporary of a class with a base that holds borrowed state keeps MIR's
+physical-shell `CallArgument` loan on that slot, with the temporary's Stored
+group as its dependency. LLVM admission accepts that loan for hierarchy types
+exactly as for other classes: the address is the fresh full-expression slot,
+and the dependency is provenance for the external owners, with no
+representation of its own.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact materialization, the value-rooted lifetime slot or the CFG-promoted
@@ -4085,8 +4091,10 @@ overflow flags. Other compilers, or a build defining
 `GTI_PORTABLE_OVERFLOW_CHECKS`, use the portable limit comparisons, which
 compute the same predicate. Each caller stores its result only on success, so
 an overflowing operation publishes nothing and reports the same code and
-detail. `checked_integer_overflow_runtime` compares both paths at O0 and O3
-against exact arithmetic. MIR operations, safety discharges and failure
+detail. `tests/ui/runtime/checked_overflow/` (O0) and its `tests/slow` O3
+copies compare the LLVM backend's checks against exact arithmetic; the
+preamble's portable path belongs to the frozen C++ backend and is no longer
+run. MIR operations, safety discharges and failure
 metadata are unchanged; this is a backend spelling of the same checked
 operation.
 

@@ -624,14 +624,17 @@ public:
     }
   }
   // A hierarchy object in program storage that its program initialization
-  // step constructs in place: a complete object, never thread-local and, by
-  // the program-storage rules, without source or owning cleanup.
+  // step constructs in place: a complete object, never thread-local. Owning
+  // roots carry the exact cleanup recipe admitted separately by cleanup().
   bool programStep(const MirProgramInitializationStep &step) const {
     const MirBodyAddress module{MirBodyKind::Module, 0};
     const auto *body = findMirBody(program, module);
     const auto *place = body ? body->findPlace(step.storagePlace) : nullptr;
     if (!place || place->type.kind != SemanticType::Class ||
-        step.requiresActiveCleanup || step.nativeRetirement ||
+        step.nativeRetirement ||
+        step.requiresActiveCleanup != step.sourceCleanup.has_value() ||
+        (step.sourceCleanup &&
+         mirUniqueCleanupType(program, place->type) != step.sourceCleanup) ||
         program.findThreadLocalStorage(step.symbol) ||
         step.role != ProgramInitializationStepRole::Initializer)
       return false;
@@ -2289,6 +2292,22 @@ private:
     if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
         !loan.conditions.empty() || loan.lifecycleBound || loan.entry)
       return false;
+    // The physical-shell loan of a fresh borrowed-carrier receiver: its
+    // address is that full-expression temporary's own storage, ended after
+    // the call, and its stored dependency is provenance for the external
+    // owners the carrier holds, with no representation of its own.
+    if (loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
+        loan.storedDependency)
+      if (const auto *source = body.findPlace(loan.source);
+          source && source->root == MirPlaceRootKind::Value &&
+          source->projections.empty()) {
+        const auto found = temporaries.find(&body);
+        const auto *dependency = body.findLoan(loan.storedDependency);
+        if (found != temporaries.end() &&
+            found->second.contains(source->value) && dependency &&
+            dependency->kind == MirLoanKind::Stored && !dependency->escapes)
+          return true;
+      }
     // A reserved two-phase store's address is its accessor's checked result,
     // activated before the store and ended with it.
     if (loan.twoPhase)
@@ -4021,6 +4040,39 @@ public:
       }
     return found;
   }
+  bool sourceProgramCleanup(const MirHostedStartupOperation &operation) const {
+    const auto &plan = program.hostedStartupPlan();
+    if (!plan ||
+        (operation.kind !=
+             MirHostedStartupOperationKind::CleanupProgramStorage &&
+         operation.kind != MirHostedStartupOperationKind::DrainThreadLocals) ||
+        operation.terminator || operation.place || operation.value ||
+        operation.dropObligation || operation.failureRecord ||
+        operation.cleanupBoundary)
+      return false;
+    const auto *startup =
+        findMirBody(program, {MirBodyKind::HostedStartup, plan->entry});
+    const auto *owner = startup ? startup->findBlock(operation.block) : nullptr;
+    if (!owner)
+      return false;
+    const auto found = std::find_if(
+        owner->instructions.begin(), owner->instructions.end(),
+        [&](const auto &stage) {
+          return stage.id == operation.instruction &&
+                 stage.hostedStartupOperation == operation.id &&
+                 stage.kind ==
+                     (operation.kind ==
+                              MirHostedStartupOperationKind::DrainThreadLocals
+                          ? MirInstructionKind::DrainThreadLocals
+                          : MirInstructionKind::CleanupProgramStorage);
+        });
+    if (found == owner->instructions.end())
+      return false;
+    return std::any_of(
+        program.programInitializationPlan().steps.begin(),
+        program.programInitializationPlan().steps.end(),
+        [](const auto &step) { return step.sourceCleanup.has_value(); });
+  }
   const MirClassInstance *bodyClass() const {
     if (!body)
       return nullptr;
@@ -4277,7 +4329,13 @@ public:
 
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
-    if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
+    // Borrowing a text-view object transports its address, not its counted
+    // bytes. rawBorrowResultLoan already proves the exact typed pointer and
+    // owner witness; keep ordinary raw loads/arithmetic separately gated.
+    const bool textReferent = stage.info.type == pointer.arguments.front() &&
+                              stage.info.type.kind == SemanticType::StringView;
+    if (!textReferent &&
+        !(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
         !nativeRecordObject(pointer.arguments.front()) &&
         // A raw borrow may name an already adjusted hierarchy view, including
@@ -5462,6 +5520,8 @@ public:
         // its storage witness does not itself grant raw reference formation.
         const auto rawReferenceShape =
             !rawReference ? std::nullopt
+            : stage.info.type.kind == SemanticType::StringView
+                ? std::optional(Shape::CountedText)
             : nativePayloadPointee(stage.info.type)
                 ? std::optional(Shape::NativePayloadRawAccess)
             : dispatchProofs.contains(stage.info.type)
@@ -5506,6 +5566,15 @@ public:
                 operation.block == block && operation.instruction == stage.id &&
                 nativeRetirement(operation))
               storageShape = Shape::NativeProgramRetirement;
+        if ((stage.kind == MirInstructionKind::CleanupProgramStorage ||
+             stage.kind == MirInstructionKind::DrainThreadLocals) &&
+            body->kind == MirBodyKind::HostedStartup &&
+            program.hostedStartupPlan())
+          for (const auto &operation : program.hostedStartupPlan()->operations)
+            if (operation.id == stage.hostedStartupOperation &&
+                operation.block == block && operation.instruction == stage.id &&
+                sourceProgramCleanup(operation))
+              storageShape = Shape::NativeProgramCleanup;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =
                   program.findThreadLocalStorage(stage.threadLocalStorage)) {
@@ -6377,6 +6446,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.add(step.dataInitialization);
     inventory.add(step.storageKind);
     inventory.add(step.role);
+    if (step.sourceCleanup)
+      inventory.cleanup(*step.sourceCleanup);
     if (const auto *module = findMirBody(mir, {MirBodyKind::Module, 0}))
       if (const auto *place = module->findPlace(step.storagePlace))
         if (dispatchProofs.contains(place->type))
@@ -6394,6 +6465,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(operation.kind,
                     native_llvm::nativeCThreadLifecycleOperation(mir, operation)
                         ? std::optional(Shape::NativeCThreadLifecycle)
+                    : inventory.sourceProgramCleanup(operation)
+                        ? std::optional(Shape::NativeProgramCleanup)
                     : inventory.nativeRetirement(operation)
                         ? std::optional(Shape::NativeProgramRetirement)
                         : std::nullopt);

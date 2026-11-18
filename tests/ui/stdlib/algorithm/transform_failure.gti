@@ -1,0 +1,90 @@
+// A failing mapper, replacement cleanup or undersized destination stops std::transform with its site and cleans up.
+//@ run-pass
+//@ revisions: ok mapper replacement undersized
+//@[ok] stdout: 10
+//@[ok] stdout: 20
+//@[ok] stdout: 90
+//@[ok] stdout: 102
+//@[ok] stdout: 101
+//@[ok] stdout: 2
+//@[ok] stdout: 1
+//@[mapper] run-fail
+//@[mapper] exit-code: 70
+//@[mapper] args: mapper
+//@[mapper] stdout: 10
+//@[mapper] stdout: 90
+//@[mapper] stdout: 20
+//@[mapper] stdout: 101
+//@[mapper] stdout: 2
+//@[mapper] stdout: 1
+//@[mapper] stderr-contains: main.gti:72: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[replacement] run-fail
+//@[replacement] exit-code: 70
+//@[replacement] args: replacement cleanup
+//@[replacement] stdout: 10
+//@[replacement] stdout: 20
+//@[replacement] stdout: 102
+//@[replacement] stdout: 90
+//@[replacement] stdout: 101
+//@[replacement] stdout: 2
+//@[replacement] stdout: 1
+//@[replacement] stderr-contains: main.gti:60: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[undersized] run-fail
+//@[undersized] exit-code: 70
+//@[undersized] args: undersized destination bounds
+//@[undersized] stdout: 10
+//@[undersized] stdout: 102
+//@[undersized] stdout: 90
+//@[undersized] stdout: 101
+//@[undersized] stdout: 2
+//@[undersized] stdout: 1
+//@[undersized] stderr-contains: <std/vector>:
+//@[undersized] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in vector
+import std.algorithm;
+import std.string;
+import std.vector;
+
+mut int mode = 0;
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int identity) : identity(identity), storage(std::string("owned")) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int id() { return this.identity; }
+  ~Resource() {
+    std::println(this.identity);
+    if (mode == 3 && this.identity == 20) {
+      int checked = 1 / (mode - 3);
+    }
+  }
+};
+
+class Mapper {
+  std::string state;
+public:
+  Mapper() : state(std::string("mapper")) {}
+  ~Mapper() { std::println(90); }
+  Resource operator()(Resource& input) {
+    if (mode == 2 && input.id() == 2) {
+      int checked = 1 / (mode - 2);
+    }
+    return Resource(input.id() + 100);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc;
+  mut std::vector<Resource> source{};
+  source.reserve(std::size_t(2));
+  source.push_back(Resource(1));
+  source.push_back(Resource(2));
+  mut std::vector<Resource> destination{};
+  destination.reserve(std::size_t(2));
+  destination.push_back(Resource(10));
+  if (mode != 4) { destination.push_back(Resource(20)); }
+  std::transform(source, destination, Mapper());
+  return 0;
+}

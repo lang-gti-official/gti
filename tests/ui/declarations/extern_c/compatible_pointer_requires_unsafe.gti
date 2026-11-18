@@ -1,0 +1,8 @@
+// Compatible native aliases retain the unsafe requirement for pointer-bearing calls.
+namespace first { extern "C" { void inspect(const c_int* value); } }
+namespace second { extern "C" { void inspect(const c_int* value); } }
+int main() {
+  c_int value = 1;
+  second::inspect(&value);  //~ ERROR GTI-S2055
+  return 0;
+}

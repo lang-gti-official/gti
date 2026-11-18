@@ -39,6 +39,16 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       program.programInitializationPlan().steps.begin(),
       program.programInitializationPlan().steps.end(),
       [](const auto &step) { return step.nativeRetirement.has_value(); });
+  const bool cleansProgramStorage = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.sourceCleanup.has_value(); });
+  const bool programCleanupMayRaise = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(), [&](const auto &step) {
+        return step.sourceCleanup &&
+               mirDropMayRaiseDefinedFailure(program, *step.sourceCleanup);
+      });
   bool cThreadStarted = false;
   std::function<void(MirBlock &)> finishNativeFailure;
 
@@ -333,7 +343,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             {.kind = MirInstructionKind::Lifecycle,
                              .cleanupBoundaryEnd = boundary});
         }
-        if (retiresProgramStorage)
+        if (retiresProgramStorage || cleansProgramStorage)
           finishNativeFailure(*cleanup);
         const MirHostedStartupOperationId containOperation =
             beginOperation(MirHostedStartupOperationKind::ContainFailure,
@@ -388,16 +398,19 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     begin.info = generatedInfo(SemanticType::Void);
     appendInstruction(operation, entryBlock, std::move(begin));
   }
-  const auto drainThreadLocals = [&](MirBlock &block) {
+  const auto drainThreadLocals = [&](MirBlock &block, bool unwinding) {
     if (program.threadLocalStorage().empty())
-      return;
+      return MirInstructionId{0};
+    const bool mayRaise = cleansProgramStorage && !unwinding;
     const auto operation =
         beginOperation(MirHostedStartupOperationKind::DrainThreadLocals,
-                       MirHostedStartupFailureBehavior::None, block.id);
+                       failureBehavior(mayRaise), block.id);
     MirInstruction drain;
     drain.kind = MirInstructionKind::DrainThreadLocals;
+    drain.definedFailure =
+        propagation(FailurePropagationKind::Destructor, mayRaise);
     drain.info = generatedInfo(SemanticType::Void);
-    appendInstruction(operation, block, std::move(drain));
+    return appendInstruction(operation, block, std::move(drain));
   };
   const auto cThreadBoundary = [&](MirBlock &block, bool begin) {
     if (!program.requiresCThreadRuntime()) {
@@ -425,10 +438,24 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                       {.kind = MirInstructionKind::RetireProgramStorage,
                        .info = generatedInfo(SemanticType::Void)});
   };
+  const auto cleanupProgramStorage = [&](MirBlock &block, bool unwinding) {
+    if (!cleansProgramStorage)
+      return MirInstructionId{0};
+    const bool mayRaise = !unwinding && programCleanupMayRaise;
+    const auto operation =
+        beginOperation(MirHostedStartupOperationKind::CleanupProgramStorage,
+                       failureBehavior(mayRaise), block.id);
+    return appendInstruction(operation, block,
+                             {.kind = MirInstructionKind::CleanupProgramStorage,
+                              .definedFailure = propagation(
+                                  FailurePropagationKind::Destructor, mayRaise),
+                              .info = generatedInfo(SemanticType::Void)});
+  };
   finishNativeFailure = [&](MirBlock &block) {
-    drainThreadLocals(block);
+    drainThreadLocals(block, true);
     if (cThreadStarted)
       cThreadBoundary(block, false);
+    cleanupProgramStorage(block, true);
     retireProgramStorage(block);
   };
 
@@ -479,8 +506,14 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     }
     plan.entryResult = entryResult;
 
-    drainThreadLocals(*startupBlock);
+    const auto tlsDrain = drainThreadLocals(*startupBlock, false);
+    if (tlsDrain && cleansProgramStorage)
+      routeOperationFailure(startupBlock, tlsDrain, {});
     cThreadBoundary(*startupBlock, false);
+    cThreadStarted = false;
+    const auto programCleanup = cleanupProgramStorage(*startupBlock, false);
+    if (programCleanup && programCleanupMayRaise)
+      routeOperationFailure(startupBlock, programCleanup, {});
     retireProgramStorage(*startupBlock);
 
     const MirHostedStartupOperationId returnOperation =
@@ -1003,8 +1036,14 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     }
     plan.entryResult = entryResult;
 
-    drainThreadLocals(*finalBlock);
+    const auto tlsDrain = drainThreadLocals(*finalBlock, false);
+    if (tlsDrain && cleansProgramStorage)
+      routeOperationFailure(finalBlock, tlsDrain, {});
     cThreadBoundary(*finalBlock, false);
+    cThreadStarted = false;
+    const auto programCleanup = cleanupProgramStorage(*finalBlock, false);
+    if (programCleanup && programCleanupMayRaise)
+      routeOperationFailure(finalBlock, programCleanup, {});
     retireProgramStorage(*finalBlock);
 
     const MirHostedStartupOperationId returnOperation =

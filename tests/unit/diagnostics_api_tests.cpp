@@ -291,6 +291,45 @@ int main() {
          "ahead of its request notes");
 }
 
+// Retained member-constraint evidence is bounded and shared: long concept
+// application chains keep their outer and innermost entries, nested member
+// failures share one immutable leaf, and a sampled disjunction counts the
+// branches it omits. (Restored from the former compiler_declarations_tests.cpp
+// testConstraintFailureProvenance; its GTI sources became tests/ui cases.)
+void testConstraintEvidenceRetention() {
+  lang::SemanticConstraintFailure evidence;
+  evidence.argument = lang::SemanticType::Bool;
+  for (int index = 0; index < 24; ++index)
+    evidence.context.push_back({"Contract" + std::to_string(index), {}, {}});
+  auto retained =
+      lang::SemanticMemberConstraintCause::retain(std::move(evidence));
+  const auto leaf = retained.leaf;
+  expect(leaf->context.size() == 8 && leaf->context.capacity() == 8 &&
+             retained.omittedApplications == 16 &&
+             leaf->context.front().name == "Contract0" &&
+             leaf->context.back().name == "Contract23",
+         "bounded member evidence preserves outer and innermost applications");
+  for (int depth = 0; depth < 64; ++depth) {
+    lang::SemanticConstraintFailure wrapper;
+    wrapper.memberFailure.emplace();
+    wrapper.memberFailure->constraintCause = std::move(retained);
+    retained = lang::SemanticMemberConstraintCause::retain(std::move(wrapper));
+  }
+  expect(retained.leaf == leaf && retained.omittedMemberSteps == 64 &&
+             retained.omittedApplications == 16 && !leaf->memberFailure,
+         "nested member evidence shares one immutable leaf rather than a "
+         "recursive tree");
+  lang::SemanticConstraintFailure branchEvidence;
+  branchEvidence.alternatives.resize(2);
+  branchEvidence.alternatives.front().memberFailure.emplace();
+  branchEvidence.alternatives.front().memberFailure->constraintCause = retained;
+  const auto representative =
+      lang::SemanticMemberConstraintCause::retain(std::move(branchEvidence));
+  expect(
+      representative.leaf == leaf && representative.omittedAlternatives == 1,
+      "sampling a failed disjunction explicitly accounts for other branches");
+}
+
 } // namespace
 
 GTI_UNIT_TEST(diagnostic_foundation) {
@@ -310,5 +349,10 @@ GTI_UNIT_TEST(analysis_error_limit) {
 
 GTI_UNIT_TEST(library_report_merge) {
   testLibraryReportMerge();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(constraint_evidence_retention) {
+  testConstraintEvidenceRetention();
   return failures == 0 ? 0 : 1;
 }

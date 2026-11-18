@@ -1,0 +1,46 @@
+// An init statement's names end with the whole statement, exactly like the
+// first declaration of a block around it.
+int after_if() {
+  mut int seen = 0;
+  if (int found = 2; found > 1) {
+    seen = found;
+  } else {
+    seen = found + 1;
+  }
+  return seen + found; //~ ERROR GTI-S2001 Undefined name 'found'.
+}
+
+int after_switch() {
+  switch (int chosen = 3; chosen) {
+  default:
+    break;
+  }
+  return chosen; //~ ERROR GTI-S2001 Undefined name 'chosen'.
+}
+
+int after_range() {
+  mut int total = 0;
+  int values[2] = {1, 2};
+  for (int step = 2; int value : values) {
+    total += value * step;
+  }
+  return total + step; //~ ERROR GTI-S2001 Undefined name 'step'.
+}
+
+int redeclared() {
+  // The enclosing scope may declare the same name after the statement ends.
+  if (int reused = 1; reused == 1) {
+  }
+  int reused = 2;
+  int twice = 1;
+  int twice = 2; //~ ERROR GTI-S2006 Duplicate declaration of 'twice'.
+  return reused + twice;
+}
+
+int constant() {
+  if constexpr (int runtime = 3; true) { //~ ERROR GTI-S2057 The init statement of 'if constexpr' must declare a constexpr variable.
+    return runtime;
+  }
+}
+
+int main() { return after_if() + after_switch() + after_range() + redeclared() + constant(); }

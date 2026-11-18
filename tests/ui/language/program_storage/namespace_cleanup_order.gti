@@ -1,0 +1,16 @@
+// Namespace owners are destroyed in reverse successful construction order.
+//@ run-pass
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) { std::println(value); }
+  ~Marker() { std::println(value); }
+};
+Marker first{1};
+Marker second{2};
+int main() { std::println(3); return 0; }

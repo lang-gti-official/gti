@@ -1,0 +1,91 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (indexed borrows); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_index_mismatch bad_index_hole
+//@[bad_index_mismatch] args: case
+//@[bad_index_mismatch] run-fail
+//@[bad_index_mismatch] exit-code: 70
+//@[bad_index_mismatch] stderr-contains: indexed_borrows.gti:35: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_index_hole] args: case case
+//@[bad_index_hole] run-fail
+//@[bad_index_hole] exit-code: 70
+//@[bad_index_hole] stderr-contains: indexed_borrows.gti:43: runtime error[GTI-R0001]: integer_overflow in addition
+// --- indexed_borrows.gti
+import std.string;
+import std.vector;
+import std.memory;
+
+class Witness { public: int unrelated = 2147483647;  public: Witness() = default; };
+
+unsafe void initialize_index(int* pointer, uint64_t index) {
+  unsafe { std::construct_at(pointer + index, 7); }
+}
+
+unsafe int& borrow_index(uint64_t index, int* pointer, Witness& owner) {
+  unsafe { return std::assume_ref(pointer + index, owner); }
+}
+
+unsafe int indexed_borrow(int* pointer, uint64_t index, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer + index, 7);
+    int& value = borrow_index(index, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int initialized_indexed_borrow(int* pointer, uint64_t index, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, index);
+    int& value = borrow_index(index, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_index_mismatch(int* pointer, uint64_t index, uint64_t other, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, index);
+    int& value = borrow_index(other, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_index_hole(int* pointer, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, uint64_t(0));
+    int& value = borrow_index(uint64_t(1), pointer, owner);
+    return value + 1;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Witness owner{};
+  mut int pair[2] = {0, 2147483647};
+  unsafe {
+    std::destroy_at(&pair[0]);
+    if (argc == 2) return bad_index_mismatch(&pair[0], uint64_t(0), uint64_t(1), owner);
+    if (false) return bad_index_mismatch(&pair[0], uint64_t(1), uint64_t(0), owner);
+    if (argc == 3) return bad_index_hole(&pair[0], owner);
+    std::destroy_at(&pair[1]);
+    if (indexed_borrow(&pair[0], uint64_t(0), owner) != 8) return 1;
+    std::destroy_at(&pair[0]);
+    if (indexed_borrow(&pair[0], uint64_t(1), owner) != 8) return 2;
+    std::destroy_at(&pair[1]);
+    if (initialized_indexed_borrow(&pair[0], uint64_t(0), owner) != 8) return 3;
+    std::destroy_at(&pair[0]);
+    if (initialized_indexed_borrow(&pair[0], uint64_t(1), owner) != 8) return 4;
+    std::destroy_at(&pair[1]);
+    // Leave ordinary scope cleanup with live scalar objects.
+    std::construct_at(&pair[0], 0);
+    std::construct_at(&pair[1], 0);
+  }
+  return 0;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

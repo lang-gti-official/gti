@@ -1,0 +1,3 @@
+// Structural_relocation: invalid structural relocation is rejected before lowering.
+import std.memory;
+void need<T>() requires std::storage_element<T> {} void check<T>() requires std::numeric<T> || std::copyable<T> { need<T>(); } int main() { return 0; }  //~ ERROR GTI-S2029

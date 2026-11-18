@@ -1,0 +1,37 @@
+// A stored-region result cannot borrow through a carrier or base field in another region.
+// Before this check read carrier lifetime arguments and base classes, both
+// relays were accepted and returned a reference to `dropped` once it ended.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Pair<lifetime x, lifetime y> {
+  Box&<x> first;
+  Box&<y> second;
+  Pair(Box&<x> first, Box&<y> second) : first(first), second(second) {}
+};
+int&<r> pass<lifetime r>(Box&<r> box) { return box.value; }
+
+class Holder<lifetime a, lifetime b> {
+  Pair<a, b> pair;
+public:
+  Holder(Box&<a> first, Box&<b> second) : pair(Pair<a, b>(first, second)) {}
+  int&<a> wrong() && { return this.pair.second.value; }  //~ ERROR GTI-S2127 borrows through field 'second', which holds region 'b'
+  int&<a> wrong_arg() && { return pass(this.pair.second); }  //~ ERROR GTI-S2127 borrows through field 'second', which holds region 'b'
+};
+class Base<lifetime r> {
+protected:
+  Box&<r> stored;
+public:
+  Base(Box&<r> stored) : stored(stored) {}
+};
+class Derived<lifetime a, lifetime b> : public Base<b> {
+  Box&<a> mine;
+public:
+  Derived(Box&<a> mine, Box&<b> other) : Base<b>(other), mine(mine) {}
+  int&<a> wrong() && { return this.stored.value; }  //~ ERROR GTI-S2127 borrows through field 'stored', which holds region 'b'
+};
+int&<a> leak<lifetime a, lifetime b>(Box&<a> kept, Box&<b> dropped) {
+  return Holder(kept, dropped).wrong();
+}
+int main() { return 0; }

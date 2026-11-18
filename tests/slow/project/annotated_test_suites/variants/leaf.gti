@@ -1,0 +1,2 @@
+export module leaf;
+namespace leaf { export [[test]] void nested() {} }

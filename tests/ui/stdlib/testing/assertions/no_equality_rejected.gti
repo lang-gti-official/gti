@@ -1,0 +1,5 @@
+// std.testing rejects a no-equality assertion at compile time.
+//@ check-fail
+import std.testing;
+struct Item {};
+int main() { Item a{}; Item b{}; std::testing::check_eq!(a, b); return 0; }  //~ ERROR GTI-S2012 //~ ERROR GTI-S2012 //~ ERROR GTI-S2029

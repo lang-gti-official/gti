@@ -1,0 +1,51 @@
+// `gti test` selection controls, per-test outcomes and the JSON event
+// stream: listing, parallel runs with a timeout (pass, failure, signal and
+// timeout outcomes), exact/skip/allow-empty filters on the cached suite and
+// option errors. (From test_command_controls_test.py, with
+// tests/project/test_command_suites; its O3 repetition, the SIGINT/SIGTERM
+// interruption of a running suite and the closed report pipe are dropped: a
+// transcript cannot signal or close a running command.)
+$ cd project
+$ gti test --progress never -O0 --list --format json
+stdout: {"schema_version":1,"event":"suite_discovered","target":"engine-tests"
+stdout: "event":"run_finished","discovered":5,"selected":5,"started":0,"completed":0,
+stdout: "list_only":true,"complete":true
+!stdout: "event":"test_started"
+$ gti test --progress never -O0 --jobs 2 --timeout 2s --format json
+? 70
+stdout: "name":"a_pass","status":"passed"
+stdout: "name":"b_failure","status":"failed"
+stdout: forced-failure
+stdout: "name":"c_crash","status":"crashed"
+stdout: "name":"d_timeout","status":"timed_out"
+stdout: "name":"e_after","status":"passed"
+stdout: "selected":5,"started":5,"completed":5,"passed":2,"failed":1,"crashed":1,"timed_out":1,"runner_errors":0,
+stdout: "complete":true
+$ gti test --progress never -O0 --filter a_pass --exact --timeout 0 --format json
+stdout: "passed":1,
+stdout: "skipped":4,
+$ gti test --progress never -O0 --filter pass --skip a_pass --format json
+? 1
+stdout: {"name":"a_pass","selected":false,"skip_reason":"skipped"}
+stdout: "selected":0,
+stdout: "complete":false
+$ gti test --progress never -O0 --filter absent --allow-empty --format json
+stdout: "selected":0,
+stdout: "complete":true
+$ gti test --progress never -O0 --list --filter after
+stdout: e_after
+!stdout: a_pass
+$ gti test --progress never --jobs 0
+? 64
+$ gti test --progress never --timeout -1s
+? 64
+$ gti test --progress never --timeout 2
+? 64
+$ gti test --progress never --timeout 999999999999999999999m
+? 64
+$ gti test --progress never --exact
+? 64
+$ gti test --progress never --filter ""
+? 64
+$ gti test --progress never --format xml
+? 64

@@ -1989,6 +1989,13 @@ containment, and callable-boundary failures.
 The overloadable operator set and arity rules are defined by the incorporated
 grammar. Operators are member-only and are selected through ordinary exact
 semantic resolution. The backend does not perform GTI operator lookup.
+The primitive counted-view `+` binding supplied by `std.string` selects a
+trusted source function with both operands as arguments. It accepts another
+counted view or a read-only borrow of the owning result type and returns an
+independent owner. This is a primitive library adapter, not user-defined
+nonmember operator lookup or an implicit conversion; user declarations cannot
+replace it. Argument evaluation, temporary materialization, borrow checking,
+and cleanup use ordinary ordered call rules.
 `operator=` takes one exact argument and requires a mutable receiver. A
 same-type assignment with no exact user operator continues to use the class's
 generated copy or move assignment policy.
@@ -2186,6 +2193,42 @@ ignored result; a selected `[[discardable]]` declaration permits omission under
 its function/method contract. Neither suppresses the call's other checks. The
 complete selected-target/virtual-contract rule is in
 [execution semantics](execution.md#optional-api-results).
+
+### 3.10.1 Init Statements
+
+`if`, `if constexpr`, `switch` and range `for` accept a C++17/C++20 init
+statement before their condition, subject or range binding:
+`if (init; condition)`, `switch (init; subject)` and
+`for (init; binding : range)`. The init is one variable declaration (any
+binding form, including `auto`, `auto&`, `mut auto&`, `mut` and direct
+initialization), a structured-binding declaration, an expression statement or
+an empty `;`.
+
+The statement means exactly a block whose first statement is the init. Its
+names are in scope in the condition, subject or range expression and in every
+branch, `else` and `else if` included; an `else if` header may add its own init
+that is visible to the rest of that chain. Name lookup follows ordinary block
+scoping: an init name shadows an enclosing local of the same name, a nested
+block in a branch may shadow it in turn, and the enclosing scope may redeclare
+the name after the statement ends. A use after the statement is an undefined
+name (`GTI-S2001`) reported at that use.
+
+Ownership, borrowing and cleanup are those of the block. An owning init is
+destroyed exactly once when the whole statement ends, after the taken branch,
+and on every exit from it: falling through, `break` and `continue` out of an
+enclosing loop or switch, `return` and `?` propagation. A move out of the init
+inside a branch leaves nothing for the statement to destroy on that path. A
+reference init's loan lasts until the statement ends, so a conflicting access
+inside the statement is rejected while the same access after it is accepted.
+Semantics owns this scope, HIR publishes it as an ordinary block that encloses
+the statement, and verified MIR lowers it; no backend path reads the init
+from syntax.
+
+The init of `if constexpr` must be a `constexpr` variable declaration (or
+empty), because the branch is selected during semantic analysis
+(`GTI-S2057`, spanning the written init). The condition may read that
+constant. GTI does not provide the C++98 declaration-as-condition
+`if (T x = e)` or `while (T x = e)`.
 
 ## 3.11 Bounded Constant Evaluation
 
