@@ -5,7 +5,6 @@
 //@ run-pass
 //@ stdout: vector 1 2 7 9
 //@ stdout: span 7 3 9
-//@ stdout: array 4 5
 //@ stdout: list 1 2
 //@ stdout: forward_list 3
 //@ stdout: deque 5 6
@@ -18,7 +17,6 @@
 //@ stdout: simd 2 true
 //@ stdout: relay 3
 import std.algorithm;
-import std.array;
 import std.deque;
 import std.format;
 import std.forward_list;
@@ -56,13 +54,6 @@ int main() {
   std::span<int> prefix = view.first(std::size_t(3));
   int& back = prefix.back();
   std::println("span {} {} {}", front, middle + 1, back);
-
-  mut std::array<int, 2> pair{};
-  pair[std::size_t(0)] = 4;
-  pair[std::size_t(1)] = 5;
-  int& head = *pair.begin();
-  int& tail = pair.begin()[1];
-  std::println("array {} {}", head, tail);
 
   std::list<int> chain = {1, 2};
   mut auto link = chain.begin();

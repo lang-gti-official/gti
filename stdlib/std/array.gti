@@ -12,17 +12,17 @@ public:
   constexpr array_sentinel(size_t length) : length(length) {}
   constexpr size_t position() { return this.length; }
 };
-class array_iterator<T, uint64_t N, uint64_t Reverse = 0, lifetime owner> {
-  array<T, N>&<owner> owner;
+class array_iterator<T, uint64_t N, uint64_t Reverse = 0> {
+  array<T, N>& owner;
   mut size_t position;
 public:
-  constexpr array_iterator(array<T, N>&<owner> owner, size_t position) : owner(owner), position(position) {}
-  constexpr T&<owner> operator*() {
+  constexpr array_iterator(array<T, N>& owner, size_t position) : owner(owner), position(position) {}
+  constexpr T& operator*() {
     size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
     unsafe { return this.owner.get_unchecked(selected); }
   }
-  constexpr T&<owner> operator->() { return *this; }
-  constexpr T&<owner> operator[](ptrdiff_t offset) {
+  constexpr T& operator->() { return *this; }
+  constexpr T& operator[](ptrdiff_t offset) {
     size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
     return this.owner[index];
   }
