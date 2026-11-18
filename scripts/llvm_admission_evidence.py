@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Capture and compare RFC 0007 whole-plan/LLVM evidence, never bless changes.
 
-The capture command defaults to the numbered, single-entry examples. Supply an
+The capture command defaults to the single-file root examples. Supply an
 explicit input manifest (a JSON array of repository-relative source paths) for
 other ordinary GTI sources. Multi-section UI tests need materializing first;
 this tool does not pretend their embedded files are ordinary source files.
@@ -34,7 +34,7 @@ def capture(args: argparse.Namespace) -> int:
     root, runner = args.root.resolve(), args.runner.resolve()
     names = (json.loads(args.inputs.read_text()) if args.inputs else
              [str(p.relative_to(root)) for p in
-              sorted((root / "examples").glob("[0-9][0-9][0-9]-*.gti"))])
+              sorted((root / "examples").glob("*.gti"))])
     if (not isinstance(names, list) or not names or
             any(not isinstance(name, str) for name in names) or
             len(set(names)) != len(names)):

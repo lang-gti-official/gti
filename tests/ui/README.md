@@ -107,7 +107,7 @@ prelude and raw-audit configurations instead of silently capturing another
 program configuration.
 This command does not run the executable or establish performance evidence:
 it emits IR and object bytes separately and repeats backend planning.
-`scripts/llvm_admission_evidence.py capture` runs this over numbered examples
+`scripts/llvm_admission_evidence.py capture` runs this over all root examples
 or an explicit input manifest at O0/O2; `compare` verifies retained bytes,
 input identities and complete case inventories without accepting a new baseline.
 

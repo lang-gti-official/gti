@@ -87,6 +87,19 @@ def admission_evidence_test(runner):
             result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
             expect(result.returncode == 0, "admission evidence capture succeeds",
                    result.stdout + result.stderr)
+        examples = root / "examples"
+        examples.mkdir()
+        (examples / "unnumbered.gti").write_text("int main() { return 0; }\n")
+        default_output = root / "default-corpus"
+        result = subprocess.run(
+            [sys.executable, str(tool), "capture", "--root", str(root),
+             "--runner", str(runner), "--output", str(default_output)],
+            capture_output=True, text=True, timeout=120)
+        expect(result.returncode == 0 and set(json.loads(
+            (default_output / "manifest.json").read_text())["sources"]) ==
+            {"examples/unnumbered.gti"},
+            "default corpus includes examples without numeric prefixes",
+            result.stdout + result.stderr)
         def compare():
             return subprocess.run([sys.executable, str(tool), "compare",
                                    *map(str, captures)], capture_output=True,

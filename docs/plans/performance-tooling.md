@@ -12,7 +12,7 @@ whole-query memoization/replay, and integer coverage keys remain to implement.
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
 capture --runner BUILD/gti-test --output NEW_DIRECTORY --validation` captures
-the numbered single-file examples at O0/O2; `--inputs MANIFEST.json` names an
+all single-file root examples at O0/O2; `--inputs MANIFEST.json` names an
 explicit JSON array of repository-relative source paths for other corpora.
 Multi-file project examples and embedded UI sections need their own explicit
 input setup; the default capture does not claim those as covered. The tool
