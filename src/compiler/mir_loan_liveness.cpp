@@ -1132,6 +1132,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         }
       }
     }
+    // A use by a statement that encloses the loan's creation (a for-loop's
+    // condition or step over a cursor its initializer declares) repeats on
+    // every iteration: the loan keeps its region's whole extent.
+    if (created[loan.id] &&
+        std::any_of(own.begin(), own.end(), [&](HirStatementId use) {
+          return use != *created[loan.id] && within(*created[loan.id], use);
+        }))
+      continue;
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);

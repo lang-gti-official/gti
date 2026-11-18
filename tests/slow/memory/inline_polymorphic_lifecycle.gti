@@ -41,7 +41,7 @@
 //@[exhausted] run-fail
 //@[exhausted] exit-signal: SIGABRT
 //@[exhausted] args: phase
-//@[exhausted] stderr-contains: <std/detail/memory_core>:248: runtime error[GTI-R0011]: allocation_failure in unique_owner
+//@[exhausted] stderr-contains: <std/detail/memory_core>:310: runtime error[GTI-R0011]: allocation_failure in unique_owner
 //@[division] run-fail
 //@[division] exit-code: 70
 //@[division] args: phase phase
