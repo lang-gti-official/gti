@@ -1470,9 +1470,14 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
 }
 
 auto SemanticVisitor::Impl::validateReturnedCallRegion(
-    const FunctionDecl &syntax, const ExprPtr &value) -> bool {
+    const FunctionDecl &syntax, const ExprPtr &value,
+    std::vector<const Expr *> visited) -> bool {
   if (!value)
     return true;
+  // Error recovery can leave a self-referential initializer in the AST.
+  // Its earlier binding error is authoritative; never recurse through it.
+  if (std::find(visited.begin(), visited.end(), value.get()) != visited.end())
+    return false;
   const auto declared = resultRegion(syntax.returnType());
   if (!declared || declared->kind != TokenKind::IDENTIFIER)
     return true;
@@ -1552,9 +1557,12 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
         symbol->bindingKind == SemanticBindingKind::LocalVariable &&
         symbol->type.kind == SemanticType::Reference &&
         symbol->variableDeclaration != nullptr &&
-        symbol->variableDeclaration->initializer())
+        symbol->variableDeclaration->initializer()) {
+      visited.push_back(value.get());
       return validateReturnedCallRegion(
-          syntax, symbol->variableDeclaration->initializer());
+          syntax, symbol->variableDeclaration->initializer(),
+          std::move(visited));
+    }
     return true;
   }
   // A carrier parameter's storage and what it stores live in different

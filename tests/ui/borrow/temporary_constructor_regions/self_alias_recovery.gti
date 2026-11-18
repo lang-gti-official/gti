@@ -1,0 +1,6 @@
+// An invalid self-referential initializer must not recurse while checking its return.
+int&<a> relay<lifetime a>(int&<a> keep) {
+  int& value = value; //~ ERROR GTI-S2001
+  return value;
+}
+int main() { return 0; }
