@@ -52,13 +52,13 @@ byte-for-byte and retained. These comparisons do not execute the programs.
 | Slice | PR | Candidate | Completed plan/IR/object comparisons | Linked example binaries |
 | --- | --- | --- | --- | --- |
 | Telemetry and evidence | [567](https://github.com/lang-gti-official/gti/pull/567) | `7c1c162204e68cbd689856195914b76075528b49` | Baseline retained | Baseline retained |
-| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | 1,470 against baseline; 46 positive UI admission captures pending | All 414 identical |
+| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | All 1,516 identical to baseline | All 414 identical |
 | Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,516 identical to reconciled parent | All 414 identical |
 | Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,516 identical to index parent | All 414 identical |
 | Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,516 identical to memo parent | Pending |
 
-The final candidate also matches the original baseline on all 1,470 example,
-registered-coverage and supplemental slow-admission captures. The first example baseline was recorded at
+The final candidate also matches the original baseline on all 1,516 example,
+registered-coverage and admission captures. The first example baseline was recorded at
 `b330a043a03086fc4f736322e6f9c32c2b3d394a`; the subsequent telemetry checkpoint
 extends the harness to preserve library exports and provider setup. All slices
 use the same frozen input and standard-library paths. The index slice's exact
