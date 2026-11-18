@@ -3383,7 +3383,9 @@ result, as for a stored group, may be a read-only reference formal's
 referent, or a field or element of it, without a loan of the body's own.
 
 Those exemptions hold only inside the body. A loan that leaves it never
-depends on an object the body declares, and a returned loan under a
+depends on an object the body owns: a local, or a by-value formal other
+than a borrow carrier, whose dependency stands for the caller-owned
+referents it stores (rejected as a borrow escape at its return); and a returned loan under a
 one-formal contract publishes only that formal (or static storage): each
 argument that the producing call, and any call nested in its arguments,
 borrows must be that formal, and, unless a receiver's stored group relays

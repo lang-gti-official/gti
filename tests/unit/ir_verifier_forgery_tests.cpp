@@ -3732,13 +3732,18 @@ int&<a> with_local<lifetime a>(int&<a> keep) {
   int seen = local;
   return keep;
 }
+int&<a> with_value<lifetime a>(int&<a> keep, int value) {
+  int seen = value;
+  return keep;
+}
 int main() {
   int x = 1;
   int y = 2;
   int& r = both(x, y);
   int& s = one(x, y);
   int& t = with_local(x);
-  return r + s + t - 4;
+  int& u = with_value(x, y);
+  return r + s + t + u - 5;
 }
 )");
   expect(frontend.canGenerateCode(), "the returned-supplier program compiles");
@@ -3842,6 +3847,34 @@ int main() {
                 {.source = local, .access = lang::AccessMode::ReadOnly});
       },
       "MIR must reject a returned loan that depends on body-owned storage");
+  // A by-value formal is the body's own object too: it dies at return.
+  const auto *withValue = find([&](const lang::MirFunctionInstance &function) {
+    return function.returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+           function.parameterTypes.size() == 2 &&
+           function.parameterTypes[1].kind != lang::SemanticType::Reference &&
+           returnLoan(function);
+  });
+  expect(withValue != nullptr, "the by-value formal function is found");
+  if (withValue == nullptr)
+    return;
+  auto malformed = frontend.mir;
+  auto *instance = const_cast<lang::MirFunctionInstance *>(
+      malformed.findFunctionInstance(withValue->id));
+  lang::MirPlaceId formal = 0;
+  for (const auto &place : instance->body.places)
+    if (place.root == lang::MirPlaceRootKind::Binding &&
+        place.binding == instance->parameterBindings[1] &&
+        place.projections.empty())
+      formal = place.id;
+  for (auto &loan : instance->body.loans)
+    if (loan.kind == lang::MirLoanKind::Return)
+      loan.additionalDependencies.push_back(
+          {.source = formal, .access = lang::AccessMode::ReadOnly});
+  const auto result = lang::verifyMirProgram(malformed);
+  expect(formal != 0 && !result.valid() &&
+             result.errors.front().message.find(
+                 "depends on body-owned storage") != std::string::npos,
+         "MIR must reject a returned loan that depends on a by-value formal");
 }
 
 // A consumed temporary relays its read-only union result to the stored

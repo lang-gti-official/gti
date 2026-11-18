@@ -3408,19 +3408,38 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             return projection.kind == MirProjectionKind::Dereference ||
                    projection.kind == MirProjectionKind::RawDereference;
           });
-      // A reference binding names its referent; a formal is the caller's
-      // argument. Only an object this body declares dies with it.
-      const bool referenceOrFormal = std::any_of(
+      // A reference binding, formal or local, names its referent, and a
+      // by-value borrow-carrier formal stands for the caller-owned referents
+      // its stored references designate. Any other object, a scalar or
+      // owned by-value formal included, dies with the body.
+      const bool reference = std::any_of(
           body.places.begin(), body.places.end(), [&](const MirPlace &base) {
             return base.root == MirPlaceRootKind::Binding &&
                    base.binding == place->binding && base.projections.empty() &&
-                   (base.initiallyAvailable ||
-                    base.type.kind == SemanticType::Reference);
+                   (base.type.kind == SemanticType::Reference ||
+                    (base.initiallyAvailable &&
+                     base.traits.containsBorrowedState));
           });
-      if (!throughReference && !referenceOrFormal)
-        return failure(body, owner,
-                       "escaping loan " + std::to_string(loan.id) +
-                           " depends on body-owned storage");
+      // A reference element of a reference pack is a reference slot too.
+      if (!throughReference && !reference &&
+          place->type.kind != SemanticType::Reference) {
+        // A returned loan is a borrow escape at its return, not malformed
+        // MIR.
+        MirBlockId returning = 0;
+        for (const MirBlock &block : body.blocks)
+          if (block.terminator.returnLoan &&
+              *block.terminator.returnLoan == loan.id)
+            returning = block.id;
+        MirVerificationResult rejected =
+            failure(body, owner,
+                    "escaping loan " + std::to_string(loan.id) +
+                        " depends on body-owned storage",
+                    returning);
+        if (returning != 0)
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Escape, .loan = loan.id};
+        return rejected;
+      }
     }
   }
   for (const MirLoan &loan : body.loans) {
