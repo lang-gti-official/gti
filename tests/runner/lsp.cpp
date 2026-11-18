@@ -266,7 +266,7 @@ LspServer::LspServer(fs::path executable, fs::path log,
 
 LspServer::~LspServer() { stop(); }
 
-bool LspServer::start(std::string &error) {
+bool LspServer::start(std::string &error, const fs::path &trace) {
   int down[2];
   int up[2];
   if (pipe(down) != 0 || pipe(up) != 0) {
@@ -280,6 +280,8 @@ bool LspServer::start(std::string &error) {
   argv.push_back(nullptr);
   const pid_t child = fork();
   if (child == 0) {
+    if (!trace.empty())
+      setenv("GTI_LSP_FRONTEND_TRACE", trace.c_str(), 1);
     dup2(down[0], 0);
     dup2(up[1], 1);
     const int logFd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1798,7 +1800,10 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
                                {"$DIR", directory.string()},
                                {"$URI", uriFor(directory / "main.gti")}};
   std::string error;
-  if (!server.start(error)) {
+  const fs::path trace = text.find("\"analysisTrace\"") == std::string::npos
+                             ? fs::path{}
+                             : directory / "frontend.jsonl";
+  if (!server.start(error, trace)) {
     result.failure = error + "\n";
     return result;
   }
@@ -1833,6 +1838,27 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
           directory / file->getString("name").value_or("main.gti").str();
       fs::create_directories(path.parent_path());
       writeFile(path, file->getString("text").value_or("").str());
+    } else if (const json::Value *expected = step->get("analysisTrace")) {
+      // The server closes the trace record before publishing diagnostics.
+      // Match the most recent analysis for the main document after that reply.
+      std::istringstream records(readFile(trace).value_or(""));
+      std::optional<json::Value> latest;
+      for (std::string row; std::getline(records, row);) {
+        auto record = json::parse(row);
+        if (!record) {
+          llvm::consumeError(record.takeError());
+          continue;
+        }
+        const auto *object = record->getAsObject();
+        if (object && object->getString("kind") == "analysis" &&
+            object->getString("uri") == uriFor(directory / "main.gti"))
+          latest = std::move(*record);
+      }
+      if (!latest || !matchesExpected(*expected, *latest)) {
+        result.failure +=
+            where + "expected analysis trace " + print(*expected) + "\n";
+        break;
+      }
     } else if (const json::Value *message = step->get("send")) {
       server.send(substitute(*message, names));
     } else if (const json::Value *expected = step->get("expect")) {

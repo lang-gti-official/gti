@@ -1,0 +1,16 @@
+// Fixed version keys compare at the first unequal element and include the empty case.
+//@ run-pass
+import std.array;
+
+int main() {
+  auto older = std::array<uint64_t, 4>({uint64_t(1), uint64_t(2), uint64_t(99), uint64_t(4)});
+  auto newer = std::array<uint64_t, 4>({uint64_t(1), uint64_t(3), uint64_t(0), uint64_t(4)});
+  auto same = std::array<uint64_t, 4>({uint64_t(1), uint64_t(2), uint64_t(99), uint64_t(4)});
+  std::array<uint64_t, 0> empty{};
+  std::array<uint64_t, 0> other_empty{};
+  if (!(older < newer && newer > older && older <= newer && newer >= older && older != newer)) { return 1; }
+  if (older > newer || newer < older || older >= newer || newer <= older || older == newer) { return 2; }
+  if (!(older == same && older <= same && older >= same) || older != same || older < same || older > same) { return 3; }
+  if (!(empty == other_empty && empty <= other_empty && empty >= other_empty) || empty != other_empty || empty < other_empty || empty > other_empty) { return 4; }
+  return 0;
+}

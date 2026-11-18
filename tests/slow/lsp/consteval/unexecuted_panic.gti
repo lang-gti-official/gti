@@ -1,5 +1,6 @@
 // An unexecuted compile-time panic publishes nothing; an executed one fails
 // the invocation (#174, #175). (From consteval_lsp_test.py.)
+//@ slow
 import std.panic;
 consteval void require_small(int value) {
   if (value > 10) { std::panic("format pattern rejected: too large"); }

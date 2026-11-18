@@ -561,6 +561,9 @@ public:
   // Drops the caller-owned graph, sources and metrics a frozen preamble
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
+  std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &,
+                     const std::atomic<bool> *) const;
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
   [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
@@ -837,7 +840,8 @@ public:
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
                            bool constexprDeclarationValid,
-                           bool explainMissingReturnAfterBody = false);
+                           bool explainMissingReturnAfterBody = false,
+                           const BlockStmt *editedBody = nullptr);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
@@ -1194,6 +1198,10 @@ private:
     bool requiresUnsafe = false;
     // Index in arguments: receiver=0, result=1 (never an origin), operands>=2.
     std::optional<std::size_t> borrowSource;
+    // Free calls retain their declaration-site query and lookup scope. Their
+    // arguments are the read-only parameter types followed by the result.
+    const MemberRequirement *freeCallQuery = nullptr;
+    std::vector<std::string> freeCallScope;
   };
 
   struct ContextualCallableResult {
@@ -1909,6 +1917,8 @@ private:
       bool mutableReceiver = false;
       bool requiresUnsafe = false;
       std::optional<std::size_t> borrowSource;
+      const MemberRequirement *freeCallQuery = nullptr;
+      std::vector<std::string> freeCallScope;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -3750,11 +3760,16 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
-      SemanticConstraintGuidance *guidance = nullptr) const;
+      SemanticConstraintGuidance *guidance = nullptr,
+      FunctionId *selectedFreeCall = nullptr) const;
   [[nodiscard]] bool expressionRequirementSatisfiedOnce(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason, const std::vector<std::string> *lookupScope,
-      SemanticConstraintGuidance *guidance) const;
+      SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const;
+  [[nodiscard]] bool
+  applyRequiredFreeCall(const Call &call,
+                        std::span<const SemanticType> argumentTypes,
+                        Symbol &callee);
   // A query's reported outcome (reason and guidance) belongs to its last
   // attempt: a repeated attempt starts from the caller's values.
   template <typename Once>
@@ -3813,7 +3828,8 @@ private:
     std::unique_ptr<Impl> impl;
     std::vector<SemanticCatalog> *idleCatalogs = nullptr;
   };
-  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker() const;
+  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker(
+      const SemanticModel *publishedBase = nullptr) const;
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
@@ -3825,10 +3841,11 @@ private:
                                    std::string *reason,
                                    const std::vector<std::string> *lookupScope,
                                    SemanticConstraintGuidance *guidance) const;
-  [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
-      const ConceptApplication &application,
-      const std::vector<SemanticType> &arguments,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::optional<PredicateCapability>
+  predicateCapabilityFor(const ConceptApplication &application,
+                         const std::vector<SemanticType> &arguments,
+                         const std::vector<std::string> *lookupScope = nullptr,
+                         bool admitNegation = false) const;
   mutable std::size_t expressionRequirementDepth = 0;
   mutable std::shared_ptr<std::size_t> requirementQueryWork;
   [[nodiscard]] bool
@@ -3887,6 +3904,23 @@ private:
   [[nodiscard]] bool activeRequirementsImply(
       std::span<const AppliedConceptRequirement> requirements,
       const ConstraintExpression &expression, std::size_t root) const;
+  // Whether `wanted` has the trusted fact `fact` (negated: lacks it) while
+  // `parameter` is assumed to have `assumed` (negated: to lack it). The
+  // ordinary structural evaluator answers under that temporary hypothesis;
+  // a fact it cannot derive from fields yields no proof.
+  [[nodiscard]] bool liftedParameterFact(const SemanticType &parameter,
+                                         GenericConstraintKind assumed,
+                                         const SemanticType &wanted,
+                                         GenericConstraintKind fact,
+                                         bool negated) const;
+  // Case-analysis hypotheses of the active implication proof: a type
+  // parameter assumed to have trusted facts, or to carry borrowed state.
+  struct AssumedParameterFact {
+    GenericParameterId parameter = 0;
+    GenericConstraintSet constraints = 0;
+    bool borrowedState = false;
+  };
+  mutable std::vector<AssumedParameterFact> assumedParameterFacts;
 
   [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
       const AppliedConceptRequirement &requirement) const;
@@ -5083,7 +5117,8 @@ private:
       const std::vector<ConceptApplication> &requirements);
   [[nodiscard]] std::optional<PredicateCapability>
   constraintPredicateCapability(const Call &call,
-                                const std::vector<SemanticType> &typeArguments);
+                                const std::vector<SemanticType> &typeArguments,
+                                bool admitNegation = false);
 
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
@@ -6620,6 +6655,8 @@ private:
   // (L-OWN-02).
   [[nodiscard]] bool
   receiverTextFieldRelay(const CallableCandidate &function) const;
+  [[nodiscard]] bool
+  receiverClassRegionRelay(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,

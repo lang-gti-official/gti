@@ -13,20 +13,15 @@ namespace lang {
 // representation while computing them.
 class MirDominanceInfo {
 public:
-  [[nodiscard]] std::size_t blockCount() const {
-    return immediateDominators.size();
-  }
+  [[nodiscard]] std::size_t blockCount() const { return blocks.size(); }
 
   [[nodiscard]] bool isReachable(MirBlockId block) const {
-    return block != 0 && block <= reachableBlocks.size() &&
-           reachableBlocks[block - 1];
+    return block != 0 && block <= blocks.size() && blocks[block - 1].entry != 0;
   }
 
   // Returns zero for the entry block, unreachable blocks, and invalid IDs.
   [[nodiscard]] MirBlockId immediateDominator(MirBlockId block) const {
-    return block == 0 || block > immediateDominators.size()
-               ? 0
-               : immediateDominators[block - 1];
+    return block == 0 || block > blocks.size() ? 0 : blocks[block - 1].parent;
   }
 
   [[nodiscard]] bool dominates(MirBlockId dominator, MirBlockId block) const;
@@ -38,8 +33,19 @@ private:
   friend std::optional<MirDominanceInfo>
   computeMirDominance(const MirBody &body);
 
-  std::vector<MirBlockId> immediateDominators;
-  std::vector<bool> reachableBlocks;
+  struct Block {
+    MirBlockId parent = 0;
+    // Inclusive subtree interval in dominator-tree preorder. Zero is reserved
+    // for unreachable blocks. Both endpoints fit even at the CFG size limit.
+    unsigned entry = 0;
+    unsigned exit = 0;
+
+    // Traversal order among siblings is not a dominance fact.
+    bool operator==(const Block &other) const {
+      return parent == other.parent && (entry != 0) == (other.entry != 0);
+    }
+  };
+  std::vector<Block> blocks;
 };
 
 // Computes fresh dominance information for a structurally usable MIR CFG.

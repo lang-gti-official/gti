@@ -1,0 +1,20 @@
+// The joined remainder bounds prove one addition safe. Each sibling still needs its own overflow check.
+//@ snapshot: optimization-report
+//@ opt: O3
+//@ reason: Branch-specific overflow discharges are visible in the optimized MIR safety report.
+// CHECK: safety family arithmetic-overflow source=3 emitted=2 statically-discharged=1
+extern "C" { int external_input(); }
+int bump(int value, bool left) {
+  mut int bounded = 0;
+  if (left) {
+    if (value > 100) { return value + 10; }
+    bounded = value % 7;
+  } else {
+    if (value > 200) { return value + 20; }
+    bounded = value % 9;
+  }
+  return bounded + 1;
+}
+int main() {
+  return bump(external_input(), external_input() == 1);
+}

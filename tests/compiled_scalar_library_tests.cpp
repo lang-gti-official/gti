@@ -224,8 +224,9 @@ int main() {
                   "GTI-B0003", "requires passive program storage"},
         Rejection{"thread_local mut int total;", "GTI-B0003",
                   "requires passive program storage"},
-        // Hosted programs support owning globals, but compiled-scalar
-        // artifacts may still only contain passive program storage.
+        // Hosted programs accept source-owned global cleanup, but a compiled
+        // library has no program shutdown, so compiled-unit admission must
+        // still reject the root's source cleanup recipe.
         Rejection{"class Guard { public: Guard() = default; ~Guard() {} }; "
                   "Guard guard{}; mut int total;",
                   "GTI-B0003", "requires passive program storage"}}) {
