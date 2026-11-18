@@ -4090,6 +4090,36 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
+  // A consumed receiver's cleanup runs after its result is published. When
+  // that cleanup uses the receiver's stored references (a lifecycle-bound
+  // carrier), an exclusive one cannot also lend its referent to the result:
+  // the cleanup could write it while the shared result is live. Rust
+  // likewise forbids moving a field out of a `Drop` type.
+  if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
+      functionInfo != nullptr && functionInfo->ownerClass != 0 &&
+      lifecycleBoundBorrowCarrierFor(openClassType(functionInfo->ownerClass)))
+    if (const auto lifetime = explicitLifetimeResult(
+            stmt, functionInfo->parameterTypes, functionInfo->ownerClass);
+        lifetime.classBinder)
+      if (const auto *owner = classInfo(functionInfo->ownerClass).declaration)
+        for (const auto &member : owner->members()) {
+          const auto *field = stmtAs<VariableDecl>(member.get());
+          if (field == nullptr || !field->type().reference ||
+              typeOf(field->type(), field->mutability()).referenceAccess !=
+                  AccessMode::Mutable ||
+              !field->type().referenceLifetime ||
+              field->type().referenceLifetime->name.lexeme != lifetime.region)
+            continue;
+          report(stmt.name(),
+                 "A consuming method of a class whose cleanup uses its "
+                 "stored references cannot return a borrow in region '" +
+                     lifetime.region +
+                     "': cleanup still holds the exclusive "
+                     "reference '" +
+                     field->name().lexeme + "' while the result is live.",
+                 "GTI-S2022");
+          break;
+        }
   if (!stmt.body() || !requirementsValid ||
       (stmt.isMacro() && !stmt.isProceduralMacro())) {
     // A typed macro is a statement template, not a callable value.

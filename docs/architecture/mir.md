@@ -3349,6 +3349,16 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+A consumed temporary receiver whose stored group is exclusive may hand its
+read-only class-region result to the group's suspended parent authority only
+when that group is not lifecycle-bound and retires within the full
+expression with nothing between the call and its end but other ends, the
+result's own publication (a return borrow or a reference binding) and drops.
+Verification checks that exact sequence. A further stored path of the same
+carrier is another field's owner and never the relayed one; and the referent
+of a read-only reference formal may be an additional source of a stored
+group without a loan of the body's own, as an owned local input may.
+
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly
 or through a child loan) is still used. Lowering a body takes two passes. The
