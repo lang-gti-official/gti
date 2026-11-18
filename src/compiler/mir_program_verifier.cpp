@@ -24224,8 +24224,16 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
   }
 
-  MirCarrierAnalysis carrierAnalysis(program);
-  const MirCarrierAnalysisScope carrierScope(carrierAnalysis);
+  // Reuse a caller's live session over this program, or open one.
+  std::optional<MirCarrierAnalysis> ownCarrierAnalysis;
+  std::optional<MirCarrierAnalysisScope> ownCarrierScope;
+  MirCarrierAnalysis *activeCarrierAnalysis = activeMirCarrierAnalysis(program);
+  if (!activeCarrierAnalysis) {
+    ownCarrierAnalysis.emplace(program);
+    ownCarrierScope.emplace(*ownCarrierAnalysis);
+    activeCarrierAnalysis = &*ownCarrierAnalysis;
+  }
+  MirCarrierAnalysis &carrierAnalysis = *activeCarrierAnalysis;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {

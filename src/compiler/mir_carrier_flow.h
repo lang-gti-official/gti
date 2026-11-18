@@ -3,6 +3,7 @@
 #include "gti/mir.h"
 
 #include <compare>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -128,6 +129,14 @@ conservativeMirRetentions(const MirCarrierFlow &flow);
 // reconstructed, and only summaries of functions in the immutable program are
 // cached. A changed program (including a mutated-MIR test) needs a new session;
 // provisional recursive facts never escape a query.
+// Forward fixed point over actual MIR control flow. Copies retain independent
+// sets; exact direct local replacements kill the previous set; projected and
+// indirect writes widen. This query does not admit a source store or certify
+// raw storage: those require their separate type/storage contracts.
+[[nodiscard]] MirCarrierFlow
+deriveMirCarrierFlow(const MirBody &body, const MirProgram *program = nullptr,
+                     bool includeBlockEntries = false);
+
 class MirCarrierAnalysis {
 public:
   explicit MirCarrierAnalysis(const MirProgram &program);
@@ -140,6 +149,10 @@ public:
 
 private:
   friend class MirCarrierAnalysisScope;
+  friend std::uint64_t activeMirCarrierSession(const MirProgram &program);
+  friend MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
+                                             const MirProgram *program,
+                                             bool includeBlockEntries);
   struct Impl;
   std::unique_ptr<Impl> implementation;
 };
@@ -152,6 +165,9 @@ private:
 // The analysis a live MirCarrierAnalysisScope holds over `program`, if any.
 [[nodiscard]] MirCarrierAnalysis *
 activeMirCarrierAnalysis(const MirProgram &program);
+// A process-unique identity of the live scope over `program` (0 if none).
+// Queries over that immutable program may cache results under it.
+[[nodiscard]] std::uint64_t activeMirCarrierSession(const MirProgram &program);
 
 class MirCarrierAnalysisScope {
 public:
@@ -174,12 +190,5 @@ private:
 deriveMirRetainingStoreEffects(const MirFunctionInstance &function,
                                const MirProgram *program = nullptr);
 
-// Forward fixed point over actual MIR control flow. Copies retain independent
-// sets; exact direct local replacements kill the previous set; projected and
-// indirect writes widen. This query does not admit a source store or certify
-// raw storage: those require their separate type/storage contracts.
-[[nodiscard]] MirCarrierFlow
-deriveMirCarrierFlow(const MirBody &body, const MirProgram *program = nullptr,
-                     bool includeBlockEntries = false);
 
 } // namespace lang

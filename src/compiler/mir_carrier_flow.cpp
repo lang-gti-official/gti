@@ -2626,11 +2626,15 @@ struct MirCarrierAnalysis::Impl {
   bool memoize = false;
   std::set<const MirBody *> programBodies;
   std::map<std::pair<const MirBody *, bool>, MirCarrierFlow> flows;
+  // Flows of the same bodies analysed without program context.
+  std::map<std::pair<const MirBody *, bool>, MirCarrierFlow> programlessFlows;
+  std::uint64_t session = 0;
   explicit Impl(const MirProgram &program) : context{.program = &program} {}
 };
 
 namespace {
 thread_local MirCarrierAnalysis *activeCarrierAnalysis = nullptr;
+thread_local std::uint64_t nextCarrierSession = 0;
 } // namespace
 
 MirCarrierAnalysisScope::MirCarrierAnalysisScope(MirCarrierAnalysis &analysis)
@@ -2638,6 +2642,7 @@ MirCarrierAnalysisScope::MirCarrierAnalysisScope(MirCarrierAnalysis &analysis)
   auto &impl = *analysis.implementation;
   if (!impl.memoize) {
     impl.memoize = true;
+    impl.session = ++nextCarrierSession;
     for (const MirBodyAddress address :
          enumerateMirBodyAddresses(*impl.context.program))
       if (const MirBody *body = findMirBody(*impl.context.program, address))
@@ -2654,6 +2659,11 @@ MirCarrierAnalysis *activeMirCarrierAnalysis(const MirProgram &program) {
   return activeCarrierAnalysis && &activeCarrierAnalysis->program() == &program
              ? activeCarrierAnalysis
              : nullptr;
+}
+
+std::uint64_t activeMirCarrierSession(const MirProgram &program) {
+  const auto *analysis = activeMirCarrierAnalysis(program);
+  return analysis ? analysis->implementation->session : 0;
 }
 
 MirCarrierAnalysis::MirCarrierAnalysis(const MirProgram &program)
@@ -2700,6 +2710,23 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
   if (program && activeCarrierAnalysis &&
       &activeCarrierAnalysis->program() == program)
     return activeCarrierAnalysis->flow(body, includeBlockEntries);
+  // A program-less flow of one of the scope's own bodies is equally fixed.
+  auto *memo = !program && activeCarrierAnalysis &&
+                       activeCarrierAnalysis->implementation->programBodies
+                           .contains(&body)
+                   ? &activeCarrierAnalysis->implementation->programlessFlows
+                   : nullptr;
+  if (memo)
+    if (const auto found = memo->find({&body, includeBlockEntries});
+        found != memo->end())
+      return found->second;
+  if (memo) {
+    AnalysisContext context{.program = nullptr};
+    context.includeBlockEntries = includeBlockEntries;
+    auto result = deriveFlow(body, context);
+    memo->emplace(std::pair{&body, includeBlockEntries}, result);
+    return result;
+  }
   AnalysisContext context{.program = program};
   solveCallEffects(body, context);
   context.includeBlockEntries = includeBlockEntries;
