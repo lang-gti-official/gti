@@ -4816,6 +4816,9 @@ leave the input byte-identical.
 small pass framework. The manager revisions bodies and caches CFG/reachability,
 dominance, value uses, effects, scalar-promotion inputs, safety proofs,
 place-alias/escape facts, natural-loop/range facts, and sparse constants.
+Each reachable block records its immediate dominator and the inclusive preorder
+interval of its dominator subtree. An interval containment test answers each
+dominance query in constant time. Unreachable blocks dominate no block.
 Explicit preservation retains an analysis; unknown preservation invalidates
 conservatively. There is no arbitrary insertion API, ID compaction,
 incremental dominance update, memory SSA, or loop/memory transformation.
@@ -4850,6 +4853,22 @@ full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
+
+A call whose result is written in its receiver's class region
+(`receiverClassRegionRelay`) borrows what the receiver stores, never the
+receiver. Lowering parents a fresh temporary receiver's call-result loan to
+the ancestry of the stored dependency its single source field designates
+(the primary path or the matching additional dependency), so the shell may
+end with its full expression while only that region's external owner stays
+borrowed. A returned call result parented to a carrier formal's stored entry
+relays that entry, as returning the designated field does; when the carrier
+is a local relayed by a reference formal, `canonicalPlace` identifies the
+dereferenced field as the formal's whole referent. The verifier admits the
+temporary receiver input under the same summary shape, accepts the
+call-result source one dereference below the designated stored path
+(`staticStorageLoan`, `independentlyStaticTextBinding`), and lets
+`referenceParameterReturnPublication` accept a local carrier whose single
+initialization stores a call result sourced at the formal.
 
 A transient call-result loan used only as the receiver of a non-borrowing
 member call ends immediately after that call. Lowering carries the source HIR

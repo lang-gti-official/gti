@@ -3615,6 +3615,12 @@
         "std::array::get_unchecked",
         "std::array::get_unchecked_mut",
         "std::array::iterator",
+        "std::array::operator!=",
+        "std::array::operator<",
+        "std::array::operator<=",
+        "std::array::operator==",
+        "std::array::operator>",
+        "std::array::operator>=",
         "std::array::operator[]",
         "std::array::sentinel",
         "std::array::size"
@@ -3635,10 +3641,12 @@
       ],
       "required_instantiations": [
         "std::array<int32_t, 0>",
-        "std::array<int32_t, 3>"
+        "std::array<int32_t, 3>",
+        "comparison of version keys, move-only strings, unordered floats, and equality-only elements"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_array.gti",
+        "tests/ui/stdlib/array/comparison",
         "tests/fixtures/algorithm_search.gti",
         "tests/fixtures/algorithm_mutation.gti",
         "tests/fixtures/algorithm_user_types.gti",

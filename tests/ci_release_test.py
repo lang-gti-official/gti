@@ -821,6 +821,53 @@ def retry_contract(root):
     assert "name: Validation plan" in full
 
 
+def auto_revert_contract(root):
+    """auto-revert.yml decides on every completed full validation of main with
+    read-only GITHUB_TOKEN, writes only behind GTI_AUTO_REVERT=true with the
+    rollup App token, runs main's own scripts on standard hosted runners, and
+    its step classification names steps full validation really has."""
+    text = (root / ".github/workflows/auto-revert.yml").read_text()
+    full = (root / ".github/workflows/full-validation.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  workflow_run:\n    workflows: [Full validation]\n    types: [completed]\n" in header
+    assert "  workflow_dispatch:\n    inputs:\n      run_id:\n" in header
+    for trigger in ("push:", "pull_request", "schedule", "merge_group", "issue_comment"):
+        assert trigger not in header, trigger
+    assert "\npermissions: {}\n" in header
+    sections = jobs(text)
+    assert list(sections) == ["evaluate", "note", "act"], list(sections)
+    writes = {name: re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE) for name, body in sections.items()}
+    assert writes == {"evaluate": [], "note": ["issues"], "act": []}, writes
+    evaluate, note, act = sections["evaluate"], sections["note"], sections["act"]
+    for name, body in sections.items():
+        assert re.findall(r"^    runs-on: (.+)$", body, re.MULTILINE) == ["ubuntu-24.04"], name
+        assert "ref: main" in body and "persist-credentials: false" in body, "main's own scripts decide"
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+                assert "${{" not in line, line
+    assert "github.repository == 'lang-gti-official/gti'" in evaluate
+    assert "workflow_run.head_branch == 'main'" in evaluate and "workflow_run.event == 'push'" in evaluate
+    assert "github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT || ''" in evaluate, "dispatch is report-only"
+    assert "vars.GTI_AUTO_REVERT != 'true'" in note and "auto_revert.py note" in note
+    assert "github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT == 'true'" in act
+    assert "auto_revert.py act" in act and "GTI_READ_TOKEN: ${{ github.token }}" in act
+    assert "secrets." not in evaluate + note and "GTI_ROLLUP_APP_PRIVATE_KEY" in act
+    assert "group: auto-revert\n      cancel-in-progress: false" in act, "one writer at a time"
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", text, re.MULTILINE):
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+    run([sys.executable, str(root / "scripts/auto_revert.py"), "--self-test"], root, True)
+    sys.path.insert(0, str(root / "scripts"))
+    script = load_module(root / "scripts/auto_revert.py", "auto_revert_contract")
+    retry_script = load_module(root / "scripts/validation_retry.py", "validation_retry_auto_revert")
+    assert script.WORKFLOW == retry_script.WORKFLOW
+    full_jobs = jobs(full)
+    steps = set(re.findall(r"^      - name: (.+)$", full_jobs["package"] + full_jobs["integration"], re.MULTILINE))
+    for name in script.TEST_STEPS | script.BUILD_STEPS:
+        assert name in steps, f"auto_revert.py classifies a step full validation does not have: {name}"
+    assert not script.TEST_STEPS & script.BUILD_STEPS
+    assert script.classify_step("Upload shard evidence") == "infrastructure"
+
+
 def gti_test_tiers_contract(root):
     """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
     puts them: a pull request runs gti_test_ui, every tests/ui shard,
@@ -987,7 +1034,8 @@ def gti_test_tiers_contract(root):
     # The sanitizer verdict covers an instrumented gti_test_ui run.
     compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
     step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
-    assert "if: matrix.kind == 'libraries'" in step and "timeout-minutes: 120" in step
+    # Runs after a failed library test too: its findings are independent.
+    assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step and "timeout-minutes: 120" in step
     assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
     assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
     assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
@@ -1187,7 +1235,7 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
+        "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
         "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
@@ -1966,6 +2014,7 @@ def main():
     gti_test_tiers_contract(root)
     runner_label_contract(root)
     retry_contract(root)
+    auto_revert_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

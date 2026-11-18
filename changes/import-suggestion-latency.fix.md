@@ -1,0 +1,1 @@
+Bound optional missing-import searches, prioritize matching module filenames, and avoid building throwaway semantic preambles during import confirmation. Already-proved fixes and ordinary diagnostics are retained when the search budget is exhausted.
