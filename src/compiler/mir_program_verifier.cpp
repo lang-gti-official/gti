@@ -15339,12 +15339,23 @@ completeBorrowSourcePath(const MirProgram &program,
     return fact;
   };
   const auto projectedReferenceSource = [&](const MirPlace &place) {
-    if (!function || place.type.kind == SemanticType::Reference)
+    if (!function || place.type.kind == SemanticType::Reference ||
+        (place.root != MirPlaceRootKind::This &&
+         (place.root != MirPlaceRootKind::Binding ||
+          std::find(function->parameterBindings.begin(),
+                    function->parameterBindings.end(),
+                    place.binding) == function->parameterBindings.end())))
       return false;
     const auto source =
         canonicalBorrowOrigin(body, place.id, bindingLoans, true);
     if (source.ambiguous)
       return false;
+    if (source.throughLoan) {
+      const auto *entry = body.findLoan(source.throughLoan);
+      if (!entry || !entry->entry || entry->kind != MirLoanKind::Parameter ||
+          !entry->additionalDependencies.empty())
+        return false;
+    }
     BorrowedFieldOrigin mapping;
     if (source.root == MirPlaceRootKind::This) {
       mapping.origin = BorrowOriginKind::Receiver;
@@ -15425,11 +15436,12 @@ completeBorrowSourcePath(const MirProgram &program,
             place->projections.empty())
           fact = self(self, state, place->loan, depth + 1);
         else if (place && place->type.kind != SemanticType::Reference &&
-                 (std::none_of(
-                      place->projections.begin(), place->projections.end(),
-                      [](const auto &part) {
-                        return part.kind == MirProjectionKind::Dereference;
-                      }) ||
+                 ((!observedReferencesOnly &&
+                   std::none_of(
+                       place->projections.begin(), place->projections.end(),
+                       [](const auto &part) {
+                         return part.kind == MirProjectionKind::Dereference;
+                       })) ||
                   projectedReferenceSource(*place)))
           fact = MirBorrowDependencySet{
               .dependencies = {
@@ -15483,7 +15495,8 @@ completeBorrowSourcePath(const MirProgram &program,
       }
       return fact;
     }
-    if (!body.findPlace(loan->source) || !loan->designatedFields.empty() ||
+    if ((observedReferencesOnly && !loan->entry) ||
+        !body.findPlace(loan->source) || !loan->designatedFields.empty() ||
         !loan->conditions.empty())
       return std::nullopt;
     // Ordinary unconditional reference loans already have an independent
@@ -15600,7 +15613,7 @@ completeBorrowSourcePath(const MirProgram &program,
         projectedReferenceSource(*place))
       return MirBorrowDependencySet{
           .dependencies = {{.source = id, .access = place->access}}};
-    if (place->root == MirPlaceRootKind::Loan ||
+    if (observedReferencesOnly || place->root == MirPlaceRootKind::Loan ||
         place->type.kind == SemanticType::Reference ||
         std::any_of(place->projections.begin(), place->projections.end(),
                     [](const auto &projection) {
@@ -17030,7 +17043,19 @@ public:
 
   bool reconstructedProof(HirFunctionInstanceId id) {
     (void)query(id);
-    return observedSummary(id) != nullptr;
+    const auto *function = program.findFunctionInstance(id);
+    const auto *observed = observedSummary(id);
+    // The actual address proof must satisfy the singleton contract even when
+    // that contract was inferred rather than explicitly written. Merely
+    // reconstructing a different owner set is not permission to omit it.
+    return function && observed && !observed->dependencies.empty() &&
+           observed->possibleAlternatives.empty() &&
+           std::all_of(
+               observed->dependencies.begin(), observed->dependencies.end(),
+               [&](const auto &dependency) {
+                 return dependency.origin == BorrowOriginKind::Argument &&
+                        dependency.parameter == function->returnBorrowParameter;
+               });
   }
 
   MirVerificationResult verifyAll() {

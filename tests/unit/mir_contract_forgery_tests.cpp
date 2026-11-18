@@ -3164,6 +3164,11 @@ int main() { return 0; }
                              }),
              "an unproved complete claim cannot waive secondary-owner checks");
     }
+    changed->explicitReturnBorrowOrigin = false;
+    changed->completeReturnBorrow.reset();
+    const auto inferred = lang::verifyMirProgram(forged);
+    expect(!inferred.valid(),
+           "an inferred singleton contract still checks every observed owner");
     exercised = true;
   }
   expect(exercised, "forgery exercises the concrete relay body");
