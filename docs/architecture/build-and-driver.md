@@ -906,9 +906,10 @@ off. The regions are the driver phases (`gti-source-load`, `gti-parse`,
 each optimizer pass (`mir-pass` with the pass name as detail, plus
 `hir-compatibility-folding`, `mir-verify-input` and
 `mir-verify-output-coherence`), the lowered-program builder's verification
-and collection steps (`lowered-verify-*`, `lowered-collect`), the backend
-(`backend-verify-lowered-program`, `backend-plan`, `backend-plan-program`,
-`backend-write`), HIR's concrete instance analyses (`hir-instance-analysis`
+and collection steps (`lowered-verify-*`, `lowered-collect`), the LLVM backend
+(`llvm-admission`, `llvm-admission-inventory`, `llvm-lower`,
+`llvm-module-transforms`, `llvm-optimize`, `llvm-codegen`, and
+`llvm-codegen-unit`, with LLVM pass events inside optimization), HIR's concrete instance analyses (`hir-instance-analysis`
 with the declaration as detail, `hir-verify-plans`), staged constant
 evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
 (`mir-safety-analysis`) and the optimization coherence verifier's replays

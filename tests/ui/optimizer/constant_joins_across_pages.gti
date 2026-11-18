@@ -1,0 +1,20 @@
+// Independent branch facts survive forks and joins across two pages of MIR values.
+//@ run-pass
+//@ opt: O3
+//@ reason: Exercises sparse conditional constant propagation on executable edges.
+int decode(bool high, bool low) {
+  int a = high ? (low ? 1 : 2) : (low ? 3 : 4);
+  int b = low ? (high ? 10 : 20) : (high ? 30 : 40);
+  int c = high ? (low ? 100 : 200) : (low ? 300 : 400);
+  int d = low ? (high ? 1000 : 2000) : (high ? 3000 : 4000);
+  int e = high ? (low ? 10000 : 20000) : (low ? 30000 : 40000);
+  int f = low ? (high ? 100000 : 200000) : (high ? 300000 : 400000);
+  int g = high ? (low ? 1000000 : 2000000) : (low ? 3000000 : 4000000);
+  int h = low ? (high ? 10000000 : 20000000) : (high ? 30000000 : 40000000);
+  return a + b + c + d + e + f + g + h;
+}
+int main() {
+  if (decode(true, true) != 11111111 || decode(true, false) != 32323232) { return 1; }
+  if (decode(false, true) != 23232323 || decode(false, false) != 44444444) { return 2; }
+  return 0;
+}
