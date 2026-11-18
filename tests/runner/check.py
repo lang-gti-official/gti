@@ -132,6 +132,45 @@ def admission_evidence_test(runner):
         expect(code == 0 and "ExecutionProfile.Concurrent" in
                (root / "concurrent/plan.txt").read_text(),
                "evidence preserves the input execution profile", out)
+        library = root / "library.gti"
+        library.write_text("int seed() { return 7; }\nmut int current = seed();\n"
+                           "int answer(int value) { return current; }\n")
+        request = {"source": "library.gti", "execution-profile": "single-threaded",
+                   "program": {"kind": "library", "exports": [
+                       {"function": "answer", "symbol": "embedded_answer"}]}}
+        inputs.write_text(json.dumps([request]))
+        library_captures = [root / "library-before", root / "library-after"]
+        for output in library_captures:
+            result = subprocess.run(
+                [sys.executable, str(tool), "capture", "--root", str(root),
+                 "--runner", str(runner), "--output", str(output),
+                 "--inputs", str(inputs), "--validation"],
+                capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "library evidence preserves exports",
+                   result.stdout + result.stderr)
+        command = [sys.executable, str(tool), "compare", *map(str, library_captures)]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 0, "library evidence compares exact artifacts",
+               result.stdout + result.stderr)
+        manifest_path = library_captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        ir = (library_captures[1] / entry["directory"] / "module.ll").read_text()
+        expect("embedded_answer" in ir, "library export reaches LLVM evidence", ir[:300])
+        manifest["configurations"]["library.gti"]["program"]["exports"][0]["symbol"] = "other"
+        manifest_path.write_text(json.dumps(manifest))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 1 and "incomparable input configurations" in result.stdout,
+               "different export requests cannot compare as equivalent", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", library,
+                        root / "invalid-export", "O0", "--library", "answer=")
+        expect(code == 1 and "invalid evidence library export" in out,
+               "malformed export request is rejected", out)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "explicit-profile", "O0", "--execution-profile", "single-threaded")
+        expect(code == 0 and "ExecutionProfile.Concurrent" not in
+               (root / "explicit-profile/plan.txt").read_text(),
+               "provider-selected profile overrides standalone directive", out)
         source.write_text("int main() { return undefined_name; }\n")
         code, out = run(runner, "--llvm-admission-evidence", source,
                         root / "invalid", "O0")

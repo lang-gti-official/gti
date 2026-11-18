@@ -20,7 +20,8 @@ namespace gti_test {
 int writeAdmissionEvidence(const char *self,
                            const std::filesystem::path &source,
                            const std::filesystem::path &output,
-                           const std::string &optimization);
+                           const std::string &optimization,
+                           const std::vector<std::string> &arguments = {});
 
 enum class Status { Pass, Fail, Ice, Crash, Timeout, Skip };
 

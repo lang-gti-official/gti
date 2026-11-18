@@ -51,7 +51,8 @@ namespace gti_test {
 
 int writeAdmissionEvidence(const char *self, const fs::path &source,
                            const fs::path &output,
-                           const std::string &optimization) {
+                           const std::string &optimization,
+                           const std::vector<std::string> &arguments) {
   try {
     if (optimization != "O0" && optimization != "O2")
       throw std::invalid_argument("admission evidence requires O0 or O2");
@@ -77,18 +78,45 @@ int writeAdmissionEvidence(const char *self, const fs::path &source,
       throw std::invalid_argument(
           "admission evidence does not yet support this input's multi-file, "
           "overlay, target, limit, native, prelude or audit configuration");
+    auto profile = test.concurrent ? lang::ExecutionProfile::Concurrent
+                                   : lang::ExecutionProfile::SingleThreaded;
+    lang::ProgramRequest programRequest;
+    std::size_t argument = 0;
+    if (argument < arguments.size() &&
+        arguments[argument] == "--execution-profile") {
+      if (++argument == arguments.size())
+        throw std::invalid_argument("missing evidence execution profile");
+      const auto selected = lang::parseExecutionProfile(arguments[argument++]);
+      if (!selected)
+        throw std::invalid_argument("invalid evidence execution profile");
+      profile = *selected;
+    }
+    if (argument < arguments.size()) {
+      if (arguments[argument++] != "--library" || argument == arguments.size())
+        throw std::invalid_argument("expected --library FUNCTION=SYMBOL ...");
+      programRequest.kind = lang::ProgramKind::Library;
+      for (; argument < arguments.size(); ++argument) {
+        const auto &spec = arguments[argument];
+        const auto split = spec.find('=');
+        if (split == std::string::npos || split == 0 ||
+            split + 1 == spec.size() ||
+            spec.find('=', split + 1) != std::string::npos)
+          throw std::invalid_argument("invalid evidence library export");
+        programRequest.exports.push_back({.function = spec.substr(0, split),
+                                          .symbol = spec.substr(split + 1)});
+      }
+    }
     const lang::driver::AnalysisConfiguration configuration(
-        lang::TargetInfo::host(),
-        test.concurrent ? lang::ExecutionProfile::Concurrent
-                        : lang::ExecutionProfile::SingleThreaded,
-        lang::driver::RuntimeProfile::Hosted, test.defines);
+        lang::TargetInfo::host(), profile, lang::driver::RuntimeProfile::Hosted,
+        test.defines);
     const auto request =
         lang::driver::CompilationRequest(
             fs::absolute(source), layout.standardLibrary,
             configuration.target(),
             optimization == "O0" ? lang::OptimizationLevel::O0
                                  : lang::OptimizationLevel::O2,
-            lang::CppStandard::Cpp23, {}, configuration.configurationFlags())
+            lang::CppStandard::Cpp23, {}, configuration.configurationFlags(),
+            {}, {}, false, {}, lang::RawPointerAuditMode::Off, programRequest)
             .withBackend(lang::BackendKind::Llvm)
             .withDefinitionClosure();
     class EvidenceBackend final : public lang::Backend {
