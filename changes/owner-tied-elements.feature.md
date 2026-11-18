@@ -4,3 +4,5 @@ to the container they view instead of the iterator or span object. `int& x =
 `v.as_span()[0]`, and keeping `*it` across `++it` now compile, while mutating,
 moving or escaping the container under a live reference stays rejected.
 Mutable iterators keep their iterator-tied results.
+
+Temporary iterator wrappers can also relay references through nested carriers; the compiler verifies the complete stored-reference path instead of rejecting it with an internal error.

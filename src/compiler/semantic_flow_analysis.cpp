@@ -8789,7 +8789,7 @@ auto SemanticVisitor::Impl::receiverClassRegionRelay(
     return false;
   const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
   return mapping.origin == BorrowOriginKind::Receiver &&
-         mapping.sourceFields.size() == 1 &&
+         !mapping.sourceFields.empty() &&
          mapping.resultFields.empty() == referenceResult &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
