@@ -1,0 +1,5 @@
+// std.testing rejects a non-floating assertion at compile time.
+//@ check-fail
+import std.testing;
+struct Item {};
+int main() { std::testing::check_approx(1, 1, 0); return 0; }  //~ ERROR GTI-S2029

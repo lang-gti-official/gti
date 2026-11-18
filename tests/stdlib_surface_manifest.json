@@ -8029,6 +8029,7 @@
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
         "tests/ui/stdlib/testing/assertions",
+        "tests/slow/stdlib/testing/assertions.gti",
         "tests/fixtures/protocol_testing_assertions.gti",
         "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
       ]
