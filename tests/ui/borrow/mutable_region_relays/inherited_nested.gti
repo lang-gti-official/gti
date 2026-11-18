@@ -1,0 +1,20 @@
+// Multiple inheritance levels preserve the exact shared stored-field path.
+//@ run-pass
+struct Box { mut int value; Box(int v) : value(v) {} };
+class Base<lifetime a> {
+protected:
+  Box&<a> item;
+public:
+  Base(Box&<a> item) : item(item) {}
+};
+class Middle<lifetime a> : public Base<a> {
+public:
+  Middle(Box&<a> item) : Base<a>(item) {}
+};
+class Derived<lifetime a> : public Middle<a> {
+public:
+  Derived(Box&<a> item) : Middle<a>(item) {}
+  int&<a> take() && { return this.item.value; }
+};
+int&<a> relay<lifetime a>(mut Box&<a> item) { return Derived(item).take(); }
+int main() { mut Box item{11}; return relay(item) == 11 ? 0 : 1; }
