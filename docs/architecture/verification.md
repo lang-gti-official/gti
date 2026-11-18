@@ -3,9 +3,9 @@
 This document records what the existing gates cover and the evidence behind
 them. How to write and run a new test is [Writing Tests](../../AGENTS.md#writing-tests)
 in `AGENTS.md`; where a section below describes an old harness, it applies to
-that harness's existing cases until the
-[test-suite migration](../plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16)
-converts them.
+that harness's existing cases. The
+[test-suite redesign](../plans/test-suite-redesign.md) converted most of the
+old suite; the families it left are frozen and listed in its status header.
 
 ## Example corpus walk
 

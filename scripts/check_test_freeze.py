@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Freeze the old test suite: a change may not grow it.
+"""Keep the old-style test families frozen: a change may not grow them.
 
-The old suite (registered Python harnesses, C++ test binaries and their
-`add_test` registrations) is being drained into one runner
-(docs/plans/test-suite-redesign.md). This check compares a candidate with the
+New tests are `gti-test` files or `tests/unit` cases
+(docs/plans/test-suite-redesign.md). The registered Python harnesses, C++ test
+binaries and `add_test` registrations that remain are kept deliberately and
+stay frozen as a standing rule. This check compares a candidate with the
 commit it forked from and fails when the candidate adds a new
 `tests/**/*_test.py`, a new `tests/**/*_tests.cpp` or a new `add_test(` line in
 a CMake file under `tests/`. Modifying, renaming or deleting existing tests
 stays allowed, and an `add_test(` line moved unchanged within the diff is not
-new. The new runner's own directories are exempt. The rule is diff-based, so
-it needs no shared registry file.
+new. The runner's directories (`tests/ui/`, `tests/lsp/`, `tests/project/`,
+`tests/slow/`, `tests/unit/`, `tests/runner/`) and `tests/gti_test.cmake` are
+exempt. The rule is diff-based, so it needs no shared registry file.
 
 Usage: check_test_freeze.py <base> <head>
 """
@@ -23,15 +25,15 @@ from pathlib import Path
 import re
 import subprocess
 
-EXEMPT_PREFIXES = ("tests/ui/", "tests/unit/", "tests/runner/")
+EXEMPT_PREFIXES = ("tests/ui/", "tests/lsp/", "tests/project/", "tests/slow/", "tests/unit/", "tests/runner/")
 EXEMPT_FILES = frozenset({"tests/gti_test.cmake"})
 NEW_TEST_FILE = re.compile(r"tests/(?:.+/)?[^/]+(?:_test\.py|_tests\.cpp)")
 CMAKE_FILE = re.compile(r"tests/(?:.+/)?(?:CMakeLists\.txt|[^/]+\.cmake)")
 ADD_TEST = re.compile(r"\badd_test\s*\(")
 GUIDANCE = (
-    "The old test suite is frozen: add no new tests/*_test.py, tests/*_tests.cpp or add_test(.\n"
-    "New tests are gti-test files in tests/ui/, tests/lsp/ or tests/project/, or C++ unit cases in tests/unit/ "
-    "(tests/ui/README.md); fix or convert a broken old case, never add to an old harness."
+    "The old test suite is frozen as a standing rule: add no new tests/*_test.py, tests/*_tests.cpp or add_test(.\n"
+    "New tests are gti-test files in tests/ui/, tests/slow/, tests/lsp/ or tests/project/, or C++ unit cases in "
+    "tests/unit/ (tests/ui/README.md); fix or convert a broken old case, never add to an old harness."
 )
 
 

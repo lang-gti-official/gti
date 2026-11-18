@@ -171,8 +171,8 @@ invalid setup cheaply; they do not replace required broad coverage.
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
    The complete suite is never a contributor gate: post-integration full
-   validation runs it on each main head on every required platform. Until the
-   test-suite migration completes, that includes the old harnesses.
+   validation runs it on each main head on every required platform, including
+   the frozen old-style harnesses that remain.
    Platform, runtime and performance obligations that the queue does not
    cover (for example a benchmark comparison under ADR 012) remain yours to
    run and record.
