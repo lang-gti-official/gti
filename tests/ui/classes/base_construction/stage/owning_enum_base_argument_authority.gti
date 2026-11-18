@@ -1,0 +1,7 @@
+// Owning enum base argument authority: owning enum trait mutation control is valid.
+//@ check-pass
+class Resource { public: Resource() {} ~Resource() {} };
+enum class Parcel { empty, item(Resource value) };
+class Base { public: Base(int value) {}  public: Base() = default; };
+class Derived : public Base { public: Derived() : Base(7) {} };
+int main() { Derived value{}; Parcel parcel = Parcel::empty; return 0; }

@@ -1,0 +1,2 @@
+import cases;
+[[test]] void root_case() {}

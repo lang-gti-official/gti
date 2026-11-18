@@ -18805,6 +18805,7 @@ private:
             std::vector<MirLoanId> transientChain;
             std::unordered_set<MirLoanId> visited;
             MirLoanId transient = borrow.loan;
+            bool relayedAlias = false;
             while (transient != 0 && transient <= output.loans.size() &&
                    visited.insert(transient).second) {
               const MirLoan &candidate = output.loans[transient - 1];
@@ -18822,12 +18823,24 @@ private:
                     return alias != nullptr &&
                            alias->info.type.kind == SemanticType::Reference;
                   });
-              if (candidate.kind != MirLoanKind::CallResult ||
+              // A local reference alias passed as a returned call's argument
+              // relays the authority it borrows from: an incoming entry, or
+              // receiver storage itself. The alias ends with the return.
+              const MirPlace *aliased = output.findPlace(candidate.source);
+              const bool localAlias =
+                  candidate.kind == MirLoanKind::Local &&
+                  !transientChain.empty() && !candidate.carriers.empty() &&
+                  referenceAliases &&
+                  (candidate.parent != 0 ||
+                   (aliased != nullptr &&
+                    aliased->root == MirPlaceRootKind::This));
+              if ((candidate.kind != MirLoanKind::CallResult && !localAlias) ||
                   (!candidate.carriers.empty() && !restoredAliases &&
                    !referenceAliases) ||
                   candidate.escapes || !loanIsActive(scopes, transient)) {
                 break;
               }
+              relayedAlias |= localAlias;
               transientChain.push_back(transient);
               transient = candidate.parent;
             }
@@ -18838,6 +18851,18 @@ private:
               summarizedEntry = found == bindingLoans.end() ? 0 : found->second;
             }
             MirLoanId mappedEntry = summarizedEntry;
+            // A receiver result relayed through a local alias of a stored
+            // reference ends at the receiver's entry authority for it.
+            if (relayedAlias &&
+                function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
+              const auto *tail = output.findLoan(transient);
+              const auto *origin =
+                  tail ? output.findPlace(tail->source) : nullptr;
+              if (tail != nullptr && tail->entry &&
+                  tail->kind == MirLoanKind::Stored && origin != nullptr &&
+                  origin->root == MirPlaceRootKind::This)
+                mappedEntry = tail->id;
+            }
             if (!function->returnBorrowFields.empty() &&
                 !function->returnBorrowFields.front().sourceFields.empty()) {
               const auto *entry = output.findLoan(summarizedEntry);
@@ -18906,6 +18931,25 @@ private:
                       return lane.second == transient && place != nullptr &&
                              place->binding == returnBorrowParameterBinding();
                     });
+            // A result several parameters supply may relay any of their
+            // entry authorities, not only the summarized first one.
+            const bool namedSupplierEntry =
+                transient != 0 &&
+                function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+                std::any_of(function->returnBorrowParameters.begin(),
+                            function->returnBorrowParameters.end(),
+                            [&](std::size_t position) {
+                              const auto formal =
+                                  mir_detail::returnOriginFormal(
+                                      function->parameterTypes,
+                                      function->parameterBindings, position);
+                              if (!formal)
+                                return false;
+                              const auto found =
+                                  bindingLoans.find(formal->binding);
+                              return found != bindingLoans.end() &&
+                                     found->second == transient;
+                            });
             const bool validTail =
                 function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
                         function->returnBorrowOrigin == BorrowOriginKind::Global
@@ -18913,6 +18957,7 @@ private:
                           (mappedEntry != 0 && transient == mappedEntry)
                     : (summarizedEntry != 0 || transferredEntry != 0) &&
                           (transient == mappedEntry || supplierLaneEntry ||
+                           namedSupplierEntry ||
                            (transient == 0 &&
                             output.loans[borrow.loan - 1].access ==
                                 AccessMode::ReadOnly &&

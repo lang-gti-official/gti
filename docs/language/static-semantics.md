@@ -1989,6 +1989,13 @@ containment, and callable-boundary failures.
 The overloadable operator set and arity rules are defined by the incorporated
 grammar. Operators are member-only and are selected through ordinary exact
 semantic resolution. The backend does not perform GTI operator lookup.
+The primitive counted-view `+` binding supplied by `std.string` selects a
+trusted source function with both operands as arguments. It accepts another
+counted view or a read-only borrow of the owning result type and returns an
+independent owner. This is a primitive library adapter, not user-defined
+nonmember operator lookup or an implicit conversion; user declarations cannot
+replace it. Argument evaluation, temporary materialization, borrow checking,
+and cleanup use ordinary ordered call rules.
 `operator=` takes one exact argument and requires a mutable receiver. A
 same-type assignment with no exact user operator continues to use the class's
 generated copy or move assignment policy.

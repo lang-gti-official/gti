@@ -110,7 +110,7 @@ The whole `sort` probe runs 877.8 ms against 505.8 ms, which is 3.67x its
 idiomatic C++ twin (137.6 ms) instead of 6.37x.
 
 **Comparisons.** Reverse input of 1,024 elements takes 13,012 comparisons
-instead of 16,407. Every shape in `algorithm_comparator_sort.gti` stays within
+instead of 16,407. Every shape in `tests/slow/stdlib/algorithm/comparator_sort.gti` stays within
 `2*n*(ceil(log2(n))+1)`. McIlroy's killer adversary costs 34,274 comparisons at
 n=1,024 through either overload, against a 56,320 bound; without the heapsort
 fallback a median-sampling quicksort needs about n*n/4.

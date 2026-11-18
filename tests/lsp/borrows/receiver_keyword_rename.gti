@@ -1,0 +1,14 @@
+// Renaming a captured receiver keyword is refused with a reason.
+//@ rename @self other: error The receiver keyword cannot be renamed.
+int invoke<F>(F& callback) { return callback(); }
+class Counter {
+  mut int value;
+public:
+  Counter(int value) : value(value) {}
+  int read() { return this.value; }
+  int shared() {
+    auto callback = [&/*@self*/this]() -> int { return this.read(); };
+    return invoke(callback);
+  }
+};
+int main() { Counter counter{1}; return counter.shared() - 1; }

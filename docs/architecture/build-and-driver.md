@@ -507,7 +507,12 @@ arbitrary PR pass or merge exception still does not.
    an older compiler with a new commit when the selected source has no artifacts.
 3. **Download and verify.** Nightly downloads the artifacts from the selected
    successful CI run and attempt. Their manifest binds source commit, platform,
-   bundled-release configuration, run/attempt and archive checksums. Missing,
+   bundled-release configuration, run/attempt and archive checksums. The run's
+   latest attempt must show every required job green; the attempt nightly
+   downloads from is the one that built both packages, which is older than the
+   latest when only failed jobs were re-run (`validation-retry.yml` re-runs
+   jobs that never got a runner), and then the latest attempt must list those
+   same package executions (`release_artifacts.py package_attempt`). Missing,
    expired, mixed or mismatched artifacts stop publication. Nightly neither
    rebuilds the compiler nor reruns the full suite. A new full CI dispatch on
    main can recover unavailable artifacts while preserving the same validation
@@ -3394,7 +3399,7 @@ available source. A failed dependency stops the application build and preserves
 the failing target and application outputs; previously completed prerequisites
 remain published. Explicit artifacts still require no producer source.
 The [`compiled-dependencies`](../../examples/compiled-dependencies/README.md)
-example and `compiled_dependency_project` gate cover a diamond graph, freshness,
+example and `tests/slow/project/compiled_dependencies` gate cover a diamond graph, freshness,
 receipt mismatches, failures and source-free distribution of the complete closure.
 
 Consumer requests retain whole-program cache bypass; compiled library output reuse

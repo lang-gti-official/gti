@@ -1,0 +1,18 @@
+// Append accepts each text input without consuming it and preserves spare capacity.
+//@ run-pass
+import std.string;
+int main() {
+  mut std::string value = "a";
+  value.reserve(128);
+  std::string suffix = "b";
+  std::string_view view = "c";
+  value += suffix;
+  value += view;
+  value += "d";
+  value += std::string("e");
+  value += "";
+  if (value != "abcde" || suffix != "b" || value.capacity() != 128) { return 1; }
+  auto chained = std::move(value) + suffix + view + "f";
+  if (chained != "abcdebcf" || chained.capacity() != 128) { return 2; }
+  return 0;
+}

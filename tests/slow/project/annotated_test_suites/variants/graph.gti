@@ -1,0 +1,2 @@
+import "indirect.gti";
+[[test]] void root_case() {}

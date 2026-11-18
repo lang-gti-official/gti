@@ -1,0 +1,19 @@
+// A destructor cannot consume its callable field by invoking std::move(callable).
+class Callback {
+public:
+  Callback() = default;
+  ~Callback() {}
+  int operator()() && { return 1; }
+};
+class Owner {
+  mut Callback callable;
+public:
+  Owner(Callback callable) : callable(std::move(callable)) {}
+  ~Owner() { [[discard]] std::move(callable)(); }  //~ ERROR GTI-S2018
+  int operator()() && { return std::move(this.callable)(); }
+};
+int main() {
+  Callback callback{};
+  Owner owner{std::move(callback)};
+  return std::move(owner)();
+}

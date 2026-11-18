@@ -1,0 +1,238 @@
+// std.testing assertions stay silent when they pass and, when one fails, panic with its values and the caller's location after cleanup.
+//@ run-fail
+//@ slow
+//@ revisions: passing eq ne string string_length string_escaped approx nan infinity tolerance elements length owned broken
+//@[passing] run-pass
+//@[passing] stdout: assertions-passed
+//@[passing] stdout: guard-cleaned
+//@[eq] exit-code: 70
+//@[eq] stderr-contains: GTI-R0017
+//@[eq] stderr-contains: Expected equal values
+//@[eq] stderr-contains: actual: 7
+//@[eq] stderr-contains: expected: 9
+//@[eq] stderr-contains: main.gti:110:
+//@[eq] stdout: guard-cleaned
+//@[eq] args: eq
+//@[ne] exit-code: 70
+//@[ne] stderr-contains: GTI-R0017
+//@[ne] stderr-contains: Expected different values
+//@[ne] stderr-contains: actual: 7
+//@[ne] stderr-contains: unexpected: 7
+//@[ne] stderr-contains: main.gti:111:
+//@[ne] stdout: guard-cleaned
+//@[ne] args: ne
+//@[string] exit-code: 70
+//@[string] stderr-contains: GTI-R0017
+//@[string] stderr-contains: first difference at byte 3
+//@[string] stderr-contains: lengths 5 and 6
+//@[string] stderr-contains: main.gti:112:
+//@[string] stderr-contains: actual: \"ready\"
+//@[string] stderr-contains: expected: \"really\"
+//@[string] stdout: guard-cleaned
+//@[string] args: string
+//@[string_length] exit-code: 70
+//@[string_length] stderr-contains: GTI-R0017
+//@[string_length] stderr-contains: first difference at byte 5
+//@[string_length] stderr-contains: lengths 5 and 6
+//@[string_length] stdout: guard-cleaned
+//@[string_length] args: string-length
+//@[string_escaped] exit-code: 70
+//@[string_escaped] stderr-contains: GTI-R0017
+//@[string_escaped] stderr-contains: \"a\\n\\\"\\\\\"
+//@[string_escaped] stderr-contains: \"a\\t\\\"\\\\\"
+//@[string_escaped] stdout: guard-cleaned
+//@[string_escaped] args: string-escaped
+//@[approx] exit-code: 70
+//@[approx] stderr-contains: GTI-R0017
+//@[approx] stderr-contains: Expected approximately equal values
+//@[approx] stderr-contains: actual: 1
+//@[approx] stderr-contains: expected: 2
+//@[approx] stderr-contains: absolute tolerance:
+//@[approx] stderr-contains: relative tolerance:
+//@[approx] stderr-contains: main.gti:115:
+//@[approx] stdout: guard-cleaned
+//@[approx] args: approx
+//@[nan] exit-code: 70
+//@[nan] stderr-contains: GTI-R0017
+//@[nan] stderr-contains: Expected approximately equal values
+//@[nan] stderr-contains: expected: 1
+//@[nan] stderr-contains: absolute tolerance: 0.01
+//@[nan] stderr-contains: relative tolerance: 0
+//@[nan] stderr-contains: main.gti:116:
+//@[nan] stderr-contains: nan\nexpected: 1
+//@[nan] stdout: guard-cleaned
+//@[nan] args: nan
+//@[infinity] exit-code: 70
+//@[infinity] stderr-contains: GTI-R0017
+//@[infinity] stderr-contains: Expected approximately equal values
+//@[infinity] stderr-contains: actual: -inf
+//@[infinity] stdout: guard-cleaned
+//@[infinity] args: infinity
+//@[tolerance] exit-code: 70
+//@[tolerance] stderr-contains: GTI-R0017
+//@[tolerance] stderr-contains: requires finite nonnegative tolerances
+//@[tolerance] stdout: guard-cleaned
+//@[tolerance] args: tolerance
+//@[elements] exit-code: 70
+//@[elements] stderr-contains: GTI-R0017
+//@[elements] stderr-contains: first difference at index 0
+//@[elements] stderr-contains: actual: 7
+//@[elements] stderr-contains: expected: 9
+//@[elements] stderr-contains: main.gti:119:
+//@[elements] stdout: guard-cleaned
+//@[elements] args: elements
+//@[length] exit-code: 70
+//@[length] stderr-contains: GTI-R0017
+//@[length] stderr-contains: collection lengths differ; actual: 1; expected: 0
+//@[length] stdout: guard-cleaned
+//@[length] args: length
+//@[owned] exit-code: 70
+//@[owned] stderr-contains: GTI-R0017
+//@[owned] stderr-contains: actual: 7
+//@[owned] stderr-contains: expected: 9
+//@[owned] stdout: comparisons: 1
+//@[owned] stdout: formats: 2
+//@[owned] stdout: guard-cleaned
+//@[owned] args: owned
+//@[broken] exit-code: 70
+//@[broken] stderr-contains: GTI-R0017
+//@[broken] stderr-contains: actual: <formatting failed>
+//@[broken] stderr-contains: expected: <formatting failed>
+//@[broken] stdout: guard-cleaned
+//@[broken] args: broken
+// --- main.gti
+import std.testing;
+import std.format;
+import std.memory;
+import std.string;
+import std.vector;
+import std.cmath;
+
+namespace sample {
+mut int format_calls = 0;
+mut int equality_calls = 0;
+mut int operand_calls = 0;
+mut int message_calls = 0;
+mut bool report_counts = false;
+int operand(int value) { operand_calls++; return value; }
+std::string_view message() { message_calls++; return "custom message"; }
+struct Guard {
+  ~Guard() {
+    if (report_counts) {
+      std::runtime_println("comparisons: {}", equality_calls);
+      std::runtime_println("formats: {}", format_calls);
+    }
+    std::println("guard-cleaned");
+  }
+public:
+  Guard() = default;
+};
+struct Owned {
+  std::unique_ptr<int> value;
+  Owned(int number) : value(std::make_unique<int>(number)) {}
+  bool operator==(Owned& other) { equality_calls++; return *this.value == *other.value; }
+  bool operator!=(Owned& other) { equality_calls++; return *this.value != *other.value; }
+};
+struct Broken {
+  int value;
+  Broken(int number) : value(number) {}
+  bool operator==(Broken& other) { return this.value == other.value; }
+  bool operator!=(Broken& other) { return this.value != other.value; }
+};
+}
+class std::formatter<sample::Owned> {
+public:
+  expected<void, std::format_errc> format(sample::Owned& value,
+      mut std::string& output, std::format_spec& spec) {
+    sample::format_calls++;
+    std::formatter<int> integer{};
+    return integer.format(*value.value, output, spec);
+  }
+public:
+  formatter() = default;
+};
+class std::formatter<sample::Broken> {
+public:
+  expected<void, std::format_errc> format(sample::Broken& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+public:
+  formatter() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  sample::Guard guard{};
+  int actual = 7;
+  int expected = 9;
+  sample::Owned owned{7};
+  sample::Owned equal_owned{7};
+  sample::Owned other_owned{9};
+  mut std::vector<int> values{};
+  values.push_back(7);
+  mut std::vector<int> others{};
+  others.push_back(9);
+  auto values_view = values.as_span();
+  auto others_view = others.as_span();
+  if (argc == 1) {
+    std::testing::check_eq!(sample::operand(7), sample::operand(7), sample::message());
+    std::testing::check_ne!(sample::operand(7), sample::operand(9), sample::message());
+    std::testing::check(sample::operand_calls == 4 && sample::message_calls == 0,
+                        "Operands must run once; successful messages stay deferred");
+    std::testing::check_eq!(true, true);
+    std::testing::check_eq!('a', 'a');
+    std::testing::check_eq!(int8_t(1), int8_t(1));
+    std::testing::check_eq!(uint8_t(1), uint8_t(1));
+    std::testing::check_eq!(int16_t(1), int16_t(1));
+    std::testing::check_eq!(uint16_t(1), uint16_t(1));
+    std::testing::check_eq!(int64_t(1), int64_t(1));
+    std::testing::check_eq!(uint64_t(1), uint64_t(1));
+    std::testing::check_eq!(uint32_t(1), uint32_t(1));
+    std::testing::check_eq!(1.0, 1.0);
+    std::testing::check_eq!(double(1.0), double(1.0));
+    std::testing::check_eq!(actual, actual);
+    std::testing::check_ne!(actual, expected);
+    std::testing::check_eq!(owned, equal_owned);
+    std::testing::check_ne!(owned, other_owned);
+    std::testing::check(*owned.value == 7 && *equal_owned.value == 7,
+                        "Checking must not consume owners");
+    std::testing::check(sample::format_calls == 0, "Successful checks must not format");
+    std::testing::check(sample::equality_calls == 2, "Each comparison must execute once");
+    std::testing::check_string_eq("ready", "ready");
+    std::testing::check_approx(1.0, 1.001, 0.01);
+    std::testing::check_approx(100.0, 101.0, 0.0, 0.02);
+    std::testing::check_approx(double(1.0), double(1.001), double(0.01));
+    std::testing::check_approx(0.0, -0.0, 0.0);
+    std::testing::check_approx(300000000000000000000000000000000000000.0, -300000000000000000000000000000000000000.0, 0.0, 2.0);
+    float infinity = std::log(0.0);
+    std::testing::check_approx(infinity, infinity, 0.0);
+    std::testing::check_elements_eq(values_view, values_view);
+    std::println("assertions-passed");
+    return 0;
+  }
+  if (argv[std::size_t(1)] == "eq") { std::testing::check_eq!(actual, expected); } // eq-site
+  if (argv[std::size_t(1)] == "ne") { std::testing::check_ne!(actual, actual); } // ne-site
+  if (argv[std::size_t(1)] == "string") { std::testing::check_string_eq("ready", "really"); } // string-site
+  if (argv[std::size_t(1)] == "string-length") { std::testing::check_string_eq("ready", "ready!"); }
+  if (argv[std::size_t(1)] == "string-escaped") { std::testing::check_string_eq("a\n\"\\", "a\t\"\\"); }
+  if (argv[std::size_t(1)] == "approx") { std::testing::check_approx(1.0, 2.0, 0.01); } // approx-site
+  if (argv[std::size_t(1)] == "nan") { std::testing::check_approx(std::sqrt(-1.0), 1.0, 0.01); }
+  if (argv[std::size_t(1)] == "infinity") { std::testing::check_approx(std::log(0.0), 1.0, 0.01); }
+  if (argv[std::size_t(1)] == "tolerance") { std::testing::check_approx(1.0, 1.0, -0.01); }
+  if (argv[std::size_t(1)] == "elements") { std::testing::check_elements_eq(values_view, others_view); } // elements-site
+  if (argv[std::size_t(1)] == "length") {
+    std::vector<int> empty{};
+    auto empty_view = empty.as_span();
+    std::testing::check_elements_eq(values_view, empty_view);
+  }
+  if (argv[std::size_t(1)] == "owned") {
+    sample::report_counts = true;
+    std::testing::check_eq!(owned, other_owned);
+  }
+  if (argv[std::size_t(1)] == "broken") {
+    sample::Broken first{7};
+    sample::Broken second{9};
+    std::testing::check_eq!(first, second);
+  }
+  return 1;
+}

@@ -1,0 +1,105 @@
+// Complete containers reject copies, live borrows and cursors across mutation, element writes through set cursors, and contains without equality.
+//@ check-fail
+import std.deque;
+import std.list;
+import std.queue;
+import std.set;
+import std.unordered_set;
+import std.vector;
+
+namespace case_vector_contains_no_equality {
+class Opaque { public: Opaque() {} };
+int entry() {
+  std::vector<Opaque> values{};
+  Opaque key{};
+  return values.contains(key) ? 0 : 1;  //~ ERROR GTI-S2029
+}
+}
+
+namespace case_vector_contains_wrong_element {
+int entry() {
+  std::vector<int> values = {1};
+  double key = 1.0;
+  return values.contains(key) ? 0 : 1;  //~ ERROR GTI-S2003
+}
+}
+
+namespace case_copy_list {
+int entry() {
+  std::list<int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_copy_deque {
+int entry() {
+  std::deque<int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_copy_queue {
+int entry() {
+  std::queue<int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_copy_set {
+int entry() {
+  std::set<int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_copy_unordered_set {
+int entry() {
+  std::unordered_set<int> values{};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return int(copied.size());
+}
+}
+
+namespace case_immutable_set {
+int entry() {
+  mut std::set<int> values{};
+  [[discard]] values.insert(1);
+  mut auto cursor = values.begin();
+  *cursor = 2;  //~ ERROR GTI-S2002
+  return 0;
+}
+}
+
+namespace case_insertion_copy_set {
+int entry() {
+  mut std::set<int> values{};
+  auto result = values.insert(1);
+  auto copied = result;  //~ ERROR GTI-S2003
+  return *copied.first;
+}
+}
+
+namespace case_immutable_unordered_set {
+int entry() {
+  mut std::unordered_set<int> values{};
+  [[discard]] values.insert(1);
+  mut auto cursor = values.begin();
+  *cursor = 2;  //~ ERROR GTI-S2002
+  return 0;
+}
+}
+
+namespace case_insertion_copy_unordered_set {
+int entry() {
+  mut std::unordered_set<int> values{};
+  auto result = values.insert(1);
+  auto copied = result;  //~ ERROR GTI-S2003
+  return *copied.first;
+}
+}
+
+int main() { return 0; }

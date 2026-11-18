@@ -1,0 +1,30 @@
+// Closure generic base arguments: closure-typed derived classes analyze.
+//@ check-pass
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+int third_of(int value) { return value / 3; }
+class Fixed<F> : public Base {
+public:
+  F callback;
+  Fixed(F f) : Base(20), callback(f) {}
+};
+class Computed<F> : public Base {
+public:
+  int extra;
+  Computed(int extra) : Base(third_of(30)), extra(extra) {}
+};
+int fixed<F>(F f) {
+  Fixed<F> value = Fixed<F>(f);
+  return value.amount;
+}
+int computed<F>(F f) {
+  Computed<F> value = Computed<F>(5);
+  return value.amount + value.extra;
+}
+int main() {
+  return fixed([]() -> int { return 1; }) +
+         computed([]() -> int { return 2; }) - 35;
+}

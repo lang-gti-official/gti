@@ -56,10 +56,12 @@ def main() -> None:
         # suites: staged evaluation, raw diagnostics, verifier construction,
         # query records and repeated-request state cannot all be observed
         # through independent Frontend snapshots.
+        "tests/unit/borrow_forgery_tests.cpp",
         "tests/unit/constant_evaluation_api_tests.cpp",
         "tests/unit/diagnostics_api_tests.cpp",
         "tests/unit/ir_verifier_forgery_tests.cpp",
         "tests/unit/language_queries_tests.cpp",
+        "tests/unit/mir_contract_forgery_tests.cpp",
         "tests/unit/semantic_request_reuse_tests.cpp",
         # Rechecks parsed syntax without a SourceManager to verify source-text
         # queries reject missing owning buffers; Frontend always supplies one.
@@ -94,7 +96,12 @@ def main() -> None:
     if actual != allowed_analyzer_consumers:
         missing = sorted(allowed_analyzer_consumers - actual)
         extra = sorted(actual - allowed_analyzer_consumers)
-        fail(f"analyzer consumer allowlist mismatch; missing={missing}, extra={extra}")
+        # Each consumer is reviewed: a new file that includes the analyzer
+        # facade joins allowed_analyzer_consumers with a comment saying what
+        # the Frontend facade cannot observe; a deleted one leaves it.
+        fail(f"analyzer consumer allowlist mismatch; missing={missing}, extra={extra}; "
+             "list each new consumer above with the reason Frontend cannot serve it, "
+             "and remove deleted ones")
 
     implementation_sources = {
         "src/compiler/semantic_analyzer.cpp",

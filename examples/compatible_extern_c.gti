@@ -1,0 +1,13 @@
+// Independent bindings can name the same native function in their own APIs.
+// Run: gti examples/compatible_extern_c.gti -o /tmp/compatible-extern-c
+namespace platform {
+extern "C" { c_int abs(c_int value); }
+}
+namespace dependency {
+extern "C" { [[link_name("abs")]] c_int magnitude(c_int number); }
+}
+int main() {
+  // Both calls reach the C library's abs; names and parameter names may differ.
+  // Parameter/result types, unsafe/noreturn and counted-array contracts must agree.
+  return platform::abs(-7) + dependency::magnitude(-5) - 12;
+}

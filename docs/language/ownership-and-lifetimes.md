@@ -462,6 +462,13 @@ parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
 first, int& second)` names `first` as the result's only supplier. A region shared by several
 parameters, as in `choose` above, names all of them. A body may return a
 borrow of any subset of them; callers keep every named supplier borrowed.
+A local reference bound to a supplier relays it, also as a call argument:
+`Box& local = box; return pass(local);` returns a borrow of `box`'s referent.
+A reference binding is never rebound (assigning to it writes the referent),
+so the alias keeps the region of the place it was bound to. An alias of a
+local, or of a part the reference's own region does not cover, supplies no
+named region (GTI-S2127). A method relays a stored reference or receiver
+storage through a local alias the same way.
 
 A method result written in a region its class binds names the receiver's
 stored fields in that region. When nothing in the class stores the region,
@@ -489,12 +496,17 @@ result escape. A parameter in another region still cannot supply it. The
 body may return any borrow it reaches through a stored reference of that
 region: the field itself, a field of a method result on it
 (`this.nodes.at(i).value`), or the result of a call whose suppliers it binds
-to reference parameters (`pass(this.box)`). A borrow reached through a field
-written only in other regions supplies those regions, not the result's, and
-is rejected (GTI-S2127). Such a result never borrows storage the receiver
-owns (GTI-S2127): the receiver's own fields stay owned when reached through a
-method call, an argument, or a mutable or consuming receiver. A consuming
-method may therefore return it,
+to reference parameters (`pass(this.box)`).
+A borrow supplies the region of the first stored reference it crosses, as
+the receiver binds it: a `Pair<a, b>` field's `second` holds `b`, and a field
+of a base `Base<b>` holds `b`. A borrow through a reference in another
+region is rejected (GTI-S2127). An owned carrier field relays what it stores:
+with `Cursor<owner> cursor`, `this.cursor.get()` returning `Cursor`'s stored
+region, or `through(this.view)` taking a by-value `View<r>`, supplies the
+region the field binds there. Such a result
+never borrows storage the receiver owns (GTI-S2127): the receiver's own
+fields stay owned when reached through a method call, an argument, or a
+mutable or consuming receiver. A consuming method may therefore return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
 consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
 

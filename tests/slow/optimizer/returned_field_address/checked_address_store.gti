@@ -1,0 +1,110 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (checked address store); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_checked_overflow bad_checked_native bad_checked_other bad_checked_call
+//@[bad_checked_overflow] args: case
+//@[bad_checked_overflow] run-fail
+//@[bad_checked_overflow] exit-code: 70
+//@[bad_checked_overflow] stderr-contains: checked_address_store.gti:31: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_checked_native] args: case case
+//@[bad_checked_native] run-fail
+//@[bad_checked_native] exit-code: 70
+//@[bad_checked_native] stderr-contains: checked_address_store.gti:41: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_checked_other] args: case case case
+//@[bad_checked_other] run-fail
+//@[bad_checked_other] exit-code: 70
+//@[bad_checked_other] stderr-contains: checked_address_store.gti:50: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_checked_call] args: case case case case
+//@[bad_checked_call] run-fail
+//@[bad_checked_call] exit-code: 70
+//@[bad_checked_call] stderr-contains: checked_address_store.gti:65: runtime error[GTI-R0001]: integer_overflow in addition
+// --- checked_address_store.gti
+import std.string;
+import std.vector;
+import std.memory;
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Owner { public: Owner() = default; };
+
+int checked_write(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    return *address + 1;
+  }
+}
+
+int checked_compound(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value *= 3;
+    return *address;
+  }
+}
+
+int bad_checked_overflow(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 2147483647;
+    return *address + 1;
+  }
+}
+
+int bad_checked_native(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    opaque_pointer_effect(address);
+    return *address + 1;
+  }
+}
+
+int bad_checked_other(int* address, int* other, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    return *other + 1;
+  }
+}
+
+void overwrite_checked(int* address, mut Owner& owner) {
+  unsafe {
+    mut int& value = std::assume_mut(address, owner);
+    value = 2147483647;
+  }
+}
+
+int bad_checked_call(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    overwrite_checked(address, owner);
+    return *address + 1;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Owner owner{};
+  mut std::uninitialized<int> first{};
+  mut std::uninitialized<int> second{};
+  mut int other = 2147483647;
+  if (argc == 2) return bad_checked_overflow(first.data(), owner);
+  if (argc == 3) return bad_checked_native(first.data(), owner);
+  if (argc == 4) return bad_checked_other(first.data(), &other, owner);
+  if (argc == 5) return bad_checked_call(first.data(), owner);
+  return checked_write(first.data(), owner) == 12 &&
+         checked_compound(second.data(), owner) == 21 ? 0 : 1;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

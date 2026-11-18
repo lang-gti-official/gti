@@ -1107,7 +1107,7 @@ state keeps at most 64 carriers and 64 facts per alternative. Nothing here
 names a library type: the prelude's result class, `std::vector`'s and
 `std::detail::prefix_owner`'s allocation results and an unrelated user result
 class over a user payload enum share the rule. The user control
-(`optimizer_payload_result_postconditions.gti`) proves its relayed, negated
+(`tests/slow/optimizer/returned_field_address/payload_result_postconditions.gti`) proves its relayed, negated
 and directly switched success additions and keeps the failed-path, reassigned,
 later-call, native-write, mixed unknown-exit, wrong-case and active-destructor
 negatives checked, with independent replay and runtime overflow evidence.
@@ -1339,7 +1339,7 @@ justified scalar facts. Live, conditionally moved and reinitialized cleanup
 retain their ordinary effects; native counter controls observe those cases.
 
 The focused `optimizer_prefix_relocation` and
-`optimizer_prefix_relocation_runtime` controls use an application-owned
+`tests/ui/optimizer/prefix_relocation/` (and its O3 copies in `tests/slow`) controls use an application-owned
 carrier, overwritten values, retired sources, vacant capacity and failed
 transfers. Owning assertions select the exact downstream multiplication in
 reference-return getter cases; unrelated arithmetic is not evidence. Scalar
@@ -2085,8 +2085,10 @@ this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and
 transformed executions, including fallback, wraparound, effects and poison
-controls. `llvm_checked_reduction_runtime` checks native results, exact failure
-locations and destructor order at LLVM O0/O2/O3 against the existing C++ oracle.
+controls. `tests/slow/optimizer/checked_reductions/` checks native results, exact
+failure locations and destructor order at LLVM O3 against an exact oracle for
+every mode and count; `tests/ui/optimizer/checked_reductions/` runs one count per
+mode at O0.
 These are correctness gates; comparative performance workloads remain manual.
 
 ### Guarded checked scans

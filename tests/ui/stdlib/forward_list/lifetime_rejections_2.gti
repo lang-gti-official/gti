@@ -1,0 +1,59 @@
+// Forward-list cursors reject owner mutation and movement, competing reads, exclusive copies, read-only writes, raw-field misuse and a local owner's escaped cursor.
+//@ check-fail
+import std.forward_list;
+
+namespace case_owner_mutation {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut std::forward_list<int32_t> values{}; values.push_front(1); auto cursor = values.begin(); values.pop_front(); if (*cursor == 0) return 1; return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_owner_movement {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut std::forward_list<int32_t> values{}; values.push_front(1); auto cursor = values.begin(); auto moved = std::move(values); if (*cursor == 0) return 1; return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_mutable_owner_read {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut std::forward_list<int32_t> values{}; values.push_front(1); mut auto cursor = values.begin_mut(); [[discard]] values.front(); *cursor = 2; return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_local_owner_escape {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+
+std::forward_list<int32_t>::const_iterator escaped() {
+  mut std::forward_list<int32_t> values{};
+  values.push_front(1);
+  return values.begin();  //~ ERROR GTI-S2127
+}
+int entry() { auto cursor = escaped(); return *cursor; }
+}
+
+int main() { return 0; }

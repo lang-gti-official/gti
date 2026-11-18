@@ -1667,7 +1667,18 @@ struct DeferredCallableCallInfo {
   bool inferResultFromInstantiation = false;
 };
 
+// A checked tree of string literals and trusted text additions. Keep only
+// size and factory identity per node, not a quadratic set of copied prefixes.
+struct LiteralTextConcatenation {
+  FunctionId factory = 0;
+  std::size_t size = 0;
+};
+
 struct ResolvedOperatorInfo {
+  // A trusted primitive adapter passes both binary operands as ordinary
+  // arguments to a source function, with no implicit class receiver.
+  bool operandArguments = false;
+  std::optional<LiteralTextConcatenation> literalText;
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   CallDispatch dispatch = CallDispatch::Static;

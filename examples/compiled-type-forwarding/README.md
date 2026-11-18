@@ -16,7 +16,8 @@ automatically re-exported: import its configured interface directly when naming
 its types or functions. The driver supplies internal virtual interfaces for
 transitive type dependencies; it never writes those interfaces to disk.
 
-The `compiled_type_forwarding` test runs this example at O0/O1/O3, checks
+The slow-tier transcript `tests/slow/project/compiled_type_forwarding` runs a copy
+of this example at the release level, checks
 dependency reuse and private-layout invalidation, then relocates the four bundles
 and removes all producer sources before checking and running the consumer.
 Custom lifecycles, generic definitions, nested class types and whole-module

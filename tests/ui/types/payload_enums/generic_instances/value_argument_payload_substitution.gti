@@ -1,0 +1,25 @@
+// Generic enum instances: value argument payload substitution.
+//@ run-pass
+class Tagged<T, uint64_t Tag> {
+  T value;
+public:
+  Tagged(T value) : value(value) {}
+  T get() { return this.value; }
+  uint64_t tag() { return Tag; }
+};
+enum TaggedEvent<T, uint64_t Tag> { item(Tagged<T, Tag> value) };
+int main() {
+  TaggedEvent<int32_t, 3> first =
+      TaggedEvent<int32_t, 3>::item(Tagged<int32_t, 3>(7));
+  TaggedEvent<int32_t, 9> second =
+      TaggedEvent<int32_t, 9>::item(Tagged<int32_t, 9>(11));
+  switch (first) {
+    case TaggedEvent<int32_t, 3>::item(auto& value):
+      if (value.get() != 7 || value.tag() != uint64_t(3)) { return 1; }
+      break;
+  }
+  switch (second) {
+    case TaggedEvent<int32_t, 9>::item(auto& value):
+      return value.get() == 11 && value.tag() == uint64_t(9) ? 0 : 2;
+  }
+}

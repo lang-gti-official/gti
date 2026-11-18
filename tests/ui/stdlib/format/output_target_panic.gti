@@ -1,0 +1,17 @@
+// The targeted convenience overload reports a write failure as a caller-tracked panic.
+//@ run-fail
+//@ stdout-closed
+//@ exit-code: 70
+//@ stderr-contains: Output failed: stdout write failed
+// --- main.gti
+import std.format;
+extern "C" { void unbuffer_stdout(); }
+int main() {
+  unbuffer_stdout();
+  int number = 7;
+  std::println(std::cout, "value {}", number);
+  return 0;
+}
+// --- helper.c
+#include <stdio.h>
+void unbuffer_stdout(void) { setvbuf(stdout, NULL, _IONBF, 0); }

@@ -1,0 +1,11 @@
+// Formatting removes gaps around captured syntax without rewriting its text.
+//@ snapshot: format
+//@ format-stable
+import std.string;
+int main() {
+  constexpr std::string_view text = std::concat!(  {
+    "hello", // preserved comment
+      " world",
+  }  );
+  return 0;
+}

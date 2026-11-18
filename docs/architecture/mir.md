@@ -1068,6 +1068,13 @@ owning member projected from that accessor. Lowering uses the already
 materialized place's exact loan root, not a guessed owner identity. Escaping
 loans, attached carriers and live children still prevent early retirement;
 borrow-returning calls retain their normal full-expression or carrier endpoint.
+An ownerless text element reached through a reference argument retains the
+same physical owner as a receiver-based accessor. The verifier unwraps the
+owner's reference type and proves its record has no stored-reference paths;
+it does not infer ownerlessness from missing loan metadata. A lowered range
+iterator retaining an exact local owner uses that owner's layout for this
+proof. The physical source, parent and call contract remain independently
+verified, including raw borrows' explicit unsafe owner witness.
 A reference return preserves both its physical source and stored dependency.
 A copied by-value return instead publishes a fresh external-owner loan from
 the exact copied SSA value. Its original entry remains live until physical

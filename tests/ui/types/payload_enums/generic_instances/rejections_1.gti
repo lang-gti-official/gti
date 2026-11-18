@@ -1,0 +1,154 @@
+// Generic enum instances reject mismatched construction and arguments, invalid patterns, escaping loans, recursive by-value layout and bare-enum misuse.
+//@ check-fail
+import std.optional;
+import std.vector;
+
+namespace case_mismatched_construction {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() { Event<int32_t> event = Event<int64_t>::item(int64_t(1)); return 0; }  //~ ERROR GTI-S2003
+}
+
+namespace case_mismatched_value_argument {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() { Event<int32_t, int32_t, 3> event = Event<int32_t, int32_t, 7>::item(1); return 0; }  //~ ERROR GTI-S2003
+}
+
+namespace case_mismatched_pack_argument {
+enum Packet<T, Rest...> { item(T value) };
+int entry() { Packet<int32_t, bool> packet = Packet<int32_t, char>::item(1); return 0; }  //~ ERROR GTI-S2003
+}
+
+namespace case_mismatched_pattern {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() {
+  Event<int32_t> event = Event<int32_t>::item(1);
+  switch (event) {
+    case Event<int64_t>::item(value): return 0;  //~ ERROR GTI-S2067
+    default: return 1;
+  }
+}
+}
+
+namespace case_nonexhaustive {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() {
+  Event<int32_t> event = Event<int32_t>::item(1);
+  switch (event) { case Event<int32_t>::item(value): return value; }  //~ ERROR GTI-S2067
+  return 0;
+}
+}
+
+namespace case_invalid_void_substitution {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() { auto event = Event<void>::idle; return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2003
+}
+
+namespace case_reference_temporary_owner {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() { auto event = Event<int32_t&>::item(3); return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2045
+}
+
+namespace case_reference_local_escape {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+Event<int32_t&> dangling() {
+  int32_t local = 3;
+  return Event<int32_t&>::pair(local, local);  //~ ERROR GTI-S2045
+}
+int entry() { return 0; }
+}
+
+namespace case_invalid_signature_substitution {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() { auto event = Event<int32_t(int32_t)>::idle; return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2003
+}
+
+namespace case_implicit_owning_copy {
+mut int32_t drops = 0;
+mut int32_t cleanup_divisor = 1;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+  int32_t id() { return this.identity; }
+};
+
+enum Event<T, uint64_t Channel = 3> { idle, item(T value) };
+
+concept identified<T> = requires(T& value) { { value.id() } -> int32_t; };
+
+int32_t id<T, uint64_t Channel>(Event<T, Channel>& event) requires identified<T> {
+  switch (event) {
+    case Event<T, Channel>::idle: return 0;
+    case Event<T, Channel>::item(auto& value): return value.id();
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+class Envelope<T> {
+  mut T value;
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+};
+
+int entry() {
+  Event<Resource> source = Event<Resource>::item(Resource(1));
+  Event<Resource> copy = source;  //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+int main() { return 0; }

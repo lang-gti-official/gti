@@ -1,0 +1,24 @@
+// Generic enum instances: generic passive class publications.
+//@ run-pass
+class P {
+  mut int32_t number = 0;
+public:
+  P(int32_t number) : number(number) {}
+  int32_t get() { return this.number; }
+public:
+  P() = default;
+};
+enum Family<T> { item(T value), empty };
+int main() {
+  Family<P> fresh = Family<P>::item(P(7));
+  P source = P(9);
+  Family<P> copied = Family<P>::item(source);
+  switch (fresh) {
+    case Family<P>::item(value): if (value.get() != 7) { return 1; } break;
+    case Family<P>::empty: return 2;
+  }
+  switch (copied) {
+    case Family<P>::item(auto& value): return value.get() - 9;
+    case Family<P>::empty: return 3;
+  }
+}

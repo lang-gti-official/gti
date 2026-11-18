@@ -1,0 +1,93 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (sibling field publication); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_sibling_native bad_sibling_indirect bad_sibling_borrow bad_sibling_direct
+//@[bad_sibling_native] args: case
+//@[bad_sibling_native] run-fail
+//@[bad_sibling_native] exit-code: 70
+//@[bad_sibling_native] stderr-contains: sibling_field_publication.gti:30: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_sibling_indirect] args: case case
+//@[bad_sibling_indirect] run-fail
+//@[bad_sibling_indirect] exit-code: 70
+//@[bad_sibling_indirect] stderr-contains: sibling_field_publication.gti:37: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_sibling_borrow] args: case case case
+//@[bad_sibling_borrow] run-fail
+//@[bad_sibling_borrow] exit-code: 70
+//@[bad_sibling_borrow] stderr-contains: sibling_field_publication.gti:44: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_sibling_direct] args: case case case case
+//@[bad_sibling_direct] run-fail
+//@[bad_sibling_direct] exit-code: 70
+//@[bad_sibling_direct] stderr-contains: sibling_field_publication.gti:50: runtime error[GTI-R0001]: integer_overflow in addition
+// --- sibling_field_publication.gti
+import std.string;
+import std.vector;
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Datum {
+public:
+  mut int value = 0;
+  expected<void, int> publish() mut { this.value = 7; return; }
+public:
+  Datum() = default;
+};
+
+class Ledger {
+  mut Datum datum{};
+  mut int stamp = 0;
+  mut int* alias = nullptr;
+public:
+  int sibling_publication() mut {
+    {
+      auto status = this.datum.publish();
+      if (!status) return 0;
+    }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_native() mut {
+    [[discard]] this.datum.publish();
+    unsafe { opaque_pointer_effect(&this.datum.value); }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_indirect() mut {
+    [[discard]] this.datum.publish();
+    this.alias = &this.datum.value;
+    unsafe { *this.alias = 2147483647; }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_borrow() mut {
+    [[discard]] this.datum.publish();
+    mut int& reference = this.datum.value;
+    reference = 2147483647;
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_direct() mut {
+    [[discard]] this.datum.publish();
+    this.datum.value = 2147483647;
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+public:
+  Ledger() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Ledger ledger{};
+  if (argc == 2) return ledger.bad_sibling_native();
+  if (argc == 3) return ledger.bad_sibling_indirect();
+  if (argc == 4) return ledger.bad_sibling_borrow();
+  if (argc == 5) return ledger.bad_sibling_direct();
+  return ledger.sibling_publication() == 8 ? 0 : 1;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

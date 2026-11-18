@@ -4,8 +4,8 @@ main.gti:57:27: error[GTI-S2057]: Consteval invocation must be evaluated during 
 main.gti:57:27: note: Compile-time evaluation panicked: "Format presentation does not accept this argument type"
  57 | int main() { std::println("{:x}", "text"); return 0; }  //~ ERROR GTI-S2057
     |                           ^~~~~~
-$STD/std/format.gti:1034:22: note: Immediate declaration is here.
- 1034 |   implicit consteval format_pattern(string_view value) : text(value) {
+$STD/std/format.gti:1040:22: note: Immediate declaration is here.
+ 1040 |   implicit consteval format_pattern(string_view value) : text(value) {
       |                      ^~~~~~~~~~~~~~
 main.gti:57:27: note: Constant evaluation requested here.
  57 | int main() { std::println("{:x}", "text"); return 0; }  //~ ERROR GTI-S2057

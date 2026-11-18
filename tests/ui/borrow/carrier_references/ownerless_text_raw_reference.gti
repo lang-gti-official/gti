@@ -1,0 +1,16 @@
+// Owner-backed raw borrows of text-view objects preserve their address for reads and writes.
+//@ run-pass
+import std.memory;
+import std.string_view;
+struct Names { mut std::string_view first; Names() : first("old") {} };
+int main() {
+  mut Names names{};
+  unsafe {
+    mut std::string_view& name = std::assume_mut(&names.first, names);
+    name = "new";
+  }
+  unsafe {
+    std::string_view& name = std::assume_ref(&names.first, names);
+    return name.size() == std::size_t(3) ? 0 : 1;
+  }
+}

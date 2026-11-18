@@ -1,0 +1,15 @@
+// Multiple source bindings call one native function, preserving native side effects and result values.
+//@ run-pass
+// --- main.gti
+namespace first { extern "C" { c_int record_value(c_int value); } }
+namespace second { extern "C" { c_int record_value(c_int renamed); } }
+extern "C" { [[link_name("record_value")]] c_int record_alias(c_int value); }
+int main() {
+  if (first::record_value(2) != 2) return 1;
+  if (second::record_value(3) != 5) return 2;
+  if (record_alias(4) != 9) return 3;
+  return 0;
+}
+// --- native.c
+static int total;
+int record_value(int value) { total += value; return total; }

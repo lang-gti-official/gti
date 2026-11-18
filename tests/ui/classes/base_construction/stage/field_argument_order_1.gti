@@ -1,0 +1,11 @@
+// Field argument order: ordinary and conditional field arguments follow base completion.
+//@ check-pass
+mut int observed = 0;
+int observe() { observed = 7; return observed; }
+class Base { public: Base() { observed = 3; } };
+class Derived : public Base {
+  int field;
+public:
+  Derived() : Base(), field(observe()) {}
+};
+int main() { Derived value{}; return 0; }

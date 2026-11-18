@@ -1,0 +1,70 @@
+// Structured bindings decompose fixed arrays of classes.
+//@ run-pass
+// --- class_array_decomposition.gti
+extern "C" {
+  void mark_constructor();
+  int32_t constructed_count();
+}
+
+class Value {
+public:
+  int32_t n;
+  Value(int32_t n) : n(n) {}
+};
+
+class ArrayOwner {
+  Value values[1];
+public:
+  ArrayOwner(Value input[1]) : values(std::move(input)) {}
+  int32_t read() { return this.values[0].n; }
+};
+
+struct Range {
+  mut int32_t lo;
+  mut int32_t hi;
+  Range(int32_t lo, int32_t hi) : lo(lo), hi(hi) {
+    mark_constructor();
+  }
+  int32_t width() { return this.hi - this.lo; }
+};
+
+int main() {
+  mut Range ranges[2] = {Range(0, 1), Range(5, 8)};
+  auto [first, second] = ranges;
+  if (first.hi + second.lo != 6 || first.width() + second.width() != 4) { return 1; }
+  // Structured binding owns an independent copy, not references to ranges.
+  ranges[0].lo = 99;
+  if (first.lo != 0) { return 2; }
+  // Existing constructor-field array publication is a distinct exact proof.
+  Value input[1] = {Value(9)};
+  ArrayOwner owner{input};
+  if (owner.read() != 9) { return 4; }
+  // Copy construction must not invent ordinary/default construction.
+  return constructed_count() == 2 ? 0 : 3;
+}
+// --- projection_records.c
+#include <stddef.h>
+#include <stdint.h>
+
+struct Samples {
+  int32_t values[4];
+  int32_t count;
+};
+
+_Static_assert(sizeof(struct Samples) == 20, "Samples C ABI size");
+_Static_assert(offsetof(struct Samples, count) == 16,
+               "Samples C ABI field offset");
+_Static_assert(_Generic(((struct Samples *)0)->values[0],
+                   int32_t: 1,
+                   default: 0),
+               "Samples element is a C int32_t");
+
+struct Samples *native_samples(void) {
+  static struct Samples samples = {{4, 0, 7, 8}, 4};
+  return &samples;
+}
+
+static int32_t constructor_count;
+
+void mark_constructor(void) { ++constructor_count; }
+int32_t constructed_count(void) { return constructor_count; }

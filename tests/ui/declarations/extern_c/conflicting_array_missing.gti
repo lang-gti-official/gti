@@ -1,0 +1,4 @@
+// Native bindings with conflicting array missing contracts are rejected across namespaces.
+namespace first { extern "C" { [[c_array(count)]] c_int* target(c_int* count); } }
+namespace second { extern "C" { c_int* target(c_int* count); } }  //~ ERROR GTI-S2054 conflicting safety contracts
+int main() { return 0; }
