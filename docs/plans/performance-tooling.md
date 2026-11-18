@@ -76,6 +76,30 @@ CLI workflow, 29 admission UI fixtures and scalar/owner native smoke at O0.
 Each has its own exact-head verification record. Full integration validation is
 CI's responsibility and has not been claimed by these local results.
 
+### Integration reconciliation
+
+After those measurements and checks completed, main incorporated RFC 0006's
+backend telemetry and additional MIR/runtime changes. Reconciling with
+`c7985d61f17192c783c361983539d8e761ea68df` required resolving one overlapping
+local variable name in `planLlvmAdmission`; the result retains exactly one
+`llvm-admission` timing scope. None of the four optimization mechanisms was
+changed by that resolution.
+
+Review of the automatic merge also found a nested second
+`llvm-admission-inventory` event. The new exact-count regression fails on
+`2ea995fd4871b7c4a3c3a5f16dd10706bda1d728` with two inventory events. Removing
+the redundant inner scope restores the original admission implementation;
+the trace regression now requires exactly one event for each of the four
+admission phases. This correction is being propagated to the dependent slices
+before their fresh verification resumes.
+
+The measurements and full equivalence inventory above remain evidence for
+their explicitly named pre-reconciliation heads. Their source archive,
+compiler/runner/runtime snapshots and raw artifacts are retained; they are not
+relabelled as results from the new heads. Fresh optimized builds, the affected
+trace/snapshot checks and the owning focused gates are in progress for the
+reconciled heads. Final integration handoff remains pending that evidence.
+
 ### Measurement protocol
 
 The capture tool intentionally repeats backend planning to collect independent
