@@ -1,0 +1,9 @@
+// Initialization: the program is accepted.
+//@ check-pass
+int missing();
+int select<uint64_t N>() {
+  if constexpr (N == 0) { return 7; }
+  else { return missing(); }
+}
+int first = select<0>();
+int main() { return first - 7; }

@@ -1,0 +1,39 @@
+// The exclusive owner stays borrowed while a consumed temporary's result lives.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Holder<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Holder(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> consumed() && { return this.direct.value; }
+};
+int&<a> returned<lifetime a>(mut Box&<a> mine) {
+  return Holder(mine).consumed();
+}
+int write_in_body<lifetime a>(mut Box&<a> mine) {
+  int& kept = Holder(mine).consumed();
+  mine.value = 3;  //~ ERROR GTI-S2017
+  return kept;
+}
+int write_in_caller() {
+  mut Box mine{9};
+  int& kept = returned(mine);
+  mine.value = 2;  //~ ERROR GTI-S2017
+  return kept;
+}
+int write_after_temporary() {
+  mut Box mine{9};
+  int& kept = Holder(mine).consumed();
+  mine.value = 1;  //~ ERROR GTI-S2017
+  return kept;
+}
+int exclusive_alias() {
+  mut Box mine{9};
+  int& kept = Holder(mine).consumed();
+  mut Box& again = mine;  //~ ERROR GTI-S2017
+  again.value = 1;
+  return kept;
+}
+int main() { return 0; }

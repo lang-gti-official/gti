@@ -1,0 +1,28 @@
+// A failing temporary argument preserves activation and cleanup (later-argument-failure).
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: GTI-R0014
+//@ stderr-contains: failure_during_cleanup
+class FailureTracker {
+public:
+  FailureTracker() = default;
+
+  ~FailureTracker() {
+    mut int32_t cleanup = 2147483647;
+    cleanup += 1;
+  }
+};
+
+int32_t fail_argument() {
+  mut int32_t checked = 2147483647;  //~ WARN GTI-S2096
+  return checked + 1;
+}
+
+int32_t inspect(FailureTracker& value, int32_t argument) {
+  return argument;
+}
+
+int main() {
+  return inspect(FailureTracker(), fail_argument());
+}

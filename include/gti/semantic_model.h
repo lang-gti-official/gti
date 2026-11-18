@@ -146,6 +146,11 @@ struct ResolvedRangeIterationInfo {
   // fresh hidden mutable cursor while evaluating that exact endpoint.
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
+  // The selected read-only operator* yields a copyable value whose borrowed
+  // state its signature writes only in the cursor class's own lifetime
+  // parameters (or `static`): the element borrows what the cursor stores,
+  // never the cursor or the range shell, so it survives advancement.
+  bool elementBorrowsCursorRegions = false;
 };
 
 enum class StructuredBindingProjectionKind {
@@ -679,6 +684,7 @@ struct ProgramInitializationStep {
   ClassId ownerClass = 0;
   bool requiresActiveCleanup = false;
   bool requiresNativeRetirement = false;
+  bool requiresSourceCleanup = false;
   bool threadLocal = false;
   FunctionId ownerFunction = 0;
   DefinedFailureOperation ensureFailure;
@@ -692,6 +698,7 @@ struct ProgramInitializationStep {
            left.symbol == right.symbol && left.ownerClass == right.ownerClass &&
            left.requiresActiveCleanup == right.requiresActiveCleanup &&
            left.requiresNativeRetirement == right.requiresNativeRetirement &&
+           left.requiresSourceCleanup == right.requiresSourceCleanup &&
            left.threadLocal == right.threadLocal &&
            left.ownerFunction == right.ownerFunction &&
            left.ensureFailure == right.ensureFailure &&
@@ -1672,7 +1679,18 @@ struct DeferredCallableCallInfo {
   bool inferResultFromInstantiation = false;
 };
 
+// A checked tree of string literals and trusted text additions. Keep only
+// size and factory identity per node, not a quadratic set of copied prefixes.
+struct LiteralTextConcatenation {
+  FunctionId factory = 0;
+  std::size_t size = 0;
+};
+
 struct ResolvedOperatorInfo {
+  // A trusted primitive adapter passes both binary operands as ordinary
+  // arguments to a source function, with no implicit class receiver.
+  bool operandArguments = false;
+  std::optional<LiteralTextConcatenation> literalText;
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   CallDispatch dispatch = CallDispatch::Static;

@@ -1,0 +1,239 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (default scalar construction); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_default_explicit bad_default_native bad_default_other bad_default_lifetime bad_modified_prefix bad_modified_native bad_compound_prefix bad_compound_native
+//@[bad_default_explicit] args: case
+//@[bad_default_explicit] run-fail
+//@[bad_default_explicit] exit-code: 70
+//@[bad_default_explicit] stderr-contains: default_scalar_construction.gti:75: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_native] args: case case
+//@[bad_default_native] run-fail
+//@[bad_default_native] exit-code: 70
+//@[bad_default_native] stderr-contains: default_scalar_construction.gti:134: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_other] args: case case case
+//@[bad_default_other] run-fail
+//@[bad_default_other] exit-code: 70
+//@[bad_default_other] stderr-contains: default_scalar_construction.gti:142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_default_lifetime] args: case case case case
+//@[bad_default_lifetime] run-fail
+//@[bad_default_lifetime] exit-code: 70
+//@[bad_default_lifetime] stderr-contains: default_scalar_construction.gti:151: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_modified_prefix] args: case case case case case
+//@[bad_modified_prefix] run-fail
+//@[bad_modified_prefix] exit-code: 70
+//@[bad_modified_prefix] stderr-contains: default_scalar_construction.gti:91: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_modified_native] args: case case case case case case
+//@[bad_modified_native] run-fail
+//@[bad_modified_native] exit-code: 70
+//@[bad_modified_native] stderr-contains: default_scalar_construction.gti:100: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_compound_prefix] args: case case case case case case case
+//@[bad_compound_prefix] run-fail
+//@[bad_compound_prefix] exit-code: 70
+//@[bad_compound_prefix] stderr-contains: default_scalar_construction.gti:116: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_compound_native] args: case case case case case case case case
+//@[bad_compound_native] run-fail
+//@[bad_compound_native] exit-code: 70
+//@[bad_compound_native] stderr-contains: default_scalar_construction.gti:125: runtime error[GTI-R0001]: integer_overflow in addition
+// --- default_scalar_construction.gti
+import std.string;
+import std.vector;
+import std.memory;
+extern "C" {
+  void opaque_pointer_effect(int* pointer);
+  void* malloc(uint64_t bytes);
+  void free(void* address);
+}
+
+class ZeroSequence {
+  mut int* pointer = nullptr;
+  mut uint64_t live = 0;
+public:
+  ZeroSequence(int* pointer) : pointer(pointer) {}
+  uint64_t size() { return this.live; }
+  unsafe void append_default() mut {
+    unsafe { std::construct_at(this.pointer + this.live); }
+    this.live += uint64_t(1);
+  }
+  unsafe int& at(uint64_t index) {
+    unsafe { return std::assume_ref(this.pointer + index, this); }
+  }
+  unsafe mut int& at(uint64_t index) mut {
+    unsafe { return std::assume_mut(this.pointer + index, this); }
+  }
+  unsafe void clobber() mut {
+    unsafe { opaque_pointer_effect(this.pointer); }
+  }
+public:
+  ZeroSequence() = default;
+};
+
+unsafe int default_sequence(ZeroSequence& sequence) {
+  unsafe {
+    int& value = sequence.at(uint64_t(4095));
+    return value + 1;
+  }
+}
+
+unsafe void initialize_zero(int* pointer) {
+  unsafe { std::construct_at(pointer); }
+}
+
+unsafe int default_scalar(int* pointer) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int default_forwarded(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe uint64_t default_unsigned(uint64_t* pointer) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + uint64_t(1);
+  }
+}
+
+unsafe int default_packed<Args...>(int* pointer, Args... unused) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_explicit(int* pointer) {
+  unsafe {
+    std::construct_at(pointer, 2147483647);
+    return *pointer + 1;
+  }
+}
+
+unsafe int modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    int& value = sequence.at(uint64_t(17));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    int& value = sequence.at(uint64_t(4095));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    sequence.clobber();
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+
+unsafe int compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 7;
+    return value;
+  }
+}
+
+unsafe int bad_compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 1;
+    return value;
+  }
+}
+
+unsafe int bad_compound_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.clobber();
+    mut int& value = sequence.at(uint64_t(0));
+    value += 1;
+    return value;
+  }
+}
+
+unsafe int bad_default_native(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    opaque_pointer_effect(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_other(int* pointer, int* other) {
+  unsafe {
+    std::construct_at(pointer, 2147483647);
+    initialize_zero(other);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_lifetime(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    std::destroy_at(pointer);
+    std::construct_at(pointer, 2147483647);
+    return *pointer + 1;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::uninitialized<int> first{};
+  mut std::uninitialized<int> second{};
+  mut std::uninitialized<uint64_t> wide{};
+  unsafe {
+    if (argc == 2) return bad_default_explicit(first.data());
+    if (argc == 3) return bad_default_native(first.data());
+    if (argc == 4) return bad_default_other(first.data(), second.data());
+    if (argc == 5) return bad_default_lifetime(first.data());
+    int direct = default_scalar(first.data());
+    std::destroy_at(first.data());
+    int packed = default_packed(first.data(), true, uint64_t(17));
+    int forwarded = default_forwarded(second.data());
+    uint64_t unsigned_value = default_unsigned(wide.data());
+    std::destroy_at(wide.data());
+    std::destroy_at(second.data());
+    std::destroy_at(first.data());
+    void* bytes = malloc(uint64_t(16384));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    mut ZeroSequence sequence{pointer};
+    while (sequence.size() < uint64_t(4096)) {
+      sequence.append_default();
+    }
+    int last = default_sequence(sequence);
+    if (argc == 6) return bad_modified_prefix(sequence);
+    if (argc == 7) return bad_modified_native(sequence);
+    if (argc == 8) return bad_compound_prefix(sequence);
+    if (argc == 9) return bad_compound_native(sequence);
+    int modified = modified_prefix(sequence);
+    int compound = compound_prefix(sequence);
+    bool stored = *(pointer + uint64_t(4095)) == 14;
+    for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
+      std::destroy_at(pointer + index);
+    }
+    free(bytes);
+    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && compound == 14 && stored ? 0 : 1;
+  }
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <deque>
 #include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,10 @@ struct MirForwardDataflowOptions {
   // Widening starts when this many prior updates reached the target block.
   // A zero threshold disables widening.
   std::size_t widenAfterUpdates = 4;
+  // Visit pending blocks in reverse postorder rather than first-in first-out.
+  // The fixed point is the same for a monotone transfer; an acyclic region
+  // is then visited once per block instead of once per predecessor update.
+  bool reversePostorder = false;
 };
 
 enum class MirDataflowStatus {
@@ -115,6 +120,65 @@ struct WorkItem {
   return false;
 }
 
+// Reverse-postorder position of each block reachable from the entry; an
+// unreachable block sorts after every reachable one.
+[[nodiscard]] inline std::vector<std::size_t>
+reversePostorderIndex(const MirBody &body) {
+  const std::size_t count = body.blocks.size();
+  std::vector<std::size_t> index(count, count);
+  if (body.entry == 0 || body.entry > count)
+    return index;
+  const auto successors = [&](const MirBlock &block) {
+    std::vector<MirBlockId> next;
+    const MirTerminator &end = block.terminator;
+    switch (end.kind) {
+    case MirTerminatorKind::Goto:
+    case MirTerminatorKind::ContinueFailure:
+      next.push_back(end.target);
+      break;
+    case MirTerminatorKind::Branch:
+    case MirTerminatorKind::Invoke:
+      next.push_back(end.target);
+      next.push_back(end.elseTarget);
+      break;
+    case MirTerminatorKind::Switch:
+      next.push_back(end.target);
+      for (const MirSwitchTarget &target : end.switchTargets)
+        next.push_back(target.target);
+      break;
+    default:
+      break;
+    }
+    return next;
+  };
+  std::vector<MirBlockId> postorder;
+  postorder.reserve(count);
+  std::vector<bool> visited(count, false);
+  // Iterative depth-first search: (block, next successor to visit).
+  std::vector<std::pair<MirBlockId, std::size_t>> stack{{body.entry, 0}};
+  std::vector<std::vector<MirBlockId>> pendingSuccessors(count);
+  visited[body.entry - 1] = true;
+  pendingSuccessors[body.entry - 1] = successors(body.blocks[body.entry - 1]);
+  while (!stack.empty()) {
+    auto &[block, next] = stack.back();
+    const auto &targets = pendingSuccessors[block - 1];
+    if (next < targets.size()) {
+      const MirBlockId target = targets[next++];
+      if (target != 0 && target <= count && !visited[target - 1]) {
+        visited[target - 1] = true;
+        pendingSuccessors[target - 1] = successors(body.blocks[target - 1]);
+        stack.push_back({target, 0});
+      }
+      continue;
+    }
+    postorder.push_back(block);
+    stack.pop_back();
+  }
+  for (std::size_t position = 0; position < postorder.size(); ++position)
+    index[postorder[postorder.size() - 1 - position] - 1] = position;
+  return index;
+}
+
 [[nodiscard]] inline bool
 canonicalEdge(const MirBlock &block, MirBlockId target, std::size_t ordinal) {
   const MirTerminator &terminator = block.terminator;
@@ -176,6 +240,16 @@ runMirForwardDataflow(const MirBody &body, State entryState,
 
   result.incoming[body.entry - 1] = std::move(entryState);
   std::deque<mir_dataflow_detail::WorkItem> worklist{{body.entry}};
+  // Reverse-postorder mode keeps its pending blocks ordered by position.
+  const std::vector<std::size_t> order =
+      options.reversePostorder
+          ? mir_dataflow_detail::reversePostorderIndex(body)
+          : std::vector<std::size_t>{};
+  std::set<std::pair<std::size_t, MirBlockId>> ordered;
+  if (options.reversePostorder) {
+    worklist.clear();
+    ordered.insert({order[body.entry - 1], body.entry});
+  }
   std::vector<bool> queued(body.blocks.size(), false);
   std::vector<std::vector<MirDataflowEdgeId>> sourceExecutable(
       body.blocks.size());
@@ -185,14 +259,20 @@ runMirForwardDataflow(const MirBody &body, State entryState,
           ? std::max<std::size_t>(128, body.blocks.size() * 64)
           : options.iterationLimit;
 
-  while (!worklist.empty()) {
+  while (!worklist.empty() || !ordered.empty()) {
     if (result.iterations >= iterationLimit) {
       result.status = MirDataflowStatus::IterationLimit;
       return result;
     }
     ++result.iterations;
-    const MirBlockId source = worklist.front().block;
-    worklist.pop_front();
+    MirBlockId source = 0;
+    if (options.reversePostorder) {
+      source = ordered.begin()->second;
+      ordered.erase(ordered.begin());
+    } else {
+      source = worklist.front().block;
+      worklist.pop_front();
+    }
     queued[source - 1] = false;
     const MirBlock *block = body.findBlock(source);
     if (block == nullptr || !result.incoming[source - 1]) {
@@ -264,7 +344,10 @@ runMirForwardDataflow(const MirBody &body, State entryState,
       }
       ++result.updateCounts[edge.target - 1];
       if (!queued[edge.target - 1]) {
-        worklist.push_back({edge.target});
+        if (options.reversePostorder)
+          ordered.insert({order[edge.target - 1], edge.target});
+        else
+          worklist.push_back({edge.target});
         queued[edge.target - 1] = true;
       }
     }

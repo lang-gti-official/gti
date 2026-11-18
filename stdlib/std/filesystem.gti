@@ -91,6 +91,11 @@ namespace std {
         this.text.append(source);
       }
 
+      /// Copies a string's bytes without consuming or retaining the source.
+      path(std::string& source) {
+        this.text.append(source.view());
+      }
+
       path clone() {
         mut path result = path();
         path::copy_text(result.text, this.text);
@@ -420,6 +425,13 @@ namespace std {
       std::filesystem::path operator/(path& other) {
         mut path result = this.clone();
         result.append_path(other);
+        return std::move(result);
+      }
+
+      /// Joins a view or string literal without changing either operand.
+      std::filesystem::path operator/(std::string_view other) {
+        mut path result = this.clone();
+        result.append(other);
         return std::move(result);
       }
 

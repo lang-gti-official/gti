@@ -1,0 +1,85 @@
+name: Full validation retry
+
+# Hosted macOS runners drop long-queued jobs: GitHub cancels such a job before
+# it executes a single step ("The job was not acquired by Runner of type hosted
+# even after multiple attempts"), and full validation's verdict then fails
+# with no test failure. When a full validation of main finishes red only
+# because required jobs never got a runner, this re-runs those jobs (with their
+# dependents: the verdict and the report) once. A run is in progress until its
+# last job ends and cannot be re-run from inside itself, so this runs on the
+# completion event. A job that executed any step is never retried, so a test
+# that ran and failed stays red; the second attempt reports like any other
+# failure; and only the newest full validation of main is retried, since a
+# newer run covers an older head. Runs of different commits overlap; each is
+# decided by its own run id and attempt, and newest means the highest run
+# number, which follows main's push order. The report job leaves `main-broken`
+# alone exactly when this will retry (scripts/validation_retry.py holds both
+# rules).
+on:
+  workflow_run:
+    workflows: [Full validation]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: Re-run jobs that never got a runner
+    if: >-
+      github.repository == 'lang-gti-official/gti'
+      && github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.head_branch == 'main'
+      && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only this job may re-run workflows; it checks out main's own scripts.
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Re-run the starved jobs of the newest red full validation, once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_ID: ${{ github.event.workflow_run.id }}
+          GTI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 scripts/validation_retry.py request --repository "${GITHUB_REPOSITORY}"
+          --run-id "${GTI_RUN_ID}" --attempt "${GTI_RUN_ATTEMPT}"
+
+  report:
+    # The report job of a starved run may have deferred to the retry. If the
+    # retry could not even be requested, say so in main-broken instead of
+    # leaving main silently red.
+    name: Report a retry that could not be requested
+    needs: [retry]
+    if: always() && needs.retry.result == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          # main's history orders this result against newer commits' verdicts.
+          fetch-depth: 0
+      - name: Open or update the main-broken issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          GTI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: >-
+          python3 scripts/full_validation_report.py --run-url "${GTI_RUN_URL}"
+          --sha "${GTI_SHA}" --status failed --repository "${GITHUB_REPOSITORY}"

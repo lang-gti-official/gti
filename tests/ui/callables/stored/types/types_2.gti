@@ -1,0 +1,15 @@
+// Stored callables: owned callable respects the exact wrapper transfer assertion: [[unsafe_transfer]].
+//@ check-pass
+import std.string;
+[[unsafe_transfer]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() {}
+};
+void retain<T>(T callback) {}
+int main() {
+  Reviewed<int> owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));
+  return 0;
+}

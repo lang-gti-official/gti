@@ -33,6 +33,9 @@ void begin_thread_local_storage_lifetime() noexcept;
 void drain_thread_local_cleanup(const gti_failure_record_v2 *primary = nullptr,
                                 const gti_failure_artifact_descriptor_v1
                                     *primaryArtifact = nullptr) noexcept;
+[[nodiscard]] bool drain_thread_local_cleanup_checked(
+    gti_failure_record_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 **artifact) noexcept;
 void drain_thread_local_cleanup_legacy(
     const gti_failure_record_v1 *primary,
     const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept;

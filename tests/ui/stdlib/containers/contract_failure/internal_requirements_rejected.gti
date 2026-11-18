@@ -1,0 +1,8 @@
+// Internal container requirement helpers are not callable from user code.
+//@ check-fail
+int main() {
+  gti_internal::require_key(1);  //~ ERROR GTI-S2058
+  gti_internal::require_container_argument();  //~ ERROR GTI-S2058
+  gti_internal::require_key(true, false);  //~ ERROR GTI-S2058
+  return 0;
+}

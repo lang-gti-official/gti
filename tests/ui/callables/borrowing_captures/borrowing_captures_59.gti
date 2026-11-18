@@ -1,0 +1,17 @@
+// Borrowing captures: cleanup-capture-borrow-live-until-later-use is rejected with a user diagnostic, not an ICE.
+class Audited {
+public:
+  Audited() {}
+  ~Audited() {}
+  int read() { return 1; }
+};
+int main() {
+  mut int base = 4;
+  Audited kept{};
+  auto reader = [cell = std::move(kept), &base]() -> int {
+    return cell.read() + base;
+  };
+  int first = reader();
+  base = 10;  //~ ERROR GTI-S2017
+  return reader() + first;
+}

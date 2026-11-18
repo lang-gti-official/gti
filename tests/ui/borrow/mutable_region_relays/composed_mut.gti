@@ -1,0 +1,13 @@
+// A mutable same-region result retains exclusive access to its selected referent.
+//@ run-pass
+mut int&<a> choose_mut<lifetime a>(mut int&<a> one, mut int&<a> two, bool first) {
+  if (first) { return one; }
+  return two;
+}
+int main() {
+  mut int one = 1;
+  mut int two = 2;
+  { mut int& selected = choose_mut(one, two, true); selected = 7; }
+  { mut int& selected = choose_mut(one, two, false); selected = 8; }
+  return one == 7 && two == 8 ? 0 : 1;
+}

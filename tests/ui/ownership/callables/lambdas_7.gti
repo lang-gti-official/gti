@@ -1,0 +1,8 @@
+// Lambdas: move-only values should not enter closures without explicit ownership-transfer capture syntax.
+import std.memory;
+
+int main() {
+  std::unique_ptr<int> owner = std::make_unique<int>(1);
+  auto invalid = [owner]() -> int { return *owner; };  //~ ERROR GTI-S2027
+  return invalid();
+}

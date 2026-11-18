@@ -1,0 +1,6 @@
+// Native callback parameter signatures participate in native binding compatibility.
+using First = (c_int) -> c_int;
+using Second = (c_long) -> c_int;
+namespace first { extern "C" { void register_callback(First callback); } }
+namespace second { extern "C" { void register_callback(Second callback); } }  //~ ERROR GTI-S2054 conflicting function signatures
+int main() { return 0; }

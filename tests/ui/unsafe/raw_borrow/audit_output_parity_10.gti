@@ -1,0 +1,28 @@
+// Audit output parity: checked loan endpoints in branches and loops is valid in both audit modes.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int inspect(bool choose) {
+  mut int owner = 7;
+  const int* address = &owner;
+  if (choose) {
+    unsafe {
+      int& view = std::assume_ref(address, owner);
+      int copy = view;
+      owner = copy + 1;
+    }
+  } else {
+    int& view = owner;
+    int copy = view;
+    owner = copy + 2;
+  }
+  for (mut int i = 0; i < 2; ++i) {
+    unsafe {
+      int& view = std::assume_ref(address, owner);
+      int copy = view;
+      owner = copy + 1;
+    }
+  }
+  return owner;
+}
+int main() { return inspect(true) - 10; }

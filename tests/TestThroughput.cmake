@@ -14,9 +14,8 @@ if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "GTI_TEST_HEAVY_CASE_JOBS must be a positive integer")
 endif()
 set(gti_heavy_case_suites
-  stdlib_surface returned_field_address_runtime
-  generic_algorithm_breadth
-  complete_containers)
+  stdlib_surface
+  )
 
 # Every gate has a bound, so a hung test fails at a known point instead of at
 # CTest's implicit 1500 seconds. A test without its own TIMEOUT gets the
@@ -38,8 +37,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  compiler_pipeline 1800
-  reflection_semantics 1800
   view_fields 900)
 list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)
 math(EXPR gti_long_timeout_last "${gti_long_timeout_count} - 1")
@@ -77,113 +74,23 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
-    borrow_origin_publication_runtime
-    semantic_call_regressions_runtime
-    consteval_runtime
-    callable_return_type_runtime
-    borrowed_enum_field_cleanup_runtime
-    borrowed_enum_scalar_sibling_runtime
-    borrowed_enum_terminal_contexts_runtime
-    contextual_borrowed_construction_runtime
     consuming_range_runtime
-    enum_replacement_runtime
-    enum_selector_runtime
-    protected_member_runtime
-    out_of_class_cleanup
-    implicit_receiver_owned_assignment_runtime
-    aggregate_std_runtime
-    operator_relay_runtime
-    ordered_search_runtime
-    abstract_generic_failure_contract_runtime
-    associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime borrow_origin_runtime owner_chain_runtime borrowing_composition
-    borrowing_callbacks_runtime charconv_runtime
-    cleanup_bound_borrow_runtime complete_containers composable_io_runtime
-    conditional_capability_runtime conditional_converted_receiver_runtime
-    conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
-    borrowed_argument_fallible_condition_runtime
-    borrowed_argument_nested_owning_argument_runtime
-    borrowed_argument_inner_temporary_runtime
-    conditional_cleanup_free_call_result_runtime
-    conditional_checked_arm_input_runtime
-    conditional_cleanup_free_nested_join_runtime
-    conditional_cleanup_free_receiver_runtime
-    conditional_moved_local_join_runtime
-    moved_local_field_read_runtime
-    conditional_prepared_input_result_runtime
-    virtual_temporary_receiver_runtime
+    associative_constructor_runtime associative_hash_contracts
+    owner_chain_runtime
     constructor_null_native_runtime
-    contiguous_iterator_completion container_iterator_movement
-    paired_span_iterator_completion cursor_carrier_publication
+    cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
-    class_conditional_join_runtime
-    comma_class_results_runtime
-    contextual_numeric_literals_runtime discarded_nominal_result_runtime
-    literal_call_arguments_runtime
-    dormant_capability_runtime
-    raw_receiver_owned_argument_runtime
-    deferred_bound_field_runtime
-    borrowed_field_publication_runtime
-    llvm_borrowed_dispatch_regressions
-    passive_text_view_class_runtime
-    passive_function_item_class_runtime
-    view_fields_runtime text_reference_accessors_runtime
-    view_field_payloads_runtime view_field_conversions_runtime
-    dependent_reference_results_runtime
-    view_field_nesting_runtime
-    recursive_text_relays_runtime
-    reference_owned_field_replacement_runtime
-    payload_enum_reference_assignment_runtime
-    raw_owned_field_replacement_runtime
-    shared_getter_worker_loans_runtime
     expected_payload_pair_arguments_runtime
-    extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
-    generic_algorithm_breadth
-    generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
-    coverage_composition_runtime
-    generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
+    hosted_constructor_identity_runtime
     hosted_exit_status_runtime
-    returned_field_address_runtime
-    http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
-    grouped_lambda_runtime
-    lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
-    lambda_class_result_consumers_runtime
+    http_url_operators
+    lambda_pack_invocation_runtime
     nested_borrow_fields
-    native_c_scalar_runtime nested_raw_pointer_runtime
-    nested_nominal_result_runtime operator_place_composition_runtime
-    object_relocation_runtime
-    owned_pointee_projection_runtime
-    owning_expected_field_runtime
-    owning_conditional_join_runtime
-    owning_temporary_field_read_runtime
-    short_circuit_field_view_runtime
-    short_circuit_temporary_argument_runtime
-    short_circuit_payload_enum_argument_runtime
-    programmable_allocators_runtime prvalue_direct_initialization_runtime
-    raw_owner_witness_runtime raw_pointer_conversion_runtime
-    reference_class_assignment_runtime
-    assignment_result_projection_runtime
-    class_store_destinations_runtime
-    assignment_result_whole_value_runtime
-    allocation_default_argument_runtime
-    restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
-    shared_accessor_range_runtime
-    accessor_text_carrier_runtime
-    shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
-    scalar_temporary_borrow_runtime
-    source_storage_drain_runtime
-    source_prefix_owner_runtime source_resource_prefix_runtime
-    source_text_address_runtime source_prefix_string_runtime
-    many_fallible_scope_guards_runtime
-    optimizer_raw_context_runtime optimizer_object_context_runtime
-    inherited_cleanup_context_runtime
+    scoped_parallel_threads
+    source_text_address_runtime
+    optimizer_object_context_runtime
     cleanup_context_scope_runtime
-    storage_final_address_runtime string_operations_runtime string_ordering_runtime
-    structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
-    interface_static_runtime
-    uninitialized_carrier_runtime
-    vector_empty_constructor_runtime
     stdlib_modules
     stdlib_surface
   )
@@ -252,17 +159,9 @@ if(Python3_Interpreter_FOUND)
     failure_metadata 520
     allocator_raw_audit_independence 290
     operator_relay_pipeline 285
-    filesystem_operations_runtime 220
     language_coverage_corpus 170
-    complete_containers_collection 165
-    class_expression_consumers_runtime 155
-    aggregate_projection_runtime 140
-    panic_runtime 140
-    container_contract_failure 115
     cli_workflow 95
     mir_cutover_corpus_oracle 85
-    constructor_pack_field_runtime 85
-    expected_transform_error_runtime 85
     simd_runtime 85)
   list(LENGTH gti_long_gate_costs gti_long_gate_count)
   math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
@@ -301,17 +200,51 @@ set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full"
 set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
-  raw_pointer_pipeline raw_borrow_contract raw_access_contract
-  mir_full_expression mir_program_initialization mir_hosted_startup
+  mir_program_initialization
   optimizer_foundation optimizer_analyses optimizer_conformance
-  layout_query_pipeline native_record_pipeline bindgen_pipeline
-  source_text_pipeline source_unit_services optional_compiler_contract
-  storage_adoption_contract resource_protocol_contract ephemeral_carrier_mir
+  native_record_pipeline bindgen_pipeline
+  source_text_pipeline source_unit_services
   parser_conditional_recovery
 )
 foreach(suite IN LISTS gti_fast_feedback_tests)
   if(TEST "${suite}")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "feedback-fast")
+  endif()
+endforeach()
+# Tree consistency: the entries that check the repository against itself
+# without a built compiler (harness imports and lists, allowlists, registration
+# and ownership maps, manifests, workflow contracts). CI's gate runs them from
+# a configure-only tree on every pull request and merge-queue candidate, so a
+# deleted or added file they cross-reference fails before integration. The
+# list is exactly what a rule selects: every entry that runs under Python or
+# CMake and names no path in the build tree but the build directory itself,
+# less the exemptions in scripts/tree_consistency.py, which test_ownership_map
+# enforces both ways. Run it with
+# `ctest --test-dir <configure-only tree> -L '^tree-consistency$'`.
+set(gti_tree_consistency_tests
+  agent_workflow backend_execution_protocol borrow_dependency_monotonicity
+  bounded_log build_window ci_cache ci_release ci_resources
+  ci_sanitizer_capability cli_hardlink_fixture cmake_test_ownership
+  coverage_native_fixture_policy cut_release_policy
+  diagnostic_registry_generator execution_coverage feature_interaction_model
+  gcp_spot_runner llvm_backend_dependency_controls llvm_cache_component_mapping
+  llvm_coverage_exhaustiveness llvm_header_install_symlink llvm_link_surface
+  llvm_link_surface_policy llvm_scalar_context_controls
+  lowered_program_source_boundary lsp_release macos_runtime_bundle
+  mir_census_profile_controls mir_header_boundary named_test_shards
+  native_fixture_build native_framework_nonapple native_packages
+  neovim_local_installer optimized_test_compiler_policy
+  optimizer_coverage_growth plan_checks process_resource_policy_harness
+  release_asset_sync release_train release_version_policy remote_runner
+  repository_hosting rollup semantic_header_boundary
+  single_body_scaling_measurement source_stdlib_ci
+  stdlib_surface_context_controls stdlib_surface_manifest
+  stdlib_surface_review_policy test_case_jobs test_ownership_map
+  tree_sitter_queries typed_program_model
+)
+foreach(suite IN LISTS gti_tree_consistency_tests)
+  if(TEST "${suite}")
+    set_property(TEST "${suite}" APPEND PROPERTY LABELS "tree-consistency")
   endif()
 endforeach()
 foreach(suite IN LISTS gti_throughput_tests)
@@ -335,12 +268,15 @@ set(gti_slow_test_patterns
   "^gti_corpus$"
   # The corpus binaries' own fixtures (40-50 s of std-importing analyses
   # each) until they move to tests/ui.
-  "^body_analysis_order_fixtures$"
   "^instance_reuse_fixtures$"
   "^trusted_body_analysis_fixtures$"
   "^mir_cutover_corpus_oracle$"
   "^language_coverage_corpus$"
   "^lowered_program_corpus_census$"
+  # gti-test's tests/slow cases and its --isolate run (tests/gti_test.cmake).
+  "^gti_test_(slow|isolate)$"
+  # Unit cases over about 2 s each (tests/gti_test.cmake).
+  "^gti_unit_tests_slow$"
   # Raw-pointer-audit independence, including the >20-minute std import.
   "^allocator_raw_audit_independence(_.+)?$"
   # Whole-program MIR mutation loops.

@@ -1,0 +1,14 @@
+// Exclusive reborrow loan graph: a local carrier's external dependency cannot extend its owned field.
+class View {
+public:
+  int& borrowed;
+  mut int owned = 1;
+  View(int& source) : borrowed(source) {}
+  mut int& invalid() mut {
+    mut View local{this.borrowed};
+    mut int& parent = local.owned;
+    mut int& child = parent;
+    return child;  //~ ERROR GTI-S2017
+  }
+};
+int main() { return 0; }

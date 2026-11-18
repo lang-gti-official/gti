@@ -1,0 +1,11 @@
+// Borrowing captures: captured-range-growth is rejected with a user diagnostic, not an ICE.
+import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  mut auto grow = [mut &values]() -> void {
+    for (auto& value : values) values.push_back(value);  //~ ERROR GTI-S2017
+  };
+  grow();
+  return 0;
+}

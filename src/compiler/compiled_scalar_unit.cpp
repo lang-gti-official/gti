@@ -375,6 +375,7 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
                (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
                 step.storageKind == ProgramStorageKind::StaticField) &&
                !step.requiresActiveCleanup && !step.nativeRetirement &&
+               !step.sourceCleanup &&
                ((step.dataInitialization ==
                      MirProgramDataInitializationKind::ImplicitZero &&
                  !step.dataConstant) ||

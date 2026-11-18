@@ -1,0 +1,10 @@
+// Include removal: explicit relative module interfaces work in fresh and cached analysis.
+//@ analyze-pass
+//@ no-prelude
+// --- main.gti
+import "api.gti";
+int main() { return answer(); }
+// --- api.gti
+export module api;
+export int answer() { return 42; }
+int hidden() { return 1; }

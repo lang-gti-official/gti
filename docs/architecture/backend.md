@@ -623,9 +623,65 @@ The LLVM backend applies the same rule to its inline hierarchy-storage query.
 `native_llvm::HierarchyStorageScope` is opened by `LlvmBackend::generate` for
 admission, lowering and emission, and by `planLlvmAdmission` when it runs
 alone. While it is open, each type's complete outcome for that exact program is
-computed once: the answer, or the rejection it rethrows. Only a finished
+computed once: `Contains`, `Excludes`, or `Unknown` with its original reason.
+`classifyHierarchyStorage` returns that outcome without throwing an unsupported
+error. `containsHierarchyStorage` remains a throwing wrapper: unknown storage
+still rejects with exactly the same reason. Admission's dispatch-witness query,
+fresh aggregate candidate query, and thread inline-storage predicate consume
+the outcome directly; layout, relocation and cleanup preflight catches remain
+because those operations can reject independently of hierarchy classification.
+The recursive visitor preserves field/base order and stops at the same first
+unknown, even after a sibling proves that hierarchy storage is present.
+Validation mode recomputes cached outcomes and reports a compiler-integrity
+failure on disagreement. Only a finished
 top-level query is recorded, because its outcome depends on the type's whole
 reachable storage graph and never on another query's path.
+
+Each admission plan builds one read-only `AdmissionTypeIndex` after obtaining
+its sealed program. Native-value, dispatch and inventory queries share it; no
+index survives the plan or observes mutable MIR. Structural hashes only choose
+buckets: complete `SemanticType` equality decides every lookup. Class matches
+retain all duplicates in original order so each consumer keeps its previous
+unique/first/any-match rule. Payload and integral enums retain their existing
+first-match lookup rule. Validation mode compares every indexed answer,
+including absence, with the original linear scans and reports an internal
+compiler error naming the query and type on disagreement. Indexing changes
+neither containment-path checks nor coverage ordering or occurrence counts.
+
+Native-value queries memoize only whole answers, separately for dispatch and
+inventory because their pointee predicates differ. Dispatch memoization starts
+after construction has finished all body and operation facts. Reentrant queries
+and queries under an active pointee/mutex path run uncached; their answers can
+depend on that path even when the native-value walk starts fresh containment
+sets. Each ordinary whole query keeps its original inline/owner cycle checks.
+The target and sealed program remain fixed for the table's entire lifetime.
+
+Inventory type and cleanup walks retain the exact ordered sequence of coverage
+additions, including repeats and each addition's required/executable context.
+Keys use complete type/recipe equality and the incoming context; type keys also
+distinguish concrete-pack metadata. Replay applies the current body's source,
+block and instruction as the witness, so sharing a sequence across bodies does
+not share their first-use locations. No sequence is deduplicated before replay.
+Validation mode recomputes every memo hit; walk recomputation bypasses nested
+walk memos and compares all recorded additions before publishing occurrences.
+Disagreement throws a compiler-integrity error naming the query and root type.
+Failed computations never populate a memo table.
+
+Admission time traces separate `llvm-admission`, `llvm-admission-closure`,
+`llvm-admission-dispatch-proofs` and `llvm-admission-inventory`. Under
+`GTI_COMPILER_VALIDATION`, the plan also retains query counters: hierarchy
+queries/hits/rejections, native-value queries/memo hits, and type/cleanup
+walks/replays. Hierarchy counters belong to the immutable program's scope;
+a plan takes a delta so enclosing backend scopes do not contribute old work.
+The counters are observational and absent in ordinary compilation.
+
+`printLlvmAdmissionPlan` emits an ordered inspection containing closure kind,
+required bodies, all coverage uses (including source, body/block/instruction,
+required/executable flags, shape and occurrence count), first unsupported use
+and limitation. It preserves exact identities and excludes counters and timings.
+`gti-test --llvm-admission-evidence` retains this dump alongside LLVM IR and
+object bytes for RFC 0007 equivalence comparisons; it is not a persistent
+admission certificate or an executable cache key.
 
 ## Generated Items
 
@@ -767,7 +823,7 @@ template is defined. The complete definitions and their native headers
 (`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
 verified capability operation. The managed-thread handle representation is
 not a template, so a retained thread-handle declaration selects its complete
-support. `dormant_capability_runtime` builds and runs each family's
+support. `tests/ui/modules/dormant_capability` builds and runs each family's
 import-only program natively.
 
 Scoped groups select the same managed-thread support from the verified
@@ -1439,6 +1495,12 @@ member's owner class (the temporary's own class or one of its bases) and the
 table selects the override, through the transformed status ABI when the family
 is failure-capable. The emitter allocates no storage for a by-value receiver
 here.
+A temporary of a class with a base that holds borrowed state keeps MIR's
+physical-shell `CallArgument` loan on that slot, with the temporary's Stored
+group as its dependency. LLVM admission accepts that loan for hierarchy types
+exactly as for other classes: the address is the fresh full-expression slot,
+and the dependency is provenance for the external owners, with no
+representation of its own.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact materialization, the value-rooted lifetime slot or the CFG-promoted
@@ -4085,8 +4147,10 @@ overflow flags. Other compilers, or a build defining
 `GTI_PORTABLE_OVERFLOW_CHECKS`, use the portable limit comparisons, which
 compute the same predicate. Each caller stores its result only on success, so
 an overflowing operation publishes nothing and reports the same code and
-detail. `checked_integer_overflow_runtime` compares both paths at O0 and O3
-against exact arithmetic. MIR operations, safety discharges and failure
+detail. `tests/ui/runtime/checked_overflow/` (O0) and its `tests/slow` O3
+copies compare the LLVM backend's checks against exact arithmetic; the
+preamble's portable path belongs to the frozen C++ backend and is no longer
+run. MIR operations, safety discharges and failure
 metadata are unchanged; this is a backend spelling of the same checked
 operation.
 
@@ -5440,7 +5504,7 @@ that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
 returns the callee's checked address, not a dispatch view, and so does a
 function returning a non-hierarchy base reference to a carrier parameter
 (`Base& up(Plain&)`): its reference return relays the parameter's loan like
-any class reference return. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+any class reference return. `dispatch.upcast-carriers` and `tests/ui/borrow/carrier_references/`
 run these forms at O0-O3.
 
 A base or interface view of a carrier now takes a `Local` loan on the
@@ -6308,7 +6372,7 @@ representation shapes. This task does not relax its gates. Recursive source
 move-state clearing covers class arrays as well as class subobjects, while
 passive arrays/classes emit no state-clear walk.
 
-`llvm_placement_execution` checks deleted-copy/deleted-move objects, fresh return
+`tests/ui/memory/placement/` checks deleted-copy/deleted-move objects, fresh return
 chains, branch-selected returns, constructor/default field publication, TLS,
 class-array copies/movement and retained semantic rejections at O0-O3. Fresh
 direct/nested/default/field arrays compare C++20/C++23 with native execution.
@@ -6762,6 +6826,19 @@ ledger assertion which verifies their rule. An already implemented row with no
 matching executable fixture uses `LLVM_COVERAGE_IMPLEMENTED_GAP(reason)`; that
 preserves the implementation classification but blocks promotion rather than
 manufacturing evidence.
+
+Migrated nonexecuting claims name `gti_unit_tests:llvm_admission_ledger`.
+Execution claims may name the `gti_test_ui` family with an exact repository
+path under `tests/ui/`. The audit resolves that family to exactly one actual
+CTest shard carrying the `gti-test-ui` label, using its registered command and
+working directory with `gti-test --list-evidence`. It never treats the base
+runner self-test/tidy entry as execution of that source. The runner reports its
+parsed mode and execution profile; only host-admitted, single-file runtime
+cases whose configuration the hosted coverage probe reproduces are eligible.
+Missing or duplicate shard ownership and unsupported configurations fail closed.
+The retained provider inventory includes exact source hashes and shard owners;
+the coverage probe must exercise the claimed row. Actual execution and output
+expectations remain the owning shard's responsibility.
 
 `llvm_coverage_evidence` reconciles those claims with the configured CTest
 inventory and JSON evidence manifests derived from the execution tests' actual

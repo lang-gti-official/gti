@@ -1,0 +1,3 @@
+// Recursive payload composition: finite nested enums, arrays and result values use structural payload composition.
+//@ check-pass
+enum Event<T> { empty, item(T value) }; int main() { auto value = Event<Event<int>>::item(Event<int>::item(7)); return 0; }

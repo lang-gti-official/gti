@@ -1,0 +1,10 @@
+// Lifetimes: a returned record borrowing a local is rejected by the MIR
+// borrow checker (RFC 0004).
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+View<a> bad<lifetime a>(int&<a> outside) {
+  int local = 7;
+  return View<a>(local);  //~ ERROR GTI-S2017 depends on storage the function owns
+}

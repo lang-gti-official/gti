@@ -1,0 +1,22 @@
+// Dispatch per use witnesses: fresh-local copy, a by-value argument published in its prepared storage, complete-object replacement and base-view assignment in one program keep distinct witnesses and explicit pending transfer requirements.
+//@ check-pass
+    class P {
+    public:
+      mut int value;
+      P() : value(1) {}
+      virtual int read() { return this.value; }
+    };
+    class Q : public P { public: Q() = default; };
+    void take(P value) {}
+    void assign(mut P& target, P& source) { target = source; }
+    int main() {
+      mut P first{};
+      P second{};
+      first.value = 5;
+      P copied = P(first);
+      take(P());
+      first = second;
+      mut Q derived{};
+      assign(derived, second);
+      return copied.read();
+    }

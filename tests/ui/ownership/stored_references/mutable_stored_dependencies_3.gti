@@ -1,0 +1,24 @@
+// Mutable stored dependencies: multi-origin, global, copied, and reseated mutable dependency graphs should remain rejected.
+class MutView {
+  mut int& referent;
+public:
+  MutView(mut int& source) : referent(source) {}
+};
+class Nested {
+  MutView view;
+public:
+  Nested(MutView source) : view(std::move(source)) {}
+};
+MutView choose(mut int& left, mut int& right) {  //~ ERROR GTI-S2017
+  return MutView(left);
+}
+mut int global_owner = 1;
+MutView global_view = MutView(global_owner);  //~ ERROR GTI-S2045
+int main() {
+  mut int owner = 1;
+  mut MutView first = MutView(owner);
+  MutView copied = first;  //~ ERROR GTI-S2003
+  mut MutView other = std::move(first);
+  other = std::move(copied);  //~ ERROR GTI-S2003
+  return 0;
+}

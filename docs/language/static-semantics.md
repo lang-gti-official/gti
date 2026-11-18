@@ -584,6 +584,32 @@ expression is invented. Borrowed dependencies from temporary default arguments
 cannot escape an empty return. Raw-address fields remain unresolved in optional
 pointer auditing until their construction origin is established.
 
+**Literal typing.** An unsuffixed integer literal has type `int32_t`, `int64_t` or `uint64_t`
+according to its value, and adopts a contextual integer type through the rules
+below. A suffixed integer literal (`255u8`, `-128i8`) has exactly its suffix
+type, as a fact the lexer records and semantics resolves; it is not sugar for a
+conversion call. It never adopts a contextual type: the initialization, call
+argument, operator operand and typed-macro argument rules below that retype an
+integer literal do not apply to it, so it behaves as a value of its type.
+`int64_t wide = 5i8;` widens as any `int8_t` value would, while
+`uint8_t narrow = 5i32;`, `take_u8(7i32)`, a `case 1i32:` label on an
+`int64_t` subject and an enumerator `= 5i8` in an enum backed by `uint8_t`
+are rejected. A unary `+` or `-` written directly on a suffixed literal,
+optionally through parentheses, is part of the literal constant, exactly as a
+sign is part of a contextual integer literal: `-128i8` has type `int8_t` and
+the value -128, and is not a negation of the unrepresentable `int8_t` value
+128. The signed value must fit the suffix type; `256u8`, `128i8`, `-129i8`
+and `-1u8` are `GTI-S2004` errors spanning the whole signed literal, never a
+truncation. Suffixed literals are valid wherever integer literals are:
+`constexpr` initializers and `static_assert`, switch labels and enumerator
+values, and fixed array extents and value-generic arguments. Those last two
+are `uint64_t` constants, so a suffixed literal there must be `u64`
+(`int32_t values[4u64]`, `width<8u64>()`); another suffix is a parse error.
+`f32` and `f64` give a
+floating literal type `float` or `double`; a floating literal has no
+contextual typing, so `float f = 2.5f64;` needs `float(...)` like any
+`double` value. Unsuffixed literals keep their existing typing.
+
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
 A non-literal integer may widen within the same signedness, and an unsigned
@@ -649,7 +675,8 @@ operands use the existing numeric common-type rules, while mixed generic
 operands must satisfy the operator's exact type contract.
 
 `float` is IEEE-754 binary32 and `double` is IEEE-754 binary64. An unsuffixed
-floating literal has type `float`; `d` or `D` selects `double`. A built-in
+floating literal has type `float`; `d`, `D` or `f64` selects `double`, and
+`f32` states `float` explicitly. A built-in
 numeric operation uses `double` if either operand is `double`, otherwise
 `float` if either operand is `float`, and converts an integer operand into that
 selected format. Conversion from either floating type to an integer requires
@@ -1962,6 +1989,13 @@ containment, and callable-boundary failures.
 The overloadable operator set and arity rules are defined by the incorporated
 grammar. Operators are member-only and are selected through ordinary exact
 semantic resolution. The backend does not perform GTI operator lookup.
+The primitive counted-view `+` binding supplied by `std.string` selects a
+trusted source function with both operands as arguments. It accepts another
+counted view or a read-only borrow of the owning result type and returns an
+independent owner. This is a primitive library adapter, not user-defined
+nonmember operator lookup or an implicit conversion; user declarations cannot
+replace it. Argument evaluation, temporary materialization, borrow checking,
+and cleanup use ordinary ordered call rules.
 `operator=` takes one exact argument and requires a mutable receiver. A
 same-type assignment with no exact user operator continues to use the class's
 generated copy or move assignment policy.
@@ -2159,6 +2193,42 @@ ignored result; a selected `[[discardable]]` declaration permits omission under
 its function/method contract. Neither suppresses the call's other checks. The
 complete selected-target/virtual-contract rule is in
 [execution semantics](execution.md#optional-api-results).
+
+### 3.10.1 Init Statements
+
+`if`, `if constexpr`, `switch` and range `for` accept a C++17/C++20 init
+statement before their condition, subject or range binding:
+`if (init; condition)`, `switch (init; subject)` and
+`for (init; binding : range)`. The init is one variable declaration (any
+binding form, including `auto`, `auto&`, `mut auto&`, `mut` and direct
+initialization), a structured-binding declaration, an expression statement or
+an empty `;`.
+
+The statement means exactly a block whose first statement is the init. Its
+names are in scope in the condition, subject or range expression and in every
+branch, `else` and `else if` included; an `else if` header may add its own init
+that is visible to the rest of that chain. Name lookup follows ordinary block
+scoping: an init name shadows an enclosing local of the same name, a nested
+block in a branch may shadow it in turn, and the enclosing scope may redeclare
+the name after the statement ends. A use after the statement is an undefined
+name (`GTI-S2001`) reported at that use.
+
+Ownership, borrowing and cleanup are those of the block. An owning init is
+destroyed exactly once when the whole statement ends, after the taken branch,
+and on every exit from it: falling through, `break` and `continue` out of an
+enclosing loop or switch, `return` and `?` propagation. A move out of the init
+inside a branch leaves nothing for the statement to destroy on that path. A
+reference init's loan lasts until the statement ends, so a conflicting access
+inside the statement is rejected while the same access after it is accepted.
+Semantics owns this scope, HIR publishes it as an ordinary block that encloses
+the statement, and verified MIR lowers it; no backend path reads the init
+from syntax.
+
+The init of `if constexpr` must be a `constexpr` variable declaration (or
+empty), because the branch is selected during semantic analysis
+(`GTI-S2057`, spanning the written init). The condition may read that
+constant. GTI does not provide the C++98 declaration-as-condition
+`if (T x = e)` or `while (T x = e)`.
 
 ## 3.11 Bounded Constant Evaluation
 
@@ -2923,7 +2993,10 @@ declared constructors as `std::meta::constructor<T, I>`. A method reports
 `is_mutating()` (non-read-only receiver), `is_public()`,
 `is_consuming()` (an `&&` receiver), `is_unsafe()` (caller obligation),
 `is_generic()` (method-owned generic parameters), `is_constrained()`
-(method requirements), `parameter_count()`,
+(method requirements), `result_outlives_receiver()` (the result carries no
+borrowed state, or every region its signature writes is a class lifetime
+parameter, `static` or a region its parameters supply; a legacy text handle
+from an instance method reports false), `parameter_count()`,
 `parameters()` (a list of `std::meta::parameter<T, I, P>` with `name()`,
 `index()` and `type()`, backed by the computed `parameter_type<T, I, P>`)
 and `result()` (a type metaobject of `return_type<T, I>`); a constructor

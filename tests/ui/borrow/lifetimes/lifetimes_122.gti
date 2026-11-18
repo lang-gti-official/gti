@@ -1,0 +1,2 @@
+// Lifetimes: rejected with GTI-S2128.
+int&<missing> bad(int& input) { return input; }  //~ ERROR GTI-S2128

@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+[[inline]] struct S {};  //~ ERROR GTI-P0001

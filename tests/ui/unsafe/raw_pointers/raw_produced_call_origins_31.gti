@@ -1,0 +1,9 @@
+// Raw produced call origins: a returned formal origin must retain callee replacement facts.
+//@ raw-pointer-audit: strict
+struct Box { mut int value = 1;  public: Box() = default; };
+int main() { mut Box box{}; auto pointer = source(box); unsafe { return *pointer; } }  //~ ERROR GTI-S2102
+const int* source(mut Box& box) {
+  const int* pointer = &box.value;
+  box = Box();
+  return pointer;
+}

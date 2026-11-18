@@ -1,0 +1,13 @@
+// Formatter: declared attributes share the class-attribute placement, one group per line before the declaration, kept with it.
+//@ parse-pass
+//@ snapshot: format
+namespace tags {
+  [[attribute]] struct key {
+    std::string_view name = "";
+  };
+}
+
+[[tags::key("player")]] struct Player {
+  [[tags::key("display"), tags::skip]] std::string_view name = "";
+  [[tags::key(.name = "hp")]] uint32_t health = 100;
+};

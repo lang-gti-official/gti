@@ -6,6 +6,13 @@ with a `// ` line saying what it checks, and use the cheapest proof that would
 catch the bug: `check-pass`/`check-fail` (frontend through verified MIR) unless
 the behaviour only shows at run time.
 
+`gti-test --list-evidence` lists the selected cases as JSON lines with their
+path, parsed mode, execution profile and compatibility with the hosted LLVM
+coverage probe. It applies the same filtering and sharding as execution and
+does not run tests. The coverage audit uses it to bind UI-source claims to
+their actual registered execution shard; ordinary test authors need no
+evidence registration.
+
 ```gti
 // An undefined name is rejected.
 int main() {
@@ -16,14 +23,16 @@ int main() {
 
 - No `//@` mode: `check-fail` when there is an `//~ ERROR`, else `check-pass`.
 - Modes: `//@ check-pass`, `check-fail`, `build-pass`, `run-pass`, `run-fail`.
-- Run tests: `//@ stdout: line` (repeat per line; or a sibling `name.stdout`),
+- Run tests: `//@ stdout: line` (repeat per line; or a sibling `name.stdout`;
+  `//@ stdout-closed`: stdout is a pipe whose reader closed before launch,
+  so writes fail or raise SIGPIPE; programs start with SIGPIPE at its default),
   `//@ exit-code: N`, `//@ stderr-contains: text`, `//@ args: a b`,
   `//@ stdin: line`. Stdout is always compared; absent means empty. `args`
   are shell-like words: `''` or `""` is an empty argument, quotes keep
   blanks, `\` escapes one character (and `\"` inside `"…"`).
 - Several runs of one program: `//@ revisions: a b`, then `//@[a] args: x`
   and the like. The program is built once and run once per revision. Only
-  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`,
+  `run-pass`, `run-fail`, `stdout`, `stdout-closed`, `stderr-contains`, `exit-code`,
   `exit-signal`, `args`, `stdin` and `env` take a revision; a revision's
   directive replaces the shared
   (unprefixed) one of that name. A revision's expected-output file is
@@ -58,16 +67,23 @@ requires a matching related diagnostic note; missing notes cannot be blessed.
 - Parse only: `//@ parse-pass` / `//@ parse-fail` stop after the lexer and
   parser (syntax and recovery tests; annotations as above). They see
   declarations only: a module unit's `export module`/`import` header belongs
-  to the source loader, so test headers with check or analyze modes.
+  to the source loader, so test headers with check or analyze modes. A
+  written `//@ error-limit:` applies (ending with GTI-D0002 as the driver
+  does; without one every error is reported), and a
+  parse-fail test may take `//@ snapshot: diagnostics` (`gti` stops at
+  syntax errors).
 - Semantics only: `//@ analyze-pass` / `//@ analyze-fail` stop after
   semantic analysis (the frontend's `stopAfter` Semantics phase): no HIR, MIR
   or borrow checking. In-process even under `--isolate` (`gti` has no such
-  stop).
+  stop). `//@ no-prelude` analyses without the standard prelude (analyze
+  modes only: the driver always loads it).
 - Compile limits, named as `gti`'s options: `//@ constexpr-depth: 16`
   (`--constexpr-depth 16`), likewise `constexpr-steps`, `macro-depth`,
   `macro-expansions`, `error-limit` and the other `[limits]` keys.
 - `//@ target: x86_64-pc-windows-msvc`: check or analyze for another target
-  (nothing is linked; in-process under `--isolate`).
+  (nothing is linked; in-process under `--isolate`); a mir snapshot works,
+  llvm-ir and diagnostics snapshots (through `gti`, which has no --target)
+  do not.
 - Analysis options, named after the compiler's: `//@ execution-profile:
   concurrent` (default `single-threaded`; `gti --execution-profile`) and
   `//@ require-function-definitions` (the definition closure executable
@@ -75,6 +91,33 @@ requires a matching related diagnostic note; missing notes cannot be blessed.
 - CPU limits: 2 s check, 5 s build/run; over half that, use `tests/slow/` + `//@ slow`.
 
 ### Snapshots: when the output is the point
+
+For backend admission equivalence experiments, the test-only command
+`gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY O0|O2` compiles one
+ordinary source file through the production driver and saves the complete,
+ordered plan (`plan.txt`), separate validation counters (`statistics.txt`),
+admission result (`outcome.txt`), LLVM IR (`module.ll`) and object (`module.o`).
+Set `GTI_COMPILER_VALIDATION=1` for counters. Rejected inputs retain the first
+unsupported use and limitation; frontend failures and internal compiler errors
+fail the command. The output directory must be new, preventing stale output
+from making an incomplete run appear successful. Compare the same source and
+stdlib paths, target, compiler configuration and optimization level across
+builds; no source identities or coverage counts are normalized. Counters are
+observations and are deliberately excluded from byte-equivalence comparisons.
+The command honors the runner's execution-profile defaults and configuration
+flags. It rejects unsupported multi-file, overlay, cross-target, limit, native,
+prelude and raw-audit configurations instead of silently capturing another
+program configuration.
+This command does not run the executable or establish performance evidence:
+it emits IR and object bytes separately and repeats backend planning.
+`scripts/llvm_admission_evidence.py capture` runs this over all root examples
+or an explicit input manifest at O0/O2; `compare` verifies retained bytes,
+input identities and complete case inventories without accepting a new baseline.
+Explicit input items may also record `execution-profile`, a relative `stdlib`
+directory, and `program: {kind: "library", exports: [{function, symbol}]}`
+beside `source`. These are the original provider's settings, not inferred
+substitutes. The capture hashes every selected library and compares the
+settings as well as the artifacts; different export sets cannot be equivalent.
 
 `//@ snapshot: KIND` (repeatable, one per kind) adds an output check after the
 test's other expectations pass. `--bless` writes the sibling expected file;
@@ -87,14 +130,15 @@ file, and any expected file over 400 lines (narrow it).
 | `llvm-ir` | the LLVM IR `gti --emit-llvm` would print, by `// CHECK:` patterns only | none |
 | `diagnostics` | errors, notes and help exactly as `gti` renders them (test directory removed, standard library as `$STD/`) | `name.stderr` |
 | `format` | the formatter's output for the file (sections joined with `// --- name`) | `name.formatted` |
+| `optimization-report` | the optimizer's remarks at the test's level (`gti --optimization-remarks`, the text of `--optimization-report`), by `// CHECK:` patterns only | none |
 
 MIR snapshots are normalised so they survive unrelated change: program-wide
 numeric identities (declarations, symbols, classes, instances, bodies, source
 units, HIR ids) become `#1`, `#2`, … by first appearance, and fields at their
 default (`0`, `-`, `[]`, `none`) are omitted.
 
-Pattern lines (FileCheck subset) check llvm-ir, or mir when the test has no
-llvm-ir snapshot (then no `.mir` file is kept): `// CHECK: text` (the next
+Pattern lines (FileCheck subset) check llvm-ir or optimization-report (one
+of them), or mir when the test has neither (then no `.mir` file is kept): `// CHECK: text` (the next
 match, on the same or a later line), `// CHECK-NEXT: text` (on the line after
 the previous match), `// CHECK-NOT: text` (absent between the surrounding
 matches). Text is literal, runs of blanks match any blanks, and `{{regex}}`
@@ -114,7 +158,8 @@ int main() { return sum(1, 2) - 3; }
 
 Rendering snapshots run `gti` in a separate process (about 0.1 s without
 imports); keep them free of imports. `--isolate` runs each case through a
-fresh `gti`, except parse modes, mir snapshots and tests with C sections, which
+fresh `gti`, except parse modes, mir and optimization-report snapshots and
+tests with C sections, which
 still run in-process (the RESULT line counts them); llvm-ir uses
 `gti --emit-llvm` and C++ sections go after `--`.
 
@@ -163,7 +208,9 @@ driver's LLVM sanitizer instrumentation, which needs an upstream Clang
 (`GTI_CXX`, `GTI_CC`); tests with `native-args` and `--isolate` builds stay
 uninstrumented.
 
-`--bless` refuses under `CI`, never accepts an internal compiler error or
+`--bless` seeds a check-fail, parse-fail or analyze-fail test that has no
+`//~ ERROR` yet (otherwise an invalid test). It refuses under `CI`, never
+accepts an internal compiler error or
 turns a declared pass test into an error test, and never changes a `//@`
 line unless `--bless-directives` is also given: without it, new run output
 goes to a sibling `name.stdout` and differing inline `//@ stdout:` lines are

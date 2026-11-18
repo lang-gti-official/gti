@@ -1,0 +1,14 @@
+// Independent text publication: text publication is independent of another temporary argument.
+//@ check-pass
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result {
+  std::string_view text;
+public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }

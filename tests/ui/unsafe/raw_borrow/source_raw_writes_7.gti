@@ -1,0 +1,9 @@
+// Source raw writes: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+void set() { int gone = 1; pointer = &gone; }
+const int* get() { return pointer; }
+int main() { auto address = get(); unsafe { return std::assume_ref(address, witness); } }

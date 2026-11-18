@@ -1,0 +1,4 @@
+// Hover over a call to a function that never returns shows [[noreturn]] in its signature.
+//@ hover @call: [[noreturn]] void stop()
+[[noreturn]] void stop() { while (true) {} }
+int main() { /*@call*/stop(); }

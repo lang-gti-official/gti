@@ -11,7 +11,9 @@
 #include "gti/frontend.h"
 #include "gti/frontend_cache.h"
 #include "gti/lexer.h"
+#include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
+#include "gti/optimization/report.h"
 #include "gti/parser.h"
 #include "gti/semantic_preamble.h"
 #include "gti/standard_library.h"
@@ -32,7 +34,10 @@
 #include <cmath>
 #include <csignal>
 #include <exception>
+#include <fstream>
 #include <functional>
+#include <iomanip>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <regex>
@@ -43,6 +48,146 @@
 namespace fs = std::filesystem;
 
 namespace gti_test {
+
+int writeAdmissionEvidence(const char *self, const fs::path &source,
+                           const fs::path &output,
+                           const std::string &optimization,
+                           const std::vector<std::string> &arguments) {
+  try {
+    if (optimization != "O0" && optimization != "O2")
+      throw std::invalid_argument("admission evidence requires O0 or O2");
+    if (!fs::is_regular_file(source))
+      throw std::invalid_argument("admission evidence requires a source file");
+    if (!fs::create_directory(output))
+      throw std::invalid_argument("admission output directory already exists");
+    const auto write = [&](const char *name, const std::string &contents) {
+      std::ofstream file(output / name, std::ios::binary);
+      file << contents;
+      file.close();
+      if (!file)
+        throw std::runtime_error(std::string("cannot write evidence: ") + name);
+    };
+    const auto layout = lang::driver::discoverToolchainLayout(self);
+    const auto test = parseTestFile(fs::absolute(source), source.string());
+    if (!test.errors.empty())
+      throw std::invalid_argument(test.errors.front());
+    if (test.sections.size() != 1 || !test.stdlibOverlay.empty() ||
+        !test.target.empty() || !test.compileLimits.empty() ||
+        !test.nativeArgs.empty() || test.noPrelude ||
+        test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings)
+      throw std::invalid_argument(
+          "admission evidence does not yet support this input's multi-file, "
+          "overlay, target, limit, native, prelude or audit configuration");
+    auto profile = test.concurrent ? lang::ExecutionProfile::Concurrent
+                                   : lang::ExecutionProfile::SingleThreaded;
+    lang::ProgramRequest programRequest;
+    std::size_t argument = 0;
+    if (argument < arguments.size() &&
+        arguments[argument] == "--execution-profile") {
+      if (++argument == arguments.size())
+        throw std::invalid_argument("missing evidence execution profile");
+      const auto selected = lang::parseExecutionProfile(arguments[argument++]);
+      if (!selected)
+        throw std::invalid_argument("invalid evidence execution profile");
+      profile = *selected;
+    }
+    if (argument < arguments.size()) {
+      if (arguments[argument++] != "--library" || argument == arguments.size())
+        throw std::invalid_argument("expected --library FUNCTION=SYMBOL ...");
+      programRequest.kind = lang::ProgramKind::Library;
+      for (; argument < arguments.size(); ++argument) {
+        const auto &spec = arguments[argument];
+        const auto split = spec.find('=');
+        if (split == std::string::npos || split == 0 ||
+            split + 1 == spec.size() ||
+            spec.find('=', split + 1) != std::string::npos)
+          throw std::invalid_argument("invalid evidence library export");
+        programRequest.exports.push_back({.function = spec.substr(0, split),
+                                          .symbol = spec.substr(split + 1)});
+      }
+    }
+    const lang::driver::AnalysisConfiguration configuration(
+        lang::TargetInfo::host(), profile, lang::driver::RuntimeProfile::Hosted,
+        test.defines);
+    const auto request =
+        lang::driver::CompilationRequest(
+            fs::absolute(source), layout.standardLibrary,
+            configuration.target(),
+            optimization == "O0" ? lang::OptimizationLevel::O0
+                                 : lang::OptimizationLevel::O2,
+            lang::CppStandard::Cpp23, {}, configuration.configurationFlags(),
+            {}, {}, false, {}, lang::RawPointerAuditMode::Off, programRequest)
+            .withBackend(lang::BackendKind::Llvm)
+            .withDefinitionClosure();
+    class EvidenceBackend final : public lang::Backend {
+    public:
+      std::function<void(lang::LoweredProgram)> inspect;
+      std::string_view name() const override {
+        return "llvm-admission-evidence";
+      }
+      lang::BackendArtifact generate(lang::LoweredProgram program) override {
+        inspect(std::move(program));
+        return {};
+      }
+    } backend;
+    backend.inspect = [&](lang::LoweredProgram program) {
+      std::vector<lang::LoweredProgramIssue> issues;
+      auto verified = lang::verifiedLoweredProgram(program, issues);
+      if (!verified)
+        throw std::logic_error("admission evidence lost verified input");
+      auto options = lang::driver::llvmBackendOptions(request);
+      try {
+        const auto plan = lang::planLlvmAdmission(*verified, options);
+        std::ostringstream dump;
+        lang::printLlvmAdmissionPlan(dump, plan);
+        write("plan.txt", dump.str());
+        std::ostringstream statistics;
+        if (plan.statistics())
+          lang::printLlvmAdmissionStatistics(statistics, *plan.statistics());
+        else
+          statistics << "validation-disabled\n";
+        write("statistics.txt", statistics.str());
+        if (!plan.admitted()) {
+          write("outcome.txt",
+                "admission-rejected\n" + plan.limitation() + "\n");
+          return;
+        }
+        options.textualIr = true;
+        write("module.ll",
+              lang::LlvmBackend(options).generate(program).contents);
+        options.textualIr = false;
+        write("module.o",
+              lang::LlvmBackend(options).generate(program).contents);
+        write("outcome.txt", "admitted\n");
+      } catch (const lang::BackendUnsupportedError &failure) {
+        // Rejections thrown while planning are evidence too. Other failures,
+        // including an internal validation mismatch, must fail the harness.
+        std::ostringstream rejection;
+        rejection << "backend-rejected\n"
+                  << std::quoted(failure.what()) << '\n';
+        if (failure.location()) {
+          const auto &span = *failure.location();
+          rejection << "source " << std::quoted(span.source) << ' '
+                    << span.start << ' ' << span.end << ' ' << span.line
+                    << '\n';
+        }
+        write("outcome.txt", rejection.str());
+      }
+    };
+    const auto result = lang::driver::compileWithBackend(request, backend);
+    if (!result.succeeded()) {
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      if (result.backendFailureDetails)
+        std::cerr << *result.backendFailureDetails << '\n';
+      return 1;
+    }
+    return 0;
+  } catch (const std::exception &failure) {
+    std::cerr << "gti-test admission evidence: " << failure.what() << '\n';
+    return 1;
+  }
+}
 
 const char *statusName(Status status) {
   switch (status) {
@@ -186,7 +331,8 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
                       const std::optional<std::string> &input, double cpuLimit,
                       double wallLimit, const fs::path &directory,
                       const Environment &environment = {},
-                      const std::optional<fs::path> &inputFile = std::nullopt) {
+                      const std::optional<fs::path> &inputFile = std::nullopt,
+                      bool closedStdout = false) {
   const fs::path in = inputFile ? *inputFile : directory / ".stdin";
   const fs::path out = directory / ".stdout";
   const fs::path err = directory / ".stderr";
@@ -197,6 +343,13 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     arguments.push_back(const_cast<char *>(argument.c_str()));
   arguments.push_back(nullptr);
   ProcessRun run;
+  // `//@ stdout-closed`: a pipe whose only reader is gone before launch.
+  int closedPipe[2] = {-1, -1};
+  if (closedStdout) {
+    if (pipe(closedPipe) != 0)
+      return run;
+    close(closedPipe[0]);
+  }
   const pid_t pid = fork();
   if (pid == 0) {
     rlimit core{0, 0};
@@ -206,8 +359,13 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
       rlimit cpu{seconds, seconds + 1};
       setrlimit(RLIMIT_CPU, &cpu);
     }
+    // The worker ignores SIGPIPE; a program starts with the default, as
+    // from a shell.
+    signal(SIGPIPE, SIG_DFL);
     const int inFd = open(in.c_str(), O_RDONLY);
-    const int outFd = open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const int outFd =
+        closedStdout ? closedPipe[1]
+                     : open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     const int errFd = open(err.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (inFd < 0 || outFd < 0 || errFd < 0 || chdir(directory.c_str()) != 0)
       _exit(127);
@@ -219,6 +377,8 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     execv(arguments[0], arguments.data());
     _exit(127);
   }
+  if (closedStdout)
+    close(closedPipe[1]);
   if (pid < 0)
     return run;
   run.started = true;
@@ -245,7 +405,7 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     if (run.signal == SIGXCPU)
       run.timedOut = true;
   }
-  run.out = readFile(out).value_or("");
+  run.out = closedStdout ? "" : readFile(out).value_or("");
   run.err = readFile(err).value_or("");
   return run;
 }
@@ -301,6 +461,16 @@ bool matches(const Annotation &annotation,
          diagnostic.message.find(annotation.substring) != std::string::npos;
 }
 
+// Errors and warnings are always annotated; information and hints (LSP) only
+// in a test that annotates one of that severity.
+bool annotatesSeverity(const TestFile &test, Severity severity) {
+  return severity == Severity::Error || severity == Severity::Warning ||
+         std::any_of(test.annotations.begin(), test.annotations.end(),
+                     [&](const Annotation &annotation) {
+                       return annotation.severity == severity;
+                     });
+}
+
 // Every annotation must match a distinct diagnostic and every error or
 // warning must be annotated. Returns the mismatch lines.
 std::vector<std::string>
@@ -343,8 +513,10 @@ compareDiagnostics(const TestFile &test,
     }
   }
   for (std::size_t index = 0; index < diagnostics.size(); ++index)
-    if (!used[index] && !(test.allowWarnings &&
-                          diagnostics[index].severity == Severity::Warning))
+    if (!used[index] &&
+        !(test.allowWarnings &&
+          diagnostics[index].severity == Severity::Warning) &&
+        annotatesSeverity(test, diagnostics[index].severity))
       problems.push_back("actual:   " + describe(test, diagnostics[index]));
   return problems;
 }
@@ -415,9 +587,11 @@ Outcome Engine::runProject(const TestFile &test) {
   return outcome;
 }
 
-// LSP tests are measured in wall time: the work happens in the server
-// process. A worker's first LSP test (or any transcript, which starts its own
-// server) may also spend the cold allowance analysing the standard library.
+// LSP tests are judged on the language server's CPU time while the test runs
+// (the work happens there), so a loaded machine's waiting never counts. Wall
+// time is only a hang guard for each awaited message. A worker's first LSP
+// test (or any transcript, which starts its own server) may also spend the
+// cold allowance analysing the standard library.
 Outcome Engine::runLsp(const TestFile &test) {
   Outcome outcome;
   const EngineOptions &options = state->options;
@@ -430,9 +604,12 @@ Outcome Engine::runLsp(const TestFile &test) {
   bool cold = test.mode == Mode::LspTranscript;
   LspResult result;
   if (test.mode == Mode::LspTranscript) {
-    result =
-        runLspTranscript(options.lsp, test, directory,
-                         start + limit + options.limits.coldAllowance, limit);
+    // Silent and idle servers still fail at once (runLspTranscript); a
+    // busy one only at the hang guard.
+    result = runLspTranscript(options.lsp, test, directory,
+                              start + options.limits.lspHang +
+                                  options.limits.coldAllowance,
+                              options.limits.lspHang);
   } else {
     std::string key;
     for (const std::string &argument : test.serverArguments)
@@ -456,12 +633,17 @@ Outcome Engine::runLsp(const TestFile &test) {
       }
     }
     cold = !server->warm;
+    const double cpuBefore = server->cpuSeconds();
     result = runLspTest(
         *server, test, directory, state->toolchain.standardLibrary.root,
-        start + limit + (cold ? options.limits.coldAllowance : 0.0));
+        options.limits.lspHang + (cold ? options.limits.coldAllowance : 0.0));
+    const double cpuAfter = server->cpuSeconds();
+    if (cpuBefore >= 0 && cpuAfter >= cpuBefore)
+      result.serverCpu = cpuAfter - cpuBefore;
   }
   outcome.wall = lspClock() - start;
-  outcome.cpu = outcome.wall;
+  // Wall time only when the server's CPU could not be read (it exited).
+  outcome.cpu = result.serverCpu.value_or(outcome.wall);
   outcome.cold = cold;
   if (result.crashed || result.timedOut) {
     outcome.status = result.crashed ? Status::Crash : Status::Timeout;
@@ -473,7 +655,11 @@ Outcome Engine::runLsp(const TestFile &test) {
     const std::vector<std::string> problems =
         compareDiagnostics(test, result.diagnostics);
     if (!problems.empty() && options.bless) {
-      writeFile(test.path, blessAnnotations(test, result.diagnostics));
+      std::vector<LocatedDiagnostic> annotated;
+      for (const LocatedDiagnostic &diagnostic : result.diagnostics)
+        if (annotatesSeverity(test, diagnostic.severity))
+          annotated.push_back(diagnostic);
+      writeFile(test.path, blessAnnotations(test, annotated));
       outcome.blessed.push_back(test.display);
     } else {
       for (const std::string &problem : problems)
@@ -483,10 +669,13 @@ Outcome Engine::runLsp(const TestFile &test) {
   if (!detail.empty()) {
     outcome.status = Status::Fail;
     outcome.detail = detail;
-  } else if (!cold && outcome.wall > limit) {
+  } else if (!cold && outcome.cpu > limit) {
     outcome.status = Status::Timeout;
-    outcome.detail = "over the time limit: " + std::to_string(outcome.wall) +
-                     " s > " + std::to_string(limit) + " s\n";
+    outcome.detail = "over the CPU budget: gti_lsp used " +
+                     std::to_string(outcome.cpu).substr(0, 5) + " s of CPU > " +
+                     std::to_string(limit).substr(0, 5) + " s (" +
+                     std::to_string(outcome.wall).substr(0, 5) +
+                     " s of wall time)\n";
   }
   return outcome;
 }
@@ -733,21 +922,31 @@ void collectRendered(Compiled &compiled, const Materialized &files,
 // after them.
 void parseOnly(Compiled &compiled, const Materialized &files,
                const TestFile &test) {
+  // Only a written `//@ error-limit:` applies (0: none), so recovery tests
+  // see every error by default.
+  std::size_t errorLimit = 0;
+  for (const auto &[name, value] : test.compileLimits)
+    if (name == "error-limit")
+      errorLimit = value;
   std::vector<lang::Diagnostic> diagnostics;
   for (const Section &section : test.sections) {
     if (!section.name.ends_with(".gti"))
       continue;
     lang::Lexer lexer;
+    lexer.setErrorLimit(errorLimit);
     std::vector<lang::Token> tokens = lexer.scan(
         section.text,
         (files.entry.parent_path() / section.name).lexically_normal().string());
     diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
                        lexer.errors().end());
     lang::Parser parser(std::move(tokens), section.text);
+    parser.setErrorLimit(errorLimit);
     (void)parser.parse();
     diagnostics.insert(diagnostics.end(), parser.errors().begin(),
                        parser.errors().end());
   }
+  // As the driver: the limit's last error, then GTI-D0002.
+  (void)lang::applyErrorLimit(diagnostics, errorLimit);
   collect(compiled, files, diagnostics);
   compiled.succeeded = std::none_of(
       compiled.diagnostics.begin(), compiled.diagnostics.end(),
@@ -817,7 +1016,17 @@ void Engine::checkFormatting(const TestFile &test, Outcome &outcome) {
   }
 }
 
-Outcome Engine::run(const TestFile &test) {
+Outcome Engine::run(const TestFile &given) {
+  // --bless seeds a fail-mode test that has no `//~ ERROR` yet.
+  TestFile seeded;
+  if (state->options.bless && given.unannotatedFailMode) {
+    seeded = given;
+    std::erase_if(seeded.errors, [](const std::string &error) {
+      return error.find("has no `//~ ERROR` expectation") != std::string::npos;
+    });
+  }
+  const TestFile &test =
+      state->options.bless && given.unannotatedFailMode ? seeded : given;
   Outcome outcome;
   if (!test.errors.empty()) {
     outcome.status = Status::Fail;
@@ -845,7 +1054,8 @@ Outcome Engine::run(const TestFile &test) {
           : lang::driver::FrontendReuse{
                 .parses = std::make_shared<lang::FrontendCache>(),
                 .preambles = std::make_shared<lang::SemanticPreambleCache>()};
-  const auto requestFor = [&](const TestFile &file, const Materialized &files) {
+  const auto requestFor = [&](const TestFile &file, const Materialized &files,
+                              bool optimizationReport = false) {
     const lang::TargetInfo target =
         file.defines.empty() && file.target.empty()
             ? (file.concurrent ? state->concurrentTarget : state->target)
@@ -867,7 +1077,10 @@ Outcome Engine::run(const TestFile &test) {
             target,
             file.optimize ? lang::OptimizationLevel::O3
                           : lang::OptimizationLevel::O0,
-            lang::CppStandard::Cpp23, {}, file.defines, {}, {}, false, {},
+            lang::CppStandard::Cpp23, {}, file.defines,
+            lang::driver::OptimizationOutputRequest{.captureReport =
+                                                        optimizationReport},
+            {}, false, {},
             lang::parseRawPointerAuditMode(file.rawPointerAudit)
                 .value_or(lang::RawPointerAuditMode::Off),
             {}, {}, file.rawPointerAuditLibraryFindings)
@@ -909,8 +1122,9 @@ Outcome Engine::run(const TestFile &test) {
     std::string problems;
     const auto compare = [&](Snapshot kind, const std::string &actual) {
       if (!test.checks.empty() &&
-          (kind == Snapshot::LlvmIr ||
-           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr)))) {
+          (kind == Snapshot::LlvmIr || kind == Snapshot::OptimizationReport ||
+           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr) &&
+            !hasSnapshot(test, Snapshot::OptimizationReport)))) {
         for (const std::string &problem : matchChecks(test.checks, actual))
           problems += problem + "\n";
         return;
@@ -986,6 +1200,21 @@ Outcome Engine::run(const TestFile &test) {
           problems += "snapshot mir: " + error;
         else
           compare(kind, selected);
+      } else if (kind == Snapshot::OptimizationReport) {
+        // The optimizer's remarks (`gti --optimization-remarks`), the text
+        // form of the --optimization-report data.
+        CheckBackend backend;
+        const lang::driver::CompilationResult compiled =
+            lang::driver::compileWithBackend(requestFor(test, files, true),
+                                             backend);
+        if (compiled.status != lang::driver::CompilationStatus::Success ||
+            !compiled.optimizationReport)
+          problems += "snapshot optimization-report: the program did not "
+                      "reach the optimizer\n";
+        else
+          compare(kind,
+                  lang::formatOptimizationRemarks(*compiled.optimizationReport,
+                                                  test.optimize ? "O3" : "O0"));
       } else if (kind == Snapshot::LlvmIr) {
         std::string ir;
         if (options.isolate) {
@@ -1090,7 +1319,10 @@ Outcome Engine::run(const TestFile &test) {
         frontend.preambleCache = request.frontendReuse().preambles;
         const lang::StandardLibraryLayout &library = request.standardLibrary();
         const lang::FrontendResult analysis = lang::Frontend(frontend).analyze(
-            files.entry, std::nullopt, {library.prelude}, {}, {library.root});
+            files.entry, std::nullopt,
+            test.noPrelude ? std::vector<fs::path>{}
+                           : std::vector<fs::path>{library.prelude},
+            {}, {library.root});
         collect(compiled, files, analysis.diagnostics);
         compiled.succeeded = analysis.sourceValid && analysis.syntaxValid &&
                              analysis.semanticValid;
@@ -1304,9 +1536,9 @@ Outcome Engine::run(const TestFile &test) {
               std::max(0.5, limit - (totalCpu() - cpuStart));
           std::vector<std::string> argv{compiled.executable.string()};
           argv.insert(argv.end(), run.args.begin(), run.args.end());
-          const ProcessRun program =
-              runProcess(argv, run.stdinText, remaining, 4 * limit,
-                         state->caseDirectory, run.env, run.stdinFile);
+          const ProcessRun program = runProcess(
+              argv, run.stdinText, remaining, 4 * limit, state->caseDirectory,
+              run.env, run.stdinFile, run.stdoutClosed);
           std::string expectedOut;
           if (run.stdoutFile)
             expectedOut = readFile(*run.stdoutFile).value_or("");
@@ -1467,6 +1699,7 @@ Outcome Engine::run(const TestFile &test) {
       options.isolate &&
       (modeParses(test.mode) || modeAnalyzes(test.mode) ||
        !test.target.empty() || hasSnapshot(test, Snapshot::Mir) ||
+       hasSnapshot(test, Snapshot::OptimizationReport) ||
        std::any_of(test.sections.begin(), test.sections.end(),
                    [](const Section &section) {
                      return nativeKind(section.name) == NativeKind::C;

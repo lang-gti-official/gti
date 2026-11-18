@@ -1,0 +1,1 @@
+Allow compatible `extern "C"` function declarations to coexist across packages and namespaces, including renamed `link_name` bindings. Reject conflicting resolved signatures and safety contracts with a diagnostic pointing to both declarations.

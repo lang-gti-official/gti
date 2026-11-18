@@ -1669,6 +1669,104 @@ def test_missing_include_and_format_config(executable, root):
         session.close()
 
 
+def test_init_statement_tooling(executable, root):
+    """Init statements keep compiler-owned scope, navigation and diagnostics."""
+    source = """int pick(int input) {
+  if (int doubled = input * 2; doubled > 4) {
+    return doubled;
+  } else if (int tripled = doubled + input; tripled > 6) {
+    return tripled;
+  } else {
+    return doubled + 1;
+  }
+}
+int main() {
+  switch (int chosen = pick(2); chosen) {
+  default:
+    return chosen;
+  }
+}
+"""
+    if True:
+        uri = (pathlib.Path(root) / "init_statements.gti").as_uri()
+        session = LspSession(executable)
+        next_id = 10
+
+        def request(method, params):
+            nonlocal next_id
+            next_id += 1
+            request_id = next_id
+            session.send({"jsonrpc": "2.0", "id": request_id,
+                          "method": method, "params": params})
+            return session.receive_until(
+                lambda message: message.get("id") == request_id)["result"]
+
+        def at(text, offset):
+            return {"textDocument": {"uri": uri},
+                    "position": lsp_position(text, offset)}
+
+        try:
+            session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                          "params": {"capabilities": {}}})
+            session.receive_until(lambda message: message.get("id") == 1)
+            session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            open_document(session, uri, source)
+
+            declaration = source.index("doubled =")
+            # The init name resolves from the condition, the then branch, the
+            # else-if init and the final else branch.
+            uses = [source.index("doubled > 4"),
+                    source.index("doubled;"),
+                    source.index("doubled + input"),
+                    source.index("doubled + 1")]
+            for use in uses:
+                hover = request("textDocument/hover", at(source, use))
+                assert hover and "int32_t" in str(hover), hover
+                definition = request("textDocument/definition", at(source, use))
+                location = definition[0] if isinstance(definition, list) else definition
+                assert location["range"]["start"] == lsp_position(source, declaration), \
+                    (use, definition)
+            references = request("textDocument/references", {
+                **at(source, declaration), "context": {"includeDeclaration": True}})
+            assert len(references) == len(uses) + 1, references
+            switch_use = source.index("chosen;")
+            definition = request("textDocument/definition", at(source, switch_use))
+            location = definition[0] if isinstance(definition, list) else definition
+            assert location["range"]["start"] == lsp_position(
+                source, source.index("chosen =")), definition
+
+            # A use after the statement is outside the init's scope.
+            invalid = source.replace("return chosen;\n  }\n}",
+                                     "return chosen;\n  }\n  return chosen;\n}")
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": 2},
+                                     "contentChanges": [{"text": invalid}]}})
+            diagnostics = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("version") == 2)["params"]["diagnostics"]
+            undefined = [item for item in diagnostics if item.get("code") == "GTI-S2001"]
+            assert len(undefined) == 1, diagnostics
+            outside = invalid.rindex("chosen;")
+            assert undefined[0]["range"]["start"] == lsp_position(invalid, outside), undefined
+            assert undefined[0]["range"]["end"] == lsp_position(
+                invalid, outside + len("chosen")), undefined
+
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": 3},
+                                     "contentChanges": [{"text": source}]}})
+            recovered = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("version") == 3)["params"]["diagnostics"]
+            assert recovered == [], recovered
+
+            formatted = request("textDocument/formatting", {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": True}})
+            assert formatted == [], formatted
+        finally:
+            session.close()
+
+
 def test_semantic_hover(executable, root):
     source = (
         "uint64_t choose(uint64_t value) { return value; }\n"
@@ -6414,7 +6512,10 @@ def test_diagnostic_capability_negotiation(executable, root):
 def test_current_language_diagnostics(executable, root):
     source = (
         "class Cleanup { public: Cleanup() {} ~Cleanup() {} };\n"
-        "Cleanup global_cleanup{};\n"
+        # Hosted programs admit owning namespace globals; constexpr program
+        # storage still cannot retain runtime ownership.
+        "Cleanup accepted_cleanup{};\n"
+        "constexpr Cleanup global_cleanup{};\n"
         "int32_t runtime_value() { return 1; }\n"
         "constexpr int32_t called = runtime_value();\n"
         'int main(int bad) { string text = "value"; return bad; }\n'
@@ -6481,13 +6582,20 @@ def test_current_language_diagnostics(executable, root):
             diagnostic
             for diagnostic in publication["diagnostics"]
             if diagnostic.get("code") == "GTI-S2057"
+            and "runtime_value" in diagnostic["message"]
         )
         assert constexpr_diagnostic["data"]["phase"] == "semantics"
         assert constexpr_diagnostic["data"]["hints"]
         assert constexpr_diagnostic["relatedInformation"][0]["location"][
             "uri"
         ] == uri
-        constexpr_start = source.index("constexpr")
+        constexpr_start = source.index("constexpr int32_t")
+        accepted_line = source[: source.index("accepted_cleanup")].count("\n")
+        assert not [
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic["range"]["start"]["line"] == accepted_line
+        ], publication["diagnostics"]
         assert constexpr_diagnostic["relatedInformation"][0]["location"][
             "range"
         ]["start"] == lsp_position(source, constexpr_start)
@@ -6523,6 +6631,7 @@ def test_current_language_diagnostics(executable, root):
             for diagnostic in publication["diagnostics"]
             if diagnostic.get("code") == "GTI-S2061"
         )
+        assert "constexpr program storage" in lifecycle["message"], lifecycle
         lifecycle_name = source.index("global_cleanup")
         assert lifecycle["range"] == {
             "start": lsp_position(source, lifecycle_name),
@@ -11792,6 +11901,7 @@ def main():
     test_instance_reuse_across_snapshots(sys.argv[1], root)
     test_preamble_across_snapshots(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
+    test_init_statement_tooling(sys.argv[1], root)
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
     test_documentation_completion_and_signature_help(sys.argv[1], root)

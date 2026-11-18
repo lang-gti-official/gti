@@ -1,0 +1,5 @@
+// Native identity: the program is accepted.
+//@ check-pass
+interface I { int32_t inspect(int32_t, uint32_t); };
+int32_t discard(int32_t, uint32_t) { return 0; }
+int main() { return discard(1, uint32_t(2)); }

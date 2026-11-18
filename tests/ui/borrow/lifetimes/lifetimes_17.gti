@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2127.
+int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input) {  //~ ERROR GTI-S2127
+  return input;  //~ ERROR GTI-S2127
+}

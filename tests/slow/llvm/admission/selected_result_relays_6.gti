@@ -1,0 +1,29 @@
+// Selected result relays: a interface call's selected std::span<int32_t> relays on LLVM.
+//@ build-pass
+//@ slow
+import std.span;
+import std.string;
+import std.vector;
+class Record {
+public:
+  std::string name;
+  Record() : name(std::string("record")) {}
+};
+interface Picker {
+  std::span<int32_t> select();
+};
+class Base : public Picker {
+public:
+  int32_t value;
+  mut std::vector<int32_t> values;
+  Record record;
+  Base() : value(5), record(Record()) {}
+  virtual void poke() {}
+  std::span<int32_t> select() override { return this.values.as_span(); }
+};
+std::span<int32_t> relay(Picker& item) { return item.select(); }
+int main() {
+  mut Base owner{};
+  owner.values.push_back(1);
+  return relay(owner).size() == std::size_t(1) ? 0 : 1;
+}

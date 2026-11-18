@@ -1068,8 +1068,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
+    const auto aliasCarriers = std::count_if(
+        loan.carriers.begin(), loan.carriers.end(), [&](HirBindingId carrier) {
+          return std::find(loan.retainedCarriers.begin(),
+                           loan.retainedCarriers.end(),
+                           carrier) == loan.retainedCarriers.end();
+        });
     if (loan.lifecycleBound ||
-        (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
+        (aliasCarriers > 1 && loan.access != AccessMode::ReadOnly))
       continue;
     if (unconfined.contains(loan.id)) {
       // A range-for's loan is carried by the loop's own symbol-less range
@@ -1126,6 +1132,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         }
       }
     }
+    // A use by a statement that encloses the loan's creation (a for-loop's
+    // condition or step over a cursor its initializer declares) repeats on
+    // every iteration: the loan keeps its region's whole extent.
+    if (created[loan.id] &&
+        std::any_of(own.begin(), own.end(), [&](HirStatementId use) {
+          return use != *created[loan.id] && within(*created[loan.id], use);
+        }))
+      continue;
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);

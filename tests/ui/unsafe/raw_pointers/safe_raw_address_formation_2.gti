@@ -1,0 +1,3 @@
+// Safe raw address formation: safe address-of must not authorize an underlying raw projection.
+int* projection(int* pointer) { return &*pointer; }  //~ ERROR GTI-S2055
+int main() { return 0; }

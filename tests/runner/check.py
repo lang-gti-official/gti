@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""The gti_test_ui gate: gti-test's own behaviour, tidy, and the source inventory in bounded shards.
+"""The gti_test_ui gate: gti-test's own behaviour, then tidy and the cases.
 
-usage: check.py <gti-test> [--jobs N] [--checks-only | --suite-only --shard I/N]
+usage: check.py <gti-test> [--jobs N] [--junit FILE]
+                [--self-test-only | --without-ui]
+
+Without options it runs the self-test, tidies every root and runs the cases
+of tests/ui, tests/project and tests/lsp. `--without-ui` leaves tests/ui's
+cases to the sharded `gti_test_ui_<i>` entries (tests/gti_test.cmake), which
+run `gti-test tests/ui --shard I/N` directly; tidy still covers tests/ui.
 
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
@@ -11,11 +17,11 @@ test kinds: parse-only modes, analysis options, and the mir, llvm-ir,
 diagnostics and format snapshots with their failure and bless paths.
 """
 
-import argparse
 import json
 import os
 from xml.etree import ElementTree
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -40,9 +46,11 @@ def run(runner, *args, env=None, cwd=ROOT, fixtures=True):
     if fixtures:
         environment["GTI_TEST_SELF_TEST"] = "1"
     environment.update(env or {})
+    # Self-test runs are small; the real runs are bounded by their CTest
+    # entry or workflow step (an instrumented run takes most of an hour).
     result = subprocess.run([str(runner), *map(str, args)], cwd=cwd,
                             env=environment, capture_output=True, text=True,
-                            timeout=600)
+                            timeout=600 if fixtures else None)
     return result.returncode, result.stdout + result.stderr
 
 
@@ -59,7 +67,170 @@ def block(output, status, name):
     return match.group(0) if match else ""
 
 
+def admission_evidence_test(runner):
+    """The test-only evidence command preserves bytes and fails closed."""
+    with tempfile.TemporaryDirectory(prefix="gti-admission-self-") as directory:
+        root = Path(directory)
+        (root / "stdlib").symlink_to(ROOT / "stdlib", target_is_directory=True)
+        source = root / "main.gti"
+        source.write_text("int main() { return 0; }\n")
+        inputs = root / "inputs.json"
+        inputs.write_text(json.dumps(["main.gti"]))
+        tool = ROOT / "scripts/llvm_admission_evidence.py"
+        captures = [root / "ordinary", root / "validation"]
+        for index, output in enumerate(captures):
+            argv = [sys.executable, str(tool), "capture", "--root", str(root),
+                    "--runner", str(runner), "--output", str(output),
+                    "--inputs", str(inputs)]
+            if index:
+                argv += ["--validation"]
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "admission evidence capture succeeds",
+                   result.stdout + result.stderr)
+        examples = root / "examples"
+        examples.mkdir()
+        (examples / "unnumbered.gti").write_text("int main() { return 0; }\n")
+        default_output = root / "default-corpus"
+        result = subprocess.run(
+            [sys.executable, str(tool), "capture", "--root", str(root),
+             "--runner", str(runner), "--output", str(default_output)],
+            capture_output=True, text=True, timeout=120)
+        expect(result.returncode == 0 and set(json.loads(
+            (default_output / "manifest.json").read_text())["sources"]) ==
+            {"examples/unnumbered.gti"},
+            "default corpus includes examples without numeric prefixes",
+            result.stdout + result.stderr)
+        def compare():
+            return subprocess.run([sys.executable, str(tool), "compare",
+                                   *map(str, captures)], capture_output=True,
+                                  text=True, timeout=30)
+        result = compare()
+        expect(result.returncode == 0, "validation preserves plan/IR/object bytes",
+               result.stdout + result.stderr)
+        manifest_path = captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        plan = captures[1] / entry["directory"] / "plan.txt"
+        original = plan.read_bytes()
+        plan.write_bytes(original + b"forged occurrence\n")
+        result = compare()
+        expect(result.returncode == 1 and "evidence changed" in result.stdout,
+               "changed admission evidence is rejected", result.stdout)
+        plan.write_bytes(original)
+        manifest["complete"] = False
+        manifest_path.write_text(json.dumps(manifest))
+        result = compare()
+        expect(result.returncode == 1 and "incomplete" in result.stdout,
+               "incomplete admission capture is rejected", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        captures[0], "O0")
+        expect(code == 1 and "already exists" in out,
+               "evidence cannot reuse a stale directory", out)
+        source.write_text("//@ execution-profile: concurrent\nint main() { return 0; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "concurrent", "O0")
+        expect(code == 0 and "ExecutionProfile.Concurrent" in
+               (root / "concurrent/plan.txt").read_text(),
+               "evidence preserves the input execution profile", out)
+        library = root / "library.gti"
+        library.write_text("int seed() { return 7; }\nmut int current = seed();\n"
+                           "int answer(int value) { return current; }\n")
+        request = {"source": "library.gti", "execution-profile": "single-threaded",
+                   "program": {"kind": "library", "exports": [
+                       {"function": "answer", "symbol": "embedded_answer"}]}}
+        inputs.write_text(json.dumps([request]))
+        library_captures = [root / "library-before", root / "library-after"]
+        for output in library_captures:
+            result = subprocess.run(
+                [sys.executable, str(tool), "capture", "--root", str(root),
+                 "--runner", str(runner), "--output", str(output),
+                 "--inputs", str(inputs), "--validation"],
+                capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "library evidence preserves exports",
+                   result.stdout + result.stderr)
+        command = [sys.executable, str(tool), "compare", *map(str, library_captures)]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 0, "library evidence compares exact artifacts",
+               result.stdout + result.stderr)
+        manifest_path = library_captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        ir = (library_captures[1] / entry["directory"] / "module.ll").read_text()
+        expect("embedded_answer" in ir, "library export reaches LLVM evidence", ir[:300])
+        manifest["configurations"]["library.gti"]["program"]["exports"][0]["symbol"] = "other"
+        manifest_path.write_text(json.dumps(manifest))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 1 and "incomparable input configurations" in result.stdout,
+               "different export requests cannot compare as equivalent", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", library,
+                        root / "invalid-export", "O0", "--library", "answer=")
+        expect(code == 1 and "invalid evidence library export" in out,
+               "malformed export request is rejected", out)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "explicit-profile", "O0", "--execution-profile", "single-threaded")
+        expect(code == 0 and "ExecutionProfile.Concurrent" not in
+               (root / "explicit-profile/plan.txt").read_text(),
+               "provider-selected profile overrides standalone directive", out)
+        source.write_text("int main() { return undefined_name; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "invalid", "O0")
+        expect(code == 1 and "GTI-S2001" in out,
+               "failed compilation cannot become admission evidence", out)
+
+def ui_evidence_test(runner):
+    # The existing coverage claim must follow actual shard selection, not the
+    # self-test/tidy entry or a second implementation of the shard hash.
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        audit = runpy.run_path(str(ROOT / "tests/llvm_coverage_evidence_test.py"))
+    finally:
+        sys.path.pop(0)
+    with tempfile.TemporaryDirectory(prefix="gti-ui-evidence-") as raw:
+        root = Path(raw).resolve()
+        relative = "tests/ui/owner.gti"
+        source = root / relative
+        source.parent.mkdir(parents=True)
+        original = "// Execution evidence.\n//@ run-pass\nint main() { return 0; }\n"
+        source.write_text(original)
+        report = {"rows": [{"state": "implemented", "acceptance": {
+            "test": "gti_test_ui", "assertion": relative}}]}
+        inventory = {f"gti_test_ui_{i}": {
+            "command": [str(runner), str(source.parent), "--shard", f"{i}/2"],
+            "properties": [{"name": "LABELS", "value": ["gti-test-ui"]},
+                           {"name": "WORKING_DIRECTORY", "value": str(root)}]}
+            for i in (1, 2)}
+        resolve = audit["ui_profile_sources"]
+        records = resolve(report, root, inventory)
+        expect(records[relative]["source"] == original and
+               records[relative]["execution-profile"] == "single-threaded" and
+               records[relative]["shard"] in inventory,
+               "UI evidence uses the exact source and registered shard", records)
+        source.write_text(original.replace("//@ run-pass", "//@ run-pass\n//@ execution-profile: concurrent"))
+        expect(resolve(report, root, inventory)[relative]["execution-profile"] == "concurrent",
+               "UI evidence preserves the parsed execution profile", records)
+
+        def rejected(entries, message):
+            try:
+                resolve(report, root, entries)
+            except AssertionError as error:
+                expect(message in str(error), "UI evidence rejection", str(error))
+            else:
+                raise AssertionError("invalid UI execution evidence was accepted")
+
+        for directive in ("check-pass", "run-pass\n//@ define: EXTRA",
+                          "run-pass\n//@ opt: O3\n//@ reason: control"):
+            source.write_text(original.replace("run-pass", directive))
+            rejected(inventory, "not probe-compatible")
+        source.write_text(original)
+        rejected({}, "exactly one registered")
+        duplicate = dict(inventory)
+        duplicate["duplicate"] = inventory[records[relative]["shard"]]
+        rejected(duplicate, "exactly one registered")
+
+
 def self_test(runner):
+    admission_evidence_test(runner)
+    ui_evidence_test(runner)
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
     expect(code == 0 and "RESULT ok: 8 passed, 0 failed" in out,
            "passing fixtures pass", out)
@@ -199,7 +370,24 @@ def self_test(runner):
                     "new_directives.gti: line 6: target 'nonsense' is not a "
                     "supported triple",
                     "new_directives.gti: line 0: analyze tests stop before "
-                    "HIR"):
+                    "HIR",
+                    "project/test.transcript: line 5: environment lines are "
+                    "`env NAME=value`",
+                    "project/test.transcript: line 6: `unset NAME` names one "
+                    "variable",
+                    "project/test.transcript: line 8: a `$ tty:` command's "
+                    "output is all `stdout:`",
+                    "project/test.transcript: `slow` is only legal under a "
+                    "slow/ directory",
+                    "round4_directives.gti: line 5: INFO and HINT annotations "
+                    "are for LSP tests",
+                    "round4_directives.gti: line 0: no-prelude is for "
+                    "analyze-pass/analyze-fail tests",
+                    "round4_directives.gti: line 0: snapshot: "
+                    "optimization-report is checked by `// CHECK:` patterns",
+                    "round4_directives.gti: line 0: stdout/stdout-closed/",
+                    "parse_snapshot.gti: line 0: a diagnostics snapshot of a "
+                    "parse test needs parse-fail"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -401,7 +589,7 @@ def kinds_self_test(runner):
     """Parse-only modes, analysis options and snapshot kinds."""
     for isolate in ((), ("--isolate",)):
         code, out = run(runner, FIXTURES / "kinds", "--jobs", "4", *isolate)
-        expect(code == 0 and "RESULT ok: 24 passed, 0 failed" in out,
+        expect(code == 0 and "RESULT ok: 29 passed, 0 failed" in out,
                f"the other test kinds pass {isolate}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "kinds")
     expect(code == 0, "tidy accepts the kind fixtures", out)
@@ -410,8 +598,11 @@ def kinds_self_test(runner):
     defaults_self_test(runner)
 
     code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
-    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 7 failed" in out,
            "drifted snapshots fail", out)
+    expect("CHECK at line 3: `applied [exact-receiver-dispatch` not found" in
+           block(out, "FAIL", "report_missing.gti"),
+           "a missing optimization-report pattern fails", out)
     mir = block(out, "FAIL", "mir_drift.gti")
     expect("snapshot mir differs from mir_drift.mir (-expected +actual)" in mir
            and "-stale" in mir and "+body kind=3" in mir,
@@ -444,8 +635,24 @@ def kinds_self_test(runner):
                "the format snapshot is the formatter's output",
                (work / "drift/format_new.formatted").read_text())
         code, out = run(runner, work, "--jobs", "4")
-        expect("RESULT fail: 3 passed, 3 failed" in out,
+        expect("RESULT fail: 3 passed, 4 failed" in out,
                "blessed snapshots pass", out)
+
+    # --bless seeds a fail-mode test that has no annotation yet.
+    with tempfile.TemporaryDirectory() as directory:
+        test = Path(directory) / "ui/x/seed.gti"
+        test.parent.mkdir(parents=True)
+        test.write_text("// A parse-fail test blessed from nothing.\n"
+                        "//@ parse-fail\nint main() {\n  int a = 1\n"
+                        "  return a;\n}\n")
+        code, out = run(runner, test)
+        expect(code == 1 and "has no `//~ ERROR` expectation" in out,
+               "an unannotated parse-fail test is invalid", out)
+        code, out = run(runner, test, "--bless")
+        expect(code == 0 and "//~ ERROR GTI-P0001" in test.read_text(),
+               "bless seeds the first annotation", out + test.read_text())
+        code, out = run(runner, test)
+        expect(code == 0, "the seeded test passes", out)
 
 
 def features_self_test(runner):
@@ -495,12 +702,22 @@ def defaults_self_test(runner):
 def project_self_test(runner):
     """Project transcripts: commands in a copy of the directory."""
     code, out = run(runner, FIXTURES / "project/ok")
-    expect(code == 0 and "RESULT ok: 1 passed, 0 failed" in out,
-           "a project transcript passes", out)
+    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
+           "project transcripts pass: env/unset lines, $HOME and $PATH, "
+           "a pseudo-terminal", out)
     code, out = run(runner, FIXTURES / "project/fail", "--jobs", "3",
                     env={"GTI_TEST_TIME_SCALE": "0.1"})
-    expect(code == 1 and "0 passed, 2 failed, 0 ice, 1 timeout" in out,
+    expect(code == 1 and "0 passed, 4 failed, 0 ice, 1 timeout" in out,
            "failing transcripts fail", out)
+    late = block(out, "FAIL", "environment/test.transcript")
+    expect('stdout lacks "set early"' in late and "      unset" in late,
+           "an env line reaches only later commands", out)
+    terminal = block(out, "FAIL", "terminal/test.transcript")
+    expect("line 2: $ tty: sh -c" in terminal and
+           'stdout lacks "\\e[31mbold"' in terminal and
+           "terminal (normalised):\n        \\e[1mbold\\e[0m" in terminal and
+           "\x1b" not in terminal,
+           "a terminal mismatch shows escapes as \\e", out)
     wrong = block(out, "FAIL", "wrong_exit/test.transcript")
     expect("line 2: $ gti main.gti --emit-mir -o out.mir" in wrong and
            "exit code 65, expected 2" in wrong and
@@ -525,14 +742,20 @@ def project_self_test(runner):
                "bless records exit codes and diagnostics", out + text)
         code, out = run(runner, work)
         expect(code == 0, "a blessed transcript passes", out)
+    # The slow tier's limit: 2-3 s of CPU, over a transcript's 1 s here.
+    code, out = run(runner, FIXTURES / "slow", env={"GTI_TEST_TIME_SCALE":
+                                                    "0.05"})
+    expect(code == 0 and "RESULT ok: 1 passed" in out,
+           "a `slow` transcript under slow/ has the slow limit", out)
 
 
 def lsp_self_test(runner):
     """LSP marker tests and transcripts against a per-worker gti_lsp."""
     code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 10 passed, 0 failed" in out,
+    expect(code == 0 and "RESULT ok: 14 passed, 0 failed" in out,
            "LSP fixtures pass: edit steps, server options, code actions, "
-           "several files, a project, cursor markers", out)
+           "several files, a project, cursor markers, prepare-rename, "
+           "format options, INFO annotations, $contains/$match", out)
     # One worker keeps a server per option list: the same call is checked
     # under the concurrent and the default profile in turn.
     code, out = run(runner, FIXTURES / "lsp/ok/server_concurrent.gti",
@@ -541,8 +764,28 @@ def lsp_self_test(runner):
     expect(code == 0 and "RESULT ok: 2 passed" in out,
            "tests with different server options share a worker", out)
     code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "3")
-    expect(code == 1 and "RESULT fail: 0 passed, 9 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 13 failed" in out,
            "failing LSP fixtures fail without timing out", out)
+    renamed = block(out, "FAIL", "wrong_rename_format.gti")
+    for problem in ("line 2 (prepare-rename): expected a rename at @other; "
+                    "got @start",
+                    "line 3 (prepare-rename): expected no rename here",
+                    'line 4 (prepare-rename): expected placeholder "wrong"; '
+                    'got "total"',
+                    'line 6 (formatting): formatted text does not contain "{',
+                    "line 7 (formatting): an unterminated or malformed"):
+        expect(problem in renamed, f"prepare-rename/formatting failure "
+               f"reported: {problem}", out)
+    expect("actual:   INFO GTI-S2003 at line 5" in
+           block(out, "FAIL", "wrong_info.gti"),
+           "a test annotating INFO must annotate every information "
+           "diagnostic", out)
+    expect("line 3: expected a message matching" in
+           block(out, "FAIL", "wrong_matchers.jsonl"),
+           "an unmatched $contains fails", out)
+    expect("invalid test: line 3: `$match` (" in
+           block(out, "FAIL", "bad_matcher.jsonl"),
+           "a malformed $match is an invalid test", out)
     actions = block(out, "FAIL", "wrong_code_actions.gti")
     for problem in ('line 2 (code-action): no code action titled "no such fix"; '
                     "offered: ",
@@ -599,6 +842,40 @@ def lsp_self_test(runner):
     expect("line 3: expected a message matching" in
            block(out, "FAIL", "wrong_transcript.jsonl") and "seen: " in out,
            "a transcript mismatch shows what was seen", out)
+    # The budget is the server's CPU: replies that are slow in wall time
+    # pass, a server burning CPU fails, a server that never publishes hits
+    # the hang guard. The shim stands in for gti_lsp (the first test of a
+    # server is cold, so the second is the one judged).
+    shim = ROOT / "tests/runner/lsp_shim.py"
+    pair = (FIXTURES / "lsp/ok/requests.gti", FIXTURES / "lsp/ok/diagnostics.gti")
+    shimmed = {"GTI_TEST_SHIM_SERVER": str(runner.parent / "gti_lsp"),
+               "GTI_TEST_TIME_SCALE": "0.5"}
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "junit.xml"
+        code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                        "--junit", report,
+                        env=shimmed | {"GTI_TEST_SHIM_MODE": "slow",
+                                       "GTI_TEST_SHIM_SECONDS": "0.4"})
+        walls = [float(case.get("time")) for case in
+                 ElementTree.parse(report).getroot().iter("testcase")]
+        cpus = [float(prop.get("value")) for prop in
+                ElementTree.parse(report).getroot().iter("property")]
+        expect(code == 0 and "RESULT ok: 2 passed" in out and
+               max(walls) > 1.5 and len(cpus) == 2 and max(cpus) < 1.5,
+               "replies slow in wall time pass the CPU budget, and JUnit "
+               "reports both times", out + report.read_text())
+    code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "spin",
+                                   "GTI_TEST_SHIM_SECONDS": "2"})
+    expect(code == 1 and "over the CPU budget: gti_lsp used" in out and
+           "RESULT fail: 1 passed, 0 failed, 0 ice, 1 timeout" in out,
+           "a server burning CPU exceeds the budget", out)
+    code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp", shim,
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "hang",
+                                   "GTI_TEST_TIME_SCALE": "0.05"})
+    expect(code == 1 and "within the hang guard" in out and
+           "over the CPU budget" not in out,
+           "a server that never publishes hits the hang guard", out)
     code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp",
                     "/usr/bin/true")
     expect(code == 1 and "could not start /usr/bin/true" in out,
@@ -612,106 +889,38 @@ def lsp_self_test(runner):
                "bless annotates published diagnostics", out)
 
 
-def suite_roots(runner):
+def main():
+    runner = Path(sys.argv[1]).resolve()
+    jobs = "4"
+    if "--jobs" in sys.argv:
+        jobs = sys.argv[sys.argv.index("--jobs") + 1]
+    self_test(runner)
+    retained_assertion_test(runner)
+    print("gti-test self-test: ok", flush=True)
+    if "--self-test-only" in sys.argv:
+        return 0
     # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
     roots = ["tests/ui", "tests/project"]
     if (runner.parent / "gti_lsp").exists():
         roots.append("tests/lsp")
     else:
         print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
-    roots.extend([
-        "tests/slow/borrow/retained-storage",
-        "tests/slow/borrow/constructor_text_storage/constructor_text_storage_contracts_2.gti",
-        "tests/slow/borrow/span_owner_dependent.gti",
-        "tests/slow/classes/construction/implicit_return_construction_1.gti",
-        "tests/slow/codegen/o0_shared_failure_channels.gti",
-        "tests/slow/generics/clone/generic_clone.gti",
-        "tests/slow/generics/structural_requires/structural_requires_and_accumulate_1.gti",
-        "tests/slow/generics/symbolic_auto_locals/symbolic_auto_local_binding_1.gti",
-        "tests/slow/language/construction/constructor_borrow_replacement_many.gti",
-        "tests/slow/language/expected/expected_class_argument.gti",
-        "tests/slow/language/expected/expected_class_assignment.gti",
-        "tests/slow/language/expected/expected_conditional_arms.gti",
-        "tests/slow/language/expected/expected_conditional_assignment.gti",
-        "tests/slow/language/expected/owned_expected_error.gti",
-        "tests/slow/macros/values_runtime.gti",
-        "tests/slow/ownership/consuming/consuming_conditional_receiver.gti",
-        "tests/slow/ownership/consuming/consuming_prepared_receiver.gti",
-        "tests/slow/ownership/loans/switch_and_break_loan_flow_1.gti",
-        "tests/slow/ownership/owners_and_storage/fixed_array_pack_forwarding.gti",
-        "tests/slow/ownership/owners_and_storage/variadic_storage_construction_and_vector_1.gti",
-        "tests/slow/ownership/owners_and_storage/variadic_storage_construction_and_vector_2.gti",
-        "tests/slow/ownership/ranges/forward_iterator_contracts_and_binary_search_1.gti",
-        "tests/slow/stdlib/build/build.gti",
-        "tests/slow/stdlib/charconv/charconv_constexpr_integer.gti",
-        "tests/slow/stdlib/contracts/set_swap_contract.gti",
-        "tests/slow/stdlib/imports/tcp_private_handle.gti",
-        "tests/slow/stdlib/imports/tcp_stream_copy.gti",
-        "tests/slow/stdlib/json/dynamic/borrowed_element_growth.gti",
-        "tests/slow/stdlib/memory/arena_pool.gti",
-        "tests/slow/stdlib/regex/regex_result_escape.gti",
-        "tests/slow/stdlib/set/complete_sets.gti",
-        "tests/slow/stdlib/vector/constexpr_range_for_views.gti",
-        "tests/slow/constexpr/lazy_staging/lazy_staging_and_compile_time_panic_2.gti",
-        "tests/slow/ownership/stored_references/writable_and_movement_iterator_capabilities_1.gti",
-
-        "tests/slow/borrow/container_views/nested_text_view_in_raw_storage.gti",
-        "tests/slow/stdlib/regex/regex_subject_mutation.gti",
-        "tests/slow/stdlib/assert/deferred_assertions.gti",
-        "tests/slow/stdlib/assert/deferred_assertions_ndebug.gti",
-        "tests/slow/stdlib/charconv/format.gti",
-        "tests/slow/stdlib/format/integral_enum_formatting_temporary.gti",
-        "tests/slow/stdlib/io/composable_io.gti",
-        "tests/slow/stdlib/encoding/encoding.gti",
-        "tests/slow/language/construction/object_construction.gti",
-        "tests/slow/language/construction/object_construction_owned.gti",
-        "tests/slow/language/construction/object_construction_reference.gti",
-        "tests/slow/language/construction/borrowed_array_cleanup.gti",
-        "tests/slow/language/construction/borrowed_vector_cleanup.gti",
-    ])
-    return [ROOT / root for root in roots]
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("runner", type=Path)
-    parser.add_argument("--jobs", default="4")
-    modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--self-test-only", action="store_true")
-    modes.add_argument("--checks-only", action="store_true")
-    modes.add_argument("--suite-only", action="store_true")
-    parser.add_argument("--shard")
-    args = parser.parse_args()
-    runner = args.runner.resolve()
-    if not args.suite_only:
-        self_test(runner)
-        retained_assertion_test(runner)
-        print("gti-test self-test: ok", flush=True)
-    if args.self_test_only:
-        return 0
-    roots = suite_roots(runner)
-    if not args.suite_only:
-        for root in roots:
-            code, out = run(runner, "--tidy", root, fixtures=False)
-            print(out, end="", flush=True)
-            if code != 0:
-                return code
-    if args.checks_only:
-        return 0
-    # Stream failures as they happen and retain per-case evidence even if the
-    # outer gate times out. Each CTest shard owns a distinct report/failed list.
-    reports = runner.parent / "Testing"
-    reports.mkdir(exist_ok=True)
-    label = "gti-test-ui-" + (args.shard or "all").replace("/", "-of-")
-    environment = dict(os.environ)
-    environment.pop("CI", None)
-    environment.pop("GTI_TEST_SELF_TEST", None)
-    environment["GTI_TEST_LAST_RUN"] = str(reports / (label + ".last-run"))
-    command = [str(runner), *map(str, roots), "--jobs", args.jobs,
-               "--json", str(reports / (label + ".jsonl"))]
-    if args.shard:
-        command += ["--shard", args.shard]
-    return subprocess.run(command, cwd=ROOT, env=environment, timeout=600).returncode
+    for root in roots:
+        code, out = run(runner, "--tidy", "--root", ROOT / root,
+                        fixtures=False)
+        sys.stdout.write(out)
+        if code != 0:
+            return code
+    # --junit FILE goes to the run of the tests: CI's per-case report.
+    report = []
+    if "--junit" in sys.argv:
+        report = ["--junit", sys.argv[sys.argv.index("--junit") + 1]]
+    if "--without-ui" in sys.argv:
+        roots.remove("tests/ui")
+    code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
+                    jobs, *report, fixtures=False)
+    sys.stdout.write(out)
+    return code
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2 @@
+// Reference substitutions and empty alternatives: known empty alternatives do not excuse missing or expired reference-bearing payload owners.
+enum Event<T> { idle, item(T value), pair(T first, T second) }; Event<int&> dangling() { int local = 3; return Event<int&>::pair(local, local); } int main() { return 0; }  //~ ERROR GTI-S2045

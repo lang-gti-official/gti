@@ -1,0 +1,27 @@
+// A payload destructor failing during failure cleanup escalates to GTI-R0014.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: 7
+//@ stderr-contains: secondary.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at secondary.gti:19; secondary [GTI-R0002]
+// --- secondary.gti
+import std.mutex;
+class Payload {
+  int32_t id;
+  int32_t divisor;
+public:
+  Payload(int32_t id, int32_t divisor) : id(id), divisor(divisor) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.id);
+    std::println(12 / this.divisor);
+  }
+};
+int main() {
+  std::mutex<Payload> unrelated{Payload(3, 1)};
+  std::mutex<Payload> first{Payload(7, 0)};
+  std::mutex<Payload> second = std::move(first);
+  int32_t zero = 0;
+  return 12 / zero;
+}

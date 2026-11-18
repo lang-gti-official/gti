@@ -1,0 +1,4 @@
+// Fallible borrows: a free fallible borrow should require one unambiguous owner parameter.
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> choose(int& first, int& second) { return first; }  //~ ERROR GTI-S2017
+int main() { return 0; }

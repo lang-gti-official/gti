@@ -272,6 +272,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "begin-thread-locals";
   case MirHostedStartupOperationKind::RetireProgramStorage:
     return "retire-program-storage";
+  case MirHostedStartupOperationKind::CleanupProgramStorage:
+    return "cleanup-program-storage";
   }
   return "invalid";
 }
@@ -997,6 +999,7 @@ private:
              << " symbol=" << step.symbol << " owner-class=" << step.ownerClass
              << " active-cleanup=" << step.requiresActiveCleanup
              << " native-retirement=" << step.nativeRetirement.has_value()
+             << " source-cleanup=" << step.sourceCleanup.has_value()
              << " binding=" << step.binding << " place=p" << step.storagePlace
              << " entry=bb" << step.entryBlock << " initialize=i"
              << step.storageInitialization << " data-kind="
@@ -1023,6 +1026,8 @@ private:
       output << "]\n";
       if (step.nativeRetirement)
         dropObligation(MirDropObligation{.dropType = *step.nativeRetirement});
+      if (step.sourceCleanup)
+        dropObligation(MirDropObligation{.dropType = *step.sourceCleanup});
     }
   }
 
@@ -2119,6 +2124,8 @@ private:
              << item.exitBlock << " extent=" << item.arrayLength
              << " owns-temporary=" << item.ownsRangeTemporary;
       output << " materializes-element-value=" << item.materializesElementValue;
+      if (item.elementBorrowsCursorRegions)
+        output << " element-borrows-cursor-regions=1";
       if (item.endpointParking) {
         const auto &parking = *item.endpointParking;
         output << " endpoint-parking=loan" << parking.cursor

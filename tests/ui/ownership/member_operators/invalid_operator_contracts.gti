@@ -1,0 +1,14 @@
+// Restricted member operators: each invalid operator declaration (result kind, arity, receiver access) keeps its own contract diagnostic.
+class Operators1 { mut int value = 0; public: int operator*() mut { return this.value; } };  //~ ERROR GTI-S2022
+class Operators2 { mut int value = 0; public: int operator->() { return this.value; } };  //~ ERROR GTI-S2022
+class Operators3 { mut int value = 0; public: int& operator[](uint64_t first, uint64_t second) { return this.value; } };  //~ ERROR GTI-S2022
+class Operators4 { mut int value = 0; public: bool operator==(nullptr_t other) mut { return true; } };  //~ ERROR GTI-S2022
+class Operators5 { mut int value = 0; public: int operator<(Operators5& other) { return 0; } };  //~ ERROR GTI-S2022
+class Operators6 { mut int value = 0; public: int operator+(int other) mut { return this.value + other; } };  //~ ERROR GTI-S2022
+class Operators7 { mut int value = 0; public: int& operator-(int other) { return this.value; } };  //~ ERROR GTI-S2022
+class Operators8 { mut int value = 0; public: int operator+=(int other) mut { return this.value + other; } };  //~ ERROR GTI-S2022
+class Operators9 { mut int value = 0; public: void operator+=(int other) {} };  //~ ERROR GTI-S2022
+class Operators10 { mut int value = 0; public: void operator--() {} };  //~ ERROR GTI-S2022
+class Operators11 { mut int value = 0; public: int operator~(int other) { return other; } };  //~ ERROR GTI-S2022
+class Operators12 { mut int value = 0; public: operator bool() mut { return true; } };  //~ ERROR GTI-S2022
+int main() { return 0; }

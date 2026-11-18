@@ -1,0 +1,329 @@
+// Interpolation keeps its earlier overflow and division failures, signed division and aliasing: every non-failing endpoint/divisor/mode case (a hash of the results from an exact oracle) and samples of each failure.
+//@ run-pass
+//@ revisions: sweep c_0_0_0_0 c_4_1_6_0 c_7_7_7_0 c_0_0_2_0 c_4_1_2_0 c_7_7_2_0 c_0_1_1_0 c_2_7_3_0 c_7_6_1_0 c_0_0_0_1 c_4_1_6_1 c_7_7_7_1 c_0_0_2_1 c_4_1_2_1 c_7_7_2_1 c_0_1_1_1 c_2_7_3_1 c_7_6_1_1 c_0_0_0_2 c_4_2_0_2 c_7_7_7_2 c_0_0_2_2 c_4_1_2_2 c_7_7_2_2 c_0_4_0_2 c_3_7_2_2 c_7_3_3_2 c_0_0_0_3 c_4_1_5_3 c_7_7_7_3 c_0_0_2_3 c_4_0_2_3 c_7_7_2_3 c_0_1_1_3 c_1_5_5_3 c_7_6_1_3 c_0_0_1_4 c_2_5_1_4 c_7_7_7_4 c_0_0_0_4 c_2_5_0_4 c_7_7_0_4 c_1_0_0_4 c_5_4_0_4 c_7_6_7_4 c_0_0_1_5 c_3_4_4_5 c_7_7_7_5 c_0_0_0_5 c_4_0_0_5 c_7_7_0_5 c_1_0_1_5 c_6_5_4_5 c_7_6_7_5
+//@[sweep] args: sweep oooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzvvovoozzzzoooooooooooooooooooooooooooooooovvovzzvvovoozzzzoooooooooooooooooooooooooooooooovvovzzvvovoozzzzoooooooooooooooooooooooooooooooovvvozzvvvvoovvvzoovvvvoovvvvoovvvvoovvvvoovvvvoovvvozzvvvooovvvzoovvvvoovvvvoovvvvoovvvvoovvvvoovvvozzvvvooovvvzoovvvvoovvvvoovvvvoovvvvoovvvooovvvozzvvvooovvvzoovvvvoovvvooovvvooovvvooovvvooooooovzoooovvzzzzvooovovooooovooooovooooovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooovvovzzvvovoozzzzoooooooooooooooooooooooooooooooovvovzzvvovoozzzzoooooooooooooooooooooooooooooooovvovzzvvovoozzzzoooooooooooooooooooooooooooooooovvvozzvvvvoovvvzoovvvvoovvvvoovvvvoovvvvoovvvooovvvozzvvvooovvvzoovvvvoovvvvoovvvvoovvvvoovvvooovvvozzvvvooovvvzoovvvvoovvvooovvvooovvvooovvvooooooovzoooovvzzzzvooovovooovovooovovooovovooooovooooovzoooovvzzzzvooovovooovovooovovooovovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooovvvozzvvvooovvvzoovvvvoovvvooovvvooovvvooovvvooooooovzoooovvzzzzvooovovooovovooovovooovovooovovooooovzoooovvzzzzvooovovooovovooovovooovovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooovvvozzvvvvoovvvzoovvvvoovvvooovvvooovvvooovvvooooooovzvvvvvvzzzzvooovovooovovooovovooovovooovovooooovzoooovvzzzzvooovovooovovooovovooovovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooovooooovooooovooooovooooovooovvvovzvvvovvvvvzvovvvvvovvvovovvvovovvvovovvvovooooovzvvvvvvzzzzvooovovooovovooovovooovovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooovzoooovvzzzzvooooovooooovooooovooooovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooovooooovooooovooooovooooooooovvvovzvvvovvvvvzvovvvvvovvvovovvvovovvvovovvvovovvvovzvvvovvvvvzvovvvvvovvvovovvvovovvvovovvvovooooovzoooovvzzzzvvoooovooooovooooovooooovooooovooooovzoooovvzzzzvvoooovvoooovooooovooooovooooovooooovzoooovvzzzzvvoooovvoooovvoooovvoooovooooovooooovzoooovvzzzzvvoooovvoooovvoooovvoooovooooovooooozzoooooozzzzoooooooooooooooooooooooooooooooooooozzoooooozzzzoooovooooovooooovooooovooooooooovvvovzvvvovvvvvzvovvvvvovvvovovvvovovvvovovvvovovvvovzvvvovvvvvzvvvvvvvovvvvvovvvovovvvovovvvovovvvovzvvvovvvvvzvvvvvvvvvvvvvovvvvvovvvvvovvvovovvovvzvvvvvvzzzzvvoovovvoooovvoooovvoooovooooovovvovvzvvovvvzzzzvvoooovvoooovvoooovvoooovooooovovvovvzvvovvvzzzzvvoooovvoooovvoooovvoooovvoooovovvovvzvvovvvzzzzvvoooovvoooovvoooovvoooovvoooovvoooozzoooooozzzzoooooooooooooooooooooooooooooooo
+//@[sweep] stdout: 1966
+//@[sweep] stdout: -2118526365351266283
+//@[sweep] stdout: 3882299720808815385
+//@[c_0_0_0_0] args: '' '' '' ''
+//@[c_0_0_0_0] stdout: -2147483648
+//@[c_0_0_0_0] stdout: 22
+//@[c_4_1_6_0] args: xxxx x xxxxxx ''
+//@[c_4_1_6_0] stdout: -306783378
+//@[c_4_1_6_0] stdout: 22
+//@[c_7_7_7_0] args: xxxxxxx xxxxxxx xxxxxxx ''
+//@[c_7_7_7_0] stdout: 2147483647
+//@[c_7_7_7_0] stdout: 22
+//@[c_0_0_2_0] args: '' '' xx ''
+//@[c_0_0_2_0] stdout: 22
+//@[c_0_0_2_0] run-fail
+//@[c_0_0_2_0] exit-code: 70
+//@[c_0_0_2_0] stderr-contains: division_by_zero
+//@[c_4_1_2_0] args: xxxx x xx ''
+//@[c_4_1_2_0] stdout: 22
+//@[c_4_1_2_0] run-fail
+//@[c_4_1_2_0] exit-code: 70
+//@[c_4_1_2_0] stderr-contains: division_by_zero
+//@[c_7_7_2_0] args: xxxxxxx xxxxxxx xx ''
+//@[c_7_7_2_0] stdout: 22
+//@[c_7_7_2_0] run-fail
+//@[c_7_7_2_0] exit-code: 70
+//@[c_7_7_2_0] stderr-contains: division_by_zero
+//@[c_0_1_1_0] args: '' x x ''
+//@[c_0_1_1_0] stdout: 22
+//@[c_0_1_1_0] run-fail
+//@[c_0_1_1_0] exit-code: 70
+//@[c_0_1_1_0] stderr-contains: integer_overflow
+//@[c_2_7_3_0] args: xx xxxxxxx xxx ''
+//@[c_2_7_3_0] stdout: 22
+//@[c_2_7_3_0] run-fail
+//@[c_2_7_3_0] exit-code: 70
+//@[c_2_7_3_0] stderr-contains: integer_overflow
+//@[c_7_6_1_0] args: xxxxxxx xxxxxx x ''
+//@[c_7_6_1_0] stdout: 22
+//@[c_7_6_1_0] run-fail
+//@[c_7_6_1_0] exit-code: 70
+//@[c_7_6_1_0] stderr-contains: integer_overflow
+//@[c_0_0_0_1] args: '' '' '' x
+//@[c_0_0_0_1] stdout: -2147483648
+//@[c_0_0_0_1] stdout: 22
+//@[c_4_1_6_1] args: xxxx x xxxxxx x
+//@[c_4_1_6_1] stdout: -306783378
+//@[c_4_1_6_1] stdout: 22
+//@[c_7_7_7_1] args: xxxxxxx xxxxxxx xxxxxxx x
+//@[c_7_7_7_1] stdout: 2147483647
+//@[c_7_7_7_1] stdout: 22
+//@[c_0_0_2_1] args: '' '' xx x
+//@[c_0_0_2_1] stdout: 22
+//@[c_0_0_2_1] run-fail
+//@[c_0_0_2_1] exit-code: 70
+//@[c_0_0_2_1] stderr-contains: division_by_zero
+//@[c_4_1_2_1] args: xxxx x xx x
+//@[c_4_1_2_1] stdout: 22
+//@[c_4_1_2_1] run-fail
+//@[c_4_1_2_1] exit-code: 70
+//@[c_4_1_2_1] stderr-contains: division_by_zero
+//@[c_7_7_2_1] args: xxxxxxx xxxxxxx xx x
+//@[c_7_7_2_1] stdout: 22
+//@[c_7_7_2_1] run-fail
+//@[c_7_7_2_1] exit-code: 70
+//@[c_7_7_2_1] stderr-contains: division_by_zero
+//@[c_0_1_1_1] args: '' x x x
+//@[c_0_1_1_1] stdout: 22
+//@[c_0_1_1_1] run-fail
+//@[c_0_1_1_1] exit-code: 70
+//@[c_0_1_1_1] stderr-contains: integer_overflow
+//@[c_2_7_3_1] args: xx xxxxxxx xxx x
+//@[c_2_7_3_1] stdout: 22
+//@[c_2_7_3_1] run-fail
+//@[c_2_7_3_1] exit-code: 70
+//@[c_2_7_3_1] stderr-contains: integer_overflow
+//@[c_7_6_1_1] args: xxxxxxx xxxxxx x x
+//@[c_7_6_1_1] stdout: 22
+//@[c_7_6_1_1] run-fail
+//@[c_7_6_1_1] exit-code: 70
+//@[c_7_6_1_1] stderr-contains: integer_overflow
+//@[c_0_0_0_2] args: '' '' '' xx
+//@[c_0_0_0_2] stdout: -2147483648
+//@[c_0_0_0_2] stdout: 22
+//@[c_4_2_0_2] args: xxxx xx '' xx
+//@[c_4_2_0_2] stdout: -4
+//@[c_4_2_0_2] stdout: 22
+//@[c_7_7_7_2] args: xxxxxxx xxxxxxx xxxxxxx xx
+//@[c_7_7_7_2] stdout: 2147483647
+//@[c_7_7_7_2] stdout: 22
+//@[c_0_0_2_2] args: '' '' xx xx
+//@[c_0_0_2_2] stdout: 22
+//@[c_0_0_2_2] run-fail
+//@[c_0_0_2_2] exit-code: 70
+//@[c_0_0_2_2] stderr-contains: division_by_zero
+//@[c_4_1_2_2] args: xxxx x xx xx
+//@[c_4_1_2_2] stdout: 22
+//@[c_4_1_2_2] run-fail
+//@[c_4_1_2_2] exit-code: 70
+//@[c_4_1_2_2] stderr-contains: division_by_zero
+//@[c_7_7_2_2] args: xxxxxxx xxxxxxx xx xx
+//@[c_7_7_2_2] stdout: 22
+//@[c_7_7_2_2] run-fail
+//@[c_7_7_2_2] exit-code: 70
+//@[c_7_7_2_2] stderr-contains: division_by_zero
+//@[c_0_4_0_2] args: '' xxxx '' xx
+//@[c_0_4_0_2] stdout: 22
+//@[c_0_4_0_2] run-fail
+//@[c_0_4_0_2] exit-code: 70
+//@[c_0_4_0_2] stderr-contains: integer_overflow
+//@[c_3_7_2_2] args: xxx xxxxxxx xx xx
+//@[c_3_7_2_2] stdout: 22
+//@[c_3_7_2_2] run-fail
+//@[c_3_7_2_2] exit-code: 70
+//@[c_3_7_2_2] stderr-contains: integer_overflow
+//@[c_7_3_3_2] args: xxxxxxx xxx xxx xx
+//@[c_7_3_3_2] stdout: 22
+//@[c_7_3_3_2] run-fail
+//@[c_7_3_3_2] exit-code: 70
+//@[c_7_3_3_2] stderr-contains: integer_overflow
+//@[c_0_0_0_3] args: '' '' '' xxx
+//@[c_0_0_0_3] stdout: -2147483648
+//@[c_0_0_0_3] stdout: 22
+//@[c_4_1_5_3] args: xxxx x xxxxx xxx
+//@[c_4_1_5_3] stdout: -715827882
+//@[c_4_1_5_3] stdout: 22
+//@[c_7_7_7_3] args: xxxxxxx xxxxxxx xxxxxxx xxx
+//@[c_7_7_7_3] stdout: 2147483647
+//@[c_7_7_7_3] stdout: 22
+//@[c_0_0_2_3] args: '' '' xx xxx
+//@[c_0_0_2_3] stdout: 22
+//@[c_0_0_2_3] run-fail
+//@[c_0_0_2_3] exit-code: 70
+//@[c_0_0_2_3] stderr-contains: division_by_zero
+//@[c_4_0_2_3] args: xxxx '' xx xxx
+//@[c_4_0_2_3] stdout: 22
+//@[c_4_0_2_3] run-fail
+//@[c_4_0_2_3] exit-code: 70
+//@[c_4_0_2_3] stderr-contains: division_by_zero
+//@[c_7_7_2_3] args: xxxxxxx xxxxxxx xx xxx
+//@[c_7_7_2_3] stdout: 22
+//@[c_7_7_2_3] run-fail
+//@[c_7_7_2_3] exit-code: 70
+//@[c_7_7_2_3] stderr-contains: division_by_zero
+//@[c_0_1_1_3] args: '' x x xxx
+//@[c_0_1_1_3] stdout: 22
+//@[c_0_1_1_3] run-fail
+//@[c_0_1_1_3] exit-code: 70
+//@[c_0_1_1_3] stderr-contains: integer_overflow
+//@[c_1_5_5_3] args: x xxxxx xxxxx xxx
+//@[c_1_5_5_3] stdout: 22
+//@[c_1_5_5_3] run-fail
+//@[c_1_5_5_3] exit-code: 70
+//@[c_1_5_5_3] stderr-contains: integer_overflow
+//@[c_7_6_1_3] args: xxxxxxx xxxxxx x xxx
+//@[c_7_6_1_3] stdout: 22
+//@[c_7_6_1_3] run-fail
+//@[c_7_6_1_3] exit-code: 70
+//@[c_7_6_1_3] stderr-contains: integer_overflow
+//@[c_0_0_1_4] args: '' '' x xxxx
+//@[c_0_0_1_4] stdout: 0
+//@[c_0_0_1_4] stdout: 22
+//@[c_2_5_1_4] args: xx xxxxx x xxxx
+//@[c_2_5_1_4] stdout: 4294967295
+//@[c_2_5_1_4] stdout: 22
+//@[c_7_7_7_4] args: xxxxxxx xxxxxxx xxxxxxx xxxx
+//@[c_7_7_7_4] stdout: 18446744073709551615
+//@[c_7_7_7_4] stdout: 22
+//@[c_0_0_0_4] args: '' '' '' xxxx
+//@[c_0_0_0_4] stdout: 22
+//@[c_0_0_0_4] run-fail
+//@[c_0_0_0_4] exit-code: 70
+//@[c_0_0_0_4] stderr-contains: division_by_zero
+//@[c_2_5_0_4] args: xx xxxxx '' xxxx
+//@[c_2_5_0_4] stdout: 22
+//@[c_2_5_0_4] run-fail
+//@[c_2_5_0_4] exit-code: 70
+//@[c_2_5_0_4] stderr-contains: division_by_zero
+//@[c_7_7_0_4] args: xxxxxxx xxxxxxx '' xxxx
+//@[c_7_7_0_4] stdout: 22
+//@[c_7_7_0_4] run-fail
+//@[c_7_7_0_4] exit-code: 70
+//@[c_7_7_0_4] stderr-contains: division_by_zero
+//@[c_1_0_0_4] args: x '' '' xxxx
+//@[c_1_0_0_4] stdout: 22
+//@[c_1_0_0_4] run-fail
+//@[c_1_0_0_4] exit-code: 70
+//@[c_1_0_0_4] stderr-contains: integer_overflow
+//@[c_5_4_0_4] args: xxxxx xxxx '' xxxx
+//@[c_5_4_0_4] stdout: 22
+//@[c_5_4_0_4] run-fail
+//@[c_5_4_0_4] exit-code: 70
+//@[c_5_4_0_4] stderr-contains: integer_overflow
+//@[c_7_6_7_4] args: xxxxxxx xxxxxx xxxxxxx xxxx
+//@[c_7_6_7_4] stdout: 22
+//@[c_7_6_7_4] run-fail
+//@[c_7_6_7_4] exit-code: 70
+//@[c_7_6_7_4] stderr-contains: integer_overflow
+//@[c_0_0_1_5] args: '' '' x xxxxx
+//@[c_0_0_1_5] stdout: 0
+//@[c_0_0_1_5] stdout: 22
+//@[c_3_4_4_5] args: xxx xxxx xxxx xxxxx
+//@[c_3_4_4_5] stdout: 306783385
+//@[c_3_4_4_5] stdout: 22
+//@[c_7_7_7_5] args: xxxxxxx xxxxxxx xxxxxxx xxxxx
+//@[c_7_7_7_5] stdout: 18446744073709551615
+//@[c_7_7_7_5] stdout: 22
+//@[c_0_0_0_5] args: '' '' '' xxxxx
+//@[c_0_0_0_5] stdout: 22
+//@[c_0_0_0_5] run-fail
+//@[c_0_0_0_5] exit-code: 70
+//@[c_0_0_0_5] stderr-contains: division_by_zero
+//@[c_4_0_0_5] args: xxxx '' '' xxxxx
+//@[c_4_0_0_5] stdout: 22
+//@[c_4_0_0_5] run-fail
+//@[c_4_0_0_5] exit-code: 70
+//@[c_4_0_0_5] stderr-contains: division_by_zero
+//@[c_7_7_0_5] args: xxxxxxx xxxxxxx '' xxxxx
+//@[c_7_7_0_5] stdout: 22
+//@[c_7_7_0_5] run-fail
+//@[c_7_7_0_5] exit-code: 70
+//@[c_7_7_0_5] stderr-contains: division_by_zero
+//@[c_1_0_1_5] args: x '' x xxxxx
+//@[c_1_0_1_5] stdout: 22
+//@[c_1_0_1_5] run-fail
+//@[c_1_0_1_5] exit-code: 70
+//@[c_1_0_1_5] stderr-contains: integer_overflow
+//@[c_6_5_4_5] args: xxxxxx xxxxx xxxx xxxxx
+//@[c_6_5_4_5] stdout: 22
+//@[c_6_5_4_5] run-fail
+//@[c_6_5_4_5] exit-code: 70
+//@[c_6_5_4_5] stderr-contains: integer_overflow
+//@[c_7_6_7_5] args: xxxxxxx xxxxxx xxxxxxx xxxxx
+//@[c_7_6_7_5] stdout: 22
+//@[c_7_6_7_5] run-fail
+//@[c_7_6_7_5] exit-code: 70
+//@[c_7_6_7_5] stderr-contains: integer_overflow
+import std.string;
+import std.vector;
+import std.numeric;
+
+class InterpolationCleanup {
+public:
+  InterpolationCleanup() {}
+  ~InterpolationCleanup() { std::println(22); }
+};
+
+int interpolate(int first, int last, int divisor, int mode) {
+  if (mode == 0) return first + (last - first) / divisor;
+  if (mode == 1) return (last - first) / divisor + first;
+  if (mode == 3) return first + std::wrapping_sub(last, first) / divisor;
+  mut int current = first;
+  int difference = last - current;
+  current = last;
+  return current + difference / divisor;
+}
+
+uint64_t unsigned_interpolate(uint64_t first, uint64_t last, uint64_t divisor, int mode) {
+  if (mode == 4) return first + (last - first) / divisor;
+  return first + std::wrapping_sub(last, first) / divisor;
+}
+
+
+void sweep(std::string& status) {
+  int endpoints[8] = {-2147483647 - 1, -2147483647, -8, -1, 0, 1, 8, 2147483647};
+  int divisors[8] = {-2, -1, 0, 1, 2, 3, 7, 2147483647};
+  uint64_t unsigned_endpoints[8] = {0, 1, 2, 8, 2147483647, 4294967295,
+    uint64_t(18446744073709551614), uint64_t(18446744073709551615)};
+  uint64_t unsigned_divisors[8] = {0, 1, 2, 3, 7, 8, 4294967295,
+    uint64_t(18446744073709551615)};
+  mut int64_t signed_hash = int64_t(0);
+  mut uint64_t unsigned_hash = uint64_t(0);
+  mut int32_t count = 0;
+  mut std::size_t index = std::size_t(0);
+  for (mut std::size_t a = std::size_t(0); a < std::size_t(8); a++) {
+    for (mut std::size_t b = std::size_t(0); b < std::size_t(8); b++) {
+      for (mut std::size_t k = std::size_t(0); k < std::size_t(8); k++) {
+        for (mut int mode = 0; mode < 6; mode++) {
+          if (status[index] == 'o') {
+            if (mode >= 4) {
+              unsigned_hash = std::wrapping_add(std::wrapping_mul(unsigned_hash, uint64_t(1099511628211)),
+                unsigned_interpolate(unsigned_endpoints[a], unsigned_endpoints[b], unsigned_divisors[k], mode));
+            } else {
+              signed_hash = std::wrapping_add(std::wrapping_mul(signed_hash, int64_t(1099511628211)),
+                int64_t(interpolate(endpoints[a], endpoints[b], divisors[k], mode)));
+            }
+            count += 1;
+          }
+          index += std::size_t(1);
+        }
+      }
+    }
+  }
+  std::println(count);
+  std::println(signed_hash);
+  std::println(unsigned_hash);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 3) {
+    sweep(argv[std::size_t(2)]);
+    return 0;
+  }
+  if (argc != 5) return 10;
+  int endpoints[8] = {-2147483647 - 1, -2147483647, -8, -1, 0, 1, 8, 2147483647};
+  int divisors[8] = {-2, -1, 0, 1, 2, 3, 7, 2147483647};
+  InterpolationCleanup cleanup{};
+  int first = endpoints[argv[std::size_t(1)].size()];
+  int last = endpoints[argv[std::size_t(2)].size()];
+  int divisor = divisors[argv[std::size_t(3)].size()];
+  int mode = int(argv[std::size_t(4)].size());
+  if (mode >= 4) {
+    uint64_t unsigned_endpoints[8] = {0, 1, 2, 8, 2147483647, 4294967295,
+      uint64_t(18446744073709551614), uint64_t(18446744073709551615)};
+    uint64_t unsigned_divisors[8] = {0, 1, 2, 3, 7, 8, 4294967295,
+      uint64_t(18446744073709551615)};
+    std::println(unsigned_interpolate(
+      unsigned_endpoints[argv[std::size_t(1)].size()],
+      unsigned_endpoints[argv[std::size_t(2)].size()],
+      unsigned_divisors[argv[std::size_t(3)].size()], mode));
+    return 0;
+  }
+  std::println(interpolate(first, last, divisor, mode));
+  return 0;
+}

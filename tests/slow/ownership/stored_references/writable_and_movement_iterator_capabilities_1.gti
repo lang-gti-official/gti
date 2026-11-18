@@ -1,6 +1,7 @@
 // Writable and movement iterator capabilities: writable, bidirectional, random-access, and sized-sentinel capabilities should drive copy/fill/transform/sort/reverse and iterator movement to valid MIR.
 //@ slow
 //@ check-pass
+//@ slow
 import std.algorithm;
 import std.iterator;
 import std.vector;

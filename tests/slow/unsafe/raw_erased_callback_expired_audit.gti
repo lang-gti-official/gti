@@ -1,0 +1,28 @@
+// The strict raw-pointer audit rejects an erased callback invoked with a
+// pointer payload whose scope has ended. (Converted from
+// raw_native_record_transport_runtime_test.)
+//@ raw-pointer-audit: strict
+//@ slow
+import std.functional;
+
+[[c_abi]] struct NativeAddress {
+  mut const int* pointer;
+  mut int code;
+};
+
+extern "C" { NativeAddress native_empty(); }
+NativeAddress empty_address() { unsafe { return native_empty(); } }
+
+int main() {
+  mut NativeAddress value = empty_address();
+  {
+    int local = 7;
+    value.pointer = &local;
+  }
+  // The erased interface has no proven concrete target/effect set. Even this
+  // locally inert target does not authorize a possibly accessing invocation
+  // with a known-expired pointer payload.
+  std::function<int(NativeAddress)> callback{
+      [](NativeAddress item) -> int { return item.code; }};
+  return callback(value);  //~ ERROR GTI-S2101 scope has ended
+}

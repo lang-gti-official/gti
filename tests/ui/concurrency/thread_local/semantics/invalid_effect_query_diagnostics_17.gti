@@ -1,0 +1,15 @@
+// Invalid effect query diagnostics: deferred invalid diagnostics use the complete owner and function type/value key without cross-specialization contamination.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1;
+class Keyed<T, uint64_t OwnerValue> {
+public:
+  void select<U, uint64_t MethodValue>() {
+    static_assert(sizeof(T) != uint64_t(8) || OwnerValue != uint64_t(7) ||  //~ ERROR GTI-S2079
+                  sizeof(U) != uint64_t(4) || MethodValue != uint64_t(9),
+                  "exact owner and method instance");
+  }
+public:
+  Keyed() = default;
+};
+int main() { Keyed<int32_t, 7> first{}; Keyed<int64_t, 6> second{}; Keyed<int64_t, 7> third{}; int& held = guarded; first.select<int32_t, 9>(); second.select<int32_t, 9>(); third.select<int64_t, 9>(); third.select<int32_t, 8>(); third.select<int32_t, 9>(); return held; }

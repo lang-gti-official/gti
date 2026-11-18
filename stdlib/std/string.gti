@@ -1,4 +1,5 @@
 export module string;
+import std.syntax;
 import "detail/sequence_removal.gti";
 import "detail/memory_storage.gti";
 import "detail/memory_capabilities.gti";
@@ -998,6 +999,39 @@ namespace std {
       unsafe { this.data.append(value); }
     }
 
+    /// Concatenation owns its result and never consumes a named left operand.
+    string operator+(string_view suffix) {
+      mut string result{};
+      gti_internal::require_container_argument(suffix.size() <= string::npos - this.size());
+      result.reserve(this.size() + suffix.size());
+      result.append(this.view());
+      result.append(suffix);
+      return std::move(result);
+    }
+
+    string operator+(string& suffix) {
+      return this + suffix.view();
+    }
+
+    /// A chain reuses the owned intermediate with amortized linear growth.
+    string operator+(string_view suffix) && {
+      this.append(suffix);
+      return std::move(this);
+    }
+
+    string operator+(string& suffix) && {
+      this.append(suffix.view());
+      return std::move(this);
+    }
+
+    void operator+=(string_view suffix) mut {
+      this.append(suffix);
+    }
+
+    void operator+=(string& suffix) mut {
+      this.append(suffix.view());
+    }
+
     /// Replaces the contents with a copy of `value`, retaining capacity.
     /// Ordinary exclusive-receiver rules forbid a view of this string.
     void operator=(string_view value) mut {
@@ -1505,4 +1539,60 @@ export [[discardable]] size_t erase(mut string& values, char& value) {
   size_t retained = std::detail::compact_remove(values, value);
   return std::detail::erase_tail(values, retained);
 }
+}
+
+namespace std {
+/// Joins comma-separated string literals into one static string literal.
+/// Empty input yields ""; one trailing comma is permitted. Expressions and
+/// adjacent literals without a comma are rejected at their source location.
+export #macro(proc) std::syntax::expr concat(std::syntax::tokens input) {
+  uint64_t count = std::syntax::size(input);
+  auto origin = std::syntax::location(input, uint64_t(0), count);
+  if (count < uint64_t(2) ||
+      std::syntax::kind(input, uint64_t(0)) != "LEFT_BRACE" ||
+      std::syntax::kind(input, count - uint64_t(1)) != "RIGHT_BRACE") {
+    return std::syntax::fail(origin, "std::concat! expects a braced list of string literals");
+  }
+  mut std::string spelling = std::string("\"");
+  mut uint64_t index = uint64_t(1);
+  while (index < count - uint64_t(1)) {
+    auto here = std::syntax::location(input, index, index + uint64_t(1));
+    if (std::syntax::kind(input, index) != "STRING_LITERAL") {
+      return std::syntax::fail(here, "std::concat! expects a string literal");
+    }
+    auto token = std::syntax::text(std::syntax::slice(input, index, index + uint64_t(1)));
+    // Preserve the already-validated spelling. GTI's escapes have fixed
+    // widths, so joining literal bodies cannot absorb a neighbour's digits.
+    for (mut size_t byte = size_t(1); byte + size_t(1) < token.size(); byte++) {
+      spelling.push_back(token[byte]);
+    }
+    index++;
+    if (index < count - uint64_t(1)) {
+      if (std::syntax::kind(input, index) != "COMMA") {
+        return std::syntax::fail(std::syntax::location(input, index, index + uint64_t(1)),
+                                 "std::concat! expects ',' between string literals");
+      }
+      index++;
+    }
+  }
+  spelling.push_back('"');
+  return std::syntax::parse(std::syntax::literal(spelling.view(), origin));
+}
+}
+
+// A counted text view has no source class body. Semantic analysis binds its
+// addition operator to these source functions by trusted declaration identity.
+namespace gti_internal {
+  export std::string text_view_concat(std::string_view left, std::string_view right) {
+    mut std::string result{};
+    require_container_argument(right.size() <= std::string::npos - left.size());
+    result.reserve(left.size() + right.size());
+    result.append(left);
+    result.append(right);
+    return std::move(result);
+  }
+
+  export std::string text_view_concat(std::string_view left, std::string& right) {
+    return text_view_concat(left, right.view());
+  }
 }

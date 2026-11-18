@@ -1,0 +1,9 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+};
+int main() { Default<int&<static>> holder{0}; return 0; }

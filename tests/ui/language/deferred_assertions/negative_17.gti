@@ -1,0 +1,11 @@
+// Negative: loop backedge.
+import std.string;
+void consume(std::string value) {}
+#macro loop(std::string expression) {
+  for (mut int i = 0; i < 2; ++i) { consume(expression); }
+}
+int main() {
+  std::string owner{"owned"};
+  loop!(std::move(owner));  //~ ERROR GTI-S2018
+  return 0;
+}

@@ -1,0 +1,10 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+void replace(mut Token& input) { input = Token::item(9); } Token unknown() { mut auto value = Token::empty; replace(value); return value; } int main() { return 0; }

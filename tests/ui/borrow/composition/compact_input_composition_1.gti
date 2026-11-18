@@ -1,0 +1,13 @@
+// Compact input composition: the program is accepted.
+//@ check-pass
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+Readings repeat(Reading input) { return Readings(input, input); }
+int main() { int v = 3; Readings r = repeat(Reading(v)); return r.first.value + r.second.value - 6; }

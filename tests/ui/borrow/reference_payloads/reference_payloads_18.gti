@@ -1,0 +1,4 @@
+// Reference payloads: rejected with GTI-S2017.
+//@ analyze-fail
+enum Pair { empty, both(mut int& first, mut int& second) };
+int main() { mut int owner = 3; auto result = Pair::both(owner, owner); return 0; }  //~ ERROR GTI-S2017

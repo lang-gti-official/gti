@@ -1,0 +1,11 @@
+// Protocol concepts: rejected with GTI-S2085.
+class Reading {
+public:
+  int& external;
+  int owned;
+  Reading(int& owner) : external(owner), owned(3) {}
+};
+int&<a> invalid<lifetime a>(Reading<a> value) {
+  return value.owned;  //~ ERROR GTI-S2085
+}
+int main() { return 0; }

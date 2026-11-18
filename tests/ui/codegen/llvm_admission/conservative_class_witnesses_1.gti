@@ -1,0 +1,4 @@
+// Conservative class witnesses: ordinary rootless inventory uses a per-use class proof without omission or family promotion.
+//@ check-pass
+class Value { int data; public: Value(int input):data(input){} int read(){return this.data;} };
+int inspect(int input) { Value value{input}; return value.read(); }

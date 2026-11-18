@@ -56,7 +56,7 @@ flags. Metadata, cache identity, build/check and read-only editor facts share
 that selection; dependency target/profile flags remain local to their own
 consumer builds. Inactive-name diagnostic facts preserve typo checking without
 warning on deliberately disabled consumer switches. The runnable
-`examples/scoped-configuration` project and `scoped_configuration_defines` gate
+`examples/scoped-configuration` project and its `tests/project/scoped_configuration_defines` transcript
 cover dev/release, distinct executable/test
 targets, CLI additions, cached rebuilds and source-order undefinition.
 
@@ -1382,6 +1382,9 @@ Acceptance criteria:
   by CLI tests, including opaque argument vectors, name resolution, library
   search directories, non-content-complete link inputs, injected environment
   search paths, and time-sensitive macros;
+- **Implemented:** a system library outside the declared search directories
+  still bypasses executable reuse, while an unchanged diagnostic-free LLVM
+  executable can reuse its compiled GTI object and relink native inputs.
 - **Passed:** an unchanged Apple framework build hits the cache, changing the
   exact linker-selected framework stub misses, and untraceable framework
   selection bypasses;
@@ -1820,7 +1823,7 @@ Fresh-session type registries remap their IDs and validate canonical declaration
 closure against lowered facts. Checked read/mutable reference parameters and
 whole-parameter borrowed returns preserve semantic/MIR origin and access rules;
 consumer escape and overlapping-loan rejection use ordinary analysis. The
-`compiled_value_types` and `compiled_borrow_library` examples remove producer
+`compiled_value_types` and `compiled_borrowing` project transcripts remove producer
 sources before consumer analysis and execution. Custom ownership/drop, borrowed
 record fields, projected/conditional returns, generic definitions and constexpr
 queries still require richer contracts. These bounded additions do not complete F1/F2.
@@ -1830,7 +1833,7 @@ namespace identity, inherited namespace exports, overload visibility and private
 layout dependencies. Virtual interfaces use private root aliases to preserve
 resolved types through namespace shadowing. `compiled_namespaces` distributes two
 libraries with same-leaf types/functions and checks source-free execution and
-borrowing at O0/O1/O3. Nested class-owned declarations and nominal
+borrowing (`tests/project/compiled_namespaces`, at O0). Nested class-owned declarations and nominal
 types from ordinary non-root source modules still need richer ownership contracts.
 
 Cross-library nominal progress: the interface records each type's defining
@@ -1851,7 +1854,7 @@ A conservative source/configuration/compiler/runtime/dependency fingerprint reus
 unchanged library outputs and rebuilds stale or corrupted ones. This still reads
 producer source inputs to establish freshness. `check` remains read-only and
 requires existing dependency artifacts. Explicit distributed artifact closures
-remain usable without sources. The `compiled_dependency_project` example covers
+remain usable without sources. The `tests/slow/project/compiled_dependencies` example covers
 these paths. Package-qualified source edges, zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
 
@@ -1873,7 +1876,7 @@ constants without active cleanup/native retirement. Their internal LLVM globals
 are linked once per library, including source-absent dependency diamonds. The
 `compiled_scalar_library` regression covers mutable namespace storage, addressed
 namespace/class static constant data, fresh process state, and fail-closed plan mutations;
-`compiled_dependency_project` covers shared counters through both diamond paths.
+`tests/slow/project/compiled_dependencies` covers shared counters through both diamond paths.
 No new startup execution or retirement scheduling is claimed. Executable explicit
 initializers (including plain literal initializers), TLS, function-local lazy
 storage and active destruction still require composable per-library lifetime

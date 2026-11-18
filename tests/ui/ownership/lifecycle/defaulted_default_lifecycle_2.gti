@@ -1,0 +1,26 @@
+// Defaulted default lifecycle: defaulted lifecycle diagnostics should own exact shape, structural availability, and unsupported deletion with actionable spans.
+class MissingInitializer {
+  int value;
+public:
+  MissingInitializer() = default;  //~ ERROR GTI-S2020
+};
+
+class ParameterizedDefault {
+  int value = 0;
+public:
+  ParameterizedDefault(int initial) = default;  //~ ERROR GTI-S2020
+public:
+  ParameterizedDefault() = default;
+};
+
+class DeletedDefault {
+public:
+  DeletedDefault() = delete;  //~ ERROR GTI-S2020
+};
+
+class DeletedCleanup {
+public:
+  ~DeletedCleanup() = delete;  //~ ERROR GTI-S2021
+public:
+  DeletedCleanup() = default;
+};

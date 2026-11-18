@@ -1,0 +1,17 @@
+// A function item passed to a callable invoked with a pack keeps its
+// signature in hover and navigates to its declaration.
+// (generic_contract_lsp_test.py, from coverage reproducer A18)
+//@ hover @use: add3(int32_t a, int32_t b, int32_t c)
+//@ definition @use: @decl
+// A18: a function item passed to a callable parameter invoked with a pack is rejected.
+namespace ops {
+int32_t /*@decl*/add3(int32_t a, int32_t b, int32_t c) { return a + b + c; }
+}
+
+int32_t invoke_with<F, Args...>(F f, Args... args) {
+  return f(args...);
+}
+
+int main() {
+  return invoke_with(ops::/*@use*/add3, 1, 2, 3) == 6 ? 0 : 1;
+}

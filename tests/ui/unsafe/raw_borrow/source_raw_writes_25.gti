@@ -1,0 +1,8 @@
+// Source raw writes: source writes follow stored formal and readonly receiver raw aliases.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+struct Alias { Holder* value = nullptr;
+  void set() { int gone = 1; unsafe { this.value->pointer = &gone; } }  public: Alias() = default; };
+int main() { mut Holder out{}; Alias alias{.value = &out}; alias.set();
+  unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

@@ -1,0 +1,43 @@
+manifest-version = 1
+[package]
+name = "compiled-type-forwarding"
+version = "0.1.0"
+
+[targets.geometry]
+kind = "gti-library"
+root = "geometry.gti"
+functions = ["geometry::echo", "geometry::status"]
+
+[targets.drawing]
+kind = "gti-library"
+root = "drawing.gti"
+functions = ["drawing::echo", "drawing::point", "drawing::status", "drawing::edit"]
+[[targets.drawing.compiled-dependencies]]
+target = "geometry"
+interface = "api/geometry.gti"
+
+[targets.processing]
+kind = "gti-library"
+root = "processing.gti"
+functions = ["processing::echo", "processing::edit"]
+[[targets.processing.compiled-dependencies]]
+target = "drawing"
+interface = "api/drawing.gti"
+
+[targets.inspection]
+kind = "gti-library"
+root = "inspection.gti"
+functions = ["inspection::sum"]
+[[targets.inspection.compiled-dependencies]]
+target = "geometry"
+interface = "api/geometry.gti"
+
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-dependencies]]
+target = "processing"
+interface = "api/processing.gti"
+[[targets.app.compiled-dependencies]]
+target = "inspection"
+interface = "api/inspection.gti"

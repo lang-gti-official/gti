@@ -20,6 +20,8 @@ module.exports = grammar({
   name: "gti",
 
   extras: ($) => [/[ \t]|\r?\n/, $.comment],
+  // Raw strings need a matching closing delimiter (src/scanner.c).
+  externals: ($) => [$._raw_string_literal],
   word: ($) => $.identifier,
 
   supertypes: ($) => [$.declaration, $.statement, $.expression],
@@ -27,6 +29,7 @@ module.exports = grammar({
   conflicts: ($) => [
     [$.generic_argument_profile_clause, $._base_type],
     [$._base_type, $.range_structured_binding],
+    [$.structured_binding_declaration, $.range_structured_binding],
     [$.function_declaration, $.macro_declaration],
     [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
@@ -1118,6 +1121,7 @@ module.exports = grammar({
           "if",
           optional(field("constant", "constexpr")),
           "(",
+          optional(field("initializer", $._init_statement)),
           field("condition", $.expression),
           ")",
           field("consequence", $.statement),
@@ -1140,22 +1144,36 @@ module.exports = grammar({
         "(",
         choice(
           seq(
-            field(
-              "initializer",
-              choice($.variable_declaration, $.expression_statement),
+            field("initializer", $._init_statement),
+            choice(
+              seq(
+                optional(field("condition", $.expression)),
+                ";",
+                optional(field("update", $.expression)),
+              ),
+              $._range_for_tail,
             ),
-            optional(field("condition", $.expression)),
-            ";",
-            optional(field("update", $.expression)),
           ),
-          seq(
-            field("binding", choice($.range_for_declaration, $.range_structured_binding)),
-            ":",
-            field("range", $.expression),
-          ),
+          $._range_for_tail,
         ),
         ")",
         field("body", $.statement),
+      ),
+
+    _range_for_tail: ($) =>
+      seq(
+        field("binding", choice($.range_for_declaration, $.range_structured_binding)),
+        ":",
+        field("range", $.expression),
+      ),
+
+    // A C++17/C++20 init statement before an if condition, a switch value or
+    // a range-for binding.
+    _init_statement: ($) =>
+      choice(
+        $.variable_declaration,
+        $.structured_binding_declaration,
+        $.expression_statement,
       ),
 
     constexpr_for_statement: ($) =>
@@ -1191,6 +1209,7 @@ module.exports = grammar({
       seq(
         "switch",
         "(",
+        optional(field("initializer", $._init_statement)),
         field("value", $.expression),
         ")",
         field("body", $.switch_body),
@@ -1557,10 +1576,17 @@ module.exports = grammar({
       ),
 
     boolean_literal: () => choice("true", "false"),
-    integer_literal: () => /0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+/,
-    float_literal: () => /[0-9]+\.[0-9]+[dD]?/,
-    string_literal: () =>
-      token(seq('"', repeat(choice(/[^"\\\r\n]/, /\\[^\r\n]/)), '"')),
+    // `_` digit separators and Rust-style suffixes (`10u8`, `2.5f32`). In a
+    // hexadecimal literal `f` is a digit, so `0x1f32` stays an integer.
+    integer_literal: () =>
+      /(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([iu](8|16|32|64))?/,
+    float_literal: () =>
+      /[0-9][0-9_]*\.[0-9_]+([dD]|f32|f64)?|[0-9][0-9_]*f(32|64)/,
+    string_literal: ($) =>
+      choice(
+        token(seq('"', repeat(choice(/[^"\\\r\n]/, /\\[^\r\n]/)), '"')),
+        $._raw_string_literal,
+      ),
     character_literal: () =>
       token(seq("'", choice(/[^'\\\r\n]/, /\\[^\r\n]/), "'")),
 

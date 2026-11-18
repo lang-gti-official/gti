@@ -1,0 +1,18 @@
+// Borrowed storage: growable views element replacement rejects expired owner.
+//@ slow
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"};
+  mut std::vector<std::string_view> values{};
+  values.emplace_back(first.view());
+  auto old = values[0];
+  { std::string second{"second"};
+    values[0] = second.view();
+  }
+  values.reserve(32);  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+  auto current = values[0];
+  return old == "first" && current == "second" ? 0 : 1;
+}

@@ -1,0 +1,4 @@
+// Analyze: public spelling has ordinary source meaning.
+//@ check-pass
+namespace std { int layout_of<T>() { return 17; } }
+int main() { return std::layout_of<int>() - 17; }

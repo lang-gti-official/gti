@@ -1,0 +1,4 @@
+// Invalid declarations: an unexecuted constexpr branch does not execute runtime TLS.
+//@ check-pass
+//@ execution-profile: concurrent
+constexpr int read() { if constexpr (false) { thread_local int state = 1; return state; } return 2; } static_assert(read() == 2); int main() { return 0; }

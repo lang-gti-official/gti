@@ -13,7 +13,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-SMOKE = "compiler_pipeline"
+SMOKE = "gti_test_ui"
 MARKER = re.compile(r"<!-- gti-validation-component: ([^\n]+) -->")
 BATCH_DIRECTORY = ".gti-validation/batches/"
 TIERS = {"T1", "T2", "T3"}
@@ -31,7 +31,8 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # Only orchestration workflows with workflow-regression coverage can skip native CI.
 # Build, packaging and integration workflows (including unknown additions) stay full.
 AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
-                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
+                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml",
+                        ".github/workflows/validation-retry.yml", ".github/workflows/auto-revert.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
                          "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
@@ -40,9 +41,13 @@ AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "build_window.py", "bounded_log.py",
                       "cut_release.py", "check_release_version.py", "check_stdlib_surface_review.py",
-                      "rollup.py", "release_train.py", "full_validation_report.py"}
-# Exactly the existing harnesses that CI's workflow-regression job runs. The
-# batch and validation scripts are covered by agent_workflow_test.
+                      "rollup.py", "release_train.py", "full_validation_report.py", "validation_retry.py",
+                      "auto_revert.py"}
+# Harnesses whose own changes need no native CI: each is the command of a
+# tree-consistency entry, which CI's workflow-regression job runs on every
+# candidate (agent_workflow_test checks this). Other labelled harnesses guard
+# compiler sources and still classify as full. The batch and validation
+# scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "stdlib_surface_review_test.py",
                     "ci_resources_test.py",
@@ -249,10 +254,65 @@ EVENTS = {"pull_request", "merge_group", "full_validation"}
 FULL_VALIDATION_JOBS = {"package", "integration"}
 
 
-def admission(mode, results, event="pull_request"):
+# The platforms ci.yml's `fast` job runs on, by triggering event. A pull
+# request proves both: its own CI gate, which needs the macOS row, is what lets
+# it enter the merge queue. A merge-queue candidate runs Linux only unless the
+# repository variable GTI_QUEUE_MACOS is `true`: on a plan with few hosted
+# macOS runners, several queue candidates building at once must not each take
+# one, and a macOS-only failure that only the combination of queued PRs causes
+# then reaches main, where post-integration full validation catches it (darwin
+# set). A manual main dispatch keeps both. The source-stdlib and LSP lanes are
+# not affected: they package both platforms' nightly archives in the queue.
+FAST_PLATFORMS = {"pull_request": ("darwin", "linux"), "merge_group": ("linux",),
+                  "workflow_dispatch": ("darwin", "linux")}
+FAST_ROW_KEYS = {"os", "platform", "rotate", "gate"}
+
+
+def queue_macos_enabled(value):
+    """GTI_QUEUE_MACOS as the workflow passes it: only `true` turns the
+    merge-queue macOS row on; unset, empty or anything else leaves it off."""
+    return str(value or "").strip().lower() == "true"
+
+
+def fast_platforms(trigger, queue_macos=False):
+    """Exactly the rows the fast job runs, and the gate requires, for an event.
+    Linux is in every set."""
+    if trigger not in FAST_PLATFORMS:
+        raise ValueError(f"No fast-checks platforms for event {trigger!r}")
+    if trigger == "merge_group" and queue_macos:
+        return ("darwin", "linux")
+    return FAST_PLATFORMS[trigger]
+
+
+def fast_matrix(rows, trigger, queue_macos=False):
+    """The `fast` job's matrix for this event: the rows ci.yml declares (one
+    per platform), keeping only the event's platforms."""
+    platforms = fast_platforms(trigger, queue_macos)
+    if (not isinstance(rows, list) or not all(isinstance(row, dict) and set(row) == FAST_ROW_KEYS for row in rows)
+            or sorted(row["platform"] for row in rows) != ["darwin", "linux"]):
+        raise ValueError("The fast-checks rows must be one {os, platform, rotate, gate} row each for darwin and linux")
+    return {"include": [row for row in rows if row["platform"] in platforms]}
+
+
+def fast_matrix_platforms(matrix):
+    rows = matrix.get("include") if isinstance(matrix, dict) else None
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("The plan published no fast-checks matrix")
+    return tuple(sorted(str(row.get("platform")) for row in rows))
+
+
+def admission(mode, results, event="pull_request", fast=None, trigger=None, queue_macos=False):
     """The one required check. A PR proves lint and fast checks before it may
     queue, and the merge queue proves the same on the exact candidate; the
-    complete suite runs post-integration under the `full_validation` event."""
+    complete suite runs post-integration under the `full_validation` event.
+
+    In full mode `fast` is the matrix the plan gave the fast job, `trigger`
+    the real event (the gate judges a main dispatch as `merge_group`) and
+    `queue_macos` the plan's reading of GTI_QUEUE_MACOS. `needs.fast.result`
+    is success only when every row passed, so with the matrix's platforms
+    equal to fast_platforms(trigger, queue_macos) a pull request cannot pass
+    without its macOS row, a queue candidate needs exactly the rows the switch
+    scheduled, and nothing passes without the Linux row."""
     if event not in EVENTS:
         raise ValueError("Unknown CI event")
     if mode == "component":
@@ -278,6 +338,12 @@ def admission(mode, results, event="pull_request"):
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
+    if "fast" in required and fast is not None:
+        trigger = trigger or event
+        ran, needed = fast_matrix_platforms(fast), fast_platforms(trigger, queue_macos)
+        if ran != needed:
+            raise ValueError(f"Fast checks ran on {', '.join(ran) or 'nothing'}; "
+                             f"a {trigger} run needs {', '.join(needed)}")
     return required
 
 
@@ -555,16 +621,7 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
 # maps to the prefix its parts share; an aggregate is dropped only when its
 # parts are registered.
 SHARDED_AGGREGATES = {
-    "compiler_pipeline": "compiler_pipeline_",
     "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
-    "body_analysis_order": "body_analysis_order_",
-    "instance_reuse": "instance_reuse_",
-}
-# Post-integration full validation runs every registered per-commit test. The
-# merge gate's shards also skip these trusted-body corpus partitions; they
-# stay in the slow tier. This is the gate's test set, not a quarantine.
-GATE_EXCLUDED = {
-    "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
 }
 # macOS does not repeat the Linux inventory. It runs the `darwin` set from
 # tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
@@ -577,7 +634,7 @@ DARWIN_TESTS = "tests/ci_darwin_tests.json"
 SLOW_LABEL = "slow"
 # Each test set's GTI_TEST_LLVM_LEVELS, set by the shard runner itself so a
 # caller's environment cannot change what a set proves.
-TEST_SET_LEVELS = {"gate": "O0", "full": "O0", "darwin": "O0",
+TEST_SET_LEVELS = {"full": "O0", "darwin": "O0",
                    "slow": "O0,O3", "darwin-slow": "O0,O3", "o3": "O3", "darwin-o3": "O3"}
 TEST_SETS = tuple(TEST_SET_LEVELS)
 # A harness that imports one of these follows GTI_TEST_LLVM_LEVELS; the -O3
@@ -670,11 +727,6 @@ def shard_inventory(expected, test_set="full", darwin=None, slow=frozenset(), se
     names -= set(slow)
     if test_set in ("o3", "darwin-o3"):
         return names & set(sensitive)
-    if test_set == "gate":
-        missing = GATE_EXCLUDED - set(expected)
-        if missing:
-            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
-        names -= GATE_EXCLUDED
     return names
 
 
@@ -857,13 +909,41 @@ def runnable_declared(document, names):
     return selected, problems
 
 
-def run_declared(build, names, jobs=4, log=None):
+def declared_scope(names, platform=None, ran=None, darwin=None):
+    """(kept, already_ran, linux_only): which declared names this job re-runs.
+
+    A name the job's gate pattern `ran` already selected passed moments ago on
+    the same build, so it is not repeated. On macOS only the `darwin` set is
+    re-run (`darwin` is (prefixes, names) from tests/ci_darwin_tests.json),
+    as in full validation: Linux proves the rest once."""
+    gate = re.compile("^(" + ran + ")$") if ran else None
+    kept, already, linux_only = [], [], []
+    for name in names:
+        if gate and gate.fullmatch(name):
+            already.append(name)
+        elif platform == "darwin" and darwin is not None and not (
+                name == SMOKE or name in darwin[1] or name.startswith(tuple(darwin[0]))):
+            linux_only.append(name)
+        else:
+            kept.append(name)
+    return kept, already, linux_only
+
+
+def run_declared(build, names, jobs=4, log=None, platform=None, ran=None, root=None):
     """Re-run the declared tests this build registers by exact name; a failure of one fails.
 
-    Unregistered or disabled names are reported as advisory and skipped."""
+    Unregistered or disabled names are reported as advisory and skipped; so are
+    names declared_scope leaves out, with the reason."""
     document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
     selected, problems = runnable_declared(document, names)
     advisory("Declared tests", problems)
+    selected, already, linux_only = declared_scope(
+        selected, platform, ran, darwin_set(root) if platform == "darwin" and root else None)
+    if already:
+        print("Declared tests the gate already ran in this job: " + ", ".join(already))
+    if linux_only:
+        print("Declared tests outside the darwin set (tests/ci_darwin_tests.json), proved on Linux: "
+              + ", ".join(linux_only))
     if not selected:
         return []
     pattern = "^(" + "|".join(re.escape(name) for name in selected) + ")$"
@@ -874,6 +954,31 @@ def run_declared(build, names, jobs=4, log=None):
                        check=True, stdout=log, stderr=subprocess.STDOUT)
         results(report, set(selected), set(selected))
     return selected
+
+
+GATE_UI_SHARD = re.compile(r"gti_test_ui_([1-9][0-9]*)\Z")
+
+
+def gate_tests(registered, gate, rotate, sha):
+    """The CTest pattern a fast-checks job runs: its row's `gate` list plus `rotate`
+    of the registered tests/ui shards gti_test_ui_<i>, chosen from the commit.
+
+    Linux's row already names every shard (rotate 0). macOS runs the entries
+    that differ on the platform and `rotate` consecutive shards starting at
+    the commit's hash modulo the shard count, so successive candidates cover
+    every shard while each runs only a fraction; post-integration full
+    validation runs all of them on macOS."""
+    if not SHA.fullmatch(sha or ""):
+        raise ValueError("gate-tests needs the full commit SHA")
+    pattern = re.compile("^(" + gate + ")$")
+    if not any(pattern.fullmatch(name) for name in registered):
+        raise ValueError("The gate list matches no registered test: " + gate)
+    shards = sorted((int(match.group(1)) for name in registered if (match := GATE_UI_SHARD.fullmatch(name))))
+    if not 0 <= rotate <= len(shards) or (rotate and not shards):
+        raise ValueError(f"Cannot rotate {rotate} of {len(shards)} registered tests/ui shards")
+    start = int(sha[:12], 16) % len(shards) if shards else 0
+    chosen = [f"gti_test_ui_{shards[(start + offset) % len(shards)]}" for offset in range(rotate)]
+    return "|".join([gate, *chosen]), chosen
 
 
 # CMake writes each argument either quoted ("...") or as a bracket argument
@@ -955,6 +1060,14 @@ def main(argv=None):
     gate = sub.add_parser("ci-gate")
     gate.add_argument("--mode", required=True)
     gate.add_argument("--results", required=True)
+    gate.add_argument("--fast-matrix", help="the fast job's matrix (JSON) from the plan; required in full mode")
+    gate.add_argument("--trigger", help="the event that started the run, when --event judges it as another")
+    gate.add_argument("--queue-macos", default="", help="the plan's GTI_QUEUE_MACOS reading (`true` or not)")
+    matrix = sub.add_parser("fast-matrix", help="the fast job's matrix for this event")
+    matrix.add_argument("--event", required=True)
+    matrix.add_argument("--rows", required=True, help="JSON list of the declared rows")
+    matrix.add_argument("--queue-macos", default="", help="repository variable GTI_QUEUE_MACOS; `true` adds macOS to merge-queue runs")
+    matrix.add_argument("--output", help="GITHUB_OUTPUT file to append `matrix=` to")
     gate.add_argument("--event", default="pull_request")
     gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
     gate.add_argument("--platforms", default="darwin,linux")
@@ -980,6 +1093,15 @@ def main(argv=None):
     declared.add_argument("--event", required=True)
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
+    declared.add_argument("--platform", choices=("linux", "darwin"),
+                          help="this job's platform: macOS re-runs only the darwin set")
+    declared.add_argument("--ran", help="the CTest pattern this job's gate already ran; not repeated")
+    selection = sub.add_parser("gate-tests", help="the CTest pattern a fast-checks job runs")
+    selection.add_argument("--build", required=True)
+    selection.add_argument("--gate", required=True)
+    selection.add_argument("--rotate", type=int, default=0)
+    selection.add_argument("--sha", required=True)
+    selection.add_argument("--output", help="GITHUB_OUTPUT file to append `pattern=` to")
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
     smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
@@ -1008,13 +1130,31 @@ def main(argv=None):
         if args.mode == "metadata":
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
-        admission(args.mode, json.loads(args.results), args.event)
+        fast = None
+        if args.mode == "full" and args.event != "full_validation":
+            if not args.fast_matrix:
+                raise ValueError("Full mode needs the fast job's matrix (--fast-matrix)")
+            fast = json.loads(args.fast_matrix)
+        admission(args.mode, json.loads(args.results), args.event, fast, args.trigger,
+                  queue_macos_enabled(args.queue_macos))
+        if fast is not None:
+            print("Fast checks passed on " + ", ".join(fast_matrix_platforms(fast)))
         if args.mode == "full" and args.event == "full_validation":
             if not args.shard_reports:
                 raise ValueError("Full validation needs the shard reports")
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "fast-matrix":
+        enabled = queue_macos_enabled(args.queue_macos)
+        lines = ["matrix=" + json.dumps(fast_matrix(json.loads(args.rows), args.event, enabled),
+                                        separators=(",", ":")),
+                 "queue_macos=" + ("true" if enabled else "false")]
+        if args.output:
+            with open(args.output, "a", encoding="utf-8") as output:
+                output.write("".join(line + "\n" for line in lines))
+        print("\n".join(lines))
         return
     if args.command == "durations":
         update_durations(root / args.durations, Path(args.reports))
@@ -1030,8 +1170,21 @@ def main(argv=None):
         names, problems = parse_declared(pr.get("body"))
         advisory("Validation block", problems)
         if args.build:
-            names = run_declared(Path(args.build).resolve(), names, args.jobs)
+            names = run_declared(Path(args.build).resolve(), names, args.jobs, platform=args.platform,
+                                 ran=args.ran, root=root)
         print("GTI_DECLARED_TESTS=" + json.dumps(names))
+        return
+    if args.command == "gate-tests":
+        document = json.loads(subprocess.check_output(
+            ["ctest", "--test-dir", str(Path(args.build).resolve()), "--show-only=json-v1"], text=True))
+        pattern, chosen = gate_tests([row["name"] for row in document.get("tests", [])],
+                                     args.gate, args.rotate, args.sha)
+        if chosen:
+            print("tests/ui shards for this commit: " + ", ".join(chosen))
+        if args.output:
+            with open(args.output, "a", encoding="utf-8") as stream:
+                stream.write(f"pattern={pattern}\n")
+        print("GTI_GATE_TESTS=" + pattern)
         return
     if args.command == "merge-shards":
         reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]

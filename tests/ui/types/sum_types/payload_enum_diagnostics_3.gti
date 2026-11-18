@@ -1,0 +1,7 @@
+// Payload enum diagnostics: payload construction should enforce exact arity and types.
+enum class Result { ok(int32_t value), error };
+int main() {
+  Result first = Result::ok();  //~ ERROR GTI-S2067
+  Result second = Result::ok("wrong");  //~ ERROR GTI-S2067
+  return 0;
+}

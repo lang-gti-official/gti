@@ -8,6 +8,7 @@
 #include <set>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 
 namespace lang {
 bool mirTypeMayHoldDependencies(const SemanticType &type,
@@ -73,6 +74,70 @@ struct AnalysisContext {
   // Public queries solve the reachable call graph before consuming these
   // summaries. Provisional iteration facts never escape that solver.
   std::map<HirFunctionInstanceId, MirRetainingStoreEffects> callEffects;
+  // Constructor and cleanup summaries read the call summaries above. They
+  // are reused only while those are unchanged: every call-summary change
+  // advances the generation, so provisional fixed-point facts never persist.
+  std::size_t generation = 0;
+  // The generation at which each call summary last changed, and the call
+  // summaries each summary being computed reads. A cached summary stays
+  // valid while none of the call summaries it read has changed since.
+  std::map<HirFunctionInstanceId, std::size_t> changedAt;
+  std::vector<std::set<HirFunctionInstanceId> *> reading;
+  template <class Value> struct Cached {
+    std::size_t generation = 0;
+    std::set<HirFunctionInstanceId> reads;
+    Value value{};
+  };
+  std::map<HirConstructorInstanceId, Cached<MirRetainingStoreEffects>>
+      constructorEffects;
+  std::map<HirConstructorInstanceId, Cached<bool>> localConstructions;
+  std::map<HirDestructorInstanceId, Cached<bool>> privateCleanups;
+
+  void changed(HirFunctionInstanceId id) { changedAt[id] = ++generation; }
+  void read(HirFunctionInstanceId id) {
+    for (auto *reads : reading)
+      reads->insert(id);
+  }
+  [[nodiscard]] bool
+  unchangedSince(std::size_t since,
+                 const std::set<HirFunctionInstanceId> &reads) const {
+    for (const auto id : reads)
+      if (const auto found = changedAt.find(id);
+          found != changedAt.end() && found->second > since)
+        return false;
+    return true;
+  }
+  // A valid cached value; its reads become reads of every enclosing summary.
+  template <class Value>
+  [[nodiscard]] const Value *
+  lookup(const std::map<std::size_t, Cached<Value>> &cache, std::size_t id) {
+    const auto found = cache.find(id);
+    if (found == cache.end() ||
+        !unchangedSince(found->second.generation, found->second.reads))
+      return nullptr;
+    for (auto *reads : reading)
+      reads->insert(found->second.reads.begin(), found->second.reads.end());
+    return &found->second.value;
+  }
+};
+// Records the call summaries read while one summary is computed.
+struct SummaryReads {
+  AnalysisContext &context;
+  std::size_t generation;
+  std::set<HirFunctionInstanceId> reads;
+  explicit SummaryReads(AnalysisContext &context)
+      : context(context), generation(context.generation) {
+    context.reading.push_back(&reads);
+  }
+  ~SummaryReads() { context.reading.pop_back(); }
+  SummaryReads(const SummaryReads &) = delete;
+  SummaryReads &operator=(const SummaryReads &) = delete;
+  template <class Value>
+  void remember(std::map<std::size_t, AnalysisContext::Cached<Value>> &cache,
+                std::size_t id, const Value &value) {
+    if (context.unchangedSince(generation, reads))
+      cache[id] = {generation, reads, value};
+  }
 };
 MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                           bool symbolicSummary = false);
@@ -81,15 +146,211 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
 MirRetainingStoreEffects
 deriveConstructorEffects(const MirConstructorInstance &constructor,
                          AnalysisContext &context);
+// A sorted-vector map. Flow states are copied for every block visit and most
+// facts are empty sets, so a contiguous copy avoids one heap node per entry.
+template <class K, class V> class FlatMap {
+public:
+  using key_type = K;
+  using mapped_type = V;
+  using value_type = std::pair<K, V>;
+  using Items = std::vector<value_type>;
+  using iterator = typename Items::iterator;
+  using const_iterator = typename Items::const_iterator;
+
+  // Copies share their entries until one of them is modified: most blocks
+  // leave most of the carried state unchanged.
+  [[nodiscard]] iterator begin() { return own().begin(); }
+  [[nodiscard]] iterator end() { return own().end(); }
+  [[nodiscard]] const_iterator begin() const { return view().begin(); }
+  [[nodiscard]] const_iterator end() const { return view().end(); }
+  [[nodiscard]] std::size_t size() const { return view().size(); }
+  [[nodiscard]] bool empty() const { return view().empty(); }
+  [[nodiscard]] iterator find(const K &key) {
+    auto &items = own();
+    const auto found = lower(items, key);
+    return found != items.end() && !(key < found->first) ? found : items.end();
+  }
+  [[nodiscard]] const_iterator find(const K &key) const {
+    const auto &items = view();
+    const auto found = lower(items, key);
+    return found != items.end() && !(key < found->first) ? found : items.end();
+  }
+  [[nodiscard]] bool contains(const K &key) const {
+    return find(key) != view().end();
+  }
+  template <class... Arguments>
+  std::pair<iterator, bool> emplace(const K &key, Arguments &&...arguments) {
+    auto &items = own();
+    auto found = lower(items, key);
+    if (found != items.end() && !(key < found->first))
+      return {found, false};
+    found = items.emplace(found, key, V(std::forward<Arguments>(arguments)...));
+    return {found, true};
+  }
+  V &operator[](const K &key) { return emplace(key).first->second; }
+  iterator erase(iterator position) { return own().erase(position); }
+  template <class Predicate> void eraseIf(Predicate predicate) {
+    if (std::none_of(view().begin(), view().end(), predicate))
+      return;
+    std::erase_if(own(), predicate);
+  }
+  // Union in one ordered pass: keys only in `incoming` are added with their
+  // value, and keys on both sides join. Returns whether this map changed.
+  template <class Join>
+  bool unionWith(const FlatMap &incoming, Join &&joinValues) {
+    if (shared == incoming.shared)
+      return false;
+    bool changed = false;
+    Items merged;
+    const auto &mine = view();
+    const auto &theirs = incoming.view();
+    merged.reserve(mine.size() + theirs.size());
+    auto left = mine.begin();
+    auto right = theirs.begin();
+    while (left != mine.end() || right != theirs.end()) {
+      if (right == theirs.end() ||
+          (left != mine.end() && left->first < right->first)) {
+        merged.push_back(*left++);
+      } else if (left == mine.end() || right->first < left->first) {
+        merged.push_back(*right++);
+        changed = true;
+      } else {
+        merged.push_back(*left++);
+        changed = joinValues(merged.back().second, right->second) || changed;
+        ++right;
+      }
+    }
+    if (changed)
+      shared = std::make_shared<Items>(std::move(merged));
+    return changed;
+  }
+  // Path join in one ordered pass: a key absent from either side becomes
+  // unknown (a default value, which every join keeps unknown), and keys on
+  // both sides join their values. Returns whether this map changed.
+  template <class Join>
+  bool joinPaths(const FlatMap &incoming, Join &&joinValues) {
+    if (shared == incoming.shared)
+      return false;
+    bool changed = false;
+    Items merged;
+    const auto &mine = view();
+    const auto &theirs = incoming.view();
+    merged.reserve(std::max(mine.size(), theirs.size()));
+    auto left = mine.begin();
+    auto right = theirs.begin();
+    while (left != mine.end() || right != theirs.end()) {
+      if (right == theirs.end() ||
+          (left != mine.end() && left->first < right->first)) {
+        merged.push_back(*left++);
+        if (merged.back().second) {
+          merged.back().second.reset();
+          changed = true;
+        }
+      } else if (left == mine.end() || right->first < left->first) {
+        merged.emplace_back(right->first, V{});
+        ++right;
+        changed = true;
+      } else {
+        merged.push_back(*left++);
+        changed = joinValues(merged.back().second, right->second) || changed;
+        ++right;
+      }
+    }
+    if (changed)
+      shared = std::make_shared<Items>(std::move(merged));
+    return changed;
+  }
+
+private:
+  [[nodiscard]] const Items &view() const {
+    static const Items none;
+    return shared ? *shared : none;
+  }
+  [[nodiscard]] Items &own() {
+    if (!shared)
+      shared = std::make_shared<Items>();
+    else if (shared.use_count() > 1)
+      shared = std::make_shared<Items>(*shared);
+    return *shared;
+  }
+  template <class Container>
+  [[nodiscard]] static auto lower(Container &items, const K &key) {
+    return std::lower_bound(items.begin(), items.end(), key,
+                            [](const value_type &item, const K &probe) {
+                              return item.first < probe;
+                            });
+  }
+  std::shared_ptr<Items> shared;
+};
+
+// A sorted-vector set whose copies share storage until one is modified.
+template <class T> class FlatSet {
+public:
+  using Items = std::vector<T>;
+  using const_iterator = typename Items::const_iterator;
+  [[nodiscard]] const_iterator begin() const { return view().begin(); }
+  [[nodiscard]] const_iterator end() const { return view().end(); }
+  [[nodiscard]] std::size_t size() const { return view().size(); }
+  [[nodiscard]] bool contains(const T &value) const {
+    return std::binary_search(view().begin(), view().end(), value);
+  }
+  void insert(const T &value) {
+    if (contains(value))
+      return;
+    auto &items = own();
+    items.insert(std::lower_bound(items.begin(), items.end(), value), value);
+  }
+  template <class Iterator> void insert(Iterator first, Iterator last) {
+    if (first == last)
+      return;
+    if constexpr (std::is_same_v<Iterator, const_iterator>) {
+      // Merging a set whose storage is shared with this one adds nothing.
+      if (shared && &*first == shared->data() &&
+          static_cast<std::size_t>(last - first) == shared->size())
+        return;
+    }
+    Items incoming(first, last);
+    std::sort(incoming.begin(), incoming.end());
+    if (std::includes(view().begin(), view().end(), incoming.begin(),
+                      incoming.end()))
+      return;
+    Items merged;
+    merged.reserve(size() + incoming.size());
+    std::set_union(view().begin(), view().end(), incoming.begin(),
+                   incoming.end(), std::back_inserter(merged));
+    shared = std::make_shared<Items>(std::move(merged));
+  }
+  void erase(const T &value) {
+    if (!contains(value))
+      return;
+    auto &items = own();
+    items.erase(std::lower_bound(items.begin(), items.end(), value));
+  }
+
+private:
+  [[nodiscard]] const Items &view() const {
+    static const Items none;
+    return shared ? *shared : none;
+  }
+  [[nodiscard]] Items &own() {
+    if (!shared)
+      shared = std::make_shared<Items>();
+    else if (shared.use_count() > 1)
+      shared = std::make_shared<Items>(*shared);
+    return *shared;
+  }
+  std::shared_ptr<Items> shared;
+};
+
 struct State {
-  std::map<Root, Fact> roots;
-  std::map<MirValueId, Fact> values;
-  std::map<MirValueId, Aliases> aliases;
+  FlatMap<Root, Fact> roots;
+  FlatMap<MirValueId, Fact> values;
+  FlatMap<MirValueId, Aliases> aliases;
   // Expiration belongs to the carried value, not merely to a group ID at a
   // CFG join. Recreating a group cannot repair an older copy of its value.
-  std::map<Root, Fact> expiredRoots;
-  std::map<MirValueId, Fact> expiredValues;
-  std::set<MirLoanId> unavailable;
+  FlatMap<Root, Fact> expiredRoots;
+  FlatMap<MirValueId, Fact> expiredValues;
+  FlatSet<MirLoanId> unavailable;
 };
 Fact empty() { return std::vector<MirLoanId>{}; }
 
@@ -156,20 +417,27 @@ bool join(std::optional<std::vector<T>> &into,
     into.reset();
     return true;
   }
-  const auto previous = *into;
+  if (from->empty())
+    return false;
+  // Facts are kept as sorted unique sets; adding elements is a change
+  // exactly when the normalized set grows.
+  bool changed = false;
+  if (!std::is_sorted(into->begin(), into->end()) ||
+      std::adjacent_find(into->begin(), into->end()) != into->end()) {
+    std::sort(into->begin(), into->end());
+    into->erase(std::unique(into->begin(), into->end()), into->end());
+    changed = true;
+  }
+  const auto before = into->size();
   into->insert(into->end(), from->begin(), from->end());
   std::sort(into->begin(), into->end());
   into->erase(std::unique(into->begin(), into->end()), into->end());
-  return *into != previous;
+  return changed || into->size() != before;
 }
-template <class Key>
-bool mergeMap(std::map<Key, Fact> &into, const std::map<Key, Fact> &from) {
-  bool changed = false;
-  for (const auto &[key, value] : from) {
-    const auto [position, inserted] = into.emplace(key, value);
-    changed = inserted || join(position->second, value) || changed;
-  }
-  return changed;
+template <class Map> bool mergeMap(Map &into, const Map &from) {
+  return into.unionWith(from, [](auto &target, const auto &source) {
+    return join(target, source);
+  });
 }
 bool join(State &into, const State &from) {
   // Absence on an executable predecessor is unknown, not an empty set.
@@ -177,18 +445,9 @@ bool join(State &into, const State &from) {
   // provenance at the join. SSA definitions are overwritten by their own
   // instructions; block arguments have already been bound on the edge.
   const auto mergePaths = [](auto &target, const auto &incoming) {
-    bool changed = false;
-    for (auto &[key, value] : target)
-      if (!incoming.contains(key) && value) {
-        value.reset();
-        changed = true;
-      }
-    for (const auto &[key, value] : incoming) {
-      const auto [found, inserted] = target.emplace(
-          key, typename std::decay_t<decltype(target)>::mapped_type{});
-      changed = inserted || join(found->second, value) || changed;
-    }
-    return changed;
+    return target.joinPaths(incoming, [](auto &into, const auto &from) {
+      return join(into, from);
+    });
   };
   const bool roots = mergePaths(into.roots, from.roots);
   const bool values = mergePaths(into.values, from.values);
@@ -520,16 +779,31 @@ bool privateCleanupEffects(const MirDropType &recipe,
   if (!program || mirDropHasPolymorphicCleanup(recipe))
     return false;
   for (const auto target : mirDropDestructorTargets(recipe)) {
+    if (const bool *cached = context.lookup(context.privateCleanups, target)) {
+      if (!*cached)
+        return false;
+      continue;
+    }
     const auto *destructor = program->findDestructorInstance(target);
     if (!destructor ||
         destructor->definitionKind != MirDefinitionKind::Source ||
         destructor->body.kind != MirBodyKind::Destructor ||
         !context.activeDestructors.insert(target).second)
       return false;
+    // A summary computed inside another construction or cleanup may be cut
+    // short by a recursion guard; remember only top-level summaries.
+    const bool topLevel = context.activeDestructors.size() == 1 &&
+                          context.activeConstructors.empty();
+    SummaryReads reads(context);
     const auto cleanup = deriveFlow(destructor->body, context);
     context.activeDestructors.erase(target);
+    const auto remember = [&](bool admitted) {
+      if (topLevel)
+        reads.remember(context.privateCleanups, target, admitted);
+      return admitted;
+    };
     if (!cleanup.effectsComplete)
-      return false;
+      return remember(false);
     for (const auto &[site, targets] : cleanup.storeTargets) {
       (void)site;
       for (const auto &destination : targets) {
@@ -542,9 +816,10 @@ bool privateCleanupEffects(const MirDropType &recipe,
                                  place.binding == destination.identity &&
                                  place.initiallyAvailable;
                         }))
-          return false;
+          return remember(false);
       }
     }
+    remember(true);
   }
   return true;
 }
@@ -619,10 +894,126 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         initial.expiredRoots.emplace(root, empty());
       }
     }
+  // SSA value facts are needed only while the value can still be read.
+  // Carrying every dead value through every later block makes each block's
+  // state grow with the body, and the fixed point quadratic in its length.
+  // Drop facts for values that are not live into an edge's target. Uses
+  // without a block (a value-rooted place, a dynamic index) keep the value
+  // live everywhere, and an incomplete use index disables the pruning.
+  std::vector<std::vector<MirValueId>> liveIn;
+  std::vector<bool> alwaysLive;
+  // Small bodies carry little state; pruning only pays off on long ones.
+  if (body.valueUses.size() == body.values.size() && body.blocks.size() >= 32) {
+    const std::size_t blockCount = body.blocks.size();
+    alwaysLive.assign(body.values.size() + 1, false);
+    std::vector<std::set<MirValueId>> uses(blockCount + 1),
+        defs(blockCount + 1);
+    bool indexed = true;
+    for (const auto &block : body.blocks) {
+      if (block.id == 0 || block.id > blockCount) {
+        indexed = false;
+        break;
+      }
+      for (const auto &parameter : block.parameters)
+        defs[block.id].insert(parameter.value);
+      for (const auto &instruction : block.instructions)
+        if (instruction.result)
+          defs[block.id].insert(*instruction.result);
+    }
+    for (const auto &valueUses : body.valueUses)
+      for (const auto &use : valueUses) {
+        if (use.value == 0 || use.value > body.values.size())
+          continue;
+        if (use.block == 0 || use.block > blockCount)
+          alwaysLive[use.value] = true;
+        else if (!defs[use.block].contains(use.value))
+          uses[use.block].insert(use.value);
+      }
+    const auto successors = [&](const MirBlock &block) {
+      std::vector<MirBlockId> next;
+      const auto &end = block.terminator;
+      switch (end.kind) {
+      case MirTerminatorKind::Goto:
+      case MirTerminatorKind::ContinueFailure:
+        next.push_back(end.target);
+        break;
+      case MirTerminatorKind::Branch:
+      case MirTerminatorKind::Invoke:
+        next.push_back(end.target);
+        next.push_back(end.elseTarget);
+        break;
+      case MirTerminatorKind::Switch:
+        next.push_back(end.target);
+        for (const auto &target : end.switchTargets)
+          next.push_back(target.target);
+        break;
+      default:
+        break;
+      }
+      return next;
+    };
+    if (indexed) {
+      std::vector<std::set<MirValueId>> live(blockCount + 1);
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        for (auto block = body.blocks.rbegin(); block != body.blocks.rend();
+             ++block) {
+          std::set<MirValueId> in = uses[block->id];
+          for (const auto target : successors(*block))
+            if (target != 0 && target <= blockCount)
+              for (const auto value : live[target])
+                if (!defs[block->id].contains(value))
+                  in.insert(value);
+          if (in.size() != live[block->id].size()) {
+            live[block->id] = std::move(in);
+            changed = true;
+          }
+        }
+      }
+      liveIn.resize(blockCount + 1);
+      for (std::size_t index = 1; index <= blockCount; ++index)
+        liveIn[index].assign(live[index].begin(), live[index].end());
+    } else {
+      alwaysLive.clear();
+    }
+  }
+  const auto pruneDeadValues = [&](State &incoming, MirBlockId target) {
+    if (liveIn.empty() || target == 0 || target >= liveIn.size())
+      return;
+    const auto &liveValues = liveIn[target];
+    const auto dead = [&](MirValueId value) {
+      return value < alwaysLive.size() && !alwaysLive[value] &&
+             !std::binary_search(liveValues.begin(), liveValues.end(), value);
+    };
+    incoming.values.eraseIf(
+        [&](const auto &entry) { return dead(entry.first); });
+    incoming.expiredValues.eraseIf(
+        [&](const auto &entry) { return dead(entry.first); });
+    incoming.aliases.eraseIf(
+        [&](const auto &entry) { return dead(entry.first); });
+  };
+  // Cleanup recipes are queried per instruction on every visit; the types
+  // queried belong to this body, so their addresses identify them here.
+  std::unordered_map<const SemanticType *, std::optional<MirDropType>>
+      cleanupRecipes;
+  const auto uniqueCleanupType =
+      [&](const SemanticType &type) -> const std::optional<MirDropType> & {
+    const auto [found, inserted] = cleanupRecipes.try_emplace(&type);
+    if (inserted)
+      found->second = mirUniqueCleanupType(*program, type);
+    return found->second;
+  };
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
     const auto id = current.id;
-    std::optional<State> beforeInvoke;
+    // Only these parts of the pre-invoke state feed the failure edge.
+    struct InvokeSnapshot {
+      FlatMap<Root, Fact> roots;
+      FlatMap<Root, Fact> expiredRoots;
+      FlatSet<MirLoanId> unavailable;
+    };
+    std::optional<InvokeSnapshot> beforeInvoke;
     const MirInstruction *invoked = nullptr;
     for (const auto &instruction : block->instructions) {
       if (instruction.tombstone)
@@ -637,7 +1028,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       };
       if (block->terminator.kind == MirTerminatorKind::Invoke &&
           block->terminator.invokeInstruction == instruction.id) {
-        beforeInvoke = state;
+        beforeInvoke = InvokeSnapshot{.roots = state.roots,
+                                      .expiredRoots = state.expiredRoots,
+                                      .unavailable = state.unavailable};
         invoked = &instruction;
       }
       Fact callReturned;
@@ -721,7 +1114,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return false;
         const auto &payload =
             instruction.parameterTypes.front().arguments.front();
-        const auto recipe = mirUniqueCleanupType(*program, payload);
+        const auto &recipe = uniqueCleanupType(payload);
         if (instruction.elementCleanup != recipe)
           return false;
         return recipe ? privateCleanupEffects(*recipe, context)
@@ -892,10 +1285,13 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           instruction.functionTarget) {
         const auto *callee =
             program->findFunctionInstance(*instruction.functionTarget);
+        context.read(*instruction.functionTarget);
         auto [cached, inserted] =
             callEffects.try_emplace(*instruction.functionTarget);
-        if (inserted && callee)
+        if (inserted && callee) {
           cached->second = deriveEffects(*callee, context);
+          context.changed(*instruction.functionTarget);
+        }
         const auto &effects = cached->second;
         if (callee && (effects.complete || !effects.effects.empty()) &&
             instruction.operands.size() == callee->parameterTypes.size()) {
@@ -1164,8 +1560,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           if (event.kind != MirLifecycleEventKind::Drop || !obligation ||
               instruction.destination != obligation->place)
             return false;
-          auto exact =
-              mirUniqueCleanupType(*program, obligation->dropType.type);
+          auto exact = uniqueCleanupType(obligation->dropType.type);
           // The active-cleanup query intentionally has no recipe for a
           // passive ordinary class. Its complete recipe is just its exact
           // nominal identity, with no destructor or active subobjects.
@@ -1199,7 +1594,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return false;
         const auto *place = body.findPlace(*instruction.destination);
         const auto exact =
-            place ? mirUniqueCleanupType(*program, place->type) : std::nullopt;
+            place ? uniqueCleanupType(place->type) : std::nullopt;
         if (!exact || instruction.replacementCleanup != exact ||
             !privateCleanupEffects(*exact, context))
           return false;
@@ -1237,15 +1632,29 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return false;
         const auto *constructor =
             program->findConstructorInstance(*instruction.constructorTarget);
-        if (!constructor ||
-            constructor->definitionKind != MirDefinitionKind::Source ||
+        if (!constructor)
+          return false;
+        if (const bool *cached =
+                context.lookup(context.localConstructions, constructor->id))
+          return *cached;
+        if (constructor->definitionKind != MirDefinitionKind::Source ||
             constructor->body.kind != MirBodyKind::Constructor ||
             !context.activeConstructors.insert(constructor->id).second)
           return false;
+        // Only a top-level summary is free of recursion-guard cutoffs.
+        const bool topLevel = context.activeConstructors.size() == 1 &&
+                              context.activeDestructors.empty();
+        SummaryReads reads(context);
         const auto construction = deriveFlow(constructor->body, context);
         context.activeConstructors.erase(constructor->id);
+        const auto remember = [&](bool admitted) {
+          if (topLevel)
+            reads.remember(context.localConstructions, constructor->id,
+                           admitted);
+          return admitted;
+        };
         if (!construction.effectsComplete)
-          return false;
+          return remember(false);
         for (const auto &[site, targets] : construction.storeTargets) {
           (void)site;
           for (const auto &target : targets) {
@@ -1256,10 +1665,10 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                           constructor->parameterBindings.end(),
                           target.identity) !=
                     constructor->parameterBindings.end())
-              return false;
+              return remember(false);
           }
         }
-        return true;
+        return remember(true);
       }();
       // Reading a constructor input does not make the fresh object's fields
       // retain it. Reconstruct the actual receiver publications, just as a
@@ -1365,6 +1774,65 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                        ? Fact{std::vector<MirLoanId>{*instruction.loan}}
                        : Fact{};
         expiredProduced = produced ? empty() : Fact{};
+        // Copy construction of a shared carrier (`Carrier copy{source};`)
+        // stages a transient Stored loan for the same owners, while the copy
+        // joins the source's own group. The copy holds what the source holds;
+        // the transient loan ends with the initialization. Accept the source's
+        // groups only when each states exactly the transient loan's owners.
+        if (!symbolicSummary &&
+            instruction.kind == MirInstructionKind::Construct &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::BorrowRead &&
+            instruction.operands.front().type.kind == SemanticType::Reference &&
+            instruction.operands.front().type.referenceAccess ==
+                AccessMode::ReadOnly &&
+            instruction.operands.front().type.arguments.size() == 1 &&
+            instruction.operands.front().type.arguments.front() ==
+                instruction.info.type) {
+          const auto *fresh = body.findLoan(*instruction.loan);
+          const Fact copiedContents =
+              operandFact(body, state, instruction.operands.front());
+          const Fact expiredCopied =
+              operandFact(body, state, instruction.operands.front(), true);
+          // A compact group names no field; it is the carrier's sole
+          // stored-reference path, which the copy's loan may spell out.
+          const auto solePath =
+              program ? soleSharedReferencePath(*program, instruction.info.type)
+                      : std::nullopt;
+          const auto sameFields = [&](const std::vector<SymbolId> &fields) {
+            if (fields == fresh->designatedFields)
+              return true;
+            return solePath &&
+                   ((fields.empty() && fresh->designatedFields == *solePath) ||
+                    (fresh->designatedFields.empty() && fields == *solePath));
+          };
+          const auto sameOwners = [&](MirLoanId id) {
+            const auto *held = body.findLoan(id);
+            return held && held != fresh && held->kind == MirLoanKind::Stored &&
+                   !held->escapes && !held->lifecycleBound && !held->twoPhase &&
+                   held->access == fresh->access &&
+                   !state.unavailable.contains(id) &&
+                   held->source == fresh->source &&
+                   // A group reborrowed through a reference binding protects
+                   // the same owner as a direct copy loan, and its parent too.
+                   (held->parent == fresh->parent || fresh->parent == 0) &&
+                   held->storedDependency == fresh->storedDependency &&
+                   sameFields(held->designatedFields) &&
+                   held->conditions == fresh->conditions &&
+                   held->additionalDependencies ==
+                       fresh->additionalDependencies;
+          };
+          if (fresh && fresh->kind == MirLoanKind::Stored &&
+              fresh->carriers.empty() && !fresh->escapes &&
+              !fresh->lifecycleBound && copiedContents &&
+              !copiedContents->empty() && expiredCopied &&
+              expiredCopied->empty() &&
+              std::all_of(copiedContents->begin(), copiedContents->end(),
+                          sameOwners)) {
+            produced = copiedContents;
+            expiredProduced = empty();
+          }
+        }
         // A source-call result loan can name a direct caller binding without
         // a parent-loan edge. In the private symbolic summary, reconstruct
         // by-value contents through the proved callee return relation instead
@@ -1388,19 +1856,23 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           // owners stored inside that container.
           auto retained = callReturned;
           const auto *represented = body.findLoan(*instruction.loan);
-          const auto independentShared = [](const MirLoan *loan) {
+          // A cleanup-bound result may replace an equally cleanup-bound
+          // input: the moved argument's carrier no longer runs cleanup, and
+          // the result's own loan protects the same owners until its drop.
+          const bool cleanupBoundResult =
+              represented != nullptr && represented->lifecycleBound;
+          const auto independentShared = [&](const MirLoan *loan) {
             return loan && loan->kind == MirLoanKind::Stored &&
                    loan->access == AccessMode::ReadOnly && !loan->parent &&
-                   !loan->storedDependency && !loan->lifecycleBound &&
+                   !loan->storedDependency &&
+                   (!loan->lifecycleBound || cleanupBoundResult) &&
                    !loan->twoPhase && !loan->escapes && loan->source &&
-                   !loan->storedField && loan->conditions.empty() &&
-                   !loan->referenceSelection &&
+                   !loan->storedField && !loan->referenceSelection &&
                    std::all_of(loan->additionalDependencies.begin(),
                                loan->additionalDependencies.end(),
                                [](const auto &part) {
                                  return part.source && !part.parent &&
-                                        part.access == AccessMode::ReadOnly &&
-                                        part.conditions.empty();
+                                        part.access == AccessMode::ReadOnly;
                                });
           };
           if (retained && independentShared(represented)) {
@@ -1456,23 +1928,30 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                                                  id) != actual->end();
                     });
               };
-              const auto covers = [&](MirPlaceId source, const auto &fields) {
+              // A conditional dependency (an enum payload's owner, held only
+              // under one variant) is covered only under the same condition.
+              const auto covers = [&](MirPlaceId source, const auto &fields,
+                                      const auto &conditions) {
                 return (source == represented->source &&
+                        conditions == represented->conditions &&
                         fieldsMatch(fields, represented->designatedFields)) ||
                        std::any_of(represented->additionalDependencies.begin(),
                                    represented->additionalDependencies.end(),
                                    [&](const auto &part) {
                                      return part.source == source &&
+                                            conditions == part.conditions &&
                                             fieldsMatch(fields,
                                                         part.designatedFields);
                                    });
               };
-              return covers(prior->source, prior->designatedFields) &&
+              return covers(prior->source, prior->designatedFields,
+                            prior->conditions) &&
                      std::all_of(prior->additionalDependencies.begin(),
                                  prior->additionalDependencies.end(),
                                  [&](const auto &part) {
                                    return covers(part.source,
-                                                 part.designatedFields);
+                                                 part.designatedFields,
+                                                 part.conditions);
                                  });
             });
           }
@@ -1551,15 +2030,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
               previous->additionalDependencies ==
                   published->additionalDependencies &&
               !state.unavailable.contains(previous->id)) {
-            for (const auto &move : block->instructions) {
-              if (move.id == instruction.id)
-                break;
-              if (move.kind != MirInstructionKind::Move || !move.result ||
-                  move.hirValue != instruction.hirValue ||
-                  move.info.type != instruction.info.type)
-                continue;
-              auto held = state.values.find(*move.result);
-              const auto expired = state.expiredValues.find(*move.result);
+            const auto rename = [&](MirValueId id) {
+              auto held = state.values.find(id);
+              const auto expired = state.expiredValues.find(id);
               if (held != state.values.end() && held->second &&
                   expired != state.expiredValues.end() && expired->second &&
                   std::find(expired->second->begin(), expired->second->end(),
@@ -1572,7 +2045,30 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                        Fact{std::vector<MirLoanId>{published->id}});
                 }
               }
+            };
+            bool renamed = false;
+            for (const auto &move : block->instructions) {
+              if (move.id == instruction.id)
+                break;
+              if (move.kind != MirInstructionKind::Move || !move.result ||
+                  move.hirValue != instruction.hirValue ||
+                  move.info.type != instruction.info.type)
+                continue;
+              rename(*move.result);
+              renamed = true;
             }
+            // A carrier constructed directly in the return expression has no
+            // moved copy: its producing value is the one the publication
+            // renames (the same HIR value, possibly defined in an earlier
+            // block before a fallible constructor's success edge).
+            if (!renamed)
+              for (const auto &value : body.values)
+                if (value.sourceValue == instruction.hirValue &&
+                    value.info.type == instruction.info.type &&
+                    value.definition != 0)
+                  if (const auto *producer = body.findLoan(previous->id);
+                      producer && producer->producedBy == instruction.hirValue)
+                    rename(value.id);
           }
         }
         state.unavailable.erase(*instruction.loan);
@@ -1779,6 +2275,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         }
       }
       // Edge parameters bind simultaneously, including loop-carried swaps.
+      // Their facts are read from the full state before pruning below.
       std::vector<Fact> argumentFacts;
       std::vector<Fact> expiredArguments;
       std::vector<Aliases> argumentAliases;
@@ -1799,6 +2296,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
              operandRead(body, incoming, argument, true));
       }
       result.complete = result.complete && result.exits[id].has_value();
+      pruneDeadValues(incoming, target);
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         incoming.values[next->parameters[index].value] =
             std::move(argumentFacts[index]);
@@ -1837,11 +2335,14 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       [](State &into, const State &from, const MirDataflowMergeContext &) {
         return join(into, from);
       },
-      {.widenAfterUpdates = 0});
+      {.widenAfterUpdates = 0, .reversePostorder = true});
   if (context.includeBlockEntries && solved.converged())
     for (std::size_t index = 0; index < solved.incoming.size(); ++index)
       if (solved.incoming[index])
-        result.entryRoots.emplace(index + 1, solved.incoming[index]->roots);
+        result.entryRoots.emplace(
+            index + 1,
+            std::map<Root, Fact>(solved.incoming[index]->roots.begin(),
+                                 solved.incoming[index]->roots.end()));
   result.complete = result.complete && solved.converged();
   result.effectsComplete = result.effectsComplete && solved.converged();
   return result;
@@ -2113,8 +2614,26 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
 }
 
 MirRetainingStoreEffects
+deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
+                                 AnalysisContext &context);
+MirRetainingStoreEffects
 deriveConstructorEffects(const MirConstructorInstance &constructor,
                          AnalysisContext &context) {
+  if (const auto *cached =
+          context.lookup(context.constructorEffects, constructor.id))
+    return *cached;
+  // Only a top-level summary is free of recursion-guard cutoffs.
+  const bool topLevel =
+      context.activeConstructors.empty() && context.activeDestructors.empty();
+  SummaryReads reads(context);
+  auto result = deriveConstructorEffectsUncached(constructor, context);
+  if (topLevel)
+    reads.remember(context.constructorEffects, constructor.id, result);
+  return result;
+}
+MirRetainingStoreEffects
+deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
+                                 AnalysisContext &context) {
   if (constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.body.kind != MirBodyKind::Constructor ||
       !context.activeConstructors.insert(constructor.id).second)
@@ -2236,6 +2755,7 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
     context.callEffects.emplace(
         id, MirRetainingStoreEffects{.returnedOrigins = std::vector<Root>{},
                                      .complete = function != nullptr});
+    context.changed(id);
     if (function)
       discover.push_back(id);
   };
@@ -2329,6 +2849,7 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
         current.returnedOrigins == next.returnedOrigins)
       continue;
     current = std::move(next);
+    context.changed(id);
     for (const auto caller : callers[id])
       if (queued.insert(caller).second)
         pending.push_back(caller);
@@ -2338,11 +2859,175 @@ void solveCallEffects(const MirBody &body, AnalysisContext &context,
 
 struct MirCarrierAnalysis::Impl {
   AnalysisContext context;
+  // Set while a MirCarrierAnalysisScope holds the program immutable.
+  bool memoize = false;
+  std::set<const MirBody *> programBodies;
+  std::map<std::pair<const MirBody *, bool>, MirCarrierFlow> flows;
+  // Flows of the same bodies analysed without program context.
+  std::map<std::pair<const MirBody *, bool>, MirCarrierFlow> programlessFlows;
+  std::uint64_t session = 0;
   explicit Impl(const MirProgram &program) : context{.program = &program} {}
 };
 
+namespace {
+thread_local MirCarrierAnalysis *activeCarrierAnalysis = nullptr;
+thread_local std::uint64_t nextCarrierSession = 0;
+} // namespace
+
+MirCarrierAnalysisScope::MirCarrierAnalysisScope(MirCarrierAnalysis &analysis)
+    : previous(activeCarrierAnalysis) {
+  auto &impl = *analysis.implementation;
+  if (!impl.memoize) {
+    impl.memoize = true;
+    impl.session = ++nextCarrierSession;
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(*impl.context.program))
+      if (const MirBody *body = findMirBody(*impl.context.program, address))
+        impl.programBodies.insert(body);
+  }
+  activeCarrierAnalysis = &analysis;
+}
+
+MirCarrierAnalysisScope::~MirCarrierAnalysisScope() {
+  activeCarrierAnalysis = previous;
+}
+
+MirCarrierAnalysis *activeMirCarrierAnalysis(const MirProgram &program) {
+  return activeCarrierAnalysis && &activeCarrierAnalysis->program() == &program
+             ? activeCarrierAnalysis
+             : nullptr;
+}
+
+std::uint64_t activeMirCarrierSession(const MirProgram &program) {
+  const auto *analysis = activeMirCarrierAnalysis(program);
+  return analysis ? analysis->implementation->session : 0;
+}
+
 MirCarrierAnalysis::MirCarrierAnalysis(const MirProgram &program)
     : implementation(std::make_unique<Impl>(program)) {}
+MirCarrierAnalysis::MirCarrierAnalysis(const MirProgram &program,
+                                       const MirCarrierAnalysis &donor)
+    : implementation(std::make_unique<Impl>(program)) {
+  implementation->context.callEffects =
+      donor.implementation->context.callEffects;
+}
+std::unique_ptr<MirCarrierAnalysis>
+MirCarrierAnalysis::reusingUnchanged(const MirProgram &program,
+                                     const MirCarrierAnalysis &donor) {
+  auto result = std::make_unique<MirCarrierAnalysis>(program);
+  const auto &previous = *donor.implementation->context.program;
+  // Class tables other than their lowered initializer bodies (which the
+  // summaries reach only through constructors) must agree.
+  const auto sameClasses = [&] {
+    const auto &before = previous.classInstances();
+    const auto &after = program.classInstances();
+    if (before.size() != after.size())
+      return false;
+    for (std::size_t index = 0; index < before.size(); ++index) {
+      MirClassInstance left = before[index];
+      MirClassInstance right = after[index];
+      left.fieldInitializers = {};
+      left.staticFieldInitializers = {};
+      right.fieldInitializers = {};
+      right.staticFieldInitializers = {};
+      if (!(left == right))
+        return false;
+    }
+    return true;
+  };
+  if (previous.functionInstances().size() !=
+          program.functionInstances().size() ||
+      !sameClasses())
+    return result;
+  // Per function: whether its own body and every constructor or cleanup
+  // body it reaches are unchanged, and which functions it calls.
+  struct Inputs {
+    bool unchanged = false;
+    std::set<HirFunctionInstanceId> callees;
+  };
+  std::map<HirFunctionInstanceId, Inputs> inputs;
+  for (const auto &[id, effects] : donor.implementation->context.callEffects) {
+    (void)effects;
+    const auto *before = previous.findFunctionInstance(id);
+    const auto *after = program.findFunctionInstance(id);
+    Inputs entry;
+    entry.unchanged =
+        before && after && before->body == after->body &&
+        before->parameterTypes == after->parameterTypes &&
+        before->parameterBindings == after->parameterBindings &&
+        before->owner == after->owner &&
+        before->staticMember == after->staticMember &&
+        before->definitionKind == after->definitionKind &&
+        before->processMemoryOperation == after->processMemoryOperation;
+    if (entry.unchanged) {
+      std::set<const MirBody *> visited;
+      const auto walk = [&](const auto &self, const MirBody &nested) -> void {
+        if (!entry.unchanged || !visited.insert(&nested).second)
+          return;
+        const auto cleanup = [&](const MirDropType &recipe) {
+          for (const auto target : mirDropDestructorTargets(recipe)) {
+            const auto *old = previous.findDestructorInstance(target);
+            const auto *now = program.findDestructorInstance(target);
+            if (!old || !now || old->body != now->body) {
+              entry.unchanged = false;
+              return;
+            }
+            self(self, now->body);
+          }
+        };
+        for (const auto &drop : nested.dropObligations)
+          cleanup(drop.dropType);
+        for (const auto &block : nested.blocks)
+          for (const auto &instruction : block.instructions) {
+            if (instruction.kind == MirInstructionKind::Call &&
+                instruction.functionTarget)
+              entry.callees.insert(*instruction.functionTarget);
+            if (instruction.constructorTarget) {
+              const auto *old = previous.findConstructorInstance(
+                  *instruction.constructorTarget);
+              const auto *now = program.findConstructorInstance(
+                  *instruction.constructorTarget);
+              if (!old || !now || old->body != now->body ||
+                  old->initializers != now->initializers) {
+                entry.unchanged = false;
+                return;
+              }
+              self(self, now->body);
+            }
+            if (instruction.elementCleanup)
+              cleanup(*instruction.elementCleanup);
+            if (instruction.replacementCleanup)
+              cleanup(*instruction.replacementCleanup);
+          }
+      };
+      walk(walk, after->body);
+    }
+    inputs.emplace(id, std::move(entry));
+  }
+  // A summary is reusable only when every function it reaches is too.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (auto &[id, entry] : inputs) {
+      (void)id;
+      if (!entry.unchanged)
+        continue;
+      for (const auto callee : entry.callees) {
+        const auto found = inputs.find(callee);
+        if (found == inputs.end() || !found->second.unchanged) {
+          entry.unchanged = false;
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  for (const auto &[id, entry] : inputs)
+    if (entry.unchanged)
+      result->implementation->context.callEffects.emplace(
+          id, donor.implementation->context.callEffects.at(id));
+  return result;
+}
 MirCarrierAnalysis::~MirCarrierAnalysis() = default;
 
 const MirProgram &MirCarrierAnalysis::program() const {
@@ -2351,11 +3036,20 @@ const MirProgram &MirCarrierAnalysis::program() const {
 
 MirCarrierFlow MirCarrierAnalysis::flow(const MirBody &body,
                                         bool includeBlockEntries) {
-  auto &context = implementation->context;
+  auto &impl = *implementation;
+  const bool memoized = impl.memoize && impl.programBodies.contains(&body);
+  if (memoized)
+    if (const auto found = impl.flows.find({&body, includeBlockEntries});
+        found != impl.flows.end())
+      return found->second;
+  auto &context = impl.context;
   context.includeBlockEntries = false;
   solveCallEffects(body, context);
   context.includeBlockEntries = includeBlockEntries;
-  return deriveFlow(body, context);
+  auto result = deriveFlow(body, context);
+  if (memoized)
+    impl.flows.emplace(std::pair{&body, includeBlockEntries}, result);
+  return result;
 }
 
 MirRetainingStoreEffects
@@ -2372,6 +3066,27 @@ MirCarrierAnalysis::retainingStores(HirFunctionInstanceId id) {
 MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
                                     const MirProgram *program,
                                     bool includeBlockEntries) {
+  if (program && activeCarrierAnalysis &&
+      &activeCarrierAnalysis->program() == program)
+    return activeCarrierAnalysis->flow(body, includeBlockEntries);
+  // A program-less flow of one of the scope's own bodies is equally fixed.
+  auto *memo =
+      !program && activeCarrierAnalysis &&
+              activeCarrierAnalysis->implementation->programBodies.contains(
+                  &body)
+          ? &activeCarrierAnalysis->implementation->programlessFlows
+          : nullptr;
+  if (memo)
+    if (const auto found = memo->find({&body, includeBlockEntries});
+        found != memo->end())
+      return found->second;
+  if (memo) {
+    AnalysisContext context{.program = nullptr};
+    context.includeBlockEntries = includeBlockEntries;
+    auto result = deriveFlow(body, context);
+    memo->emplace(std::pair{&body, includeBlockEntries}, result);
+    return result;
+  }
   AnalysisContext context{.program = program};
   solveCallEffects(body, context);
   context.includeBlockEntries = includeBlockEntries;

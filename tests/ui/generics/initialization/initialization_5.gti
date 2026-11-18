@@ -1,0 +1,12 @@
+// Initialization: the program is accepted.
+//@ check-pass
+class Owner<uint64_t N> {
+public:
+  Owner() { if constexpr (N == 1) { later = 9; } }
+  ~Owner() { if constexpr (N == 2) { later = 10; } }
+};
+int make<uint64_t N>() { Owner<N> owner{}; return 3; }
+
+int first = make<0>();
+mut int later = 0;
+int main() { return first - 3; }

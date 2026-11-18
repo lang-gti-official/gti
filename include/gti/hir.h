@@ -365,6 +365,7 @@ struct HirRangeIteration {
   bool ownsRangeTemporary = false;
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
+  bool elementBorrowsCursorRegions = false;
 
   friend bool operator==(const HirRangeIteration &,
                          const HirRangeIteration &) = default;
@@ -863,6 +864,8 @@ struct HirProgramInitializationStep {
   HirClassInstanceId ownerClass = 0;
   bool requiresActiveCleanup = false;
   std::optional<HirDropType> nativeRetirement;
+  // Source cleanup is a separate, potentially failing lifecycle operation.
+  std::optional<HirDropType> sourceCleanup;
   HirBindingId binding = 0;
   std::optional<HirValueId> initializer;
   HirStatementId statement = 0;

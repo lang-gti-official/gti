@@ -47,6 +47,10 @@ struct LoanFacts {
   std::vector<HirValueId> additionalUseValues;
   std::vector<HirStatementId> additionalUseStatements;
   bool scopeBound = false;
+  // Carriers added because MIR carrier flow shows they retain this loan
+  // through other storage (a record holding a reference to the carrier, for
+  // example). They are uses of the loan, not exclusive aliases of its place.
+  std::vector<HirBindingId> retainedCarriers;
   HirValueId producedBy = 0;
   std::size_t parent = 0;
   std::size_t storedDependency = 0;

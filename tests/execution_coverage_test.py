@@ -47,12 +47,10 @@ ALLOWED_SPELLINGS = {
     "llvm_cache_project_test.py": "asserts the project driver rejects --std with --backend llvm",
     "llvm_case_context_test.py": "unit test of the recorded case-context command spelling",
     "llvm_embedding_project_test.py": "asserts the embedding project rejects --backend cpp",
-    "module_cpp_boundary_test.py": "the C++ module boundary of the C++ backend is the contract under test",
     "native_fixture_build_test.py": "unit test of the native provider build helper's C++ emission path",
     "project_cli_smoke_test.py": "the project CLI contract, including --keep-cpp acceptance",
     "registry_cli_test.py": "the `gti run --std` registry workflow is the contract under test",
     # LLVM-backend harnesses with a C++ differential oracle.
-    "llvm_checked_reduction_runtime_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_dispatch_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",
     "llvm_hosted_cleanup_execution_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_hosted_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",

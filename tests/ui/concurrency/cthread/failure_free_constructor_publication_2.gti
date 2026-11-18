@@ -1,0 +1,12 @@
+// Failure free constructor publication: a checked nested constructor must verify.
+//@ check-pass
+//@ execution-profile: concurrent
+struct Checked {
+  int32_t value;
+  Checked(int32_t input) : value(input + 1) {}
+};
+struct Wrapper {
+  Checked value;
+  Wrapper(int32_t input) : value(Checked(input)) {}
+};
+int main() { Wrapper value{3}; return value.value.value; }

@@ -1,0 +1,8 @@
+// Exclusive reborrow loan graph: read-only loans should not be upgradeable to mutable children.
+int main() {
+  mut int value = 0;
+  int& shared = value;
+  mut int& upgraded = shared;  //~ ERROR GTI-S2017
+  upgraded += 1;
+  return value;
+}

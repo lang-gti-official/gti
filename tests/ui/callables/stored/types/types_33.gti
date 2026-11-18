@@ -1,0 +1,11 @@
+// Stored callables: void functions and lambdas can return exact void expressions.
+//@ check-pass
+void action() {}
+void relay() { return action(); }
+void generic<T>(T callback) { return callback(); }
+int main() {
+  relay();
+  auto callback = []() -> void { return action(); };
+  generic(callback);
+  return 0;
+}

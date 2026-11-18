@@ -1,0 +1,8 @@
+// Borrowed array projection proof: borrowed array literals retain all element owners.
+//@ check-pass
+import std.string;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  std::string_view views[2] = {first.view(), second.view()};
+  return views[0] == "first" && views[1] == "second" ? 0 : 1;
+}

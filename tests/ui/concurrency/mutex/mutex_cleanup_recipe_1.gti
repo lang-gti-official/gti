@@ -1,0 +1,19 @@
+// Mutex cleanup recipe: mutex payloads with active cleanup should retain a verified nested drop recipe.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.memory;
+import std.mutex;
+class item {
+public:
+  item() {}
+  ~item() {}
+};
+class payload {
+  std::unique_ptr<item> value;
+public:
+  payload() : value(std::make_unique<item>()) {}
+};
+int main() {
+  std::mutex<payload> value{payload()};
+  return 0;
+}

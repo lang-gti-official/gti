@@ -462,17 +462,95 @@ parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
 first, int& second)` names `first` as the result's only supplier. A region shared by several
 parameters, as in `choose` above, names all of them. A body may return a
 borrow of any subset of them; callers keep every named supplier borrowed.
+A local reference bound to a supplier relays it, also as a call argument:
+`Box& local = box; return pass(local);` returns a borrow of `box`'s referent.
+A reference binding is never rebound (assigning to it writes the referent),
+so the alias keeps the region of the place it was bound to. An alias of
+what a stored reference holds (`Box& local = holder.ref;` with
+`Holder<a>& holder`) has the region the parameter's type binds for that
+reference, `a`, not the parameter's own. A region call passed as the
+argument of another, `return pass(same(box));`, is supplied by its own
+suppliers. An alias of a local, or of a part the reference's own region does
+not cover, supplies no named region (GTI-S2127). A method relays a stored reference or receiver
+storage through a local alias the same way.
+
+For the same reason, returning a local reference returns whatever its
+initializer may designate. `int& k = either(keep, other); return k;` may
+return `other`, so it is checked exactly as `return either(keep, other);`:
+every supplier of the call, including one reached through a further alias,
+an init-statement binding or a nested call, must outlive the result's region
+(GTI-S2127). With an elided result region, each must be the summarized
+parameter, never another parameter or a local (GTI-S2017). Using such a
+reference inside the body needs no such proof.
 
 A method result written in a region its class binds names the receiver's
 stored fields in that region. When nothing in the class stores the region,
 as in a callable pattern `class Local<R&<result>(R&<result>)>` with
 `R&<result> invoke(R&<result> value)`, the parameters written in it are its
-suppliers, exactly as for a method's own binder. A class that also stores
-the region does not yet combine its receiver fields with such parameters;
-returning the parameter there remains rejected. Such a result never borrows
-storage the receiver owns (GTI-S2127), so a consuming method may return it,
+suppliers, exactly as for a method's own binder. When the class does store
+the region, its suppliers are the union of the receiver's fields stored in it
+and every parameter lane written in it, as `choose` names both of its inputs:
+
+```gti
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+};
+```
+
+A caller keeps the receiver's stored referents and every such argument
+borrowed while the result is live, so writing `fallback` or mutating the
+table then is GTI-S2017, and a temporary or local argument cannot let the
+result escape. A parameter in another region still cannot supply it. The
+body may return any borrow it reaches through a stored reference of that
+region: the field itself, a field of a method result on it
+(`this.nodes.at(i).value`), or the result of a call whose suppliers it binds
+to reference parameters (`pass(this.box)`).
+A borrow supplies the region of the first stored reference it crosses, as
+the receiver binds it: a `Pair<a, b>` field's `second` holds `b`, and a field
+of a base `Base<b>` holds `b`. A borrow through a reference in another
+region is rejected (GTI-S2127). An owned carrier field relays what it stores:
+with `Cursor<owner> cursor`, `this.cursor.get()` returning `Cursor`'s stored
+region, or `through(this.view)` taking a by-value `View<r>`, supplies the
+region the field binds there. Such a result
+never borrows storage the receiver owns (GTI-S2127): the receiver's own
+fields stay owned when reached through a method call, an argument, or a
+mutable or consuming receiver. A consuming method may therefore return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
-consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
+consumed receiver, as Rust's `fn take(self) -> View<'a>` does. A read-only
+result may come from an exclusive stored reference (`mut Box&<a>`): the
+caller's owner then stays exclusively borrowed while the result is live, so
+writing or re-borrowing it mutably is GTI-S2017. A class whose cleanup uses
+its stored references cannot lend an exclusive one this way, since that
+cleanup runs after the result exists (GTI-S2022); Rust likewise forbids moving
+a field out of a `Drop` type.
+
+A method result written in one of its class's regions is what the receiver
+stores in that region, not storage of the receiver. In
+`struct Window<lifetime a> { int&<a> value; int&<a> get() { ... } }`, the call
+`c.get()` therefore relays exactly what `c.value` does. That holds wherever
+`c` lives:
+- a by-value carrier parameter (`int&<h> pick<lifetime h>(Window<h> c) { return c.get(); }`);
+- a carrier reference (`Window<h>& c`);
+- a local carrier initialized from a reference parameter;
+- a fresh temporary, as in `int& r = holder.window().get();` or
+  `bytes.as_span().first(n)`.
+
+A carrier result in the class region (`Window<a> again()`) relays the same
+way. The result keeps that region's external owner borrowed, so mutating the
+owner while it is live is rejected. The temporary or carrier itself may end;
+of a two-region temporary, only the selected region's owner stays borrowed.
+
+A result written in `this`, or read from a carrier's value field, borrows the
+carrier's own storage instead. Through a carrier reference that storage lives
+in the reference's region, so returning it under a stored region is rejected
+(GTI-S2127). From a by-value parameter or a temporary it does not outlive the
+call (GTI-S2017, GTI-S2081). Returning a stored region that is not declared to
+outlive the result's region is GTI-S2127, for a method result as for a field.
 
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
@@ -622,13 +700,16 @@ accepts are still rejected, never the reverse:
 - A region cannot travel through a type argument: `transform` with a mapper
   returning `int&<static>` is rejected (GTI-S2022), unlike Rust's
   `Result::map` over a `U` that carries a lifetime.
-- A result region cannot name both the receiver's stored region and a
-  parameter (`int&<a> operator()(int&<a> input) &&` in `C<lifetime a>`).
 - A relay through more than one stored reference of a by-value carrier
   (`c.referent.next`) is a GTI-S2085 supplier rejection.
 - A carrier from a virtual call cannot serve as a temporary receiver
   (GTI-S2081), and a binding that borrows a temporary receiver holding no
-  borrowed state is rejected even when unused (GTI-S2045).
+  borrowed state is rejected even when unused (GTI-S2045). A temporary
+  receiver relays a class-region result only from a read-only method.
+- Passing a whole multi-region carrier to a function keeps every one of its
+  owners borrowed for the result, even when the result names only one region
+  (`int&<b> f(Pair<a, b> p)`); a temporary receiver keeps only the selected
+  region's owner.
 - A record factory with two distinct regions
   (`Two<f, s> make<lifetime f, lifetime s>(int&<f>, int&<s>)`) is rejected;
   one shared region over every supplier is accepted.

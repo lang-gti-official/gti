@@ -1,0 +1,6 @@
+manifest-version = 1
+[package]
+name = "second"
+version = "1.0.0"
+[modules]
+native = "src/native.gti"

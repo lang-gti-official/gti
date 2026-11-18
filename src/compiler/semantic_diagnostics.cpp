@@ -674,6 +674,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The first type must be an integral enum and the second its exact "
           "declared underlying integer type.");
       break;
+    case StructuralConstraintKind::FreeCall:
     case StructuralConstraintKind::None:
       break;
     }

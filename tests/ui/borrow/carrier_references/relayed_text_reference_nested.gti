@@ -1,0 +1,31 @@
+// Text-view references relayed through nested accessors and stored regions keep their owner at -O3 (#565).
+//@ run-pass
+//@ opt: O3
+//@ reason: the relayed view address must survive optimized lowering, not only -O0
+//@ stdout: nested nested 12
+import std.format;
+struct Inner { mut std::string_view text = ""; public: Inner() = default; };
+struct Box { mut Inner inner{}; public: Box() = default; };
+class Cur<lifetime o> {
+  Box&<o> box;
+public:
+  Cur(Box&<o> b) : box(b) {}
+  std::string_view&<o> get() { return this.box.inner.text; }
+};
+class Outer<lifetime o> {
+  Cur<o> cur;
+public:
+  Outer(Box&<o> b) : cur(Cur(b)) {}
+  std::string_view&<o> get() { return this.cur.get(); }
+};
+std::string_view&<o> pick<lifetime o>(Cur<o>& c) { return c.get(); }
+int main() {
+  mut Box b{};
+  b.inner.text = "nested";
+  Outer o = Outer(b);
+  std::string_view& t = o.get();
+  Cur c = Cur(b);
+  std::string_view& u = pick(c);
+  std::println("{} {} {}", t, u, t.size() + u.size());
+  return 0;
+}

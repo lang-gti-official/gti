@@ -1,0 +1,17 @@
+// Virtual and erased text results: an override of a dependency-free root returns ownerless text.
+import std.polymorphic;
+import std.string;
+interface Named {
+  std::string_view name();
+};
+class Owner : public Named {
+  std::string text;
+public:
+  Owner() : text("owned") {}
+  std::string_view name() override { return this.text.view(); }  //~ ERROR GTI-S2045
+};
+int main() {
+  mut std::inline_polymorphic<Named, 64, 8> slot{};
+  slot.replace(Owner());
+  return int(slot.get().name().size());
+}

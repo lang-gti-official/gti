@@ -1,0 +1,3 @@
+// Negative: resource limit.
+#macro helper() { helper!(); }
+int main() { helper!(); return 0; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2009

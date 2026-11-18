@@ -1,0 +1,13 @@
+// Mixed operator origins: operator-derived borrow keeps its exact owner protected.
+struct Services {
+  int& first;
+  mut int& second;
+  mut int& third;
+  Services(int& a, mut int& b, mut int& c) : first(a), second(b), third(c) {}
+  mut int& operator*() mut { return this.second; }
+};
+int main() {
+  int a = 40; mut int b = 0; mut int c = 2;
+  mut Services value{a, b, c};
+mut int& selected = *value; b = 9; return selected;  //~ ERROR GTI-S2017
+}

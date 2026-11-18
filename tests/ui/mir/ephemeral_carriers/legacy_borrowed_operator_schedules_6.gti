@@ -1,0 +1,13 @@
+// Legacy borrowed operator schedules: borrowed-result operator keeps its original loan schedule in conditional expressions: false ? false : *cursor(owner) == 4.
+//@ check-pass
+struct Counter { int value = 4; Counter() = default; };
+class Cursor {
+  Counter& counter;
+public:
+  Cursor(Counter& source) : counter(source) {}
+  int& operator*() { return this.counter.value; }
+};
+Cursor cursor(Counter& owner) { return Cursor(owner); }
+int main() {
+  Counter owner{};
+bool result = false ? false : *cursor(owner) == 4; return result ? 0 : 1; }

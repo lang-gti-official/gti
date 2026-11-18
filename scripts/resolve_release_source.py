@@ -10,6 +10,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,10 +30,20 @@ NIGHTLY_TAG = "refs/tags/nightly"
 # passed their installed-toolchain checks, before the complete suite finishes.
 TIP_TAG = "refs/tags/tip"
 # How far back along main's first-parent history a scheduled selection looks
-# for the newest commit with full-validation evidence. Full validation keeps
-# one run going plus the newest waiting push, so the newest validated commit
-# is normally within a few merges of main's head.
+# for the newest commit with full-validation evidence. Every main push starts
+# its own full validation at once, so the newest validated commit trails
+# main's head by the merges of one validation cycle at most.
 NIGHTLY_SEARCH_DEPTH = 50
+# Full validation's tip publication job (.github/workflows/full-validation.yml).
+FULL_VALIDATION_WORKFLOW = ".github/workflows/full-validation.yml"
+TIP_JOB = "Tip toolchain"
+# A claim retries when another publication moved the tag between admission
+# and the push; each retry decides again from the new tag.
+TIP_CLAIM_ATTEMPTS = 5
+# How long a claimed tip publication waits for older in-progress ones to end.
+# The tip job's own timeout is 30 minutes and a publication takes a few.
+TIP_WAIT_SECONDS = 20 * 60
+TIP_POLL_SECONDS = 20
 
 ApiRequest = Callable[[str], Any]
 
@@ -145,6 +156,84 @@ def admit_tip(sha: str) -> dict[str, str]:
     rule is nightly's, so a slower package job never moves the tag backwards.
     """
     return admit_rolling(sha, TIP_TAG, "Tip")
+
+
+def push_tip(sha: str, lease: str) -> bool:
+    """Move the tip tag to sha only if it still names lease (empty: absent)."""
+    result = subprocess.run(["git", "push", "--porcelain", f"--force-with-lease={TIP_TAG}:{lease}",
+                             "origin", f"{sha}:{TIP_TAG}"],
+                            capture_output=True, text=True, timeout=120, check=False)
+    return result.returncode == 0
+
+
+def claim_tip(sha: str, push: Callable[[str, str], bool] = push_tip) -> dict[str, str]:
+    """Admit sha against the published tip and move the tag to it, or skip.
+
+    Full validation runs for several main commits at once, so their tip jobs
+    finish in any order. Admission is the ordering rule: a commit the
+    published tip already descends from (an older one) is skipped. The tag
+    then moves only through a lease on the value admission read, and a lease
+    lost to a concurrent publication decides again against the new tag
+    instead of failing, so the newer commit always ends up named.
+    """
+    for _ in range(TIP_CLAIM_ATTEMPTS):
+        values = admit_tip(sha)
+        if values["publish"] != "true" or push(sha, values["lease"]):
+            return values
+        print(f"Tip tag moved during admission of {sha}; deciding again")
+    raise ValueError(f"tip tag kept moving; {sha} could not be claimed")
+
+
+def older_tip_publications(repository: str, sha: str, run_id: int, request: ApiRequest,
+                           older: Callable[[str, str], bool] | None = None) -> list[int]:
+    """Other full-validation runs whose tip job is publishing an older commit.
+
+    A run whose tip claim already succeeded may still be uploading. Waiting
+    for each older one to end means the newest claim uploads last, so its
+    archives and BUILD_ID are what the release keeps. Newer runs are never
+    waited for: a newer claim makes this one stop uploading instead.
+    """
+    def is_older(other: str) -> bool:
+        return git("cat-file", "-t", other, optional=True) == "commit" and is_ancestor(other, sha)
+
+    older = older or is_older
+    base = repository_path(repository)
+    workflow = urllib.parse.quote(pathlib.PurePosixPath(FULL_VALIDATION_WORKFLOW).name, safe="")
+    runs = request(f"{base}/actions/workflows/{workflow}/runs?branch=main&status=in_progress&per_page=100")
+    if not isinstance(runs, dict) or not isinstance(runs.get("workflow_runs"), list):
+        raise RuntimeError("GitHub returned no workflow run inventory")
+    busy = []
+    for run in runs["workflow_runs"]:
+        other = run.get("head_sha") if isinstance(run, dict) else None
+        if (not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] == run_id
+                or not isinstance(other, str) or SHA.fullmatch(other) is None or other == sha
+                or run.get("path") != FULL_VALIDATION_WORKFLOW or run.get("head_branch") != "main"
+                or (run.get("repository") or {}).get("full_name", "").lower() != repository.lower()
+                or not older(other)):
+            continue
+        jobs = request(f"{base}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+        if not isinstance(jobs, dict) or not isinstance(jobs.get("jobs"), list):
+            raise RuntimeError("GitHub returned no job inventory")
+        if any(isinstance(job, dict) and job.get("name") == TIP_JOB and job.get("status") == "in_progress"
+               for job in jobs["jobs"]):
+            busy.append(run["id"])
+    return busy
+
+
+def await_tip(repository: str, sha: str, run_id: int, request: ApiRequest,
+              sleep: Callable[[float], None] = time.sleep,
+              clock: Callable[[], float] = time.monotonic) -> dict[str, str]:
+    """Wait until no older commit's tip publication is in progress."""
+    if run_id < 1:
+        raise ValueError("the waiting run's id is required")
+    deadline = clock() + TIP_WAIT_SECONDS
+    while busy := older_tip_publications(repository, sha, run_id, request):
+        if clock() >= deadline:
+            raise ValueError(f"older tip publications {busy} are still running after "
+                             f"{TIP_WAIT_SECONDS // 60} minutes")
+        print(f"Tip {sha}: waiting for older tip publications in runs {busy}")
+        sleep(TIP_POLL_SECONDS)
+    return {"ready": "true"}
 
 
 def admit_nightly(sha: str) -> dict[str, str]:
@@ -316,7 +405,8 @@ def select_nightly(repository: str, event: str, ref: str, requested: str,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("source", "admit-nightly", "admit-tip", "select-nightly"))
+    parser.add_argument("mode", choices=("source", "admit-nightly", "admit-tip", "claim-tip", "await-tip",
+                                         "select-nightly"))
     parser.add_argument("--sha", default="")
     parser.add_argument("--event", choices=("push", "workflow_dispatch", "schedule", "nightly"),
                         default="push")
@@ -324,6 +414,7 @@ def main() -> int:
     parser.add_argument("--repository", default="")
     parser.add_argument("--ref", default="")
     parser.add_argument("--requested", default="")
+    parser.add_argument("--run-id", type=int, default=0)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     arguments = parser.parse_args()
     try:
@@ -333,6 +424,11 @@ def main() -> int:
             values = admit_nightly(arguments.sha)
         elif arguments.mode == "admit-tip":
             values = admit_tip(arguments.sha)
+        elif arguments.mode == "claim-tip":
+            values = claim_tip(arguments.sha)
+        elif arguments.mode == "await-tip":
+            values = await_tip(arguments.repository, checked_sha(arguments.sha), arguments.run_id,
+                               github_request(os.environ.get("GTI_GITHUB_TOKEN", "")))
         else:
             from release_artifacts import release_evidence
             request = github_request(os.environ.get("GTI_GITHUB_TOKEN", ""))

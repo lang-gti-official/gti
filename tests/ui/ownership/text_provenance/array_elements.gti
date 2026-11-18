@@ -1,0 +1,32 @@
+// A view copied out of an array of views is the ownerless text the array holds.
+//@ run-pass
+//@ stdout: cde
+//@ stdout: ab
+//@ stdout: two
+//@ stdout: right
+//@ stdout: placed
+import std.string_view;
+std::string_view table[3] = {"zero", "one", "two"};
+mut std::string_view kept = "";
+std::string_view pick(std::string_view names[3], uint64_t index) { return names[index]; }
+std::string_view fromTable(uint64_t index) { return table[index]; }
+std::string_view fromLocal(uint64_t index) {
+  std::string_view local[2] = {"left", "right"};
+  return local[index];
+}
+std::string_view place(std::string_view text, uint64_t at) {
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[at] = text;
+  return slots[at];
+}
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  kept = pick(names, uint64_t(1));
+  std::println(kept);
+  std::println(pick(names, uint64_t(0)));
+  if (!pick(names, uint64_t(2)).empty() || kept.size() != uint64_t(3)) { return 1; }
+  std::println(fromTable(uint64_t(2)));
+  std::println(fromLocal(uint64_t(1)));
+  std::println(place("placed", uint64_t(1)));
+  return pick(names, uint64_t(1)) == "cde" ? 0 : 2;
+}

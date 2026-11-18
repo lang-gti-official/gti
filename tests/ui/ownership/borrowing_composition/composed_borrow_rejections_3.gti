@@ -1,0 +1,12 @@
+// A composed borrow returned with one field borrowing a local is rejected by
+// the MIR borrow checker (RFC 0003 defers composed returns to MIR).
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+};
+PairView bad(int& a) {
+  int b = 2; return PairView(a, b);  //~ ERROR GTI-S2017 depends on storage the function owns
+}
+int main() { int a = 1; auto view = bad(a); return view.sum(); }

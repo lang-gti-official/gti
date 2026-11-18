@@ -1,0 +1,23 @@
+// Initialising a thread-local during thread-local shutdown reports GTI-R0013.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0013
+import std.format;
+class State {
+  int32_t id;
+public:
+  State(int32_t id) : id(id) { std::println("init {}", this.id); }
+  int32_t read() { return this.id; }
+  ~State() { std::println("drop {}", this.id); }
+};
+thread_local mut State first = State(1);
+thread_local mut State second = State(2);
+thread_local mut State unused = State(99);
+class End {
+public:
+  End() = default;
+  int32_t read() { return 1; }
+  ~End() { int32_t value = unused.read(); }
+};
+thread_local mut End end{};
+int main() { return end.read() - 1; }

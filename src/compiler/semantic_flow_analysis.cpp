@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <array>
+
 namespace lang {
 namespace {
 // A known-length concrete pack is not the same as the primary's empty
@@ -851,6 +853,10 @@ auto SemanticVisitor::Impl::programConstructor(ConstructorId id) const
     return nullptr;
   }
   for (const ClassInfo &owner : classes) {
+    if (owner.copyConstructor && owner.copyConstructor->id == id)
+      return &*owner.copyConstructor;
+    if (owner.moveConstructor && owner.moveConstructor->id == id)
+      return &*owner.moveConstructor;
     if (owner.designatedConstructor && owner.designatedConstructor->id == id) {
       return &*owner.designatedConstructor;
     }
@@ -961,8 +967,9 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
     const SourceSpan &span, const std::vector<SemanticType> &types,
     const std::vector<CompileTimeValue> &values) -> void {
   if (constructor == nullptr || constructor->declaration == nullptr) {
-    addUnknownProgramEffect(
-        span, "a selected GTI constructor has no exact declaration");
+    addUnknownProgramEffect(span, "a selected GTI constructor for " +
+                                      typeSpelling(constructedType) +
+                                      " has no exact declaration");
     return;
   }
   if (constructor->declaration->body() != nullptr) {
@@ -978,6 +985,12 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
   if (constructor->declaration->specifier() &&
       constructor->declaration->specifier()->kind ==
           SpecialMemberSpecifierKind::Defaulted) {
+    // Defaulted copy/move policies structurally transfer the existing fields
+    // and base. They do not run their default initializers. Custom copy/move
+    // bodies are rejected by declaration analysis.
+    if (constructor->kind == ConstructorKind::Copy ||
+        constructor->kind == ConstructorKind::Move)
+      return;
     const ClassInfo &owner = classInfo(constructedType.classId);
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       recordProgramDefaultConstructionEffects(
@@ -1166,7 +1179,14 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
                                   "program-storage effect summary");
     return true;
   }
-  if (construction.generatedDefault || construction.constructor == 0) {
+  if (construction.kind == ConstructorKind::Copy ||
+      construction.kind == ConstructorKind::Move) {
+    if (construction.constructor != 0)
+      recordProgramSelectedConstructorEffect(
+          programConstructor(construction.constructor),
+          construction.constructedType, span, construction.typeArguments,
+          construction.valueArguments);
+  } else if (construction.generatedDefault || construction.constructor == 0) {
     recordProgramDefaultConstructionEffects(construction.constructedType, span);
   } else {
     const ProgramEffectOwner fields{
@@ -1387,10 +1407,17 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       consumeReceiver(call->callee(), operation->receiverMode);
       consumeArguments(call->arguments(), operation->parameterTypes);
     } else if (const auto *binary = exprAs<Binary>(&expression)) {
-      consumeReceiver(binary->left(), operation->receiverMode);
-      if (!operation->parameterTypes.empty() &&
-          operation->parameterTypes.front().kind != SemanticType::Reference)
-        consumeProgramTemporary(binary->right());
+      if (operation->operandArguments) {
+        if (operation->parameterTypes[0].kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->left());
+        if (operation->parameterTypes[1].kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->right());
+      } else {
+        consumeReceiver(binary->left(), operation->receiverMode);
+        if (!operation->parameterTypes.empty() &&
+            operation->parameterTypes.front().kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->right());
+      }
     } else if (const auto *index = exprAs<Index>(&expression)) {
       consumeReceiver(index->object(), operation->receiverMode);
       if (!operation->parameterTypes.empty() &&
@@ -1816,8 +1843,15 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
                                            call->arguments());
     } else if (const auto *binary = exprAs<Binary>(&expression);
                binary != nullptr && !operation->parameterTypes.empty()) {
-      if (operation->parameterTypes.front().kind == SemanticType::Reference ||
-          operation->parameterTypes.front().kind == SemanticType::RawPointer) {
+      const std::size_t rightIndex = operation->operandArguments ? 1 : 0;
+      if (operation->operandArguments &&
+          (operation->parameterTypes[0].kind == SemanticType::Reference ||
+           operation->parameterTypes[0].kind == SemanticType::RawPointer))
+        forceProgramStorageBoundaryAccess(binary->left());
+      if (operation->parameterTypes[rightIndex].kind ==
+              SemanticType::Reference ||
+          operation->parameterTypes[rightIndex].kind ==
+              SemanticType::RawPointer) {
         forceProgramStorageBoundaryAccess(binary->right());
       }
     } else if (const auto *index = exprAs<Index>(&expression);
@@ -2036,6 +2070,8 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
        .requiresNativeRetirement = !variable->isThreadLocal() &&
                                    requiresActiveCleanupFor(binding->type) &&
                                    !requiresSourceCleanupFor(binding->type),
+       .requiresSourceCleanup = !variable->isThreadLocal() &&
+                                requiresSourceCleanupFor(binding->type),
        .threadLocal = variable->isThreadLocal(),
        .ensureFailure =
            variable->isThreadLocal()
@@ -2295,6 +2331,71 @@ auto SemanticVisitor::Impl::validateProgramInitializationEffects(
   }
 }
 
+// A global destructor runs after later program roots and thread-local roots
+// have ended. Reuse the closed source call graph used for initialization;
+// representation and backend emission must not invent this lifetime proof.
+void SemanticVisitor::Impl::validateProgramCleanupEffects(
+    const ProgramInitializationPlan &plan) {
+  std::unordered_map<SymbolId, ProgramInitializationStepId> stepForSymbol;
+  for (const auto &step : plan.steps)
+    stepForSymbol.emplace(step.symbol, step.id);
+  for (const auto &step : plan.steps) {
+    if (!step.requiresSourceCleanup)
+      continue;
+    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
+    const auto report = [&](SourceSpan span, const std::string &reason,
+                            const SymbolRecord *target) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2061", DiagnosticPhase::Semantics, span,
+          "Cannot safely destroy namespace or static object '" +
+              step.declaration->name().lexeme + "': " + reason + ".");
+      diagnostic.related.push_back(
+          {step.declarationSpan, "This object's program lifetime ends here in "
+                                 "reverse initialization order."});
+      if (target)
+        diagnostic.related.push_back(
+            {target->declarationSpan,
+             "The referenced storage is declared here."});
+      diagnostic.hints.emplace_back(
+          "Keep destructor dependencies in earlier program storage; do not "
+          "access thread-local storage during program shutdown.");
+      diagnostics.push_back(std::move(diagnostic));
+    };
+    const auto visit = [&](auto &&self, ProgramEffectOwner owner) -> bool {
+      if (!visited.insert(owner).second)
+        return false;
+      initializerEffectOwners.insert(owner);
+      const auto found = programEffects.find(owner);
+      if (found == programEffects.end())
+        return false;
+      const auto &summary = found->second;
+      if (!summary.unknown.empty()) {
+        const auto &unknown = summary.unknown.front();
+        report(unknown.span,
+               "its cleanup effects are not closed because " + unknown.reason,
+               nullptr);
+        return true;
+      }
+      for (const auto &use : summary.uses) {
+        const auto target = stepForSymbol.find(use.symbol);
+        if (isThreadLocalStorage(use.symbol) || target == stepForSymbol.end() ||
+            target->second >= step.id) {
+          report(use.span,
+                 "cleanup may access storage whose lifetime has already ended",
+                 semanticModel.database().findSymbol(use.symbol));
+          return true;
+        }
+      }
+      for (const auto &edge : summary.edges)
+        if (self(self, edge.target))
+          return true;
+      return false;
+    };
+    visit(visit,
+          {.kind = ProgramEffectOwnerKind::ProgramCleanup, .id = step.symbol});
+  }
+}
+
 auto SemanticVisitor::Impl::finalizeDeferredProgramConstantSubstitutions(
     const ProgramInitializationPlan &plan) -> void {
   std::unordered_map<SymbolId, const ConstantValue *> constants;
@@ -2384,10 +2485,24 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
   for (std::size_t index = 0; index < plan.steps.size(); ++index) {
     plan.steps[index].id = index + 1;
   }
+  const auto savedEffectOwner = currentProgramEffectOwner;
+  for (const auto &step : plan.steps) {
+    if (!step.requiresSourceCleanup)
+      continue;
+    const auto *binding = semanticModel.findBinding(*step.declaration);
+    if (!binding)
+      continue;
+    currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::ProgramCleanup,
+                                 .id = step.symbol};
+    programEffects[currentProgramEffectOwner] = {};
+    recordProgramCleanupEffects(binding->type, step.declarationSpan);
+  }
+  currentProgramEffectOwner = savedEffectOwner;
   closeConcreteProgramEffects(plan);
   closeConcreteProgramEffects(semanticModel.threadLocalInitializationPlan());
   finalizeDeferredProgramConstantSubstitutions(plan);
   validateProgramInitializationEffects(plan);
+  validateProgramCleanupEffects(plan);
   semanticModel.setProgramInitializationPlan(std::move(plan));
   finalizeHostedProgramEntry(program);
 }
@@ -5515,7 +5630,7 @@ auto SemanticVisitor::Impl::sameSignatureType(
     }
   }
   if (left.kind != right.kind || left.nativeCScalar != right.nativeCScalar ||
-      left.classId != right.classId ||
+      left.classId != right.classId || left.enumId != right.enumId ||
       left.genericParameterId != right.genericParameterId ||
       left.functionId != right.functionId ||
       left.arrayLength != right.arrayLength ||
@@ -5678,8 +5793,9 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     const bool candidateC = candidate.declaration != nullptr &&
                             candidate.declaration->hasCLinkage();
     if (previousC || candidateC) {
-      // The external-symbol catalog owns duplicate C symbol diagnostics,
-      // including this same-name case. Keep the GTI overload rule for mixed
+      // The external-symbol catalog owns C signature/contract checks,
+      // including compatible redeclarations. Keep one lookup candidate for
+      // this same-name case, and the GTI overload rule for mixed
       // linkage and distinct native link names.
       if (previousC && candidateC &&
           previous.record().externalSymbol ==
@@ -6583,6 +6699,84 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
       return &found->second;
   }
   return nullptr;
+}
+
+// A spelling repair is advisory: ordinary lookup still fails and the program
+// stays invalid until the user chooses an edit. Do not instantiate candidates.
+auto SemanticVisitor::Impl::suggestVisibleLocalName(
+    const Token &name, Diagnostic &diagnostic) const -> void {
+  constexpr std::size_t maximumLength = 64;
+  constexpr std::size_t maximumBindings = 512;
+  if (name.generated || macroContext(name) != nullptr ||
+      name.lexeme.size() < 3 || name.lexeme.size() > maximumLength)
+    return;
+  const std::size_t threshold = name.lexeme.size() < 6 ? 1 : 2;
+  const auto distance = [&](std::string_view candidate) {
+    // Optimal-string-alignment distance includes adjacent transpositions.
+    std::array<std::size_t, maximumLength + 1> previous{}, beforePrevious{},
+        row{};
+    for (std::size_t j = 0; j <= candidate.size(); ++j)
+      previous[j] = j;
+    for (std::size_t i = 1; i <= name.lexeme.size(); ++i) {
+      row[0] = i;
+      for (std::size_t j = 1; j <= candidate.size(); ++j) {
+        row[j] = std::min(
+            {previous[j] + 1, row[j - 1] + 1,
+             previous[j - 1] + (name.lexeme[i - 1] != candidate[j - 1])});
+        if (i > 1 && j > 1 && name.lexeme[i - 1] == candidate[j - 2] &&
+            name.lexeme[i - 2] == candidate[j - 1])
+          row[j] = std::min(row[j], beforePrevious[j - 2] + 1);
+      }
+      beforePrevious = previous;
+      previous = row;
+    }
+    return previous[candidate.size()];
+  };
+  const Symbol *best = nullptr;
+  std::size_t bestDistance = threshold + 1;
+  bool ambiguous = false;
+  std::size_t visited = 0;
+  for (const auto &scope : scopes) {
+    for (const auto &[key, symbol] : scope) {
+      // Refuse partial unordered-map searches, so a work cap cannot select an
+      // arbitrary winner or hide an equally close spelling.
+      if (++visited > maximumBindings)
+        return;
+      if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+          symbol.bindingKind != SemanticBindingKind::Parameter &&
+          symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+        continue;
+      const auto &spelling = symbol.declaration.lexeme;
+      if (symbol.declaration.generated || key != spelling ||
+          spelling.size() > maximumLength ||
+          spelling.size() + threshold < name.lexeme.size() ||
+          name.lexeme.size() + threshold < spelling.size())
+        continue;
+      Token candidate = name;
+      candidate.lexeme = spelling;
+      // Use the actual lexical/hygienic resolver, including shadowing. Captures
+      // not admitted into this lambda's environment are never candidates.
+      if (resolve(candidate) != &symbol)
+        continue;
+      const auto score = distance(spelling);
+      if (score < bestDistance) {
+        best = &symbol;
+        bestDistance = score;
+        ambiguous = false;
+      } else if (score == bestDistance) {
+        ambiguous = true;
+      }
+    }
+  }
+  if (best == nullptr || ambiguous)
+    return;
+  const std::string &spelling = best->declaration.lexeme;
+  diagnostic.hints.push_back("Did you mean '" + spelling + "'?");
+  diagnostic.related.push_back(
+      {tokenSpan(best->declaration), "Similar visible binding declared here."});
+  diagnostic.fixes.push_back({tokenSpan(name), spelling,
+                              "Replace with '" + spelling + "'", false,
+                              RepairApplicability::RequiresReview});
 }
 
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
@@ -8562,10 +8756,47 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
        (function.returnType.kind == SemanticType::Reference &&
         function.returnType.referenceAccess == AccessMode::ReadOnly &&
         !textReference));
-  return readObservation ||
+  return readObservation || receiverClassRegionRelay(function) ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&
           !typeTraits(function.returnType).containsBorrowedState);
+}
+
+auto SemanticVisitor::Impl::receiverClassRegionRelay(
+    const CallableCandidate &function) const -> bool {
+  // A result written in one of the receiver's class regions is what one of
+  // its reference fields stores, never storage of the receiver itself, so a
+  // fresh carrier temporary can supply it beyond the full expression: the
+  // result keeps the temporary's external owners, not the temporary.
+  // A carrier result takes the stored reference into one of its own fields.
+  const bool referenceResult =
+      function.returnType.kind == SemanticType::Reference;
+  const bool carrierResult =
+      function.returnType.kind == SemanticType::Class &&
+      typeTraits(function.returnType).containsBorrowedState;
+  if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+      function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+      (!referenceResult && !carrierResult))
+    return false;
+  // A generic class's member reaches resolution before its instance maps
+  // the stored fields; its signature already states the relationship: a
+  // result written only in a class binder that the class stores.
+  if (function.returnBorrowFields.empty()) {
+    if (function.declaration == nullptr)
+      return false;
+    const auto lifetime =
+        explicitLifetimeResult(*function.declaration, {}, function.ownerClass);
+    return lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+           lifetime.classBinder && lifetime.classStoresRegion &&
+           lifetime.parameters.empty();
+  }
+  if (function.returnBorrowFields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
+  return mapping.origin == BorrowOriginKind::Receiver &&
+         mapping.sourceFields.size() == 1 &&
+         mapping.resultFields.empty() == referenceResult &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
 
 auto SemanticVisitor::Impl::receiverTextFieldRelay(
@@ -8631,7 +8862,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function) ||
-       (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
+       (isTextDependentValue(*info) && receiverTextFieldRelay(function)) ||
+       receiverClassRegionRelay(function)) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
        (consumingReceiverValue(receiver) && !virtualCarrierProducer()))) {
     return function.receiverMutability == ReceiverMutability::Mutable
@@ -13492,9 +13724,12 @@ auto SemanticVisitor::Impl::contextualIntegerLiteral(const Expr *expression,
     return nullptr;
   }
   if (expression->exprKind() == ExprKind::LiteralExpr) {
+    // A suffixed literal already has its written type; it is not contextual.
     const auto *literal = static_cast<const LiteralExpr *>(expression);
-    return std::holds_alternative<std::uint64_t>(literal->value()) ? literal
-                                                                   : nullptr;
+    return std::holds_alternative<std::uint64_t>(literal->value()) &&
+                   !isIntegerSuffix(literal->token().numericSuffix)
+               ? literal
+               : nullptr;
   }
   if (expression->exprKind() == ExprKind::Grouping) {
     const auto *grouping = static_cast<const Grouping *>(expression);
@@ -13514,6 +13749,90 @@ auto SemanticVisitor::Impl::contextualIntegerLiteral(const Expr *expression,
 auto SemanticVisitor::Impl::isContextualIntegerLiteral(const Expr *expression)
     -> bool {
   return contextualIntegerLiteral(expression) != nullptr;
+}
+
+auto SemanticVisitor::Impl::suffixedIntegerLiteral(const Expr *expression,
+                                                   bool allowSign)
+    -> const LiteralExpr * {
+  if (expression == nullptr) {
+    return nullptr;
+  }
+  if (const auto *literal = exprAs<LiteralExpr>(expression)) {
+    return std::holds_alternative<std::uint64_t>(literal->value()) &&
+                   isIntegerSuffix(literal->token().numericSuffix)
+               ? literal
+               : nullptr;
+  }
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
+    return suffixedIntegerLiteral(grouping->expression().get(), allowSign);
+  }
+  const auto *unary = exprAs<Unary>(expression);
+  if (allowSign && unary != nullptr &&
+      (unary->oper().kind == TokenKind::PLUS ||
+       unary->oper().kind == TokenKind::MINUS)) {
+    return suffixedIntegerLiteral(unary->right().get(), false);
+  }
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::integerSuffixType(NumericSuffix suffix)
+    -> SemanticType {
+  switch (suffix) {
+  case NumericSuffix::U8:
+    return SemanticType::UInt8;
+  case NumericSuffix::U16:
+    return SemanticType::UInt16;
+  case NumericSuffix::U32:
+    return SemanticType::UInt32;
+  case NumericSuffix::U64:
+    return SemanticType::UInt64;
+  case NumericSuffix::I8:
+    return SemanticType::Int8;
+  case NumericSuffix::I16:
+    return SemanticType::Int16;
+  case NumericSuffix::I32:
+    return SemanticType::Int32;
+  case NumericSuffix::I64:
+    return SemanticType::Int64;
+  default:
+    return SemanticType::Unknown;
+  }
+}
+
+auto SemanticVisitor::Impl::checkSuffixedIntegerLiteralRange(
+    const Expr &expression, const LiteralExpr &literal) -> void {
+  const SemanticType type = integerSuffixType(literal.token().numericSuffix);
+  const std::optional<IntegerConstant> value = integerConstant(&expression);
+  if (!value || integerFits(type, *value)) {
+    return;
+  }
+  // A sign is part of the literal constant: `-128i8` is in range although
+  // its magnitude alone is not. Span the whole signed literal.
+  SourceSpan span = tokenSpan(literal.token());
+  if (const auto *unary = exprAs<Unary>(&expression)) {
+    span.start = tokenSpan(unary->oper()).start;
+    span.line = unary->oper().line;
+  }
+  const int width = integerRank(type);
+  const bool isSigned = isSignedInteger(type);
+  const std::string minimum =
+      isSigned ? "-" + std::to_string(std::uint64_t{1}
+                                      << static_cast<unsigned>(width - 1))
+               : std::string("0");
+  const std::uint64_t maximum =
+      isSigned      ? (std::uint64_t{1} << static_cast<unsigned>(width - 1)) - 1
+      : width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                    : (std::uint64_t{1} << static_cast<unsigned>(width)) - 1;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2004", DiagnosticPhase::Semantics, span,
+      "Integer literal '" + std::string(value->negative ? "-" : "") +
+          std::to_string(value->magnitude) +
+          "' is out of range for its suffix type '" + typeSpelling(type) +
+          "' (" + minimum + " to " + std::to_string(maximum) + ").");
+  diagnostic.hints.emplace_back(
+      "A suffixed literal has exactly its suffix type and is never "
+      "truncated; choose a representable value or a wider suffix.");
+  diagnostics.emplace_back(std::move(diagnostic));
 }
 
 auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
@@ -13889,8 +14208,11 @@ auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const
     return 0;
   }
   const auto found = genericConstraints.find(type.genericParameterId);
-  const GenericConstraintSet declared =
+  GenericConstraintSet declared =
       found == genericConstraints.end() ? 0 : found->second;
+  for (const AssumedParameterFact &assumed : assumedParameterFacts)
+    if (assumed.parameter == type.genericParameterId)
+      declared |= assumed.constraints;
   return impliedConstraints(declared | activeAtomicConstraints(type));
 }
 
@@ -14121,7 +14443,8 @@ auto SemanticVisitor::Impl::canConvertToUnsigned(SemanticType originalType,
     return true;
   }
   if (const std::optional<IntegerConstant> constant =
-          integerConstant(expression)) {
+          integerConstant(expression);
+      constant && suffixedIntegerLiteral(expression) == nullptr) {
     return integerFits(unsignedTarget, *constant);
   }
   return false;
@@ -14285,8 +14608,10 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
            value.pointerAccess == AccessMode::Mutable;
   }
   if (isInteger(target) && isInteger(value)) {
+    // A suffixed literal converts by its written type, like a typed value.
     if (const std::optional<IntegerConstant> constant =
-            integerConstant(expression)) {
+            integerConstant(expression);
+        constant && suffixedIntegerLiteral(expression) == nullptr) {
       return integerFits(target, *constant);
     }
     return integerRangeFits(target, value);

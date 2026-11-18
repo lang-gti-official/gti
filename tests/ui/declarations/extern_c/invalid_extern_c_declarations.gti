@@ -12,7 +12,7 @@ enum class Mode { One };
 extern "C" {
   [[link_name("bad-symbol")]] int32_t bad_link_name();  //~ ERROR GTI-S2054
   [[link_name("shared_symbol")]] int32_t first_name();
-  [[link_name("shared_symbol")]] int32_t second_name();  //~ ERROR GTI-S2054
+  [[link_name("shared_symbol")]] int32_t second_name(); // Compatible alias of the same external function.
   [[link_name("overload_i32")]] int32_t overloaded_name(int32_t value);
   [[link_name("overload_i64")]] int32_t overloaded_name(int64_t value);  //~ ERROR GTI-S2054
   bool bad_bool(bool value);

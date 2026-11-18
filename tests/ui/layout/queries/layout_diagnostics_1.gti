@@ -1,0 +1,3 @@
+// Layout diagnostics: invalid layout query 'layout-query-incomplete.gti' should produce one focused GTI-S2063 without a fix-it.
+class Box;  //~ ERROR GTI-S2065
+uint64_t query() { return sizeof(Box); }  //~ ERROR GTI-S2063

@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Cell<T> { T value; };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+int main() { return 0; }

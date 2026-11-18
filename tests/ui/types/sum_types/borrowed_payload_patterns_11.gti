@@ -1,0 +1,20 @@
+// Borrowed payload patterns: exclusive payload loans conservatively conflict at the enum owner.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+
+enum class pair_data { pair(resource left, resource right) };
+int main() {
+  mut pair_data value = pair_data::pair(resource(), resource());
+  switch (value) {
+    case pair_data::pair(mut auto& left, mut auto& right):  //~ ERROR GTI-S2017
+      left.add(); right.add(); return 0;
+  }
+}

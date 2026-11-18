@@ -1,0 +1,25 @@
+// Text views and their cursors reject private names, owner invalidation, escapes, read-only writes and invalid value cursors.
+//@ check-fail
+import std.string;
+
+namespace case_owner_invalidation {
+int entry() { mut std::string owner{"abc"}; std::string_view view = owner.view(); auto cursor = view.begin(); owner.clear(); return *cursor == 'a' ? 0 : 1; }  //~ ERROR GTI-S2017
+}
+
+namespace case_argument_invalidates_owner {
+std::size_t erase(mut std::string& owner) { owner.clear(); return std::size_t(0); } int entry() { mut std::string owner{"abc"}; std::string_view view = owner.view(); auto cursor = view.iterator_at(erase(owner)); return *cursor == 'a' ? 0 : 1; }  //~ ERROR GTI-S2017
+}
+
+namespace case_subview_owner_invalidation {
+int entry() { mut std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); owner.clear(); return int(part.size()); }  //~ ERROR GTI-S2017
+}
+
+namespace case_shrunk_view_owner_invalidation {
+int entry() { mut std::string owner{"abc"}; mut std::string_view rest = owner.view(); rest.remove_prefix(std::size_t(1)); owner.clear(); return int(rest.size()); }  //~ ERROR GTI-S2017
+}
+
+namespace case_shrink_under_live_cursor {
+int entry() { std::string owner{"abc"}; mut std::string_view rest = owner.view(); auto cursor = rest.begin(); rest.remove_prefix(std::size_t(1)); return *cursor == 'a' ? 0 : 1; }  //~ ERROR GTI-S2017
+}
+
+int main() { return 0; }

@@ -1,0 +1,36 @@
+// Named restoration return tests: the program is accepted.
+//@ check-pass
+import std.memory;
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+struct Writer {
+  mut int& value;
+  Writer(mut int& source) : value(source) {}
+  void increment() mut { this.value += 1; }
+};
+unsafe Reader& restore_reader(std::erased_object& object) {
+  unsafe { Reader& restored = std::restore_ref<Reader>(object); return restored; }
+}
+unsafe mut Writer& restore_writer(mut std::erased_object& object) {
+  unsafe { mut Writer& restored = std::restore_mut<Writer>(object); return restored; }
+}
+int main() {
+  int value = 9;
+  Reader reader{value};
+  std::erased_object& object = std::erase_ref(reader);
+  unsafe {
+    Reader& restored = restore_reader(object);
+    if (restored.read() != 9) return 1;
+  }
+  mut int count = 4;
+  mut Writer writer{count};
+  mut std::erased_object& mutable_object = std::erase_mut(writer);
+  unsafe {
+    mut Writer& restored = restore_writer(mutable_object);
+    restored.increment();
+  }
+  return count - 5;
+}

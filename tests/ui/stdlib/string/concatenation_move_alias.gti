@@ -1,0 +1,8 @@
+// A consuming concatenation cannot read a view of its consumed source.
+import std.string;
+int main() {
+  mut std::string value = "abc";
+  auto result = std::move(value) + value.view(); //~ ERROR GTI-S2018
+  std::println(result);
+  return 0;
+}

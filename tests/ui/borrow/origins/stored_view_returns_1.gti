@@ -1,0 +1,14 @@
+// Stored view returns: an immutable local view may shadow a field and relay its receiver.
+//@ check-pass
+import std.string;
+class Holder {
+  std::string_view name = "stored";
+  std::string text{"owned"};
+public:
+  Holder() = default;
+  std::string_view Shadowed() {
+    std::string_view name = this.text.view();
+    return name;
+  }
+};
+int main() { Holder holder{}; return int(holder.Shadowed().size()) - 5; }

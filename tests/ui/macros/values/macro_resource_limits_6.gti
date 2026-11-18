@@ -1,0 +1,11 @@
+// Macro resource limits: fan-out beyond the budget is rejected.
+//@ macro-expansions: 127
+#macro int32_t t0(int32_t v) { return v + 1; }
+#macro int32_t t1(int32_t v) { return t0!(v) + t0!(v); }
+#macro int32_t t2(int32_t v) { return t1!(v) + t1!(v); }
+#macro int32_t t3(int32_t v) { return t2!(v) + t2!(v); }
+#macro int32_t t4(int32_t v) { return t3!(v) + t3!(v); }
+#macro int32_t t5(int32_t v) { return t4!(v) + t4!(v); }
+#macro int32_t t6(int32_t v) { return t5!(v) + t5!(v); }
+#macro int32_t t7(int32_t v) { return t6!(v) + t6!(v); }
+int main() { return t7!(0) - 128; }  //~ ERROR GTI-S2124

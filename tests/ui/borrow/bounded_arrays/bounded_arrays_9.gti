@@ -1,0 +1,2 @@
+// Bounded arrays: owner mutation uses valid existing syntax.
+int main() { mut int a[2] = {1,2}; int[2]& r = a; a[1] = 3; return r[0]; }  //~ ERROR GTI-S2017

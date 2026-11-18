@@ -212,6 +212,8 @@ public:
           if (afterBrace == nullptr ||
               (afterBrace->kind != Kind::Semicolon &&
                afterBrace->kind != Kind::Comma &&
+               afterBrace->kind != Kind::RightParen &&
+               afterBrace->kind != Kind::RightBracket &&
                !(afterBrace->kind == Kind::Word &&
                  (afterBrace->text == "else" ||
                   (doBody && afterBrace->text == "while"))) &&
@@ -255,6 +257,8 @@ public:
         state.append("}");
         if (next == nullptr ||
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
+             next->kind != Kind::RightParen &&
+             next->kind != Kind::RightBracket &&
              !(next->kind == Kind::Word &&
                (next->text == "else" || (doBody && next->text == "while"))) &&
              !commentFollowsOnLine(lexemes, index)) ||
@@ -1936,6 +1940,13 @@ private:
         add(Kind::String, source.substr(start, current - start));
         continue;
       }
+      if (character == 'R' && current < source.size() &&
+          source[current] == '"') {
+        // A raw string's text is kept byte for byte, including its lines.
+        current = scanRawStringLiteral(source, start).end;
+        add(Kind::String, source.substr(start, current - start));
+        continue;
+      }
       if (isIdentifierStart(character)) {
         while (current < source.size() && isIdentifierPart(source[current])) {
           ++current;
@@ -1954,23 +1965,24 @@ private:
           add(Kind::Number, source.substr(start, current - start));
           continue;
         }
-        while (current < source.size() &&
-               std::isdigit(static_cast<unsigned char>(source[current])) != 0) {
+        // Digits, `_` separators and any suffix are kept as written.
+        const auto digitOrSeparator = [&](std::size_t at) {
+          return at < source.size() &&
+                 (std::isdigit(static_cast<unsigned char>(source[at])) != 0 ||
+                  source[at] == '_');
+        };
+        while (digitOrSeparator(current)) {
           ++current;
         }
         if (current + 1 < source.size() && source[current] == '.' &&
-            std::isdigit(static_cast<unsigned char>(source[current + 1])) !=
-                0) {
+            digitOrSeparator(current + 1)) {
           ++current;
-          while (current < source.size() &&
-                 std::isdigit(static_cast<unsigned char>(source[current])) !=
-                     0) {
+          while (digitOrSeparator(current)) {
             ++current;
           }
-          if (current < source.size() &&
-              (source[current] == 'd' || source[current] == 'D')) {
-            ++current;
-          }
+        }
+        while (current < source.size() && isIdentifierPart(source[current])) {
+          ++current;
         }
         add(Kind::Number, source.substr(start, current - start));
         continue;
@@ -2096,6 +2108,16 @@ private:
   }
 
   static bool retokenizes(const std::vector<const Lexeme *> &window) {
+    // Captured syntax starts with '{' and, when complete, ends with '}'.
+    // Those delimiters cannot fuse with adjacent tokens. Re-scanning a small
+    // window without the preceding '!(' loses the capture context and would
+    // mistake its contents for a changed token stream. Incomplete captures
+    // consume EOF, so they have no following token to merge with either.
+    if (std::any_of(window.begin(), window.end(), [](const Lexeme *lexeme) {
+          return lexeme->kind == Kind::OpaqueSyntax;
+        })) {
+      return false;
+    }
     std::string joined;
     for (const Lexeme *lexeme : window) {
       joined += lexeme->text;

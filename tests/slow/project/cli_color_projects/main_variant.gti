@@ -1,0 +1,7 @@
+import std.string;
+import std.vector;
+int main(int argc, std::vector<std::string> argv) {
+  mut int unused_mut = 0;
+  if (argc > 1) { std::println(argv[std::size_t(1)]); }
+  return unused_mut;
+}

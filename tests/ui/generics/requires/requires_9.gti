@@ -1,0 +1,7 @@
+// General requires: distinct symbolic identities do not establish equality diagnostic.
+import std.meta;
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+concept same<T, U> = equal<T, U>();
+void accepts<T, U>(T& left, U& right) requires same<T, U> {}
+void forward<T, U>(T& left, U& right) { accepts(left, right); }  //~ ERROR GTI-S2029
+int main() { return 0; }

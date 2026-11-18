@@ -79,12 +79,13 @@ auto SemanticVisitor::Impl::registerConstraintPredicateDeclarations(
 }
 
 auto SemanticVisitor::Impl::constraintPredicateCapability(
-    const Call &call, const std::vector<SemanticType> &typeArguments)
-    -> std::optional<PredicateCapability> {
+    const Call &call, const std::vector<SemanticType> &typeArguments,
+    bool admitNegation) -> std::optional<PredicateCapability> {
   // This is deliberately an implication recognizer, not a second constexpr
   // interpreter. Only a transparent source call chain ending at a trusted
   // type-fact query carries proof; arbitrary predicates still use ordinary
-  // concrete semantic checking and constant evaluation.
+  // concrete semantic checking and constant evaluation. With admitNegation,
+  // a helper may return the logical negation (`!`) of such a chain.
   std::vector<const FunctionDecl *> active;
   std::function<std::optional<PredicateCapability>(
       const Call &, const std::vector<SemanticType> *)>
@@ -216,6 +217,16 @@ auto SemanticVisitor::Impl::constraintPredicateCapability(
     const Expr *value = returned->value().get();
     while (const auto *group = exprAs<Grouping>(value))
       value = group->expression().get();
+    bool negated = false;
+    while (const auto *unary = exprAs<Unary>(value)) {
+      if (!admitNegation || unary->oper().kind != TokenKind::BANG ||
+          unary->rangeObject())
+        return std::nullopt;
+      negated = !negated;
+      value = unary->right().get();
+      while (const auto *group = exprAs<Grouping>(value))
+        value = group->expression().get();
+    }
     const auto *forwarded = exprAs<Call>(value);
     if (forwarded == nullptr || expression.typeArguments().size() !=
                                     function.genericParameters().size())
@@ -257,6 +268,8 @@ auto SemanticVisitor::Impl::constraintPredicateCapability(
     auto result = typeOf(function.returnType()) == SemanticType::Bool
                       ? inspect(*forwarded, nullptr)
                       : std::nullopt;
+    if (result && negated)
+      result->negated = !result->negated;
     active.pop_back();
     typePackScopes = std::move(enclosingPacks);
     valueParameterScopes = std::move(enclosingValues);

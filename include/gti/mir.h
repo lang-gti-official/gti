@@ -600,6 +600,7 @@ enum class MirInstructionKind {
   DrainThreadLocals,
   BeginThreadLocals,
   RetireProgramStorage,
+  CleanupProgramStorage,
   Count,
 };
 
@@ -1098,6 +1099,9 @@ struct MirRangeIteration {
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
   bool materializesElementValue = false;
+  // Semantic fact: the element value retains Stored loans on external owners
+  // the cursor protects, not a loan of the cursor or range shell.
+  bool elementBorrowsCursorRegions = false;
   std::optional<MirRangeEndpointParking> endpointParking;
 
   friend bool operator==(const MirRangeIteration &,
@@ -1755,6 +1759,9 @@ struct MirProgramInitializationStep {
   // Only infallible native retirement, never source destruction or release of
   // owning payloads. The endpoint retires published roots in reverse order.
   std::optional<MirDropType> nativeRetirement;
+  // Exact ordinary cleanup recipe, never treated as infallible native
+  // retirement.
+  std::optional<MirDropType> sourceCleanup;
   HirBindingId binding = 0;
   MirPlaceId storagePlace = 0;
   MirBlockId entryBlock = 0;
@@ -1840,6 +1847,7 @@ enum class MirHostedStartupOperationKind {
   DrainThreadLocals,
   BeginThreadLocals,
   RetireProgramStorage,
+  CleanupProgramStorage,
   Count,
 };
 

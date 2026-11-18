@@ -1,0 +1,8 @@
+// Expansion limits: a lowered element limit rejects one more element.
+//@ constexpr-for-elements: 8
+import std.meta;
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto x : std::meta::list<int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t>()) { total = total + uint64_t(1); }  //~ ERROR GTI-S2108
+  return int(total);
+}

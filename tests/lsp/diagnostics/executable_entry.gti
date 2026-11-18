@@ -1,0 +1,57 @@
+// A project's executable entry and test-target root without a global main
+// publish GTI-S2094 at the namespaced main; a helper module, a standalone file
+// and a library source do not; a parse error suppresses the finding until the
+// source parses again. (executable_entry_test.py, LSP half.)
+// --- project/src/main.gti
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }  //~ ERROR GTI-S2094 global 'main'
+// --- project/gti.toml
+manifest-version = 1
+[package]
+name = "entry-test"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+[targets.checks]
+kind = "test"
+root = "src/checks.gti"
+// --- project/src/helper.gti
+export module auxiliary;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }
+// --- project/src/checks.gti
+export module checks;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }  //~ ERROR GTI-S2094
+// --- standalone.gti
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }
+// --- library/gti.toml
+manifest-version = 1
+[package]
+name = "library"
+version = "0.1.0"
+source-root = "."
+// --- library/library.gti
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }
+// --- step 2
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }
+int main() { return tea::main(); }
+// --- step 3
+namespace tea { int main( {  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001
+// --- step 4
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }  //~ ERROR GTI-S2094
+// --- step 5
+export module helper;
+// supplementary: 😀
+namespace tea { /* 😀 */ export int main() { return 0; } }
+int main() { return tea::main(); }

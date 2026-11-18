@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import agent_storage
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import importlib.util
@@ -27,6 +28,10 @@ API = "https://api.github.com/repos/" + REPOSITORY
 GRAPHQL = "https://api.github.com/graphql"
 HOST = "github"
 SCHEMA = 4
+# Each agent client names its task branches under its own prefix. Every helper
+# command accepts either, so tasks started by one client stay resumable by the
+# other.
+BRANCH_PREFIXES = ("claude/", "codex/")
 REHOST_SCHEMAS = {("github", 2), ("gitea", 3)}
 # The one required status check. CI reports it on pull_request (fast checks)
 # and on merge_group (the complete integration suite of the queued candidate).
@@ -277,6 +282,7 @@ class Workflow:
 
     def tree(self, state):
         root = Path(state["worktree"])
+        agent_storage.require_available(root)
         if not root.is_dir() or Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root:
             raise WorkflowError("Task worktree is missing or has changed identity")
         if git(root, "branch", "--show-current") != state["branch"]:
@@ -328,8 +334,22 @@ class Workflow:
             raise WorkflowError("GitHub did not create the PR as a draft")
         return pr
 
+    @staticmethod
+    def branch_prefix(environ=None):
+        """Return the running client's task-branch prefix.
+
+        Claude Code marks its shells with CLAUDECODE=1; every other client,
+        including Codex, keeps the original codex/ prefix.
+        """
+        environ = os.environ if environ is None else environ
+        return "claude/" if environ.get("CLAUDECODE") == "1" else "codex/"
+
     def start(self, task, title, worktree, branch=None, adopt=False):
         path = self.file(task)
+        if worktree is None:
+            worktree = (self.load(task, legacy=True)["worktree"] if path.exists() else
+                        agent_storage.worktree_path(task, self.primary))
+        agent_storage.require_available(Path(worktree).expanduser().resolve())
         if path.exists() and self.is_legacy(self.load(task, legacy=True)):
             # Never bind a historical tracker number to the replacement repo.
             if not adopt:
@@ -360,9 +380,10 @@ class Workflow:
         root = Path(worktree).resolve()
         if root == self.primary or self.primary in root.parents:
             raise WorkflowError("Use a separate worktree outside the primary checkout")
-        branch = branch or "codex/" + task + "-" + uuid.uuid4().hex[:8]
-        if not branch.startswith("codex/") or git(self.primary, "check-ref-format", "--branch", branch, check=False).returncode:
-            raise WorkflowError("Use a valid codex/ task branch")
+        branch = branch or self.branch_prefix() + task + "-" + uuid.uuid4().hex[:8]
+        if (not branch.startswith(BRANCH_PREFIXES) or
+                git(self.primary, "check-ref-format", "--branch", branch, check=False).returncode):
+            raise WorkflowError("Use a valid claude/ or codex/ task branch")
         for record in self.state_dir.glob("*.json"):
             other = json.loads(record.read_text())
             if self.is_legacy(other):
@@ -1044,7 +1065,7 @@ def main():
     start = sub.add_parser("start")
     start.add_argument("task")
     start.add_argument("--title", required=True)
-    start.add_argument("--worktree", required=True)
+    start.add_argument("--worktree", help="explicit location; otherwise prefer mounted Mac mini SSD, then sibling gti-worktrees/<task>")
     start.add_argument("--branch")
     start.add_argument("--adopt", action="store_true")
     rehost = sub.add_parser("rehost", help="bind a historical published task to its migrated GitHub PR by tree identity")
@@ -1107,7 +1128,7 @@ def main():
                 result = getattr(workflow, args.command)(args.task)
         print(json.dumps(result, indent=2))
         return 0
-    except (WorkflowError, OSError, ValueError) as error:
+    except (agent_storage.StorageError, WorkflowError, OSError, ValueError) as error:
         print("agent-workflow: " + str(error), file=sys.stderr)
         return 1
 

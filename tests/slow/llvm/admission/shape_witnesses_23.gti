@@ -1,0 +1,10 @@
+// Shape witnesses: immovable ordinary objects use final destination placement rather than byte transport.
+//@ build-pass
+//@ slow
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+int main() { Pinned value{}; return 0; }

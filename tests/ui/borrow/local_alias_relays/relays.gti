@@ -1,0 +1,112 @@
+// A local reference alias passed to a region call relays what it aliases.
+//@ run-pass
+//@ exit-code: 0
+
+// `Box& local = source; return pass(local);` returns a borrow of the place
+// `local` was bound to. A reference binding is never rebound (assignment
+// writes through it), so the alias supplies exactly that place's region: a
+// reference parameter's, or a stored reference's in a method.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Nodes {
+  mut Box items[2];
+  Nodes() : items({Box(5), Box(6)}) {}
+  Box& at(uint64_t i) { return this.items[i]; }
+};
+int&<a> pass<lifetime a>(Box&<a> box) { return box.value; }
+mut int&<a> pass_mut<lifetime a>(mut Box&<a> box) { return box.value; }
+Box&<a> same<lifetime a>(Box&<a> box) { return box; }
+
+int&<a> alias<lifetime a>(Box&<a> box) {
+  Box& local = box;
+  return pass(local);
+}
+int&<a> chained<lifetime a>(Box&<a> box) {
+  Box& first = box;
+  Box& second = first;
+  return pass(second);
+}
+int&<a> alias_of_call<lifetime a>(Box&<a> box) {
+  Box& local = same(box);
+  return pass(local);
+}
+int&<a> projected<lifetime a>(Nodes&<a> nodes) {
+  Nodes& local = nodes;
+  return local.at(uint64_t(0)).value;
+}
+// Every parameter written in `a` supplies the result, not only the first.
+int&<a> second_supplier<lifetime a>(Box&<a> first, Box&<a> second) {
+  return pass(second);
+}
+// An inner alias shadows the outer one; both name a supplier of `a`.
+int&<a> shadowed<lifetime a>(Box&<a> first, Box&<a> second) {
+  Box& local = first;
+  {
+    Box& local = second;
+    return pass(local);
+  }
+}
+// Assigning through a mutable alias writes the referent; the alias still
+// designates the parameter's referent.
+mut int&<a> written<lifetime a>(mut Box&<a> box, Box replacement) {
+  mut Box& local = box;
+  local = replacement;
+  return pass_mut(local);
+}
+
+class Cursor<lifetime owner> {
+  Box&<owner> box;
+  mut Box&<owner> slot;
+  Nodes&<owner> nodes;
+  Box owned;
+public:
+  Cursor(Box&<owner> box, mut Box&<owner> slot, Nodes&<owner> nodes)
+      : box(box), slot(slot), nodes(nodes), owned(Box(8)) {}
+  int& elided() { Box& local = this.box; return pass(local); }
+  int&<this> receiver() { Box& local = this.box; return pass(local); }
+  int&<owner> stored() { Box& local = this.box; return pass(local); }
+  int&<owner> stored_chain() {
+    Box& first = this.box;
+    Box& second = first;
+    return pass(second);
+  }
+  int&<owner> stored_projection() {
+    Nodes& local = this.nodes;
+    return local.at(uint64_t(1)).value;
+  }
+  mut int&<owner> stored_mutable() mut {
+    mut Box& local = this.slot;
+    return pass_mut(local);
+  }
+  // A result borrowed from the receiver may relay its owned storage.
+  int&<this> owned_receiver() { Box& local = this.owned; return pass(local); }
+};
+
+int main() {
+  Box box{4};
+  mut Box slot{9};
+  Nodes nodes{};
+  Box other{7};
+  if (alias(box) != 4 || chained(box) != 4 || alias_of_call(box) != 4 ||
+      projected(nodes) != 5 || shadowed(box, other) != 7 ||
+      second_supplier(box, other) != 7) {
+    return 1;
+  }
+  mut Box target{1};
+  mut int& changed = written(target, Box(3));
+  changed = changed + 2;
+  if (target.value != 5) {
+    return 2;
+  }
+  mut Cursor cursor = Cursor(box, slot, nodes);
+  if (cursor.elided() != 4 || cursor.receiver() != 4 || cursor.stored() != 4 ||
+      cursor.stored_chain() != 4 || cursor.stored_projection() != 6 ||
+      cursor.owned_receiver() != 8) {
+    return 3;
+  }
+  mut int& stored = cursor.stored_mutable();
+  stored = 11;
+  return slot.value == 11 ? 0 : 4;
+}

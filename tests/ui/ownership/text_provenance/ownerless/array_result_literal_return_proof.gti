@@ -1,0 +1,7 @@
+// Array result literal return proof: a declared array lifetime contract permits an actually ownerless result.
+//@ check-pass
+std::string_view<a>[2] paired<lifetime a>(std::string_view<a> first,
+                                        std::string_view<a> second) {
+  return {"first", "second"};
+}
+int main() { auto values = paired("one", "two"); return values[0] == "first" ? 0 : 1; }

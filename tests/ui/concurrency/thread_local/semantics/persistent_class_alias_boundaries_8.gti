@@ -1,0 +1,21 @@
+// Persistent class alias boundaries: copying a scalar before the call ends its storage borrow before a later hidden mutation.
+//@ check-pass
+class Meter {
+public:
+  mut int count;
+  Meter(int value) : count(value) {}
+  int read() { return this.count; }
+  void set() mut { this.count = 9; }
+};
+mut Meter meter{1};
+void direct() { meter.count = 9; }
+void forwarded() { direct(); }
+void method() { meter.set(); }
+void reference() { mut Meter& alias = meter; alias.count = 9; }
+void scalar_reference() { mut int& alias = meter.count; alias = 9; }
+void assign(mut int& value) { value = 9; }
+void reborrow() { mut Meter& alias = meter; assign(alias.count); }
+int initialize() { direct(); return 0; }
+class Trigger { public: int value = initialize(); Trigger() {} };
+void initializer() { Trigger value{}; }
+int inspect(int snapshot) { direct(); return snapshot; } int main() { return inspect(meter.read()); }

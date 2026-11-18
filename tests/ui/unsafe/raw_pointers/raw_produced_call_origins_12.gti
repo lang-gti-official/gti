@@ -1,0 +1,5 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: default-argument-produced-pointer.
+//@ raw-pointer-audit: strict
+const int* dangling() { int local = 1; return &local; }
+const int* source(const int* pointer = dangling()) { return pointer; }  //~ ERROR GTI-S2077
+int main() { auto pointer = source(); unsafe { return *pointer; } }  //~ ERROR GTI-S2103 //~ ERROR GTI-S2102

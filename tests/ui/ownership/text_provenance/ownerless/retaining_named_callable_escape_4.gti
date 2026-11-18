@@ -1,0 +1,23 @@
+// Retaining named callable escape: the opaque-call control reaches MIR with an incomplete retention summary.
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain(mut Holder& target, std::string_view input) { target.put(input); }
+void literal(mut Holder& target, std::string_view input) { target.put("literal"); }
+
+extern "C" { void opaque_effect(); }
+void retain_opaque(mut Holder& target, std::string_view input) {
+  target.put(input);
+  opaque_effect();
+}
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{retain_opaque};
+  mut Holder holder{};
+  { std::string owner{"short"}; store(holder, owner.view()); }
+  return holder.value == "short" ? 0 : 1;
+}
+//~? ERROR GTI-S2045

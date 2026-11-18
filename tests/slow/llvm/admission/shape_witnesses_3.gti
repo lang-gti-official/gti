@@ -1,0 +1,13 @@
+// Shape witnesses: verified typed-to-void-to-same-typed conversion uses the exact native object-address witness.
+//@ build-pass
+//@ slow
+struct Reading { int value = 42;  public: Reading() = default; };
+using Erased = void*;
+using Typed = Reading*;
+int main() {
+  mut Reading owner{};
+  Typed address = &owner;
+  Erased erased = Erased(address);
+  Typed restored = Typed(erased);
+  return restored == address ? 0 : 1;
+}

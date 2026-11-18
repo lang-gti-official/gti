@@ -1,0 +1,300 @@
+// Empty owning-function invocation reports the library access; small targets stay inline.
+//@ run-pass
+//@ revisions: phase0 phase1 phase2 phase3 phase7 phase8 phase9 phase12 phase13 phase14
+//@[phase0] run-fail
+//@[phase0] exit-code: 70
+//@[phase0] stdout: 9
+//@[phase0] stderr-contains: <std/detail/memory_core>:280: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase1] run-fail
+//@[phase1] exit-code: 70
+//@[phase1] args: phase
+//@[phase1] stdout: 9
+//@[phase1] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase2] run-fail
+//@[phase2] exit-code: 70
+//@[phase2] args: phase phase
+//@[phase2] stdout: 9
+//@[phase2] stderr-contains: <std/detail/memory_core>:280: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase3] run-fail
+//@[phase3] exit-code: 70
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: 9
+//@[phase3] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase7] args: phase phase phase phase phase phase phase
+//@[phase7] stdout: 7
+//@[phase7] stdout: 8
+//@[phase7] stdout: 8
+//@[phase7] stdout: 9
+//@[phase8] run-fail
+//@[phase8] exit-code: 70
+//@[phase8] args: phase phase phase phase phase phase phase phase
+//@[phase8] stdout: 9
+//@[phase8] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase9] run-fail
+//@[phase9] exit-code: 70
+//@[phase9] args: phase phase phase phase phase phase phase phase phase
+//@[phase9] stdout: 9
+//@[phase9] stderr-contains: <std/detail/memory_core>:284: runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[phase12] run-fail
+//@[phase12] exit-code: 42
+//@[phase12] args: phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase12] stdout: 9
+//@[phase13] run-fail
+//@[phase13] exit-code: 42
+//@[phase13] args: phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase13] stdout: 9
+//@[phase14] run-fail
+//@[phase14] exit-code: 42
+//@[phase14] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase14] stdout: 9
+// --- owning_function_policy_failure.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int identity(int value) { return value; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  if (argc == 1) {
+    std::function<int(int)> callback{};
+    return callback(1);
+  }
+  if (argc == 2) {
+    mut std::function<int(int) mut> callback{};
+    return callback(1);
+  }
+  if (argc == 3) {
+    std::move_only_function<int(int)> callback{};
+    return callback(1);
+  }
+  if (argc == 4) {
+    mut std::move_only_function<int(int) mut> callback{};
+    return callback(1);
+  }
+  if (argc == 5) {
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    Resource capture{8};
+    std::move_only_function<int()> callback{
+        [capture = std::move(capture)]() -> int { return capture.read(); }};
+    return callback();
+  }
+  if (argc == 6) {
+    // Four retained words exceed the inline slot, so the clone allocates.
+    int64_t a = 1;
+    int64_t b = 2;
+    int64_t c = 3;
+    int64_t d = 4;
+    std::function<int(int)> callback{
+        [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    auto copy = callback.clone();
+    return copy(1);
+  }
+  if (argc == 9) {
+    std::function<int(int) &&> callback{};
+    return std::move(callback)(1);
+  }
+  if (argc == 10) {
+    std::move_only_function<int(int) &&> callback{};
+    return std::move(callback)(1);
+  }
+  if (argc == 11) {
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    Resource capture{8};
+    std::move_only_function<int() &&> callback{
+        [capture = std::move(capture)]() -> int { return capture.read(); }};
+    return std::move(callback)();
+  }
+  if (argc == 12) {
+    // The once-invoked clone must also exceed the inline slot to allocate.
+    int64_t a = 1;
+    int64_t b = 2;
+    int64_t c = 3;
+    int64_t d = 4;
+    std::function<int(int) &&> callback{
+        [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    auto copy = callback.clone();
+    return std::move(copy)(1);
+  }
+  if (argc == 13) {
+    // A small target is cloned inline: no allocation can fail.
+    std::function<int(int)> callback{identity};
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    auto copy = callback.clone();
+    return copy(41) + 1;
+  }
+  if (argc == 14) {
+    // Replacing with a small target needs no allocation either.
+    int offset = 40;
+    mut std::move_only_function<int() mut> callback{};
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    callback.replace([offset]() -> int { return offset + 2; });
+    return callback();
+  }
+  if (argc == 15) {
+    // Small once-invoked targets clone inline while allocation is disabled.
+    std::function<int(int) &&> callback{identity};
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+    auto copy = callback.clone();
+    return std::move(copy)(41) + 1;
+  }
+  Resource original{7};
+  mut std::move_only_function<int()> callback{
+      [original = std::move(original)]() -> int { return original.read(); }};
+  Resource replacement{8};
+  if (argc == 7) {
+    unsafe { gti_test_fail_scalar_allocation(1); }  //~ WARN GTI-S2100
+  }
+  callback.replace([replacement = std::move(replacement)]() -> int {
+    return replacement.read();
+  });
+  std::println(callback());
+  callback.reset();
+  return callback.empty() ? 0 : 1;
+}
+// --- unique_scalar_allocation_fault.cpp
+#include "process_allocation_test_provider.h"
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <new>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
+namespace {
+bool failScalarAllocation = false;
+// Abort deliberately does not flush streams. Make cleanup markers observable
+// before any program I/O, so an empty capture proves cleanup did not execute.
+struct ConfigureFaultProcess {
+  ConfigureFaultProcess() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#ifndef _WIN32
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+#endif
+  }
+} configureFaultProcess;
+} // namespace
+
+extern "C" void gti_test_fail_scalar_allocation(std::int32_t enabled) {
+  failScalarAllocation = enabled != 0;
+}
+
+extern "C" void gti_test_observe_owner(const void *value) {
+  if (!value)
+    std::abort();
+}
+
+// The fault tests require a real allocation, not an optimizable owner. This
+// external observation makes its address escape without modifying the value.
+extern "C" std::int32_t
+gti_test_observe_scalar_allocation(const std::int32_t *value) {
+  return *value;
+}
+
+using Callback = std::int32_t (*)(std::int32_t);
+extern "C" std::int32_t gti_test_call_scalar_callback(Callback function,
+                                                      std::int32_t value) {
+  return function == nullptr ? -1 : function(value);
+}
+
+// Replace the standard no-throw allocation seam, not generated GTI code or
+// the failure helper. No real resource exhaustion is needed for this oracle.
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
+  if (failScalarAllocation) {
+    return nullptr;
+  }
+  try {
+    return ::operator new(size);
+  } catch (const std::bad_alloc &) {
+    return nullptr;
+  }
+}
+
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  return failScalarAllocation ? nullptr : systemAllocate(bytes, alignment);
+}
+void release(void *address) { systemRelease(address); }
+} // namespace gti_test_process_provider
+// --- process_allocation_test_provider.h
+#pragma once
+// Complete injectable GTI process provider for native allocation oracles.
+// Each companion supplies acquire/release; C++ new/delete remain independent.
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <limits>
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment);
+void release(void *address);
+inline void *systemAllocate(std::size_t bytes, std::size_t alignment) {
+#ifdef _WIN32
+  return _aligned_malloc(bytes, alignment < sizeof(void *) ? sizeof(void *)
+                                                           : alignment);
+#else
+  if (alignment <= alignof(std::max_align_t))
+    return std::malloc(bytes);
+  void *result = nullptr;
+  return posix_memalign(&result, alignment, bytes) == 0 ? result : nullptr;
+#endif
+}
+inline void systemRelease(void *address) {
+#ifdef _WIN32
+  _aligned_free(address);
+#else
+  std::free(address);
+#endif
+}
+} // namespace gti_test_process_provider
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
+}
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *p,
+                                                     std::uint64_t a) {
+  return p && a && !(a & (a - 1)) &&
+         reinterpret_cast<std::uintptr_t>(p) % a == 0;
+}
+#ifdef _WIN32
+extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t n, std::uint64_t a) {
+  return gti_test_process_provider::acquire(n, a);
+}
+extern "C" void gti_rt_aligned_free_v1(void *p) {
+  gti_test_process_provider::release(p);
+}
+#else
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
+  return sizeof(void *);
+}
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_malloc_v1(std::uint64_t n) {
+  return gti_test_process_provider::acquire(n, 1);
+}
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t n, std::uint64_t a,
+                                          std::int32_t *status) {
+  void *result = gti_test_process_provider::acquire(n, a);
+  *status = result ? 0 : ENOMEM;
+  return result;
+}
+extern "C" void gti_rt_posix_free_v1(void *p) {
+  gti_test_process_provider::release(p);
+}
+#endif

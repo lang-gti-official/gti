@@ -1,0 +1,23 @@
+// Composed returns: every field of a returned record must come from the elided
+// supplier. A second field borrowed from a local or from another formal is
+// rejected even though the first field relays the supplier.
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& first, int& second) : first(first), second(second) {}
+};
+struct Mixed {
+  int& step;
+  mut int& value;
+  Mixed(int& step, mut int& value) : step(step), value(value) {}
+};
+Pair local_second(int& supplier) {
+  int local = 3;
+  return Pair(supplier, local);  //~ ERROR GTI-S2017 depends on storage the function owns
+}
+Mixed local_mutable(int& supplier) {
+  mut int local = 3;
+  return Mixed(supplier, local);  //~ ERROR GTI-S2017 depends on storage the function owns
+}
+Pair both(int& supplier) { return Pair(supplier, supplier); }
+int main() { int x = 1; Pair pair = both(x); return pair.first - pair.second; }

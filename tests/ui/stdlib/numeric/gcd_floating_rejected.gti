@@ -1,0 +1,4 @@
+// std::gcd rejects floating-point arguments.
+//@ check-fail
+import std.numeric;
+int main() { std::gcd(1.0, 2.0); return 0; }  //~ ERROR GTI-S2029

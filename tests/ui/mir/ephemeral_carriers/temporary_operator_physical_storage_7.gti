@@ -1,0 +1,16 @@
+// Temporary operator physical storage: temporary borrowed operator retains physical storage: *cursor(owner) + *cursor(other) == 14 (cleanup-bearing).
+//@ check-pass
+class Cursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  Cursor(int& source) : owner(source) {}
+  // The checked addition keeps a failure edge, so the temporary also has a
+  // failure-cleanup endpoint after its interior result loan.
+  int& operator*() { int checked = this.inline_value + 0; return this.inline_value; }
+  int& ref() { return this.inline_value; }
+  ~Cursor() {}
+
+};
+Cursor cursor(int& source) { return Cursor(source); }
+int main() { int owner = 4; int other = 6; return (*cursor(owner) + *cursor(other) == 14) ? 0 : 1; }

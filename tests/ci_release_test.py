@@ -90,13 +90,15 @@ def artifact_contract(root):
     jobs = [gate_job(sha, name=n) for n in names]
     assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
 
-    def evidence(run=run, jobs=jobs, assets=assets):
+    def evidence(run=run, jobs=jobs, assets=assets, earlier=None):
         def request(path):
             if "/workflows/full-validation.yml/" in path:
                 return {"workflow_runs": [run] if run.get("path") == artifacts.FULL_VALIDATION_WORKFLOW else []}
             if "/workflows/ci.yml/" in path:
                 return {"workflow_runs": [run] if run.get("path") == ".github/workflows/ci.yml" else []}
             if "/jobs?" in path:
+                if "/attempts/1/" in path:
+                    return {"jobs": jobs if earlier is None else earlier}
                 assert "/attempts/2/" in path, path
                 return {"jobs": jobs}
             return {"artifacts": assets, "total_count": len(assets)}
@@ -130,6 +132,34 @@ def artifact_contract(root):
         {"assets": assets[:1]},
         {"assets": [{**a, "expired": True} for a in assets]},
         {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
+    ]
+    # validation-retry.yml re-runs only jobs that never got a runner: attempt
+    # 2 lists copies of attempt 1's green package jobs (new ids, the original
+    # execution's times and runner), and their archives keep attempt 1's name.
+    # Nightly then publishes attempt 1's packages, never a mix of attempts.
+    def executed(job, index):
+        return {**job, "started_at": f"2026-11-17T18:{index:02d}:00Z",
+                "completed_at": f"2026-11-17T19:{index:02d}:00Z", "runner_id": 1000 + index}
+    carried = [executed(job, index) for index, job in enumerate(jobs)]
+    first = [{**job, "conclusion": "cancelled", "runner_id": 0} if job["name"].startswith("Integration (darwin")
+             else job for job in carried]
+    attempt_one = [{**asset, "name": asset["name"].replace("-2", "-1")} for asset in assets]
+    assert evidence(jobs=carried, assets=attempt_one, earlier=first) == {"run_id": "7", "run_attempt": "1"}
+    assert evidence(jobs=carried, assets=[*attempt_one, *assets], earlier=first)["run_attempt"] == "2", \
+        "a re-run of every job publishes its own packages"
+    package = next(index for index, job in enumerate(jobs) if job["name"] == "Release package (darwin-arm64)")
+    rerun = [{**job, "started_at": "2026-11-17T21:00:00Z"} if index == package else job
+             for index, job in enumerate(carried)]
+    rejected += [
+        # The latest package job is another execution than the one that built the archive.
+        {"jobs": rerun, "assets": attempt_one, "earlier": first},
+        # The archive's attempt did not pass that package job.
+        {"jobs": carried, "assets": attempt_one,
+         "earlier": [{**job, "conclusion": "failure"} if job["name"].startswith("Release package") else job
+                     for job in first]},
+        # The platforms were built in different attempts.
+        {"jobs": carried, "assets": [attempt_one[0], assets[1]], "earlier": first},
+        {"jobs": carried, "assets": [*attempt_one, attempt_one[0]], "earlier": first},
     ]
     for options in rejected:
         try:
@@ -223,6 +253,86 @@ def tip_contract(artifacts, sha, repository):
             else:
                 raise AssertionError(("tip accepted unverified packages", output.name))
             assert not (output / "BUILD_ID").exists(), output.name
+
+
+def report_order_contract(root):
+    """Full validation runs of several main commits overlap and finish in any
+    order. The main-broken report applies a commit's result only while no
+    newer main commit (a descendant) has its own verdict, in both finish
+    orders, so an older failure never re-flags main after a newer pass and an
+    older pass never closes an issue a newer failure opened."""
+    report = load_module(root / "scripts/full_validation_report.py", "full_validation_report_order")
+    repository = "lang-gti-official/gti"
+    older, newer, newest, stray = "a" * 40, "b" * 40, "c" * 40, "d" * 40
+    history = [older, newer, newest]  # main's first-parent order
+
+    def descends(sha, other):
+        if other == stray:
+            return None  # not in the checkout: unknown, so it never suppresses
+        return history.index(sha) < history.index(other)
+
+    def run_row(identity, sha, **overrides):
+        row = {"id": identity, "head_sha": sha, "event": "push", "head_branch": "main",
+               "path": ".github/workflows/full-validation.yml", "repository": {"full_name": repository}}
+        row.update(overrides)
+        return row
+
+    def verdict(conclusion, status="completed"):
+        return [{"name": "Full validation verdict", "status": status, "conclusion": conclusion},
+                {"name": "Report main status", "status": "in_progress", "conclusion": None}]
+
+    def newer_verdict(sha, runs, jobs):
+        calls = []
+
+        def request(path):
+            calls.append(path)
+            if "/workflows/" in path:
+                return {"workflow_runs": runs}
+            identity = int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])
+            return {"jobs": jobs[identity]}
+        return report.newer_verdict(sha, repository, request, descends), calls
+
+    # Older failure finishing after the newer commit passed: stale, no issue.
+    found, _ = newer_verdict(older, [run_row(2, newer), run_row(1, older)], {2: verdict("success")})
+    assert found == {"id": 2, "sha": newer, "conclusion": "success"}, found
+    # Older pass finishing after the newer commit failed: the issue stays open.
+    found, _ = newer_verdict(older, [run_row(2, newer), run_row(1, older)], {2: verdict("failure")})
+    assert found and found["conclusion"] == "failure"
+    # The other finish order: the older result arrives first and is applied;
+    # the newer one, having no descendant verdict, is applied after it.
+    for conclusion in ("success", "failure"):
+        found, _ = newer_verdict(older, [run_row(2, newer, status="in_progress"), run_row(1, older)],
+                                 {2: verdict(None, status="in_progress")})
+        assert found is None, conclusion
+        found, calls = newer_verdict(newer, [run_row(2, newer), run_row(1, older)], {1: verdict(conclusion)})
+        assert found is None and not any("/runs/1/" in path for path in calls), \
+            "an ancestor's verdict never suppresses a newer result"
+    # Only a completed pass or failure of a strictly newer main commit counts.
+    ignored = [
+        ([run_row(3, newest)], {3: verdict("cancelled")}),
+        ([run_row(3, newest)], {3: verdict("skipped")}),
+        ([run_row(3, newest)], {3: [{"name": "Report main status", "status": "completed",
+                                     "conclusion": "success"}]}),
+        ([run_row(3, older)], {3: verdict("success")}),
+        ([run_row(3, newer)], {3: verdict("success")}),
+        ([run_row(3, stray)], {3: verdict("success")}),
+        ([run_row(3, newest, event="pull_request")], {3: verdict("success")}),
+        ([run_row(3, newest, head_branch="feature")], {3: verdict("success")}),
+        ([run_row(3, newest, path=".github/workflows/ci.yml")], {3: verdict("success")}),
+        ([run_row(3, newest, repository={"full_name": "attacker/gti"})], {3: verdict("success")}),
+    ]
+    for runs, jobs in ignored:
+        found, _ = newer_verdict(newer, runs, jobs)
+        assert found is None, (runs, jobs)
+    found, _ = newer_verdict(newer, [run_row(3, newest, event="workflow_dispatch")], {3: verdict("failure")})
+    assert found == {"id": 3, "sha": newest, "conclusion": "failure"}
+    # The CLI orders only the full-validation issue.
+    for extra in (["--title", report.SANITIZER_TITLE], ["--label", "nightly"]):
+        result = subprocess.run([sys.executable, str(root / "scripts/full_validation_report.py"),
+                                 "--run-url", "https://github.com/lang-gti-official/gti/actions/runs/1",
+                                 "--sha", older, "--repository", repository, *extra],
+                                capture_output=True, text=True, check=False)
+        assert result.returncode == 1 and "ordering applies only" in result.stderr, result.stderr
 
 
 def editor_contract(root):
@@ -346,8 +456,10 @@ def nightly_contract(root):
     full_header = full.split("\njobs:\n", 1)[0]
     assert "  push:\n    branches: [main]\n  workflow_dispatch:" in full_header
     assert "merge_group" not in full and "pull_request" not in full, "full validation runs post-integration"
-    assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
-        "full validation runs queue; a superseded head's verdict is still channel evidence"
+    assert "group: full-validation-${{ github.sha }}\n  cancel-in-progress: false" in full_header, \
+        "every main commit gets its own uncancelled run; a repeated dispatch of one commit waits"
+    assert full.count("concurrency:") == 1, \
+        "a job-level group cancels its pending job, which cancels the run and can drop a newer tip"
     integration = jobs(full)
     # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
     assert list(integration) == ["plan", "package", "tip", "integration", "verdict", "report"], list(integration)
@@ -355,19 +467,22 @@ def nightly_contract(root):
     assert "needs: [package]\n" in tip, "tip waits for both packages and nothing else"
     assert "continue-on-error: true" in tip, "a tip failure never changes the run nightly selects by"
     assert "if: github.event_name == 'push' && github.repository == 'lang-gti-official/gti'" in tip
-    assert "group: gti-tip-publication\n      cancel-in-progress: false" in tip
     assert "contents: write" in tip and "contents: write" not in full.replace(tip, ""), \
         "only tip publication writes from full validation"
     assert "pattern: gti-nightly-*-${{ github.run_attempt }}" in tip
     assert "cmake" not in tip and "validation_checks.py" not in tip and "ctest" not in tip, \
         "tip republishes the packaged archives; it builds and tests nothing"
-    order = ["release_artifacts.py tip", "admit-tip",
-             "--force-with-lease=refs/tags/tip:${GTI_TIP_LEASE}", "gh release create tip",
+    order = ["release_artifacts.py tip", "resolve_release_source.py claim-tip", "resolve_release_source.py await-tip",
+             "still_tip || exit 0", "gh release create tip", "still_tip || exit 0\n          gh release upload",
              "--clobber dist/tip/BUILD_ID"]
     positions = [tip.index(item) for item in order]
-    assert positions == sorted(positions), "tip must verify, admit, lease the tag, then upload BUILD_ID last"
+    assert positions == sorted(positions), \
+        "tip must verify, claim the tag, wait for older publications, then upload BUILD_ID last"
+    assert tip.count("still_tip || exit 0") == 3, "a newer claim stops this upload before each asset"
+    assert '--run-id "${GITHUB_RUN_ID}"' in tip and "GTI_GITHUB_TOKEN: ${{ github.token }}" in tip
     assert tip.count("if: steps.admission.outputs.publish == 'true'") == 2
-    assert "--force " not in tip and "push --force" not in tip and "+refs/tags" not in tip
+    assert "--force" not in tip and "+refs/tags" not in tip and "git push" not in tip, \
+        "only the leased claim in resolve_release_source.py moves the tag"
     assert "git tag" not in tip and "nightly\"" not in tip and "refs/tags/nightly" not in tip
     assert "--prerelease" in tip and "--verify-tag" in tip and "--latest=false" in tip
     assert "tip" not in integration["verdict"].split("steps:", 1)[0], "the verdict never depends on tip"
@@ -415,6 +530,15 @@ def nightly_contract(root):
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
         "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
+    # The gate judges the fast job against the platforms its real event needs.
+    assert "GTI_FAST_MATRIX: ${{ needs.plan.outputs.fast_matrix }}" in gate
+    assert "GTI_QUEUE_MACOS: ${{ needs.plan.outputs.queue_macos }}" in gate, \
+        "the gate requires the rows the plan scheduled, not a re-read of the variable"
+    assert ('--fast-matrix "${GTI_FAST_MATRIX}" --trigger "${GTI_EVENT_NAME}" '
+            '--queue-macos "${GTI_QUEUE_MACOS}"') in gate
+    for line in gate.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "--")):
+            assert "${{" not in line, line
     verdict = integration["verdict"]
     assert "needs: [plan, package, integration]\n" in verdict
     assert "advisories --reports" in verdict and "continue-on-error: true" in verdict, \
@@ -433,6 +557,17 @@ def nightly_contract(root):
     report = integration["report"]
     assert "issues: write" in report and "full_validation_report.py" in report
     assert "needs.verdict.result != 'cancelled'" in report
+    # A run red only for want of runners is left to validation-retry.yml; any
+    # doubt (a broken deferral step) still reports.
+    defer = report.split("name: Leave a run that only lacked runners to the retry", 1)[1].split("- name:", 1)[0]
+    assert "validation_retry.py defer" in defer and "continue-on-error: true" in defer
+    assert "if: needs.verdict.result != 'success'" in defer and '--attempt "${GITHUB_RUN_ATTEMPT}"' in defer
+    assert "actions: read" in report and "actions: write" not in full, "full validation never re-runs itself"
+    issue = report.split("name: Open, update or close the main-broken issue", 1)[1]
+    assert "if: steps.retry.outputs.deferred != 'true'" in issue
+    assert '--repository "${GITHUB_REPOSITORY}"' in issue and "fetch-depth: 0" in report, \
+        "overlapping runs report in commit order: main's history decides which result is newer"
+    report_order_contract(root)
     publish = sections["publish"]
     assert "needs: select" in publish
     assert "run-id: ${{ needs.select.outputs.run_id }}" in publish
@@ -541,11 +676,10 @@ def sanitizer_contract(root):
         assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
             "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
     compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
-    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
-        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "{kind: libraries, index: 1, count: 1}" in compiler
+    assert "kind: compiler" not in compiler and "compiler_pipeline" not in compiler, \
+        "the compiler aggregate's partitions left with the aggregate"
     assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
-    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
-        "the compiler partitions re-configure only their timeout, keeping the cached configure"
     assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
         '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
         "sanitizer trees keep line tables only; full debug information exhausted runner disk"
@@ -635,6 +769,281 @@ def slow_tier_contract(root):
     assert "needs.source.outputs.nightly == 'true'" in report
     # The release requirement reads both daily verdicts.
     assert set(train.DAILY_TIERS) == {"sanitizers", "slow"}
+
+
+def retry_contract(root):
+    """validation-retry.yml re-runs, once, only the full-validation jobs that
+    never got a runner, from main's own scripts; only its retry job can write
+    Actions, and its decision is the one the report job defers to."""
+    text = (root / ".github/workflows/validation-retry.yml").read_text()
+    full = (root / ".github/workflows/full-validation.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  workflow_run:\n    workflows: [Full validation]\n    types: [completed]\n" in header
+    assert re.search(r"^name: Full validation$", full, re.MULTILINE), "the trigger names full validation's workflow"
+    for trigger in ("push:", "pull_request", "schedule", "workflow_dispatch", "merge_group"):
+        assert trigger not in header, trigger
+    assert "\npermissions:\n  contents: read\n" in header and "cancel-in-progress: false" in header
+    assert not re.search(r"secrets\.[A-Za-z]", text)
+    sections = jobs(text)
+    assert list(sections) == ["retry", "report"], list(sections)
+    writes = {name: re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE) for name, body in sections.items()}
+    assert writes == {"retry": ["actions"], "report": ["issues"]}, writes
+    retry, report = sections["retry"], sections["report"]
+    for condition in ("github.repository == 'lang-gti-official/gti'", "workflow_run.conclusion == 'failure'",
+                      "workflow_run.head_branch == 'main'", "workflow_run.event == 'push'",
+                      "workflow_run.event == 'workflow_dispatch'"):
+        assert condition in retry, condition
+    assert "ref: main" in retry and "persist-credentials: false" in retry, "main's own scripts decide"
+    assert "validation_retry.py request" in retry and '--attempt "${GTI_RUN_ATTEMPT}"' in retry
+    assert "needs.retry.result == 'failure'" in report and "full_validation_report.py" in report
+    assert "--status failed" in report and "validation_retry.py" not in report
+    for body in sections.values():
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+                assert "${{" not in line, line
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", text, re.MULTILINE):
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+    # The script's decisions over the recorded starved run, and its view of
+    # the jobs agrees with what nightly requires.
+    run([sys.executable, str(root / "scripts/validation_retry.py"), "--self-test"], root, True)
+    sys.path.insert(0, str(root / "scripts"))
+    retry_script = load_module(root / "scripts/validation_retry.py", "validation_retry_contract")
+    artifacts = load_module(root / "scripts/release_artifacts.py", "release_artifacts_retry_contract")
+    assert retry_script.WORKFLOW == artifacts.FULL_VALIDATION_WORKFLOW
+    assert retry_script.MAX_ATTEMPTS == 2, "one automatic retry; a re-run's completion may raise no event"
+    names = ["Validation plan", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
+             *(f"Integration ({p} {i}/{n})" for p, n in artifacts.integration_shards().items() for i in range(n))]
+    assert all(retry_script.required({"name": name}) for name in names)
+    assert not any(retry_script.required({"name": name}) for name in
+                   ("Tip toolchain", "Full validation verdict", "Report main status"))
+    for name in names[1:]:
+        assert f"name: {name.split(' (')[0]} (" in full, name
+    assert "name: Validation plan" in full
+
+
+def auto_revert_contract(root):
+    """auto-revert.yml decides on every completed full validation of main with
+    read-only GITHUB_TOKEN, writes only behind GTI_AUTO_REVERT=true with the
+    rollup App token, runs main's own scripts on standard hosted runners, and
+    its step classification names steps full validation really has."""
+    text = (root / ".github/workflows/auto-revert.yml").read_text()
+    full = (root / ".github/workflows/full-validation.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  workflow_run:\n    workflows: [Full validation]\n    types: [completed]\n" in header
+    assert "  workflow_dispatch:\n    inputs:\n      run_id:\n" in header
+    for trigger in ("push:", "pull_request", "schedule", "merge_group", "issue_comment"):
+        assert trigger not in header, trigger
+    assert "\npermissions: {}\n" in header
+    sections = jobs(text)
+    assert list(sections) == ["evaluate", "note", "act"], list(sections)
+    writes = {name: re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE) for name, body in sections.items()}
+    assert writes == {"evaluate": [], "note": ["issues"], "act": []}, writes
+    evaluate, note, act = sections["evaluate"], sections["note"], sections["act"]
+    for name, body in sections.items():
+        assert re.findall(r"^    runs-on: (.+)$", body, re.MULTILINE) == ["ubuntu-24.04"], name
+        assert "ref: main" in body and "persist-credentials: false" in body, "main's own scripts decide"
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+                assert "${{" not in line, line
+    assert "github.repository == 'lang-gti-official/gti'" in evaluate
+    assert "workflow_run.head_branch == 'main'" in evaluate and "workflow_run.event == 'push'" in evaluate
+    assert "github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT || ''" in evaluate, "dispatch is report-only"
+    assert "vars.GTI_AUTO_REVERT != 'true'" in note and "auto_revert.py note" in note
+    assert "github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT == 'true'" in act
+    assert "auto_revert.py act" in act and "GTI_READ_TOKEN: ${{ github.token }}" in act
+    assert "secrets." not in evaluate + note and "GTI_ROLLUP_APP_PRIVATE_KEY" in act
+    assert "group: auto-revert\n      cancel-in-progress: false" in act, "one writer at a time"
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", text, re.MULTILINE):
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+    run([sys.executable, str(root / "scripts/auto_revert.py"), "--self-test"], root, True)
+    sys.path.insert(0, str(root / "scripts"))
+    script = load_module(root / "scripts/auto_revert.py", "auto_revert_contract")
+    retry_script = load_module(root / "scripts/validation_retry.py", "validation_retry_auto_revert")
+    assert script.WORKFLOW == retry_script.WORKFLOW
+    full_jobs = jobs(full)
+    steps = set(re.findall(r"^      - name: (.+)$", full_jobs["package"] + full_jobs["integration"], re.MULTILINE))
+    for name in script.TEST_STEPS | script.BUILD_STEPS:
+        assert name in steps, f"auto_revert.py classifies a step full validation does not have: {name}"
+    assert not script.TEST_STEPS & script.BUILD_STEPS
+    assert script.classify_step("Upload shard evidence") == "infrastructure"
+
+
+def gti_test_tiers_contract(root):
+    """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
+    puts them: a pull request runs gti_test_ui, every tests/ui shard,
+    gti_test_examples and gti_unit_tests on Linux, and gti_test_ui,
+    gti_unit_tests and one tests/ui shard chosen from the commit on macOS; a
+    merge-queue candidate runs only the Linux row; a main dispatch runs both;
+    all with per-case JUnit, and the PR holds changed cases to half their limit
+    (gti_test_ui is the runner, tidy, tests/project and tests/lsp;
+    gti_test_ui_<i> shard tests/ui); full validation runs them all on both
+    platforms; the daily slow tier runs tests/slow and the --isolate run; the
+    sanitizer verdict includes an instrumented gti_test_ui run."""
+    workflows = root / ".github/workflows"
+    ci = (workflows / "ci.yml").read_text()
+    fast = jobs(ci)["fast"]
+    checks = load_module(root / "scripts/validation_checks.py", "validation_checks_tiers_contract")
+    # gti_test_ui and its tests/ui shards gti_test_ui_<i> (tests/gti_test.cmake).
+    tiers = "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"
+    # The rows live in the plan job, which keeps the event's platforms; the
+    # fast job's matrix is exactly that output, never a static list.
+    plan = jobs(ci)["plan"]
+    step = plan.split("name: Choose the fast-checks platforms for this event", 1)[1].split("- name:", 1)[0]
+    assert "id: fast" in step and "fast_matrix: ${{ steps.fast.outputs.matrix }}" in plan
+    assert "queue_macos: ${{ steps.fast.outputs.queue_macos }}" in plan
+    # The merge-queue macOS switch is a repository variable, read in the plan
+    # the way the jobs read vars.GTI_JOBS, never hard-coded.
+    assert "GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS }}" in step
+    assert ('python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"\n'
+            '          --rows "${GTI_FAST_ROWS}" --queue-macos "${GTI_QUEUE_MACOS}" --output "${GITHUB_OUTPUT}"') in step
+    folded = step.split("GTI_FAST_ROWS: >-\n", 1)[1].split("        run:", 1)[0]
+    rows = json.loads(" ".join(line.strip() for line in folded.splitlines()))
+    assert "matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}" in fast and "include:" not in fast
+    assert "runs-on: ${{ matrix.os }}" in fast
+    # Linux runs every tier; macOS the platform entries plus one rotating
+    # tests/ui shard, and full validation's darwin set runs the rest there.
+    assert {row["platform"]: (row["os"], row["rotate"], row["gate"]) for row in rows} == {
+        "linux": ("ubuntu-24.04", 0, tiers), "darwin": ("macos-26", 1, "gti_test_ui|gti_unit_tests")}, rows
+    # What runs on each event and switch setting: both rows for a pull request
+    # (its own gate, which admits it to the queue, needs the macOS row) and a
+    # main dispatch; for a merge-queue candidate the Linux row alone, plus
+    # macOS only when GTI_QUEUE_MACOS is exactly `true` (unset: Linux only).
+    expected = {(event, setting): ["darwin", "linux"]
+                for event in ("pull_request", "workflow_dispatch")
+                for setting in ("", "true", "false", "yes")}
+    expected |= {("merge_group", ""): ["linux"], ("merge_group", "false"): ["linux"],
+                 ("merge_group", "yes"): ["linux"], ("merge_group", "1"): ["linux"],
+                 ("merge_group", "true"): ["darwin", "linux"], ("merge_group", " TRUE "): ["darwin", "linux"]}
+    for (event, setting), platforms in expected.items():
+        enabled = checks.queue_macos_enabled(setting)
+        matrix = checks.fast_matrix(rows, event, enabled)
+        assert sorted(row["platform"] for row in matrix["include"]) == platforms, (event, setting, matrix)
+        assert all(row in rows for row in matrix["include"]), "rows pass through unchanged"
+        assert list(checks.fast_platforms(event, enabled)) == platforms
+    assert checks.fast_matrix(rows, "merge_group") == checks.fast_matrix(rows, "merge_group", False), \
+        "the default is Linux only"
+    assert {event for event, _ in expected} == set(checks.FAST_PLATFORMS) and \
+        {"pull_request", "merge_group", "workflow_dispatch"} == set(re.findall(
+            r"^  (pull_request|merge_group|workflow_dispatch):", ci.split("\njobs:\n", 1)[0], re.M)), \
+        "every event CI runs on has a fast-checks platform set"
+    for bad in (rows[:1], rows + rows[:1], [{**rows[0], "extra": 1}, rows[1]]):
+        try:
+            checks.fast_matrix(bad, "pull_request")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(("accepted malformed fast rows", bad))
+    try:
+        checks.fast_matrix(rows, "push")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an event CI does not run on has no fast-checks matrix")
+    selection = fast.split("name: Select this commit's gti-test entries", 1)[1].split("- name:", 1)[0]
+    assert "validation_checks.py gate-tests --build build" in selection and '--sha "${GITHUB_SHA}"' in selection
+    assert "GTI_GATE: ${{ matrix.gate }}" in selection and "GTI_ROTATE: ${{ matrix.rotate }}" in selection
+    registered = ["gti_test_ui", "gti_test_examples", "gti_unit_tests", "llvm_backend_cli",
+                  *(f"gti_test_ui_{index}" for index in range(1, 9))]
+    assert checks.gate_tests(registered, tiers, 0, "0" * 40) == (tiers, [])
+    covered = set()
+    for prefix in range(8):
+        pattern, chosen = checks.gate_tests(registered, "gti_test_ui|gti_unit_tests", 1, f"{prefix:012x}" + "0" * 28)
+        selected = {name for name in registered if re.fullmatch("^(" + pattern + ")$", name)}
+        assert len(chosen) == 1 and selected == {"gti_test_ui", "gti_unit_tests", *chosen}, (pattern, selected)
+        covered |= set(chosen)
+    assert covered == {f"gti_test_ui_{index}" for index in range(1, 9)}, "the shard rotates through all eight"
+    for gate, rotate, sha in (("gti_test_ui|gti_unit_tests", 9, "0" * 40), ("nothing", 0, "0" * 40),
+                              ("gti_test_ui", 1, "HEAD")):
+        try:
+            checks.gate_tests(registered, gate, rotate, sha)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(("accepted a bad gate selection", gate, rotate, sha))
+    # The declared re-run never repeats what the gate ran, and macOS keeps
+    # only the darwin set, as full validation does.
+    darwin = checks.darwin_set(root)
+    assert checks.declared_scope(["gti_test_ui_3", "llvm_backend_cli", "execution_coverage"], "darwin",
+                                 "gti_test_ui|gti_unit_tests|gti_test_ui_3", darwin) == (
+        ["llvm_backend_cli"], ["gti_test_ui_3"], ["execution_coverage"])
+    assert checks.declared_scope(["gti_test_ui_3", "execution_coverage"], "linux", tiers, darwin) == (
+        ["execution_coverage"], ["gti_test_ui_3"], [])
+    code = "\n".join(line for line in fast.splitlines() if not line.lstrip().startswith("#"))
+    assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
+    assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
+                   "name: Run the gti-test tiers",
+                   "name: Hold new and modified gti-test cases to half their limit",
+                   "name: Re-run the tests this pull request declares", "name: Upload gti-test reports"],
+            "the tiers run after fast feedback, then the budget, then declared tests")
+    step = fast.split("name: Run the gti-test tiers", 1)[1].split("- name:", 1)[0]
+    assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in step and '-R "^(${GTI_GATE_TESTS})$"' in step
+    declared = fast.split("name: Re-run the tests this pull request declares", 1)[1].split("- name:", 1)[0]
+    assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in declared
+    assert '--platform "${GTI_PLATFORM}" --ran "${GTI_GATE_TESTS}"' in declared
+    # A discarded queue candidate releases its runner before the build.
+    stale = fast.split("name: Skip a merge group the queue has already discarded", 1)[1].split("- uses:", 1)[0]
+    assert "if: github.event_name == 'merge_group'" in stale and 'git ls-remote --exit-code' in stale
+    assert fast.index("name: Skip a merge group") < fast.index("uses: actions/checkout@")
+    assert "--output-on-failure" in step and '--output-junit "${RUNNER_TEMP}/gti-test/ctest.xml"' in step
+    budget = fast.split("name: Hold new and modified gti-test cases to half their limit", 1)[1]
+    budget = budget.split("- name:", 1)[0]
+    assert "if: github.event_name == 'pull_request' && matrix.platform == 'linux'" in budget
+    assert 'GTI_TEST_TIME_SCALE: "2"' in budget, "hosted runners scale limits as the gti_test_ui entry does"
+    # Advisory until calibrated: over-budget cases are warnings, not failures.
+    assert 'run: python3 scripts/gti_test_budget.py build/gti-test HEAD^1 --jobs "${GTI_TEST_JOBS}"' in budget
+    assert "continue-on-error" not in budget, "the advisory script decides what fails, not the step"
+    script = (root / "scripts/gti_test_budget.py").read_text()
+    assert '"--changed", base' in script and "::warning file=" in script and "GITHUB_STEP_SUMMARY" in script
+    upload = fast.split("name: Upload gti-test reports", 1)[1].split("- name:", 1)[0]
+    assert "if: always()" in upload and "path: ${{ runner.temp }}/gti-test/*.xml" in upload
+    for line in fast.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest", "mkdir")):
+            assert "${{" not in line, line
+    # The entries' registration: per-case JUnit only when CI asks for it.
+    cmake = (root / "tests/gti_test.cmake").read_text()
+    assert 'set(GTI_TEST_REPORT_DIRECTORY "" CACHE PATH' in cmake
+    for name in ("gti_test_ui", "gti_test_examples", "gti_test_slow", "gti_test_isolate"):
+        assert f"gti_test_report({name} {name}_report)" in cmake, name
+    assert "gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)" in cmake
+    shards = int(re.search(r"set\(gti_test_ui_shards ([0-9]+)\)", cmake).group(1))
+    shard_names = {f"gti_test_ui_{index}" for index in range(1, shards + 1)}
+    assert "add_test(NAME gti_test_slow" in cmake and "add_test(NAME gti_test_isolate" in cmake
+    assert '"^gti_test_(slow|isolate)$"' in (root / "tests/TestThroughput.cmake").read_text(), \
+        "the slow-tier gti-test entries carry the slow label"
+    # Full validation: Linux runs every registered per-commit test; macOS runs
+    # the gti-test entries through the darwin list.
+    darwin = json.loads((root / "tests/ci_darwin_tests.json").read_text())["tests"]
+    assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} | shard_names <= set(darwin)
+    assert not {"gti_test_slow", "gti_test_isolate"} & set(darwin)
+    # The committed seeds, not the working file: full validation overwrites the
+    # working table with the newest refreshed artifact, which predates any entry
+    # this change adds and never gains the slow-tier names.
+    seeded = subprocess.run(["git", "show", "HEAD:tests/ci_test_durations.json"], cwd=root,
+                            capture_output=True, text=True, timeout=30, check=False)
+    durations = json.loads(seeded.stdout if seeded.returncode == 0 else
+                           (root / "tests/ci_test_durations.json").read_text())["seconds"]
+    for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate",
+                 *sorted(shard_names)):
+        assert name in durations, f"{name} has no shard-balancing duration"
+    # The slow tier reports its gti-test cases per case.
+    slow = jobs((workflows / "slow.yml").read_text())["shards"]
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/shard/gti-test"' in slow
+    assert "${{ runner.temp }}/shard/gti-test/*.xml" in slow
+    # The sanitizer verdict covers an instrumented gti_test_ui run.
+    compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
+    step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
+    # Runs after a failed library test too: its findings are independent.
+    assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step and "timeout-minutes: 120" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
+    assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
+    assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
+    # The compiler-API checks that left the aggregate for tests/unit keep a
+    # sanitized run in the library subset.
+    assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
+    assert "${{ runner.temp }}/sanitizers-gti-test.xml" in compiler
 
 
 def ordered(body, items, message):
@@ -826,9 +1235,9 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
+        "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
-        "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml"]
+        "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -891,9 +1300,14 @@ def change_review_contract(root):
     assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha }}") in job
     assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
+    # The review script's own regression harness runs in the gate as a
+    # tree-consistency entry, from a tree that is configured but not built.
     automation = jobs(ci)["automation-tests"]
-    assert ("python3 tests/stdlib_surface_review_test.py "
-            "scripts/check_stdlib_surface_review.py") in automation
+    assert "-L '^tree-consistency$'" in automation and "cmake --build" not in automation
+    sys.path.insert(0, str(root / "scripts"))
+    import tree_consistency
+    assert "stdlib_surface_review_policy" in tree_consistency.listed(root)
+    assert "stdlib_surface_review_test.py" in tree_consistency.harness_files(root)["stdlib_surface_review_policy"]
     # Execute the fork step: a base that main advanced past still yields the
     # candidate's fork point, and an absent base falls back to HEAD^.
     step = job.split("      - name: Find where the candidate forked\n", 1)[1]
@@ -928,9 +1342,9 @@ def change_review_contract(root):
 
 
 def freeze_contract(root):
-    """The old suite is frozen: a candidate adding a test file or an add_test(
+    """The old suite stays frozen: a candidate adding a test file or an add_test(
     registration fails, with the two-line guidance; edits, deletions, renames,
-    moved registrations and the new runner's directories pass."""
+    moved registrations and exactly the runner's directories pass."""
     script = root / "scripts/check_test_freeze.py"
     with tempfile.TemporaryDirectory(prefix="gti-test-freeze-") as directory:
         work = pathlib.Path(directory)
@@ -965,14 +1379,17 @@ def freeze_contract(root):
         write("tests/helper_support.py", "helper\n")
         allowed = commit()
         assert check(base, allowed) == (0, "test freeze: the candidate adds no old-suite tests\n")
-        # The new runner's directories and registration file are exempt.
+        # The runner's directories and registration file are exempt.
         for name in ("tests/ui/borrow/x_test.py", "tests/unit/arena_tests.cpp",
-                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt"):
+                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt",
+                     "tests/lsp/hover/x_test.py", "tests/project/build/x_test.py",
+                     "tests/slow/borrow/x_tests.cpp"):
             write(name, "add_test(NAME runner COMMAND runner)\n")
         write("tests/gti_test.cmake", "add_test(NAME gti_test COMMAND gti-test)\n")
         exempt = commit()
         assert check(allowed, exempt)[0] == 0
         for name, text in (("tests/new_test.py", "x\n"), ("tests/nested/new_tests.cpp", "x\n"),
+                           ("tests/uix/new_test.py", "x\n"), ("tests/coverage/new_test.py", "x\n"),
                            ("tests/CMakeLists.txt", registrations + "add_test(NAME fresh COMMAND fresh)\n"),
                            ("tests/TestThroughput.cmake", "add_test(\n")):
             run(["git", "checkout", "--quiet", "-B", "candidate", exempt], work)
@@ -980,9 +1397,9 @@ def freeze_contract(root):
             code, output = check(exempt, commit())
             assert code == 1 and name in output, (name, output)
             guidance = output.strip().splitlines()[-2:]
-            assert guidance[0].startswith("The old test suite is frozen") and all(
-                directory in guidance[1] for directory in ("tests/ui/", "tests/lsp/", "tests/project/",
-                                                           "tests/unit/")) \
+            assert guidance[0].startswith("The old test suite is frozen as a standing rule") and all(
+                directory in guidance[1] for directory in ("tests/ui/", "tests/slow/", "tests/lsp/",
+                                                           "tests/project/", "tests/unit/")) \
                 and "never add to an old harness" in guidance[1], output
 
 
@@ -1122,9 +1539,43 @@ def source_contract(root):
         run(["git", "checkout", "--quiet", "--detach", stray], work)
         assert query(stray, mode="admit-tip") == {"publish": "false", "lease": ""}, "tip names main commits only"
         run(["git", "checkout", "--quiet", "main"], work)
+        tip_order_contract(script, work, latest, newest, advanced, stray)
         selection_contract(script, work, newest, latest, advanced, stray)
         run(["git", "remote", "remove", "origin"], work)
         query(advanced, mode="admit-nightly", success=False)
+
+
+# GitHub-hosted runner labels the workflows may use. Standard hosted runners
+# are free for this public repository; larger runners (more cores, GPU, ARM
+# larger runners, runner groups) are billed per minute even for public
+# repositories, and the owner allows no cost beyond the plan fee. A new label
+# belongs here only after confirming it is a standard (unbilled) runner.
+STANDARD_RUNNER_LABELS = {"ubuntu-24.04", "macos-26"}
+
+
+def runner_label_contract(root):
+    """Every runs-on value and every matrix `os` value in .github/workflows is
+    a standard runner label from STANDARD_RUNNER_LABELS, so a billed runner
+    cannot be introduced unnoticed. runs-on is either such a label or
+    `${{ matrix.os }}` (whose values are checked here too); a list, `group:` or
+    `labels:` form (larger runners and runner groups) is refused."""
+    seen = set()
+    for path in sorted((root / ".github/workflows").glob("*.y*ml")):
+        text = path.read_text()
+        for value in re.findall(r"^\s*runs-on:(.*)$", text, re.M):
+            value = value.split(" #", 1)[0].strip().strip("'\"")
+            assert value == "${{ matrix.os }}" or value in STANDARD_RUNNER_LABELS, \
+                f"{path.name}: runs-on {value!r} is not a standard runner label (larger runners are billed)"
+            seen.add(value)
+        for value in re.findall(r"(?:[{,]\s*os:\s*|^\s*os:\s*|\"os\":\s*\")([^,}\"\s]+)", text, re.M):
+            assert value.strip("'") in STANDARD_RUNNER_LABELS, \
+                f"{path.name}: matrix os {value!r} is not a standard runner label (larger runners are billed)"
+            seen.add(value.strip("'"))
+    assert STANDARD_RUNNER_LABELS <= seen, "the allowlist names only labels the workflows use"
+    # The checker itself refuses billed forms.
+    for forged in ("runs-on: ubuntu-24.04-16core", "runs-on:\n  group: larger", "runs-on: [self-hosted]"):
+        values = [v.split(" #", 1)[0].strip() for v in re.findall(r"^\s*runs-on:(.*)$", forged, re.M)]
+        assert not all(v == "${{ matrix.os }}" or v in STANDARD_RUNNER_LABELS for v in values), forged
 
 
 def load_module(script, name):
@@ -1173,6 +1624,133 @@ def gate_job(sha, **overrides):
     job = {"name": "CI gate", "head_sha": sha, "status": "completed", "conclusion": "success"}
     job.update(overrides)
     return job
+
+
+def tip_order_contract(script, work, older, newer, oldest, stray):
+    """Full validation runs of several main commits overlap, so their tip jobs
+    finish in either order. Whichever order, the tag ends at the newer commit:
+    the claim skips a commit the published tip descends from, a lease lost to
+    a concurrent claim is decided again, and a claimed publication waits only
+    for older in-progress ones, so the newest claim uploads last."""
+    resolver = load_resolver(script)
+    repository = "lang-gti-official/gti"
+
+    def tag():
+        return run(["git", "ls-remote", "origin", "refs/tags/tip"], work).split()[0]
+
+    def set_tag(sha):
+        run(["git", "push", "--quiet", "--force", "origin", f"{sha}:refs/tags/tip"], work)
+
+    def output(values):
+        return dict(sorted(values.items()))
+
+    def claim(sha, *push):
+        # Admission checks the job's own checkout, as in full validation.
+        run(["git", "checkout", "--quiet", "--detach", sha], work)
+        return resolver.claim_tip(sha, *push)
+
+    with working_directory(work):
+        # Older finishes first, then newer: the newer claim moves the tag on.
+        set_tag(oldest)
+        assert claim(older) == {"publish": "true", "lease": oldest} and tag() == older
+        assert claim(newer) == {"publish": "true", "lease": older} and tag() == newer
+        # Newer finishes first, then older: the older claim is skipped.
+        set_tag(oldest)
+        assert claim(newer) == {"publish": "true", "lease": oldest} and tag() == newer
+        assert claim(older) == {"publish": "false", "lease": ""} and tag() == newer, \
+            "an older commit finishing late never replaces a newer tip"
+        assert output(claim(newer)) == {"lease": newer, "publish": "true"}, "a retry repairs"
+        assert claim(stray) == {"publish": "false", "lease": ""} and tag() == newer
+
+        # Both claims read the same tag; the other one's push lands first.
+        def racing(winner):
+            pushes = []
+
+            def push(sha, lease):
+                pushes.append((sha, lease))
+                if len(pushes) == 1:
+                    set_tag(winner)
+                    return resolver.push_tip(sha, lease)  # the stale lease must fail
+                return resolver.push_tip(sha, lease)
+            return push, pushes
+        set_tag(oldest)
+        push, pushes = racing(older)
+        assert claim(newer, push) == {"publish": "true", "lease": older} and tag() == newer
+        assert pushes == [(newer, oldest), (newer, older)], pushes
+        set_tag(oldest)
+        push, pushes = racing(newer)
+        assert claim(older, push) == {"publish": "false", "lease": ""} and tag() == newer
+        assert pushes == [(older, oldest)], "a lost lease decides again and then skips the older commit"
+        try:
+            claim(newer, lambda sha, lease: False)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an endlessly moving tag must fail the claim, not loop")
+
+        def tip_job(status):
+            return [{"name": "Validation plan", "status": "completed"}, {"name": "Tip toolchain", "status": status}]
+
+        def full(identity, sha, **overrides):
+            row = full_run(sha, id=identity, status="in_progress")
+            row.update(overrides)
+            return row
+
+        def listing(runs, jobs):
+            calls = []
+
+            def request(path):
+                calls.append(path)
+                if "/workflows/" in path:
+                    assert "branch=main" in path and "status=in_progress" in path, path
+                    return {"workflow_runs": runs}
+                return {"jobs": jobs[int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])]}
+            return request, calls
+        # The newer claim waits for the older publication; never the reverse.
+        request, _ = listing([full(9, newer), full(8, older)], {8: tip_job("in_progress"), 9: tip_job("in_progress")})
+        assert resolver.older_tip_publications(repository, newer, 9, request) == [8]
+        assert resolver.older_tip_publications(repository, older, 8, request) == []
+        quiet = [
+            ([full(8, older)], {8: tip_job("queued")}),
+            ([full(8, older)], {8: tip_job("completed")}),
+            ([full(8, older)], {8: [{"name": "Validation plan", "status": "in_progress"}]}),
+            ([full(9, older)], {9: tip_job("in_progress")}),
+            ([full(8, newer)], {8: tip_job("in_progress")}),
+            ([full(8, stray)], {8: tip_job("in_progress")}),
+            ([full(8, "f" * 40)], {8: tip_job("in_progress")}),
+            ([full(8, older, head_branch="feature")], {8: tip_job("in_progress")}),
+            ([full(8, older, path=".github/workflows/ci.yml")], {8: tip_job("in_progress")}),
+            ([full(8, older, repository={"full_name": "attacker/gti"})], {8: tip_job("in_progress")}),
+        ]
+        for runs, jobs in quiet:
+            request, calls = listing(runs, jobs)
+            assert resolver.older_tip_publications(repository, newer, 9, request) == [], (runs, jobs)
+        states = iter([tip_job("in_progress"), tip_job("in_progress"), tip_job("completed")])
+        sleeps = []
+
+        def waiting(path):
+            if "/workflows/" in path:
+                return {"workflow_runs": [full(8, older)]}
+            return {"jobs": next(states)}
+        assert resolver.await_tip(repository, newer, 9, waiting, sleep=sleeps.append, clock=lambda: 0.0) == \
+            {"ready": "true"}
+        assert sleeps == [resolver.TIP_POLL_SECONDS] * 2, sleeps
+        times = iter([0.0, resolver.TIP_WAIT_SECONDS + 1.0])
+        request, _ = listing([full(8, older)], {8: tip_job("in_progress")})
+        try:
+            resolver.await_tip(repository, newer, 9, request, sleep=lambda _: None, clock=lambda: next(times))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a stuck older publication must end the wait")
+        try:
+            resolver.await_tip(repository, newer, 0, request)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("the waiting run must identify itself")
+        set_tag(newer)
+    run(["git", "checkout", "--quiet", "main"], work)
 
 
 def selection_contract(script, work, head, published, older, stray):
@@ -1433,6 +2011,10 @@ def main():
     llvm_pin_contract(root)
     sanitizer_contract(root)
     slow_tier_contract(root)
+    gti_test_tiers_contract(root)
+    runner_label_contract(root)
+    retry_contract(root)
+    auto_revert_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

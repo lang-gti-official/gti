@@ -1,0 +1,18 @@
+// Constructor caller contexts: explicit and implicit base defaults should lower to verified MIR.
+//@ check-pass
+import std.source_location;
+class Base {
+  uint32_t line_value;
+public:
+  Base(std::source_location where = std::source_location::current())
+      : line_value(where.line()) {}
+};
+class Explicit : public Base {
+public:
+  Explicit() : Base() {}
+};
+class Implicit : public Base {
+public:
+  Implicit() {}
+};
+int main() { Explicit first{}; Implicit second{}; return 0; }

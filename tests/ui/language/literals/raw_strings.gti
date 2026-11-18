@@ -1,0 +1,27 @@
+// Raw strings keep their text verbatim, across lines and without escapes, and
+// are ordinary string literals everywhere else.
+//@ run-pass
+//@ stdout: \d+ "x" // kept
+//@ stdout: {
+//@ stdout:   "k": [1, 2]
+//@ stdout: }
+//@ stdout: 4 0 3
+import std.format;
+import std.string;
+
+constexpr std::string_view pattern = R"re(\d+ "x" // kept)re";
+static_assert(R"(a\nb)" == "a\\nb" && R"()".size() == 0u64);
+
+#macro uint64_t length(std::string_view text) { return text.size(); }
+
+int main() {
+  int32_t R = 3;
+  std::string_view json = R"json({
+  "k": [1, 2]
+})json";
+  std::string owned = std::string(R"(owned)");
+  std::println(pattern);
+  std::println(json);
+  std::println("{} {} {}", length!(R"(\n\t)"), R"()".size(), R);
+  return owned.size() == 5u64 ? 0 : 1;
+}

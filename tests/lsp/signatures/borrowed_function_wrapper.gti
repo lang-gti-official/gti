@@ -1,0 +1,29 @@
+// A function wrapper over a borrowed parameter shows `int32_t&` at the call;
+// a wrong argument is a user error. (From function_signature_lsp_test.py.)
+//@ hover @call: int32_t&
+import std.functional;
+struct Read { int operator()(int& value) { return value; }  public: Read() = default; };
+int main() {
+  Read reader{};
+  std::function<int(int&)> callback{std::move(reader)};
+  int value = 7;
+  return /*@call*/callback(value);
+}
+// --- step 2
+import std.functional;
+struct Read { int operator()(int& value) { return value; }  public: Read() = default; };
+int main() {
+  Read reader{};
+  std::function<int(int&)> callback{std::move(reader)};
+  int value = 7;
+  return callback(true);  //~ ERROR GTI-S2022
+}
+// --- step 3
+import std.functional;
+struct Read { int operator()(int& value) { return value; }  public: Read() = default; };
+int main() {
+  Read reader{};
+  std::function<int(int&)> callback{std::move(reader)};
+  int value = 7;
+  return callback(value);
+}

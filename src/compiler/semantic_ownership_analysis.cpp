@@ -652,6 +652,14 @@ auto SemanticVisitor::Impl::typeTraits(
                                  GenericConstraintKind::Relocatable))
         traits.relocation = RelocationKind::Structural;
     }
+    // An implication case may assume that the parameter carries borrowed
+    // state; storage of it by value then carries that state too.
+    for (const AssumedParameterFact &assumed : assumedParameterFacts)
+      if (assumed.borrowedState &&
+          assumed.parameter == type.genericParameterId) {
+        traits.containsBorrowedState = true;
+        traits.relocation = RelocationKind::Unavailable;
+      }
     return traits;
   }
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
@@ -1878,7 +1886,8 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
           block->statements().begin(), block->statements().end(),
           [&](const StmtPtr &nested) { return self(self, nested.get()); });
     if (const auto *branch = stmtAs<IfStmt>(statement))
-      return self(self, branch->thenBranch().get()) &&
+      return self(self, branch->initializer().get()) &&
+             self(self, branch->thenBranch().get()) &&
              self(self, branch->elseBranch().get());
     return false;
   };
@@ -3057,6 +3066,25 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
                                        .field = field});
     for (const auto &payload : textPayloadFields(type, use.formal))
       (void)requireOwnerlessTextField(use.function, payload);
+    // In a generic class a field typed by a class parameter may be text in
+    // an instance (`T elements[N]` of `array<std::string_view, N>`). Require
+    // it here; each instance keeps only the fields that are text there.
+    if (const ClassInfo *owner = classInfo(type);
+        owner != nullptr && !owner->genericParameters.empty())
+      for (const FieldInfo &entry : owner->fields) {
+        if (entry.declaration == nullptr)
+          continue;
+        const auto member =
+            owner->members.find(entry.declaration->name().lexeme);
+        if (member == owner->members.end() ||
+            !containsOpenTypeParameter(member->second.symbol.type))
+          continue;
+        (void)requireOwnerlessTextField(
+            use.function,
+            {.receiver = use.formal.receiver,
+             .parameter = use.formal.parameter,
+             .field = symbolForDeclaration(member->second.symbol.declaration)});
+      }
   }
   // Finite monotone closure over exact (formal, field) pairs.
   bool changed = true;
@@ -7173,20 +7201,6 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
       return contract;
     case ExplicitLifetimeResult::Kind::Region:
-      // A class region nothing in the class stores is supplied only by the
-      // parameters written in it, exactly as a method's own binder is.
-      if (lifetime.classBinder &&
-          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
-        if (ownerClass != 0 && !staticMember)
-          contract.origin = BorrowOriginKind::Receiver;
-        return contract;
-      }
-      if (lifetime.parameters.empty()) {
-        contract.missing = true;
-        return contract;
-      }
-      // A region on a result this instance makes owned
-      // (neither a reference nor a conditional borrow carrier) is inert.
       const bool arrayInput =
           std::any_of(parameterTypes.begin(), parameterTypes.end(),
                       [](const SemanticType &parameter) {
@@ -7201,15 +7215,13 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       const bool inlineTextResult =
           inlineTextStorage(returnType) &&
           (returnType.kind == SemanticType::Array || arrayInput);
-      if (!reference && !isBorrowReturningType(returnType) && !inlineTextResult)
-        return contract;
-      {
-        // A region written on a supplier this instance makes owned supplies
-        // nothing, and a mutable result needs a supplier that can grant
-        // mutable access. Over a pack this selects its borrowing elements.
-        std::vector<SemanticType> expanded;
-        for (const SemanticType &type : parameterTypes)
-          SemanticType::appendExpandedArgument(expanded, type);
+      // A region written on a supplier this instance makes owned supplies
+      // nothing, and a mutable result needs a supplier that can grant
+      // mutable access. Over a pack this selects its borrowing elements.
+      std::vector<SemanticType> expanded;
+      for (const SemanticType &type : parameterTypes)
+        SemanticType::appendExpandedArgument(expanded, type);
+      const auto regionSuppliers = [&] {
         std::vector<std::size_t> suppliers;
         for (const std::size_t position : lifetime.parameters) {
           if (position >= expanded.size()) {
@@ -7236,6 +7248,34 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
                mutableExternal || borrowAccess(type) == AccessMode::Mutable))
             suppliers.push_back(position);
         }
+        return suppliers;
+      };
+      // A class region is supplied by the receiver's fields stored in it and,
+      // when the class stores it, also by every parameter lane written in
+      // it: the union, as `choose<lifetime a>` names both of its inputs. A
+      // class region nothing in the class stores is supplied only by the
+      // parameters written in it, exactly as a method's own binder is.
+      if (lifetime.classBinder &&
+          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
+        if (ownerClass != 0 && !staticMember) {
+          contract.origin = BorrowOriginKind::Receiver;
+          if (!lifetime.parameters.empty() &&
+              (reference || isBorrowReturningType(returnType) ||
+               inlineTextResult))
+            contract.parameters = regionSuppliers();
+        }
+        return contract;
+      }
+      if (lifetime.parameters.empty()) {
+        contract.missing = true;
+        return contract;
+      }
+      // A region on a result this instance makes owned
+      // (neither a reference nor a conditional borrow carrier) is inert.
+      if (!reference && !isBorrowReturningType(returnType) && !inlineTextResult)
+        return contract;
+      {
+        std::vector<std::size_t> suppliers = regionSuppliers();
         if (suppliers.empty()) {
           contract.missing = true;
           return contract;
@@ -13165,6 +13205,8 @@ auto SemanticVisitor::Impl::metaQueryConstant(
         return ConstantValue{facts->generic};
       case 9:
         return ConstantValue{facts->constrained};
+      case 10:
+        return ConstantValue{facts->resultOutlivesReceiver};
       default:
         return std::nullopt;
       }

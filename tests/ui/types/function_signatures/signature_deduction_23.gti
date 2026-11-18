@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: class Tag<S> { public: Tag() = default; }; int fixed<R, A>(Tag<R(A)>& tag) { return 0; } int main() { Tag<int(int, int)> tag{}; return fixed(tag); }.
+class Tag<S> { public: Tag() = default; }; int fixed<R, A>(Tag<R(A)>& tag) { return 0; } int main() { Tag<int(int, int)> tag{}; return fixed(tag); }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2023 //~ ERROR GTI-S2003

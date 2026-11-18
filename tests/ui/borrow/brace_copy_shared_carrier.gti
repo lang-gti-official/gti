@@ -1,0 +1,18 @@
+// A brace copy of a shared carrier (`Reading copied{reading};`) joins the
+// source's owner group, so the source stays usable afterwards, also when it
+// was built through a reference binding and when the copy is moved on.
+//@ run-pass
+import std.utility;
+struct Reading {
+  int& value;
+  Reading(int& input) : value(input) {}
+};
+int main() {
+  int right = 9;
+  int& selected = right;
+  Reading reading{selected};
+  Reading copied{reading};
+  Reading moved{std::move(copied)};
+  Reading again{reading};
+  return reading.value + moved.value + again.value - 27;
+}

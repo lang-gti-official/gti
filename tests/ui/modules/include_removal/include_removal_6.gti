@@ -1,0 +1,8 @@
+// Include removal: import must not implicitly export a legacy source file.
+//@ analyze-fail
+//@ no-prelude
+// --- main.gti
+import "api.gti";  //~ ERROR GTI-I0012
+int main() { return answer(); }
+// --- api.gti
+int answer() { return 42; }

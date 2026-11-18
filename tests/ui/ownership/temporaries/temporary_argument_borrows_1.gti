@@ -1,0 +1,47 @@
+// Temporary argument borrows: direct construction, GTI-call, grouping, nested, multiple, and concrete-generic temporary arguments should lower to verified MIR.
+//@ check-pass
+class Report {
+  int value;
+
+public:
+  Report(int value) : value(value) {}
+  int code() { return this.value; }
+};
+
+class Factory {
+public:
+  Factory() {}
+  Report build(int value) { return Report(value); }
+};
+
+Report make_report(int value) { return Report(value); }
+int inspect(Report& report) { return report.code(); }
+int triple(int left, Report& report, int right) {
+  return left + report.code() + right;
+}
+int combine(Report& left, Report& right) {
+  return left.code() + right.code();
+}
+void observe(Report& report) {}
+Report duplicate(Report& report) { return Report(report.code()); }
+int generic<T>(T& value) { return 9; }
+int choose(Report& report) { return 100 + report.code(); }
+int choose(Report report) { return 200 + report.code(); }
+int consume(int value) { return value; }
+int side(int value) { return value; }
+
+int main() {
+  int direct = inspect(Report(1));
+  int produced = inspect((make_report(2)));
+  int nested = consume(inspect((Report(3))));
+  int ordered = triple(side(4), Report(5), side(6));
+  int multiple = combine(Report(7), make_report(8));
+  observe(Report(11));
+  int owned = duplicate(Report(12)).code();
+  int concrete = generic(Report(9));
+  int owning = choose(Report(10));
+  Factory factory = Factory();
+  int member_produced = inspect(factory.build(13));
+  return direct + produced + nested + ordered + multiple + concrete + owning +
+         member_produced;
+}

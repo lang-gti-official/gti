@@ -1,0 +1,24 @@
+// Generic enum instances: default alias namespace.
+//@ run-pass
+namespace messages {
+  enum class Packet<T, U = T, uint64_t Channel = 3> {
+    absent,
+    pair(T first, U second)
+  };
+}
+using Default = messages::Packet<int32_t>;
+using Explicit = messages::Packet<int32_t, int32_t, 3>;
+using Other = messages::Packet<int32_t, int64_t, 9>;
+Default default_packet(Explicit packet) { return packet; }
+int main() {
+  Default first = default_packet(messages::Packet<int32_t, int32_t, 3>::pair(1, 2));
+  Other second = Other::pair(3, int64_t(4));
+  switch (first) {
+    case Default::absent: return 1;
+    case Default::pair(a, b): if (a + b != 3) { return 2; } break;
+  }
+  switch (second) {
+    case messages::Packet<int32_t, int64_t, 9>::absent: return 3;
+    case messages::Packet<int32_t, int64_t, 9>::pair(a, b): return a == 3 && b == int64_t(4) ? 0 : 4;
+  }
+}

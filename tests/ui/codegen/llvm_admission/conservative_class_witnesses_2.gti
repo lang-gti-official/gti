@@ -1,0 +1,10 @@
+// Conservative class witnesses: representable class storage retains the required method body and its exact callable-storage witness.
+//@ check-pass
+class Value {
+  int data = 1;
+public:
+  int unsupported() { auto call = [](int value)->int{return value;}; return call(this.data); }
+public:
+  Value() = default;
+};
+int inspect(Value& value) { return value.unsupported(); }

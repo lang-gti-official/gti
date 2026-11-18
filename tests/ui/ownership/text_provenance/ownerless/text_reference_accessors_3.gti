@@ -1,0 +1,23 @@
+// Text reference accessors: a value over a local owner reaches no escaping accessor: kept = t.ref();.
+import std.string;
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+  int& kindOf() { return this.kindRef(); }
+  std::string_view& alias() { return this.ref(); }
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+int run() { std::string input{"input"}; Token t = Token(input.view(), 1); kept = t.ref(); return 0; }  //~ ERROR GTI-S2045
+int main() { return run(); }

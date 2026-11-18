@@ -1,0 +1,21 @@
+// Verified concrete pack owners: verified functions retain the source identity of an empty pack.
+//@ build-pass
+//@ slow
+enum class Tag { value };
+void receive<Args...>(int prefix, Args... args) {}
+struct Box {
+  Box<Args...>(Tag tag, Args... args) {}
+public:
+  Box() = default;
+};
+int invoke<Args...>(Args... args) {
+  auto callback = [](int prefix, Args... forwarded) -> int { return prefix; };
+  return callback(7, args...);
+}
+int main() {
+  receive(0);
+  receive(0, 1, true);
+  Box value{Tag::value};
+  Box full{Tag::value, 1, true};
+  return invoke() + invoke(1, true) - 14;
+}

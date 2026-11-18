@@ -1,0 +1,14 @@
+// A concatenation result owns its bytes independently of local inputs and temporary views.
+//@ run-pass
+import std.string;
+std::string make() {
+  std::string local = "local";
+  return local.view() + std::string(" result");
+}
+int main() {
+  auto value = make();
+  if (value != "local result") { return 1; }
+  auto temporary_views = std::string("one").view() + std::string("two").view();
+  if (temporary_views != "onetwo") { return 2; }
+  return 0;
+}

@@ -216,9 +216,10 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // the initial pass cannot retain a call's inputs before its callee exists.
   // Verification below reconstructs effects from the rebuilt program and
   // checks every lifetime; an unchecked seed never becomes executable MIR.
+  MirCarrierAnalysis seedAnalysis(seed.program);
   MirLoweringResult provisional =
       lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false,
-                   &seed.program);
+                   &seed.program, &seedAnalysis);
   if (!provisional.valid()) {
     return provisional;
   }
@@ -230,7 +231,16 @@ MirLowerer::lowerVerified(const HirProgram &source,
     function.entryKind = ProgramEntryKind::None;
     function.entryArgumentAppendTarget.reset();
   }
-  const auto provisionalProof = verifyMirProgram(provisionalVerification);
+  // The verification copy differs only in entry metadata: its call
+  // summaries are the provisional program's, reused for the rounds below.
+  // Summaries whose inputs the rebuild left unchanged carry over from the
+  // seed.
+  const auto verificationAnalysis = MirCarrierAnalysis::reusingUnchanged(
+      provisionalVerification, seedAnalysis);
+  const auto provisionalProof = [&] {
+    const MirCarrierAnalysisScope scope(*verificationAnalysis);
+    return verifyMirProgram(provisionalVerification);
+  }();
   if (!provisionalProof.valid()) {
     for (const auto &error : provisionalProof.errors)
       provisional.errors.push_back({.body = {error.bodyKind, error.owner},
@@ -247,20 +257,41 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // Effects only ever move from conservative true toward proved false, so this
   // terminates; the bound keeps a non-converging program fail-closed below.
   constexpr int maximumEffectRounds = 8;
-  MirDefinedFailureEffects effects =
-      deriveMirDefinedFailureEffects(provisional.program);
   // Retaining transfers come from independently verified source MIR, never
   // from unchecked declaration hints. Reuse that conservative shape while
   // failure cleanup is refined; source function identities remain fixed.
-  MirLoweringResult result = lowerProgram(source, failureMetadata, effects,
-                                          true, &provisional.program);
+  MirCarrierAnalysis provisionalAnalysis(provisional.program,
+                                         *verificationAnalysis);
+  MirDefinedFailureEffects effects = [&] {
+    const MirCarrierAnalysisScope scope(provisionalAnalysis);
+    return deriveMirDefinedFailureEffects(provisional.program);
+  }();
+  MirLoweringResult result =
+      lowerProgram(source, failureMetadata, effects, true, &provisional.program,
+                   &provisionalAnalysis);
+  // The final program's effects and its verification share one analysis
+  // session. A session never outlives the program contents it read.
+  // Functions whose bodies and reached bodies the rounds left unchanged keep
+  // the provisional program's converged call summaries.
+  struct ScopedAnalysis {
+    std::unique_ptr<MirCarrierAnalysis> analysis;
+    MirCarrierAnalysisScope scope;
+    ScopedAnalysis(const MirProgram &program, const MirCarrierAnalysis &donor)
+        : analysis(MirCarrierAnalysis::reusingUnchanged(program, donor)),
+          scope(*analysis) {}
+  };
+  auto resultAnalysis =
+      std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
   MirDefinedFailureEffects finalEffects =
       deriveMirDefinedFailureEffects(result.program);
   for (int round = 0; round < maximumEffectRounds && effects != finalEffects;
        ++round) {
     effects = finalEffects;
+    resultAnalysis.reset();
     result = lowerProgram(source, failureMetadata, effects, true,
-                          &provisional.program);
+                          &provisional.program, &provisionalAnalysis);
+    resultAnalysis =
+        std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
     finalEffects = deriveMirDefinedFailureEffects(result.program);
   }
   const bool exactSummaries =
@@ -287,18 +318,28 @@ MirLowerer::lowerVerified(const HirProgram &source,
                  });
   result.program.valid_ = result.program.valid_ && exactSummaries &&
                           verifyMirProgram(result.program).valid();
+  resultAnalysis.reset();
   return result;
 }
 
 MirLoweringResult MirLowerer::lowerProgram(
     const HirProgram &source, const FailureMetadata &failureMetadata,
     const MirDefinedFailureEffects &definedFailureEffects,
-    bool includeHostedStartup, const MirProgram *retainingProgram) {
+    bool includeHostedStartup, const MirProgram *retainingProgram,
+    MirCarrierAnalysis *sharedRetainingAnalysis) {
   // Calls are interpreted against the previous, immutable MIR snapshot, never
-  // the output program being assembled by this lowering pass.
-  std::unique_ptr<MirCarrierAnalysis> retainingAnalysis;
-  if (retainingProgram)
-    retainingAnalysis = std::make_unique<MirCarrierAnalysis>(*retainingProgram);
+  // the output program being assembled by this lowering pass. Rounds over
+  // one snapshot share its analysis and call summaries.
+  std::unique_ptr<MirCarrierAnalysis> ownRetainingAnalysis;
+  if (retainingProgram &&
+      (!sharedRetainingAnalysis ||
+       &sharedRetainingAnalysis->program() != retainingProgram))
+    ownRetainingAnalysis =
+        std::make_unique<MirCarrierAnalysis>(*retainingProgram);
+  MirCarrierAnalysis *const retainingAnalysis =
+      ownRetainingAnalysis ? ownRetainingAnalysis.get()
+      : retainingProgram   ? sharedRetainingAnalysis
+                           : nullptr;
   MirLoweringResult result;
   if (!source.valid()) {
     result.program.valid_ = false;
@@ -344,12 +385,12 @@ MirLoweringResult MirLowerer::lowerProgram(
   // provisional module would turn owning global receivers into unproved
   // dynamic calls, even when their declaration fixes the complete type.
   // Only the hosted entry wrapper waits for the derived failure contracts.
-  result.program.moduleBody = lowerBody(
-      source, failureMetadata, source.module(), MirBodyKind::Module,
-      SemanticType::Void, {}, definedFailureEffects, retainingProgram,
-      retainingAnalysis.get(), valid, result.errors, 0, false, nullptr, nullptr,
-      nullptr, nullptr, &source.programInitializationPlan(),
-      &result.program.programInitialization);
+  result.program.moduleBody =
+      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
+                SemanticType::Void, {}, definedFailureEffects, retainingProgram,
+                retainingAnalysis, valid, result.errors, 0, false, nullptr,
+                nullptr, nullptr, nullptr, &source.programInitializationPlan(),
+                &result.program.programInitialization);
 
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
@@ -414,16 +455,16 @@ MirLoweringResult MirLowerer::lowerProgram(
     lowered.fieldInitializers =
         lowerBody(source, failureMetadata, instance.fieldInitializers,
                   MirBodyKind::FieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, retainingProgram,
-                  retainingAnalysis.get(), valid, result.errors, instance.id,
-                  false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, instance.id, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     lowered.staticFieldInitializers =
         lowerBody(source, failureMetadata, instance.staticFieldInitializers,
                   MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, retainingProgram,
-                  retainingAnalysis.get(), valid, result.errors, instance.id,
-                  false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, instance.id, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
          ++field) {
@@ -549,7 +590,7 @@ MirLoweringResult MirLowerer::lowerProgram(
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Function,
              instance.returnType, {}, definedFailureEffects, retainingProgram,
-             retainingAnalysis.get(), valid, result.errors, instance.id,
+             retainingAnalysis, valid, result.errors, instance.id,
              implicitZeroReturn, nullptr,
              signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, nullptr,
@@ -660,11 +701,10 @@ MirLoweringResult MirLowerer::lowerProgram(
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
-             definedFailureEffects, retainingProgram, retainingAnalysis.get(),
-             valid, result.errors, instance.id, false, &instance.initializers,
-             nullptr, signatureOnly ? &*signatureOnly : &instance, nullptr,
-             nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit),
+             definedFailureEffects, retainingProgram, retainingAnalysis, valid,
+             result.errors, instance.id, false, &instance.initializers, nullptr,
+             signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
+             nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
     auto &lowered = result.program.constructors.back();
     if (constructorOwner && constructorOwner->polymorphic &&
@@ -715,7 +755,7 @@ MirLoweringResult MirLowerer::lowerProgram(
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Destructor,
              SemanticType::Void, {}, definedFailureEffects, retainingProgram,
-             retainingAnalysis.get(), valid, result.errors, instance.id, false,
+             retainingAnalysis, valid, result.errors, instance.id, false,
              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
              &instance)});
@@ -762,8 +802,8 @@ MirLoweringResult MirLowerer::lowerProgram(
     lowered.body = lowerBody(
         source, failureMetadata, instance.body, MirBodyKind::Lambda,
         instance.returnType, {}, definedFailureEffects, retainingProgram,
-        retainingAnalysis.get(), valid, result.errors, instance.id, false,
-        nullptr, nullptr, nullptr, &instance, nullptr, nullptr,
+        retainingAnalysis, valid, result.errors, instance.id, false, nullptr,
+        nullptr, nullptr, &instance, nullptr, nullptr,
         instance.source != nullptr &&
             compilerTrustedSourcePath(source,
                                       instance.source->bracket().source));
@@ -778,11 +818,11 @@ MirLoweringResult MirLowerer::lowerProgram(
                                   .requiresActiveCleanup =
                                       storage.requiresActiveCleanup,
                                   .dataInitializer = storage.dataInitializer};
-    lowered.initializer = lowerBody(
-        source, failureMetadata, storage.initializer,
-        MirBodyKind::ThreadLocalInitializer, storage.type, {},
-        definedFailureEffects, retainingProgram, retainingAnalysis.get(), valid,
-        result.errors, storage.symbol);
+    lowered.initializer =
+        lowerBody(source, failureMetadata, storage.initializer,
+                  MirBodyKind::ThreadLocalInitializer, storage.type, {},
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, storage.symbol);
     const auto cleanup = mirUniqueCleanupType(result.program, storage.type);
     if (!cleanup && storage.requiresActiveCleanup) {
       valid = false;

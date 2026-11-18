@@ -1,0 +1,6 @@
+// Semantic rejections: the default execution profile should reject thread before backend entry.
+import std.thread;
+int main() {
+  auto started = std::thread::start([]() -> void {});  //~ ERROR GTI-S2084
+  return 0;
+}

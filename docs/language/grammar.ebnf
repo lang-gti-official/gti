@@ -20,6 +20,38 @@
    INT_LITERAL accepts decimal digits, hexadecimal `0x`/`0X` digits, and
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
    magnitude no larger than uint64_t before semantic type selection.
+   Lexically:
+
+     INT_LITERAL      = ( decimal-digits | ( "0x" | "0X" ) hex-digits
+                        | ( "0b" | "0B" ) binary-digits ) [ [ "_" ] int-suffix ] ;
+     FLOAT_LITERAL    = decimal-digits "." decimal-digits
+                        [ [ "_" ] ( "d" | "D" | float-suffix ) ]
+                      | decimal-digits [ "_" ] float-suffix ;
+     decimal-digits   = DIGIT { [ "_" ] DIGIT } ;
+     hex-digits       = HEX_DIGIT { [ "_" ] HEX_DIGIT } ;
+     binary-digits    = BINARY_DIGIT { [ "_" ] BINARY_DIGIT } ;
+     int-suffix       = "u8" | "u16" | "u32" | "u64"
+                      | "i8" | "i16" | "i32" | "i64" ;
+     float-suffix     = "f32" | "f64" ;
+
+   A `_` digit separator has no meaning and must sit between two digits of one
+   run, except for one `_` directly before a suffix. The whole identifier-like
+   tail after the digits is the suffix; any other tail is a lexical error.
+   `f` is a hexadecimal digit, so `0x1f32` has no suffix. A suffixed integer
+   literal has exactly its suffix type (`u8` = uint8_t ... `i64` = int64_t);
+   `f32` = float and `f64` = double.
+
+   STRING_LITERAL also has a raw form, lexed as one token with the same
+   meaning as an ordinary string literal of the same bytes:
+
+     raw-string       = "R" '"' raw-delimiter "(" raw-body ")" raw-delimiter '"' ;
+     raw-delimiter    = 0 to 16 printable ASCII characters other than space,
+                        "(", ")", "\" and '"' ;
+     raw-body         = any bytes, verbatim and without escapes, up to the
+                        first ")" raw-delimiter '"' ;
+
+   `R` not followed by `"` is an IDENTIFIER, and an identifier ending in `R`
+   followed by `"` is an IDENTIFIER and an ordinary STRING_LITERAL.
 
    Recursive raw pointers use C++-familiar `T*`/`const T*` spelling with
    per-layer qualification. Inert address formation from an admitted checked
@@ -1355,8 +1387,23 @@ unsafe-statement       = "unsafe" block ;
    provenance, writable access, and native-call requirements as applicable;
    violating one of those obligations is undefined behavior. *)
 
-if-statement           = "if" [ "constexpr" ] "(" expression ")" statement
-                         [ "else" statement ] ;
+if-statement           = "if" [ "constexpr" ] "(" [ init-statement ] expression ")"
+                         statement [ "else" statement ] ;
+
+init-statement         = variable-declaration
+                       | structured-binding-declaration
+                       | expression-statement ;
+
+(* C++17/C++20 init statements. An `if`, `switch` or range `for` header may
+   begin with one init statement, which ends with its own `;`. The statement
+   means exactly a block whose first statement is the init: its names are in
+   scope in the condition, subject or range and in every branch, `else`
+   included, and its objects are destroyed after the taken branch when the
+   whole statement ends, on every exit (`break`, `continue`, `return` and `?`
+   propagation run that cleanup). Its names may shadow enclosing names and be
+   shadowed by nested blocks like any block-scoped declaration. The init of
+   `if constexpr` must be a `constexpr` variable declaration (or empty). The
+   C++98 declaration-as-condition `if (T x = e)` is not part of GTI. *)
 
 while-statement        = "while" "(" expression ")" statement ;
 
@@ -1372,8 +1419,8 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
 
 for-init               = variable-declaration | expression-statement ;
 
-range-for-statement    = "for" "(" range-for-declaration ":" expression ")"
-                         statement ;
+range-for-statement    = "for" "(" [ init-statement ] range-for-declaration ":"
+                         expression ")" statement ;
 
 range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent }
                        | "auto" [ "&" ] "[" IDENTIFIER { "," IDENTIFIER } "]"
@@ -1411,7 +1458,7 @@ constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
    child loans, ending the element before increment or every exit. General
    proxy iterators and paired mutable subranges need separate contracts. *)
 
-switch-statement       = "switch" "(" expression ")"
+switch-statement       = "switch" "(" [ init-statement ] expression ")"
                          "{" { switch-item } "}" ;
 
 switch-item            = switch-label | block-item ;
@@ -1948,9 +1995,10 @@ literal                = INT_LITERAL
                        | "false" ;
 
 (* FLOAT_LITERAL is one or more decimal digits, `.`, and one or more decimal
-   digits, optionally followed by `d` or `D`. Exponents, other suffixes,
-   hexadecimal forms, leading/trailing-dot forms, infinity, and NaN spellings
-   are not accepted. The complete decimal digits are rounded directly to
-   IEEE-754 binary32 when unsuffixed or binary64 when suffixed, using
-   round-to-nearest, ties-to-even. Finite-range overflow is a lexical error;
+   digits, optionally followed by `d`, `D`, `f32` or `f64`, or decimal digits
+   followed by `f32` or `f64` (see the lexical rules at the top of this file).
+   Exponents, other suffixes, hexadecimal forms, leading/trailing-dot forms,
+   infinity, and NaN spellings are not accepted. The complete decimal digits
+   are rounded directly to IEEE-754 binary32 when unsuffixed or `f32`, or to
+   binary64 for `d`, `D` or `f64`, using round-to-nearest, ties-to-even. Finite-range overflow is a lexical error;
    underflow rounds to a subnormal value or positive zero. *)

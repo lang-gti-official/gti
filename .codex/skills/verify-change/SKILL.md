@@ -44,14 +44,14 @@ tooling that consume them. For the changed paths the planner prints:
 
 - each matched **area** and the changed paths it selected; nested areas
   (for example `llvm-backend` and `llvm-abi-layout`) both apply;
-- the **baseline** every implementation change runs: `compiler_pipeline`
+- the **baseline** every implementation change runs: `gti_test_ui`
   and the native O0/O3 smoke
   (`python3 scripts/validation_checks.py smoke --build build`);
 - **T0**, the registered tests whose CMake registration names a changed test,
-  fixture or harness file; source files under `tests/ui/`, `tests/lsp/` and
-  `tests/project/` select the `gti_test_ui` self-check and all four source
-  shards through the ownership map (T1). For a quick loop run
-  `build-release/gti-test <path>` on just those files;
+  fixture or harness file (a changed `tests/ui/`, `tests/lsp/` or
+  `tests/project/` file selects `gti_test_ui` and its `tests/ui` shards,
+  `-R '^gti_test_ui'`; for a quick loop run
+  `build-release/gti-test <path>` on just those files);
 - **T1**, the owning tests, and **T2**, the consumer tests, each as one
   runnable `ctest ... -R '<anchored regex>'` command, followed by a
   per-test list of the areas that selected it;
@@ -69,6 +69,15 @@ tooling that consume them. For the changed paths the planner prints:
   warns (advisory; it fails under `GTI_ADVISORY_CHECKS=strict`) while a
   tracked file under `src/`, `include/`, `runtime/`, `stdlib/`, `scripts/` or
   `lua/` has neither, and the selection silently misses its checks.
+
+A change that deletes, adds or renames a test file, script or fixture also
+runs the `tree-consistency` label (meta-tests that cross-reference the tree;
+the CI gate runs it too) from a configure-only tree:
+
+```sh
+cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"
+ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'
+```
 
 The selection is a lower bound, never a proof of sufficiency. The author
 extends it from their own analysis of the changed invariant: which phases and
@@ -162,11 +171,11 @@ invalid setup cheaply; they do not replace required broad coverage.
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
    The complete suite is never a contributor gate: post-integration full
-   validation runs it on each main head on every required platform. Until the
-   test-suite migration completes, that includes the old harnesses, and
-   `compiler_pipeline` remains a focused check. Platform, runtime and
-   performance obligations that the queue does not cover (for example a
-   benchmark comparison under ADR 012) remain yours to run and record.
+   validation runs it on each main head on every required platform, including
+   the frozen old-style harnesses that remain.
+   Platform, runtime and performance obligations that the queue does not
+   cover (for example a benchmark comparison under ADR 012) remain yours to
+   run and record.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
    generated, vendored, user, or semantic changes.
 5. If a check fails, preserve its raw command and output, identify the owning

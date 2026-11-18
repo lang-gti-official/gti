@@ -1,0 +1,9 @@
+// Native identity: rejected with GTI-S2003.
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+void take(Celsius value) {}
+int main() { take(21); return 0; }  //~ ERROR GTI-S2003

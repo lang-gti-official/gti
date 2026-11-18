@@ -1,0 +1,76 @@
+// A consumed temporary holding a mutable stored reference relays a read-only result.
+//@ run-pass
+//@ exit-code: 0
+
+// `Holder(mine).consumed()` consumes a temporary whose stored reference is
+// exclusive. Its read-only class-region result borrows the referent below
+// the caller's own authority, so it outlives the consumed temporary.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Holder<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Holder(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> consumed() && { return this.direct.value; }
+};
+// A second region stored beside the exclusive one stays independent.
+class Pair<lifetime owner, lifetime other> {
+  mut Box&<owner> direct;
+  Box&<other> second;
+public:
+  Pair(mut Box&<owner> direct, Box&<other> second)
+      : direct(direct), second(second) {}
+  int&<owner> consumed() && { return this.direct.value; }
+  int peek() { return this.direct.value + this.second.value; }
+};
+// A cleanup that only reads a shared stored reference may still relay it.
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  ~Reader() { int seen = this.direct.value; }
+  int&<owner> consumed() && { return this.direct.value; }
+};
+
+int&<a> returned<lifetime a>(mut Box&<a> mine) {
+  return Holder(mine).consumed();
+}
+int&<a> bound<lifetime a>(mut Box&<a> mine) {
+  int& kept = Holder(mine).consumed();
+  int seen = mine.value;
+  return kept;
+}
+int&<a> paired<lifetime a, lifetime b>(mut Box&<a> mine, Box&<b> dropped) {
+  return Pair(mine, dropped).consumed();
+}
+int peeked<lifetime a, lifetime b>(mut Box&<a> mine, Box&<b> other) {
+  Pair pair = Pair(mine, other);
+  return pair.peek();
+}
+
+int main() {
+  mut Box mine{9};
+  int& direct = Holder(mine).consumed();
+  if (direct != 9) {
+    return 1;
+  }
+  int& relayed = returned(mine);
+  int read = mine.value;
+  if (relayed + read != 18) {
+    return 2;
+  }
+  if (bound(mine) != 9) {
+    return 5;
+  }
+  {
+    Box dropped{1};
+    if (paired(mine, dropped) != 9 || peeked(mine, dropped) != 10) {
+      return 3;
+    }
+  }
+  Box shared{4};
+  int& read_only = Reader(shared).consumed();
+  return read_only == 4 ? 0 : 4;
+}

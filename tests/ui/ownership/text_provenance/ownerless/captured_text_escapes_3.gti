@@ -1,0 +1,60 @@
+// Captured text escapes: captured text escapes are rejected at source.
+import std.string;
+import std.functional;
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+class Label {
+public:
+  mut std::string_view text;
+  Label() : text("") {}
+  void set(std::string_view text) mut { this.text = text; }
+};
+enum class Message { text(std::string_view value), none };
+mut std::string_view kept = "";
+void keep(std::string_view text) { kept = text; }
+std::string_view same(std::string_view text) { return text; }
+Token make(std::string_view text) { return Token(text, 1); }
+std::string_view call<F>(F view) { return view(); }
+
+int stores(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  kept = f();  //~ ERROR GTI-S2045
+  mut Label label{};
+  label.text = f();  //~ ERROR GTI-S2045
+  Note note{.text = f(), .line = 1};  //~ ERROR GTI-S2045
+  Token token = Token(f(), 1);  //~ ERROR GTI-S2045
+  Token made = make(f());  //~ ERROR GTI-S2045
+  std::string_view shelf[2] = {f(), "x"};  //~ ERROR GTI-S2045
+  mut std::string_view slots[1] = {"x"};
+  slots[0] = f();  //~ ERROR GTI-S2045
+  Message message = Message::text(f());  //~ ERROR GTI-S2045
+  keep(f());  //~ ERROR GTI-S2045
+  label.set(f());  // a setter grows the local label's dependencies (RFC 0003)
+  return note.line + token.n + made.n;
+}
+int locals(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  std::string_view held = f();
+  kept = held;  //~ ERROR GTI-S2045
+  std::string_view fixed = "fixed";
+  auto g = [fixed]() -> std::string_view { return fixed; };
+  mut std::string_view later = "";
+  kept = later;  //~ ERROR GTI-S2045
+  later = g();
+  auto store = [v]() -> int { kept = v; return 0; };  //~ ERROR GTI-S2045
+  return store();
+}
+class Box {
+public:
+  std::string_view text;
+  Box(std::string_view s) : text([s]() -> std::string_view { return s; }()) {}  //~ ERROR GTI-S2045
+};
+int main() { return stores("x") + locals("y"); }

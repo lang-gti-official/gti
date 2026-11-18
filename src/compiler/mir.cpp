@@ -1389,6 +1389,28 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
                   project(dependency.source, dependency.designatedFields))
             return *result;
       }
+      // A by-value local carrier relayed by a reference parameter's entry
+      // (its group folded into that entry) stores references into the
+      // parameter's referent. A dereferenced reference field of it therefore
+      // designates storage below that referent; identify it conservatively
+      // as the whole referent plus any further projections.
+      const auto *formal =
+          loan != nullptr ? body.findPlace(loan->source) : nullptr;
+      if (loan != nullptr && loan->kind == MirLoanKind::Parameter &&
+          loan->entry && formal != nullptr &&
+          formal->root == MirPlaceRootKind::Binding &&
+          formal->projections.empty() && formal->binding != place->binding &&
+          formal->type.kind == SemanticType::Reference &&
+          place->projections.size() >= 2 &&
+          place->projections.front().kind == MirProjectionKind::Field &&
+          place->projections[1].kind == MirProjectionKind::Dereference) {
+        auto result = self(self, loan->source, depth + 1);
+        result.throughLoan = carrier;
+        result.projections.push_back({.kind = MirProjectionKind::Dereference});
+        // Fields below the stored referent are not positioned within the
+        // formal's referent; stop at the whole referent.
+        return result;
+      }
     }
     if (place->root == MirPlaceRootKind::Loan) {
       throughLoan = place->loan;
@@ -3416,6 +3438,57 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     }
     return result;
   };
+  // A loan that leaves the body never depends on storage the body owns: a
+  // returned or escaping loan's further sources are reached through a
+  // reference (a formal's referent, or what one designates), never a local
+  // or by-value object the return destroys.
+  for (const MirLoan &loan : body.loans) {
+    if (loan.kind != MirLoanKind::Return && !loan.escapes)
+      continue;
+    for (const auto &dependency : loan.additionalDependencies) {
+      const MirPlace *place = body.findPlace(dependency.source);
+      if (place == nullptr || place->root != MirPlaceRootKind::Binding)
+        continue;
+      const bool throughReference = std::any_of(
+          place->projections.begin(), place->projections.end(),
+          [](const auto &projection) {
+            return projection.kind == MirProjectionKind::Dereference ||
+                   projection.kind == MirProjectionKind::RawDereference;
+          });
+      // A reference binding, formal or local, names its referent, and a
+      // by-value borrow-carrier formal stands for the caller-owned referents
+      // its stored references designate. Any other object, a scalar or
+      // owned by-value formal included, dies with the body.
+      const bool reference = std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &base) {
+            return base.root == MirPlaceRootKind::Binding &&
+                   base.binding == place->binding && base.projections.empty() &&
+                   (base.type.kind == SemanticType::Reference ||
+                    (base.initiallyAvailable &&
+                     base.traits.containsBorrowedState));
+          });
+      // A reference element of a reference pack is a reference slot too.
+      if (!throughReference && !reference &&
+          place->type.kind != SemanticType::Reference) {
+        // A returned loan is a borrow escape at its return, not malformed
+        // MIR.
+        MirBlockId returning = 0;
+        for (const MirBlock &block : body.blocks)
+          if (block.terminator.returnLoan &&
+              *block.terminator.returnLoan == loan.id)
+            returning = block.id;
+        MirVerificationResult rejected =
+            failure(body, owner,
+                    "escaping loan " + std::to_string(loan.id) +
+                        " depends on body-owned storage",
+                    returning);
+        if (returning != 0)
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Escape, .loan = loan.id};
+        return rejected;
+      }
+    }
+  }
   for (const MirLoan &loan : body.loans) {
     if (loan.parent == 0) {
       continue;
@@ -3468,16 +3541,50 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               // loan: its exact source-call mapping and ordinary ownership
               // checks establish that authority instead. The stored loan
               // still protects this additional source for its entire lifetime.
+              // The referent of a read-only reference formal is the caller's
+              // storage: a shared additional dependency on it needs no loan
+              // of this body's own, as an owned local input needs none.
+              const bool independentReadOnlyFormal =
+                  authority == 0 && sourcePlace != nullptr &&
+                  dependency != loan.additionalDependencies.end() &&
+                  dependency->access == AccessMode::ReadOnly &&
+                  sourcePlace->root == MirPlaceRootKind::Binding &&
+                  !sourcePlace->projections.empty() &&
+                  sourcePlace->projections.front().kind ==
+                      MirProjectionKind::Dereference &&
+                  // The referent or a part of it, never through a further
+                  // reference it stores.
+                  std::all_of(
+                      std::next(sourcePlace->projections.begin()),
+                      sourcePlace->projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind == MirProjectionKind::Field ||
+                               projection.kind == MirProjectionKind::Index;
+                      }) &&
+                  std::any_of(
+                      body.places.begin(), body.places.end(),
+                      [&](const MirPlace &formal) {
+                        return formal.root == MirPlaceRootKind::Binding &&
+                               formal.binding == sourcePlace->binding &&
+                               formal.projections.empty() &&
+                               formal.initiallyAvailable &&
+                               formal.type.kind == SemanticType::Reference &&
+                               formal.type.referenceAccess ==
+                                   AccessMode::ReadOnly;
+                      });
               if (loan.kind == MirLoanKind::Stored && !loan.entry &&
                   !loan.escapes && child != loan.source &&
                   ((authority != 0 && authority != loan.parent) ||
-                   independentOwnedInput))
+                   independentOwnedInput || independentReadOnlyFormal))
                 return false;
               // A call result several inputs may own retains each further
-              // input under that input's own authority, as a stored loan does.
+              // input under that input's own authority, as a stored loan
+              // does: an owned local input under its ordinary ownership, or
+              // a read-only reference formal's referent in the caller.
               if (loan.kind == MirLoanKind::CallResult && !loan.entry &&
-                  !loan.escapes && child != loan.source && authority != 0 &&
-                  authority != loan.parent)
+                  !loan.escapes && child != loan.source &&
+                  ((authority != 0 && authority != loan.parent) ||
+                   independentOwnedInput || independentReadOnlyFormal))
                 return false;
               return std::none_of(
                   parentSources.begin(), parentSources.end(),
@@ -5849,11 +5956,78 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               return permitted;
             };
             const MirOperand *resolved = callInputSource(operand);
+            // A temporary's exclusive stored group may hand a read-only
+            // result to its parent only when the group retires immediately
+            // at publication, before any access: no exclusive sibling then
+            // overlaps the shared result. That group is the handoff alias.
+            const auto exclusiveGroupRetired = [&](MirLoanId group) {
+              const MirBlock *continuation = &block;
+              auto next = std::find_if(block.instructions.begin(),
+                                       block.instructions.end(),
+                                       [&](const auto &candidate) {
+                                         return candidate.id == instruction.id;
+                                       });
+              if (next == block.instructions.end())
+                return false;
+              ++next;
+              if (next == block.instructions.end() &&
+                  block.terminator.kind == MirTerminatorKind::Invoke &&
+                  block.terminator.invokeInstruction == instruction.id) {
+                continuation = body.findBlock(block.terminator.target);
+                if (!continuation)
+                  return false;
+                next = continuation->instructions.begin();
+              }
+              // A group whose carrier's cleanup does not use its stored
+              // references may also retire after that carrier's drop: only
+              // ends, the result's own publication and that drop intervene.
+              const MirLoan *retiring = body.findLoan(group);
+              if (!retiring || retiring->lifecycleBound)
+                return false;
+              for (; next != continuation->instructions.end(); ++next) {
+                if (next->kind == MirInstructionKind::EndBorrow &&
+                    next->loan == group) {
+                  selectedAlias = group;
+                  return true;
+                }
+                // The result published as a return loan or bound to a
+                // reference binding.
+                const bool publication =
+                    (next->kind == MirInstructionKind::Borrow ||
+                     next->kind == MirInstructionKind::Initialize) &&
+                    next->operands.size() == 1 &&
+                    next->operands.front().kind == MirOperandKind::Loan &&
+                    next->operands.front().loan == loan;
+                if (next->kind != MirInstructionKind::EndBorrow &&
+                    next->kind != MirInstructionKind::Drop && !publication)
+                  return false;
+              }
+              return false;
+            };
+            // The receiver's mapping, and the named argument lanes a stored
+            // class region's union result also borrows. Those lanes are the
+            // result's further dependencies, each checked as such.
+            const BorrowedFieldOrigin *receiverMapping = nullptr;
+            std::size_t laneMappings = 0;
+            bool mappingsExact = true;
+            for (const auto &candidate : instruction.borrowFields) {
+              if (candidate.origin == BorrowOriginKind::Receiver &&
+                  receiverMapping == nullptr)
+                receiverMapping = &candidate;
+              else if (candidate.origin == BorrowOriginKind::Argument &&
+                       candidate.access == AccessMode::ReadOnly &&
+                       std::find(instruction.borrowArguments.begin(),
+                                 instruction.borrowArguments.end(),
+                                 candidate.parameter) !=
+                           instruction.borrowArguments.end())
+                ++laneMappings;
+              else
+                mappingsExact = false;
+            }
             if (instruction.kind == MirInstructionKind::Call &&
                 instruction.borrowOrigin == BorrowOriginKind::Receiver &&
-                instruction.receiver == operand &&
-                instruction.borrowFields.size() == 1 &&
-                operand.kind == MirOperandKind::Value) {
+                instruction.receiver == operand && receiverMapping &&
+                mappingsExact && operand.kind == MirOperandKind::Value) {
               const auto *stage =
                   mir_detail::definitionFor(body, operand.value);
               const auto *shell =
@@ -5863,7 +6037,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   place ? findMirTemporaryCarrierDependency(body, *place)
                         : MirTemporaryCarrierDependency{};
               const auto &result = body.loans[loan - 1];
-              const auto &mapping = instruction.borrowFields.front();
+              const auto &mapping = *receiverMapping;
               // A fresh carrier's physical shell and external stored group
               // are distinct authorities. Follow their exact staged identity
               // to the original parameter, not an overlapping owner. Shared
@@ -5879,11 +6053,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   shell->kind == MirLoanKind::CallArgument &&
                   shell->storedDependency == carrier.loan->id &&
                   carrier.loan->parent == parent &&
-                  carrier.loan->additionalDependencies.empty() &&
-                  carrier.loan->access == AccessMode::ReadOnly &&
+                  // Further stored paths of the carrier are other fields'
+                  // owners; the result relays the primary path exactly.
+                  std::none_of(carrier.loan->additionalDependencies.begin(),
+                               carrier.loan->additionalDependencies.end(),
+                               [&](const MirLoanDependency &other) {
+                                 return other.designatedFields ==
+                                        mapping.sourceFields;
+                               }) &&
+                  (carrier.loan->access == AccessMode::ReadOnly ||
+                   exclusiveGroupRetired(carrier.loan->id)) &&
                   result.kind == MirLoanKind::CallResult &&
                   result.access == AccessMode::ReadOnly &&
-                  result.additionalDependencies.empty() &&
+                  result.additionalDependencies.size() == laneMappings &&
+                  std::all_of(result.additionalDependencies.begin(),
+                              result.additionalDependencies.end(),
+                              [&](const MirLoanDependency &lane) {
+                                return lane.access == AccessMode::ReadOnly &&
+                                       lane.source != carrier.loan->source;
+                              }) &&
                   carrier.loan->source == result.source &&
                   mapping.origin == BorrowOriginKind::Receiver &&
                   mapping.access == AccessMode::ReadOnly &&
@@ -5893,7 +6081,22 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   mapping.sourceConditions == carrier.loan->conditions &&
                   active[shell->id - 1] == MirLoanFlowState::Active &&
                   active[carrier.loan->id - 1] == MirLoanFlowState::Active &&
-                  active[parent - 1] == MirLoanFlowState::Active)
+                  (active[parent - 1] == MirLoanFlowState::Active ||
+                   (carrier.loan->access == AccessMode::Mutable &&
+                    active[parent - 1] == MirLoanFlowState::Suspended) ||
+                   // A shared group taken from an exclusive authority
+                   // suspends it; the shared result may join that group's
+                   // readers while every live child of the authority reads.
+                   (carrier.loan->access == AccessMode::ReadOnly &&
+                    active[parent - 1] == MirLoanFlowState::Suspended &&
+                    std::all_of(children[parent - 1].begin(),
+                                children[parent - 1].end(),
+                                [&](MirLoanId child) {
+                                  return active[child - 1] ==
+                                             MirLoanFlowState::Inactive ||
+                                         body.loans[child - 1].access ==
+                                             AccessMode::ReadOnly;
+                                }))))
                 return true;
             }
             bool movedCarrier = resolved->kind == MirOperandKind::Move;
@@ -8963,6 +9166,9 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.bodyTarget.has_value();
   case FailurePropagationKind::Destructor:
     return instruction.kind == MirInstructionKind::Drop ||
+           ((instruction.kind == MirInstructionKind::CleanupProgramStorage ||
+             instruction.kind == MirInstructionKind::DrainThreadLocals) &&
+            instruction.hostedStartupOperation != 0) ||
            (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
             instruction.replacementCleanup) ||
            (instruction.kind == MirInstructionKind::Call &&
@@ -9695,7 +9901,23 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
               suffix->kind == MirInstructionKind::DrainThreadLocals)
             nativeShutdown = nativeShutdown || suffix->id == instruction.id;
         }
-        if (!failureDrop && !failureBoundary && !nativeShutdown) {
+        const bool hasSourceShutdown =
+            std::any_of(block.instructions.begin(), block.instructions.end(),
+                        [](const auto &candidate) {
+                          return candidate.kind ==
+                                 MirInstructionKind::CleanupProgramStorage;
+                        });
+        const bool sourceShutdown =
+            hasSourceShutdown && instruction.hostedStartupOperation != 0 &&
+            instruction.definedFailure.empty() &&
+            (instruction.kind == MirInstructionKind::CleanupProgramStorage ||
+             instruction.kind == MirInstructionKind::DrainThreadLocals ||
+             (instruction.kind == MirInstructionKind::Call &&
+              instruction.functionTarget &&
+              instruction.info.type == SemanticType::Void &&
+              !instruction.result && instruction.operands.empty()));
+        if (!failureDrop && !failureBoundary && !nativeShutdown &&
+            !sourceShutdown) {
           return failure(body, owner,
                          "hosted-startup active-failure block contains a "
                          "non-cleanup instruction",
@@ -9818,6 +10040,10 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
            (producer->kind == MirInstructionKind::CallBody &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::BodyCall) ||
+           ((producer->kind == MirInstructionKind::CleanupProgramStorage ||
+             producer->kind == MirInstructionKind::DrainThreadLocals) &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Destructor) ||
            (block.activeFailure != 0 &&
             producer->kind == MirInstructionKind::Drop &&
             producer->definedFailure.propagation ==
@@ -10381,6 +10607,43 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
              std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
                  loan.carriers.end();
     };
+    // A read-only value yield whose borrowed state lies in the cursor's
+    // stored regions retains its own Stored loan on an external owner the
+    // cursor already protects, never the cursor or the range shell, so
+    // advancing the cursor cannot invalidate it.
+    const auto cursorProtects = [&](MirPlaceId source) {
+      return source != 0 &&
+             std::any_of(body.loans.begin(), body.loans.end(),
+                         [&](const MirLoan &loan) {
+                           return loan.id != range.rangeLoan &&
+                                  loan.kind == MirLoanKind::Stored &&
+                                  carries(loan, iteratorPlace->binding) &&
+                                  loan.protectsSource(source);
+                         });
+    };
+    const auto cursorRegionLoan = [&](const MirLoan *loan) {
+      return range.elementBorrowsCursorRegions &&
+             range.strategy == RangeIterationStrategy::Structural &&
+             range.elementAccess == AccessMode::ReadOnly && loan != nullptr &&
+             loan->id != range.rangeLoan && loan->kind == MirLoanKind::Stored &&
+             loan->parent == 0 && !loan->entry && !loan->escapes &&
+             loan->access == AccessMode::ReadOnly &&
+             loan->producedBy == range.elementAccessSource &&
+             !mirCanonicalPlaceContains(body, range.iterator, loan->source) &&
+             cursorProtects(loan->source) &&
+             std::all_of(loan->additionalDependencies.begin(),
+                         loan->additionalDependencies.end(),
+                         [&](const MirLoanDependency &dependency) {
+                           return dependency.source == 0 ||
+                                  cursorProtects(dependency.source);
+                         });
+    };
+    if (range.elementBorrowsCursorRegions &&
+        (range.strategy != RangeIterationStrategy::Structural ||
+         range.elementAccess != AccessMode::ReadOnly))
+      return failure(body, owner,
+                     "cursor-region range element must be a read-only "
+                     "structural yield");
     if (range.elementOwner == 0) {
       if (range.elementOwnerStatement != 0 || range.elementOwnerLoan != 0 ||
           range.elementAccessValue != 0 || range.materializesElementValue ||
@@ -10522,20 +10785,63 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                         initialize->lifecycle ==
                             std::vector<MirLifecycleEvent>{
                                 {.kind = MirLifecycleEventKind::Initialize,
+                                 .target = ownedDrop->id}}) ||
+                       // A cursor-region carrier's lexical drop only retires
+                       // the loans it carries; its nonfailing producer's
+                       // value initializes the binding directly.
+                       (range.elementBorrowsCursorRegions && !sourceDrop &&
+                        range.elementSourceDrop == 0 && producer &&
+                        !producer->successResultDrop &&
+                        !producer->successResultDestination &&
+                        initialize->operands.size() == 1 &&
+                        initialize->operands.front().kind ==
+                            MirOperandKind::Value &&
+                        initialize->operands.front().value ==
+                            range.elementAccessValue &&
+                        std::none_of(
+                            body.dropObligations.begin(),
+                            body.dropObligations.end(),
+                            [&](const MirDropObligation &drop) {
+                              return drop.kind ==
+                                         MirDropObligationKind::Value &&
+                                     drop.value == range.elementAccessSource;
+                            }) &&
+                        initialize->lifecycle ==
+                            std::vector<MirLifecycleEvent>{
+                                {.kind = MirLifecycleEventKind::Initialize,
                                  .target = ownedDrop->id}}));
+        // The producer of a cursor-region yield publishes exactly one Stored
+        // loan, carried by the hidden owner, on what the cursor stores.
+        const MirLoan *yieldLoan = producer && producer->loan
+                                       ? body.findLoan(*producer->loan)
+                                       : nullptr;
+        const bool exactYieldBorrows =
+            range.elementBorrowsCursorRegions
+                ? producer && yieldLoan &&
+                      producer->borrowOrigin == BorrowOriginKind::Receiver &&
+                      !producer->borrowFields.empty() &&
+                      cursorRegionLoan(yieldLoan) &&
+                      carries(*yieldLoan, elementOwner->binding) &&
+                      range.elementOwnerLoan == yieldLoan->id && elementLoan &&
+                      elementLoan->storedDependency == yieldLoan->id
+                : producer && producer->borrowFields.empty() &&
+                      producer->borrowOrigin == BorrowOriginKind::None &&
+                      !producer->loan && range.elementOwnerLoan == 0 &&
+                      elementLoan && elementLoan->storedDependency == 0;
         if (!access || !producer || !initialize || ambiguousInitialization ||
             !initializationBlock || elementOwner->type != range.elementType ||
             elementOwner->type.kind == SemanticType::Reference ||
             elementOwner->type.kind == SemanticType::StringView ||
             elementOwner->type.kind == SemanticType::CString ||
             !elementOwner->traits.copyable ||
-            elementOwner->traits.containsBorrowedState ||
-            range.elementOwnerLoan != 0 ||
-            range.elementAccess != AccessMode::ReadOnly ||
+            elementOwner->traits.containsBorrowedState !=
+                range.elementBorrowsCursorRegions ||
+            !exactYieldBorrows || range.elementAccess != AccessMode::ReadOnly ||
             access->info.type != elementOwner->type ||
             access->info.category != ValueCategory::Value ||
             !access->info.traits.copyable ||
-            access->info.traits.containsBorrowedState ||
+            access->info.traits.containsBorrowedState !=
+                range.elementBorrowsCursorRegions ||
             access->sourceValue != range.elementAccessSource ||
             producer->hirValue != range.elementAccessSource ||
             range.dereferenceFunction == 0 ||
@@ -10543,18 +10849,16 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
             producer->intrinsic != IntrinsicKind::None ||
             !producer->functionTarget || !producer->operands.empty() ||
             !producer->parameterTypes.empty() ||
-            !producer->borrowArguments.empty() ||
-            !producer->borrowFields.empty() || !exactReceiver ||
-            producer->borrowOrigin != BorrowOriginKind::None ||
-            producer->loan || producer->result != range.elementAccessValue ||
+            !producer->borrowArguments.empty() || !exactReceiver ||
+            producer->result != range.elementAccessValue ||
             initialize->hirStatement != range.elementOwnerStatement ||
             !exactOperand || !exactDropTransfer ||
             !dominance->dominates(range.bodyBlock, access->definitionBlock) ||
             !dominance->dominates(range.bodyBlock, initializationBlock->id) ||
             !elementLoan || elementLoan->kind != MirLoanKind::Local ||
             elementLoan->source != elementOwner->id || elementLoan->parent ||
-            elementLoan->storedDependency || elementLoan->entry ||
-            elementLoan->escapes || elementLoan->lifecycleBound ||
+            elementLoan->entry || elementLoan->escapes ||
+            elementLoan->lifecycleBound ||
             elementLoan->access != AccessMode::ReadOnly)
           return failure(
               body, owner,
@@ -10640,6 +10944,45 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
         elementLoan->parent == 0 && elementLoan->producedBy != 0 &&
         elementLoan->source == range.iterator &&
         elementLoan->storedDependency == physicalCursor->id;
+    const bool externalStoredYield =
+        !range.materializesElementValue && cursorRegionLoan(elementLoan);
+    // A read-only reference yield in the cursor's stored region designates
+    // what the cursor's stored reference holds: its element borrows the
+    // cursor's own Stored loan below the range loan, which advancing the
+    // cursor's shell does not disturb, through the selected dereference's
+    // call result on the cursor.
+    const auto cursorStoredReferenceYield = [&] {
+      if (range.strategy != RangeIterationStrategy::Structural ||
+          range.elementAccess != AccessMode::ReadOnly ||
+          range.materializesElementValue || ambiguousCursor ||
+          physicalCursor == nullptr || elementLoan != physicalCursor ||
+          physicalCursor->entry || physicalCursor->escapes ||
+          physicalCursor->parent != range.rangeLoan ||
+          physicalCursor->access != AccessMode::ReadOnly)
+        return false;
+      const MirInstruction *producer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.hirValue == range.elementAccessSource) {
+            if (producer != nullptr)
+              return false;
+            producer = &instruction;
+          }
+      const MirLoan *result = producer != nullptr && producer->loan
+                                  ? body.findLoan(*producer->loan)
+                                  : nullptr;
+      return result != nullptr && result->kind == MirLoanKind::CallResult &&
+             result->parent == physicalCursor->id && !result->escapes &&
+             result->access == AccessMode::ReadOnly &&
+             producer->borrowOrigin == BorrowOriginKind::Receiver &&
+             producer->receiver && producer->receiver->place == range.iterator;
+    }();
+    if (range.elementBorrowsCursorRegions && !range.materializesElementValue &&
+        !externalStoredYield)
+      return failure(body, owner,
+                     "cursor-region range element lost its external Stored "
+                     "loan on what the cursor stores");
     const MirInstruction *elementProducer = nullptr;
     bool ambiguousElementProducer = false;
     if (elementLoan)
@@ -10817,7 +11160,8 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
            (range.elementLoan == range.rangeLoan ||
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
           (physicalCursor != nullptr && !physicalProxy &&
-           !range.materializesElementValue)))) {
+           !range.materializesElementValue && !externalStoredYield &&
+           !cursorStoredReferenceYield)))) {
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");
@@ -13400,9 +13744,21 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              (instruction.definedFailure.propagation ==
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
+    case MirInstructionKind::CleanupProgramStorage:
+    case MirInstructionKind::DrainThreadLocals:
+      return body.kind == MirBodyKind::HostedStartup && noOperation &&
+             !hasResult && !instruction.destination && !instruction.receiver &&
+             instruction.operands.empty() &&
+             instruction.parameterTypes.empty() && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
+             !instruction.lambdaTarget && !instruction.bodyTarget &&
+             (instruction.definedFailure.empty() ||
+              instruction.definedFailure.propagation ==
+                  FailurePropagationKind::Destructor) &&
+             instruction.info.type == SemanticType::Void &&
+             instruction.lifecycle.empty();
     case MirInstructionKind::BeginThreadLocals:
     case MirInstructionKind::RetireProgramStorage:
-    case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&
              instruction.operands.empty() &&

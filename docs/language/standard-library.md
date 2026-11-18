@@ -341,8 +341,14 @@ The current implemented foundation includes:
   front/back access, copyable-element fill, read-only random-access cursors,
   and checked exclusive positional/reverse cursors. Constructors, `size`,
   `empty`, and the read-only `at`, `front`, and `back` methods support constexpr
-  evaluation for supported elements; mutable access and iterator traversal remain runtime
-  operations; and
+  evaluation for supported elements. Two arrays of the same element type and
+  extent support element-wise `==` and `!=` when the elements satisfy
+  `std::equality_comparable`. The operators `<`, `<=`, `>`, and `>=` require
+  `std::totally_ordered` elements and compare lexicographically. Comparison
+  borrows both arrays, stops at the first unequal pair, and is constexpr when
+  the element comparisons are. If the first unequal pair is unordered (as with
+  floating-point NaN), all four ordering operators return false. Mutable access
+  and iterator traversal remain runtime operations; and
 - `std.string` `std::string` as a move-only owner over a source-defined
   terminated character prefix, including
   construction from an exact input iterator/sentinel pair whose dereference
@@ -361,7 +367,25 @@ The current implemented foundation includes:
   the source into another owner. Slice/erase/replace lengths clamp to the available remainder;
   positions beyond `size()` raise `GTI-R0007`. The view constructor is
   `implicit`, so `std::string text = "Sampling...";` constructs a string, and
-  assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
+  assignment from a counted view (`text = "Done";`) replaces the contents.
+  With `import std.string;`, `+` accepts any pairing of strings, counted views,
+  and literals and returns an independent owning `std::string`. For example,
+  `" (GTI " + before + " -> " + after + ")"` does not consume named inputs.
+  A fresh or explicitly moved left string reuses its storage; left-associated
+  chains therefore take amortized linear copying and geometric allocation
+  growth, rather than cloning every accumulated prefix. The first pair of
+  borrowed inputs reserves their combined size once. Literal-only `+` trees,
+  including parenthesized groups, combine their decoded bytes at compile time
+  and construct one owned result at runtime, without intermediate strings.
+  This optimization preserves the `std::string` result type; it does not make
+  the expression a static view or a constexpr owning allocation.
+  `text += suffix` accepts
+  a string, view, literal, or temporary string and requires a mutable owning
+  destination. A view cannot grow with `+=`. Both operators copy counted bytes,
+  including embedded NULs. They preserve ordinary borrow rules: self-append,
+  an aliased source view, mutation while a destination view remains live, and
+  escaping a view into a temporary result remain rejected.
+  Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
   replacement argument that aliases it. When `append`, `push_back`, `insert`,
   or `replace` must grow, capacity at least doubles, so a sequence of appends
@@ -1957,3 +1981,25 @@ Example `090-generic-algorithms.gti` demonstrates all four free operations.
 The `removal_algorithms` check covers stable prefixes, all keep/remove patterns,
 move-only and immovable cleanup, collisions, node reuse, exact predicate counts,
 allocation-free vector filtering, and invalid borrow/callback contracts.
+
+### Compile-time literal concatenation
+
+`import std.string;` exports the source-defined procedural macro
+`std::concat!({"first", "second"})`. It emits one ordinary static string
+literal, usable as a `std::string_view`, a constexpr initializer, or a function
+result without an owner allocation at runtime. Empty input produces `""` and
+one trailing comma is allowed. Commas are mandatory: adjacent literals, names,
+expressions, numeric/character literals and nested macro invocations are rejected
+at the offending token. Comments and whitespace between tokens are permitted.
+
+Literal escape spellings retain their ordinary meaning, including embedded NUL,
+Unicode escapes and fixed-width hexadecimal escapes. For example
+`std::concat!({"\x41", "B", "\0", "7"})` yields four bytes: `A`, `B`, NUL,
+`7`. The macro joins the validated literal bodies and asks `std::syntax::literal`
+to lex the result; it does not implement a second escape decoder. This relies
+on GTI's fixed-width escapes. Any future literal spelling must preserve this
+property or update the source macro alongside the lexer.
+
+The macro executes under the normal procedural syntax and constexpr resource
+budgets. It accepts literal tokens rather than arbitrary constant expressions.
+See [`procedural-macros.gti`](../../examples/procedural-macros.gti).

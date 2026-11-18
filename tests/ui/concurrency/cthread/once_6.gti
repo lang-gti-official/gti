@@ -1,0 +1,4 @@
+// Once: private implementation token cannot escape into applications.
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { gti_internal::once_access access{}; return 0; }  //~ ERROR GTI-S2058

@@ -1,5 +1,10 @@
 # GTI examples
 
+[`compatible_extern_c.gti`](compatible_extern_c.gti) demonstrates two independent
+namespace APIs binding the same C function, with exact signature and safety
+contract checking. Compile it with `gti examples/compatible_extern_c.gti -o
+/tmp/compatible-extern-c` and run `/tmp/compatible-extern-c`; success exits zero.
+
 [`llvm/codegen-attributes.gti`](llvm/codegen-attributes.gti) demonstrates advisory
 `[[inline]]`, `[[noinline]]` call boundaries and a returning `[[cold]]` function,
 including generic/member functions, constructors, destructors and deterministic cleanup. Run it with
@@ -20,7 +25,9 @@ small token-based markup grammar, not a browser DOM or a sanitizer.
 [`procedural-macros.gti`](procedural-macros.gti) imports
 [`procedural-macros/library.gti`](procedural-macros/library.gti) and demonstrates
 identity, nested expansion, hygienic generated bindings and evaluating an input
-once. `procedural_execution_example` runs it through LLVM O0/O3.
+once. It also demonstrates `std::concat!({"Hello, ", "GTI!"})`, empty input,
+escapes and returning a joined static literal. `procedural_execution_example`
+runs it through LLVM O0/O3.
 [`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
 an ordinary typed macro alongside a procedural declaration. These focused
 examples are outside the numbered full-language census. The imported HTML library and these examples implement the bounded design in
@@ -122,7 +129,7 @@ deleted-copy/deleted-move objects constructed directly through fresh return
 chains and nested fixed-array elements, with stable addresses and exactly-once
 cleanup. Build with
 `gti examples/llvm/immovable-placement.gti --backend llvm -O3 -o placement`.
-`llvm_placement_execution` validates it at O0-O3. Like the other bounded LLVM
+`tests/ui/memory/placement/` validates it at O0-O3. Like the other bounded LLVM
 profiles it is separate from the numbered full-language census.
 
 [`llvm/classes-and-lifetimes.gti`](llvm/classes-and-lifetimes.gti) exercises
@@ -199,11 +206,13 @@ You do not need to read the entire sequence to find an API pattern:
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
+| Write an iterator that yields spans or views of the data it walks | [197: borrowed-yield cursors](197-borrowed-yield-cursors.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
+| Write `1_000_000`, typed literals like `255u8` or `2.5f32`, and regex or JSON text as raw strings | [196: lexical literals](196-lexical-literals.gti) |
 | Loop over arrays, vectors and your own ranges at compile time | [198: constexpr range-for](198-constexpr-range-for.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
@@ -234,6 +243,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Take ownership of an enum alternative's payload in a `switch` | [161: consuming matches](161-consuming-matches.gti) |
+| Scope a helper value to one `if`, `switch` or range `for` with a C++17/C++20 init statement | [199: init statements](199-init-statements.gti) |
 | Read program arguments | [43: hosted arguments](043-program-arguments.gti) |
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
 | Model an owner and its checked views | [41: owner dependencies](041-owner-dependencies.gti), [42: reborrows](042-exclusive-reborrows.gti) |
@@ -289,6 +299,7 @@ the modules other examples import.
 | `032-structured-bindings.gti` | immutable exact-arity decomposition, owning, read-only borrowed and mutable borrowed range patterns, independent passive class-array copies, explicit owning class-array moves |
 | `033-source-concepts.gti` | unary capabilities, structural class contracts with an `[[unsatisfied(...)]]` explanation, and trailing-clause admission of dependent compound arguments |
 | `034-do-while.gti` | body-first loops with explicit `continue` and termination |
+| `199-init-statements.gti` | C++17/C++20 init statements: a range-for owner the range borrows, a `switch` init with payload patterns destroyed on every exit, an `if`/`else if` chain whose borrow ends with the statement, and a `constexpr` init for `if constexpr` |
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `037-tcp-socket-owner.gti` | move-only `std::tcp` listener and stream owners exchanging bytes over loopback |
@@ -398,6 +409,7 @@ the modules other examples import.
 | `141-reflected-json.gti` | `std.experimental_json` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
+| `196-lexical-literals.gti` | `_` digit separators in every base, `u8`...`i64`/`f32`/`f64` suffixes with exact types (signed minimums, range checking, `0x1f32` as an integer), suffixed enum values, value-generic arguments and array extents, and `R"delim(...)delim"` raw strings for a regular expression and a multi-line JSON document |
 | `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
 | `198-constexpr-range-for.gti` | range-based `for` in `constexpr` functions over a fixed array, a vector temporary, a mutable `std::array` and an application range whose cursor refers to it, with `break`, `continue` and a computed table size, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
@@ -439,10 +451,11 @@ the modules other examples import.
 | `189-protocol-format-hash.gti` | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key (LLVM). |
 | `190-conditional-member-operators.gti` | Conditional user operators, inserting map indexing, exclusive result loans and pair equality (LLVM). |
 | `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary views and their owners, constrained mutable packs and per-element exclusive access (LLVM). |
-| `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers and fixed lambda environment premises; ordinary callers infer lifetime arguments (LLVM). |
+| `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, stored-region results also supplied by a parameter, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers, fixed lambda environment premises and class-region method results relayed from carrier parameters and temporaries; ordinary callers infer lifetime arguments (LLVM). |
 | `193-tcp-line-server.gti` | A loopback line service: `std::tcp::listen`/`connect` by host and port, `serve` driving an application type through the `connection_handler` protocol concept, and `buffered_stream` frames borrowed in place (`span<uint8_t, this>`) until `consume` (LLVM). |
 | `194-borrowed-containers.gti` | Multiple external owners in vectors of text views and shared-reference records; direct indexed copies preserve owners independently of container growth and scope (LLVM). |
 | `194-string-view-subviews.gti` | Counted sub-views: `substr` with clamped counts, in-place `remove_prefix`/`remove_suffix` trimming, owner relay through a by-value `mut` view parameter, and the `GTI-R0007` boundary (LLVM). |
+| `197-borrowed-yield-cursors.gti` | Cursors whose read-only `operator*` yields a borrow carrier in the cursor's own lifetime parameter: `std::span` frames and an application view type, kept across `++`, bound by value and `auto&` in range-for, `std::input_iterator`/`std::forward_iterator` and a generic algorithm (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -908,16 +921,16 @@ O0/O1/O3 execution and failure/cleanup checks.
 
 [`compiled-value-types/`](compiled-value-types/README.md) demonstrates source-free
 record, nested-record and integral-enum interfaces, with normal field access and
-generated value operations. `compiled_value_types` owns its execution matrix.
+generated value operations. `tests/project/compiled_value_types` owns its checks.
 
 [`compiled-borrowing/`](compiled-borrowing/README.md) demonstrates reference
 parameters and borrowed results through library metadata, with normal caller
-loan checking. `compiled_borrow_library` owns its positive and negative matrix.
+loan checking. `tests/project/compiled_borrowing` owns its positive and negative cases.
 
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
 library builds through a diamond dependency graph, a shared private counter and
 class static constant, exact dependency receipts and reuse of unchanged libraries.
-`compiled_dependency_project` owns its execution,
+The `tests/slow/project/compiled_dependencies` transcript (a copy of the example) owns its execution,
 failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct

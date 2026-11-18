@@ -1,0 +1,22 @@
+// Structural_relocation: dependent fields preserve declared and active relocation guarantees.
+//@ check-pass
+    struct Parcel<T> { T item; };
+    enum Choice<T> { empty, item(T value) };
+    void require_relocation<std::relocatable U>() {}
+    void require_bitwise<std::bitwise_relocatable U>() {}
+    void check<T>() requires std::relocatable<T> {
+      require_relocation<Parcel<T>>();
+      require_relocation<Choice<T>>();
+      require_relocation<Parcel<Choice<T>>>();
+    }
+    void check_bits<std::bitwise_relocatable T>() {
+      require_bitwise<Parcel<T>>();
+    }
+    class Resource {
+    public:
+      Resource() {}
+      Resource(Resource& source) = delete;
+      Resource(Resource&& source) = default;
+      ~Resource() {}
+    };
+    int main() { check<Resource>(); check_bits<int>(); return 0; }

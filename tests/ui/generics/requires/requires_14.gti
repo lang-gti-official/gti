@@ -1,0 +1,6 @@
+// General requires: a deferred comparison must resolve in the concrete instance diagnostic.
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+struct Uncomparable { public: Uncomparable() = default; };
+struct Reader { Uncomparable operator*() { return Uncomparable(); }  public: Reader() = default; };
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }  //~ ERROR GTI-S2022
+int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }

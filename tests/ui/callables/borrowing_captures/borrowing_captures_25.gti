@@ -1,0 +1,8 @@
+// Borrowing captures: restore-requires-unsafe is rejected with a user diagnostic, not an ICE.
+import std.memory;
+int main() {
+  int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  int& restored = std::restore_ref<int>(erased);  //~ ERROR GTI-S2055
+  return restored;
+}

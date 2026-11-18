@@ -1,0 +1,22 @@
+// A concept with too many arguments or an incomplete one is reported and
+// repaired. (From concept_conditions_lsp_test.py.)
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+struct Box { Box() = default; uint64_t size() { return 3; } };
+uint64_t measure<T>(T& value) { if constexpr(sized<T>) { return value.size(); } else { return 0; } }
+int main() { Box box{}; bool value = /* 😀 */ sized<Box, int>; return int(measure(box)); }  //~ ERROR GTI-S2049 requires 1 type argument
+static_assert(sized<Box> && !sized<int> || std::integral<int>);
+static_assert(sized<Box> and std::integral<int> or sized<int>);
+// --- step 2
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+struct Box { Box() = default; uint64_t size() { return 3; } };
+uint64_t measure<T>(T& value) { if constexpr(sized<) { return value.size(); } else { return 0; } }  //~ ERROR GTI-P0001 //~ ERROR GTI-S2031
+int main() { Box box{}; bool value = /* 😀 */ sized<Box>; return int(measure(box)); }
+static_assert(sized<Box> && !sized<int> || std::integral<int>);
+static_assert(sized<Box> and std::integral<int> or sized<int>);
+// --- step 3
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+struct Box { Box() = default; uint64_t size() { return 3; } };
+uint64_t measure<T>(T& value) { if constexpr(sized<T>) { return value.size(); } else { return 0; } }
+int main() { Box box{}; bool value = /* 😀 */ sized<Box>; return int(measure(box)); }
+static_assert(sized<Box> && !sized<int> || std::integral<int>);
+static_assert(sized<Box> and std::integral<int> or sized<int>);

@@ -1,0 +1,58 @@
+// Shared accessor range: read-only traversal of a stored carrier reference verifies.
+//@ check-pass
+import std.vector;
+import std.string;
+
+// An application-defined owner and noncopyable elements, independent of JSON.
+class Item {
+  int number;
+public:
+  Item(int number) : number(number) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  int read() { return this.number; }
+};
+class Bag {
+  mut std::vector<Item> items;
+public:
+  Bag() : items(std::vector<Item>()) {
+    this.items.push_back(Item(3));
+    this.items.push_back(Item(5));
+    this.items.push_back(Item(7));
+  }
+  ~Bag() { std::println(90); }
+  std::vector<Item>& elements() { return this.items; }
+  void clear() mut { this.items.clear(); }
+};
+expected<Bag&, int> lookup(Bag& bag) { return bag; }
+
+int first(Bag& owner) {
+  auto borrowed = lookup(owner);
+  for (auto& item : borrowed.value().elements()) { return item.read(); }
+  return 0;
+}
+expected<int, int> checked_sum(Bag& owner, bool fail) {
+  auto borrowed = lookup(owner);
+  mut int sum = 0;
+  for (auto& item : borrowed.value().elements()) {
+    if (fail && item.read() == 5) { return unexpected(7); }
+    sum += item.read();
+  }
+  return sum;
+}
+
+struct Elements {
+  std::vector<Item>& items;
+  Elements(std::vector<Item>& items) : items(items) {}
+};
+int main() {
+  mut Bag owner{};
+  {
+    Elements borrowed{owner.elements()};
+    mut int sum = 0;
+    for (auto& item : borrowed.items) { sum += item.read(); }
+    if (sum != 15) { return 1; }
+  }
+  owner.clear();
+  return 0;
+}

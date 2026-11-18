@@ -1,0 +1,41 @@
+// Receiver tied reference returns: methods should return read-only references borrowed from 'this'.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class Box<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+
+  T& get() {
+    return this.value;
+  }
+};
+
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+
+public:
+  Buffer(uint64_t capacity)
+      : data(std::detail::prefix_owner<T>(capacity)) {}
+
+  void push(T value) mut requires std::move_constructible<T> {
+    this.data.append_value(std::move(value));
+  }
+
+  T& at(uint64_t index) {
+    return this.data.read(index);
+  }
+};
+
+int main() {
+  Box<int> box = Box<int>(7);
+  int& boxed = box.get();
+  mut Buffer<int> buffer = Buffer<int>(uint64_t(1));
+  buffer.push(9);
+  int& stored = buffer.at(uint64_t(0));
+  return boxed + stored - 16;
+}

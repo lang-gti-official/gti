@@ -1,0 +1,355 @@
+// Source destructor bodies compose with owning-field cleanup, keeping first and secondary failures, per phase.
+//@ run-pass
+//@ slow
+//@ revisions: phase0 phase1 phase2 phase3 phase4 phase5 phase6 phase7 phase8 phase9 phase10 phase11 phase12 phase13 phase14 phase15 phase16 phase17 phase18 phase19 phase20 phase21 phase22 phase23 phase24 phase25 phase26 phase27 phase28 phase29 phase30
+//@[phase0] stdout: 3
+//@[phase0] stdout: 2
+//@[phase0] stdout: 1
+//@[phase0] stdout: 9
+//@[phase1] run-fail
+//@[phase1] exit-code: 70
+//@[phase1] args: phase
+//@[phase1] stdout: 3
+//@[phase1] stdout: 2
+//@[phase1] stdout: 1
+//@[phase1] stdout: 9
+//@[phase1] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase2] run-fail
+//@[phase2] exit-code: 70
+//@[phase2] args: phase phase
+//@[phase2] stdout: 3
+//@[phase2] stdout: 2
+//@[phase2] stdout: 1
+//@[phase2] stdout: 9
+//@[phase2] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase3] run-fail
+//@[phase3] exit-code: 70
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: 3
+//@[phase3] stdout: 2
+//@[phase3] stdout: 1
+//@[phase3] stderr-contains: source_destructor_cleanup_failure.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase4] run-fail
+//@[phase4] exit-code: 70
+//@[phase4] args: phase phase phase phase
+//@[phase4] stdout: 3
+//@[phase4] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:130; secondary [GTI-R0002]
+//@[phase5] run-fail
+//@[phase5] exit-code: 70
+//@[phase5] args: phase phase phase phase phase
+//@[phase5] stdout: 3
+//@[phase5] stdout: 2
+//@[phase5] stdout: 1
+//@[phase5] stdout: 9
+//@[phase5] stderr-contains: source_destructor_cleanup_failure.gti:130: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase6] run-fail
+//@[phase6] exit-code: 70
+//@[phase6] args: phase phase phase phase phase phase
+//@[phase6] stdout: 3
+//@[phase6] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:130; secondary [GTI-R0002]
+//@[phase7] run-fail
+//@[phase7] exit-code: 70
+//@[phase7] args: phase phase phase phase phase phase phase
+//@[phase7] stdout: 3
+//@[phase7] stdout: 2
+//@[phase7] stdout: 1
+//@[phase7] stderr-contains: source_destructor_cleanup_failure.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:49; secondary [GTI-R0002]
+//@[phase8] run-fail
+//@[phase8] exit-code: 70
+//@[phase8] args: phase phase phase phase phase phase phase phase
+//@[phase8] stdout: 2
+//@[phase8] stdout: 9
+//@[phase8] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase9] args: phase phase phase phase phase phase phase phase phase
+//@[phase9] stdout: 3
+//@[phase9] stdout: 2
+//@[phase9] stdout: 1
+//@[phase9] stdout: 9
+//@[phase10] args: phase phase phase phase phase phase phase phase phase phase
+//@[phase10] stdout: 3
+//@[phase10] stdout: 2
+//@[phase10] stdout: 1
+//@[phase10] stdout: 9
+//@[phase11] run-fail
+//@[phase11] exit-code: 70
+//@[phase11] args: phase phase phase phase phase phase phase phase phase phase phase
+//@[phase11] stdout: 3
+//@[phase11] stdout: 2
+//@[phase11] stdout: 1
+//@[phase11] stdout: 9
+//@[phase11] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase12] run-fail
+//@[phase12] exit-code: 70
+//@[phase12] args: phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase12] stdout: 3
+//@[phase12] stdout: 2
+//@[phase12] stdout: 1
+//@[phase12] stdout: 9
+//@[phase12] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase13] run-fail
+//@[phase13] exit-code: 70
+//@[phase13] args: phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase13] stdout: 3
+//@[phase13] stdout: 2
+//@[phase13] stdout: 1
+//@[phase13] stdout: 9
+//@[phase13] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase14] run-fail
+//@[phase14] exit-code: 70
+//@[phase14] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase14] stdout: 3
+//@[phase14] stdout: 2
+//@[phase14] stdout: 1
+//@[phase14] stdout: 9
+//@[phase14] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase15] run-fail
+//@[phase15] exit-code: 70
+//@[phase15] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase15] stdout: 3
+//@[phase15] stdout: 2
+//@[phase15] stdout: 1
+//@[phase15] stdout: 9
+//@[phase15] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase16] run-fail
+//@[phase16] exit-code: 70
+//@[phase16] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase16] stdout: 3
+//@[phase16] stdout: 2
+//@[phase16] stdout: 1
+//@[phase16] stdout: 9
+//@[phase16] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase17] run-fail
+//@[phase17] exit-code: 70
+//@[phase17] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase17] stdout: 3
+//@[phase17] stdout: 2
+//@[phase17] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:49; secondary [GTI-R0002]
+//@[phase18] run-fail
+//@[phase18] exit-code: 70
+//@[phase18] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase18] stdout: 3
+//@[phase18] stdout: 2
+//@[phase18] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:130; secondary [GTI-R0002]
+//@[phase19] run-fail
+//@[phase19] exit-code: 70
+//@[phase19] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase19] stdout: 3
+//@[phase19] stdout: 2
+//@[phase19] stdout: 1
+//@[phase19] stdout: 9
+//@[phase19] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase20] run-fail
+//@[phase20] exit-code: 70
+//@[phase20] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase20] stdout: 3
+//@[phase20] stdout: 2
+//@[phase20] stdout: 1
+//@[phase20] stdout: 9
+//@[phase20] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase21] run-fail
+//@[phase21] exit-code: 70
+//@[phase21] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase21] stdout: 3
+//@[phase21] stdout: 2
+//@[phase21] stdout: 1
+//@[phase21] stdout: 3
+//@[phase21] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:49; secondary [GTI-R0002]
+//@[phase22] run-fail
+//@[phase22] exit-code: 70
+//@[phase22] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase22] stdout: 4
+//@[phase22] stdout: 3
+//@[phase22] stdout: 2
+//@[phase22] stdout: 1
+//@[phase22] stdout: 9
+//@[phase22] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase23] run-fail
+//@[phase23] exit-code: 70
+//@[phase23] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase23] stdout: 4
+//@[phase23] stdout: 3
+//@[phase23] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:84; secondary [GTI-R0002]
+//@[phase24] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase24] stdout: 3
+//@[phase24] stdout: 2
+//@[phase24] stdout: 1
+//@[phase24] stdout: 3
+//@[phase24] stdout: 2
+//@[phase24] stdout: 1
+//@[phase24] stdout: 9
+//@[phase25] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase25] stdout: 5
+//@[phase25] stdout: 3
+//@[phase25] stdout: 2
+//@[phase25] stdout: 1
+//@[phase25] stdout: 9
+//@[phase26] run-fail
+//@[phase26] exit-code: 70
+//@[phase26] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase26] stdout: 3
+//@[phase26] stdout: 2
+//@[phase26] stdout: 1
+//@[phase26] stdout: 9
+//@[phase26] stderr-contains: source_destructor_cleanup_failure.gti:73: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase27] run-fail
+//@[phase27] exit-code: 70
+//@[phase27] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase27] stdout: 3
+//@[phase27] stderr-contains: source_destructor_cleanup_failure.gti:49: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:73; secondary [GTI-R0002]
+//@[phase28] run-fail
+//@[phase28] exit-code: 70
+//@[phase28] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase28] stdout: 3
+//@[phase28] stdout: 2
+//@[phase28] stderr-contains: source_destructor_cleanup_failure.gti:31: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:73; secondary [GTI-R0002]
+//@[phase29] run-fail
+//@[phase29] exit-code: 70
+//@[phase29] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase29] stdout: 1
+//@[phase29] stdout: 9
+//@[phase29] stderr-contains: source_destructor_cleanup_failure.gti:42: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase30] run-fail
+//@[phase30] exit-code: 70
+//@[phase30] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase30] stdout: 1
+//@[phase30] stderr-contains: source_destructor_cleanup_failure.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at source_destructor_cleanup_failure.gti:42; secondary [GTI-R0002]
+// --- source_destructor_cleanup_failure.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+class Trace {
+public:
+  Trace() {}
+  ~Trace() { std::println(9); }
+};
+
+class First {
+public:
+  First() {}
+  ~First() {
+    std::println(1);
+    if (phase == 3 || phase == 7 || phase == 30) {
+      int32_t first_failure = 11 / zero;
+    }
+  }
+};
+
+class Second {
+public:
+  Second() {}
+  ~Second() {
+    std::println(2);
+    if (phase == 2 || phase == 3 || phase == 6 || phase == 8 || phase == 12 || phase == 14 || phase == 16 || phase == 17 || phase == 18 || phase == 20 || phase == 28) {
+      int32_t second_failure = 13 / zero;
+    }
+  }
+};
+
+class Owner {
+  std::unique_ptr<First> first;
+  int32_t checked;
+  std::string label;
+  std::unique_ptr<Second> second;
+public:
+  Owner() : first(std::make_unique<First>()), checked(37 / (phase == 29 || phase == 30 ? zero : 1)), label(std::string("still alive in destructor")), second(std::make_unique<Second>()) {}
+  ~Owner() {
+    std::println(3);
+    if (this.label.empty()) {
+      std::println("lost field before destructor");
+    }
+    if (phase == 1 || phase == 4 || phase == 6 || phase == 7 || phase == 11 || phase == 13 || phase == 15 || phase == 17 || phase == 19 || phase == 21 || phase == 22 || phase == 23 || phase == 27) {
+      int32_t owner_failure = 17 / zero;
+    }
+  }
+};
+
+// This body is proved failure-free, but its field's destructor is not.
+class QuietOwner {
+  std::unique_ptr<Second> second;
+public:
+  QuietOwner() : second(std::make_unique<Second>()) {}
+  ~QuietOwner() {}
+};
+
+class Nested {
+  Owner owner;
+public:
+  Nested() : owner(Owner()) {}
+  ~Nested() { std::println(4); }
+};
+
+class Rollback {
+  Owner owner;
+  int32_t checked;
+public:
+  Rollback() : owner(Owner()), checked(31 / (phase == 25 ? 1 : zero)) {}
+  ~Rollback() { std::println(5); }
+};
+
+int32_t run() {
+  if (phase >= 25 && phase <= 28) {
+    Rollback value = Rollback();
+    return 0;
+  }
+  if (phase == 22 || phase == 23) {
+    Nested value = Nested();
+    if (phase == 23) { return 29 / zero; }
+    return 0;
+  }
+  if (phase == 21 || phase == 24) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.push_back(Owner());
+    return 0;
+  }
+  if (phase == 11 || phase == 12) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.pop_back();
+    return 0;
+  }
+  if (phase == 13 || phase == 14) {
+    std::allocator allocator = std::allocator();
+    mut auto allocated = allocator.try_storage<Owner>(std::size_t(2));
+    if (!allocated) { return 20; }
+    mut std::storage<Owner> values = std::move(allocated).value();
+    values.construct(std::size_t(1), Owner());
+    values.destroy(std::size_t(1));
+    return 0;
+  }
+  if (phase == 15 || phase == 16) {
+    mut std::vector<Owner> values = std::vector<Owner>();
+    values.push_back(Owner());
+    values.erase(std::size_t(0));
+    return 0;
+  }
+  if (phase == 8) {
+    QuietOwner value = QuietOwner();
+    return 0;
+  }
+  if (phase == 9 || phase == 19 || phase == 20) {
+    auto value = std::make_unique<Owner>();
+    auto moved = std::move(value);
+    return 0;
+  }
+  if (phase == 10) {
+    Owner value = Owner();
+    Owner moved = std::move(value);
+    return 0;
+  }
+  Owner value = Owner();
+  if (phase == 4 || phase == 5 || phase == 6 || phase == 18) {
+    return 19 / zero;
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Trace outer = Trace();
+  return run();
+}

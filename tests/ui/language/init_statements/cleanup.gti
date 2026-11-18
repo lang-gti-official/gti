@@ -1,0 +1,180 @@
+// An owning init statement is destroyed exactly once when the whole statement
+// ends, after the taken branch, on every exit: fallthrough, break, continue,
+// return, '?' propagation and a move out of the init inside a branch.
+//@ run-pass
+//@ stdout: make 1
+//@ stdout: then 1
+//@ stdout: drop 1
+//@ stdout: make 2
+//@ stdout: else 2
+//@ stdout: drop 2
+//@ stdout: make 10
+//@ stdout: drop 10
+//@ stdout: make 11
+//@ stdout: continue 11
+//@ stdout: drop 11
+//@ stdout: make 12
+//@ stdout: break 12
+//@ stdout: drop 12
+//@ stdout: make 3
+//@ stdout: return 3
+//@ stdout: drop 3
+//@ stdout: make 4
+//@ stdout: switch 4
+//@ stdout: drop 4
+//@ stdout: make 5
+//@ stdout: element 5
+//@ stdout: element 5
+//@ stdout: drop 5
+//@ stdout: make 6
+//@ stdout: failed 6
+//@ stdout: drop 6
+//@ stdout: make 7
+//@ stdout: moved 7
+//@ stdout: drop 7
+//@ stdout: owners 8
+//@ stdout: drops 10
+import std.string;
+import std.vector;
+
+mut int drops = 0;
+
+class Tracked {
+public:
+  Tracked(int id) : id(id) {
+    std::print("make ");
+    std::println(id);
+  }
+  Tracked(Tracked&& other) = default;
+  ~Tracked() {
+    std::print("drop ");
+    std::println(this.id);
+    drops++;
+  }
+
+  int value() { return this.id; }
+
+private:
+  int id;
+};
+
+std::vector<int> count_to(int last) {
+  mut std::vector<int> values = std::vector<int>();
+  for (mut int value = 1; value <= last; value++) {
+    values.push_back(value);
+  }
+  return values;
+}
+
+int keep(Tracked tracked) {
+  std::print("moved ");
+  std::println(tracked.value());
+  return tracked.value();
+}
+
+void fallthrough(int id) {
+  if (Tracked tracked = Tracked(id); tracked.value() == 1) {
+    std::print("then ");
+    std::println(tracked.value());
+  } else {
+    std::print("else ");
+    std::println(tracked.value());
+  }
+}
+
+void loop_exits() {
+  for (mut int index = 10; index < 13; index++) {
+    if (Tracked tracked = Tracked(index); index == 11) {
+      std::print("continue ");
+      std::println(tracked.value());
+      continue;
+    } else if (index == 12) {
+      std::print("break ");
+      std::println(tracked.value());
+      break;
+    }
+  }
+}
+
+int early_return() {
+  if (Tracked tracked = Tracked(3); tracked.value() == 3) {
+    std::print("return ");
+    std::println(tracked.value());
+    return tracked.value();
+  }
+  return 0;
+}
+
+void selected() {
+  switch (Tracked tracked = Tracked(4); tracked.value()) {
+  case 4:
+    std::print("switch ");
+    std::println(tracked.value());
+    break;
+  default:
+    break;
+  }
+}
+
+void ranged() {
+  for (Tracked tracked = Tracked(5); int unused : count_to(2)) {
+    std::print("element ");
+    std::println(tracked.value());
+  }
+}
+
+expected<int, std::string_view> fail() { return unexpected("no"); }
+
+expected<int, std::string_view> propagated() {
+  if (Tracked tracked = Tracked(6); tracked.value() == 6) {
+    std::print("failed ");
+    std::println(tracked.value());
+    int value = ?fail();
+    return value;
+  }
+  return 0;
+}
+
+int moved() {
+  if (Tracked tracked = Tracked(7); tracked.value() == 7) {
+    // A move inside the branch leaves nothing for the statement to drop.
+    return keep(std::move(tracked));
+  }
+  return 0;
+}
+
+int owners() {
+  mut int total = 0;
+  if (std::vector<int> values = count_to(5); values.size() == 5) {
+    total += int(values.size());
+  }
+  if (std::string text = "hello"; text.size() == 5) {
+    switch (std::string copy = text.clone(); int(copy.size())) {
+    case 5:
+      total += 3;
+      break;
+    default:
+      break;
+    }
+  }
+  return total;
+}
+
+int main() {
+  fallthrough(1);
+  fallthrough(2);
+  loop_exits();
+  [[discard]] early_return();
+  selected();
+  ranged();
+  if (propagated().has_value()) {
+    return 1;
+  }
+  [[discard]] moved();
+  int total = owners();
+  std::print("owners ");
+  std::println(total);
+  std::print("drops ");
+  std::println(drops);
+  return 0;
+}

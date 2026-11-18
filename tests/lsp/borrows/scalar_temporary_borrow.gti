@@ -1,0 +1,20 @@
+// A temporary bound to a reference parameter hovers and navigates; a
+// mutable reference to a temporary is S2017 at the argument, and an
+// ambiguous operator is S2022. (scalar_temporary_borrow_lsp_test.py, first
+// part; related-location counts are not asserted.)
+//@ hover @call: int32_t&
+//@ definition @call: @decl
+int /*@decl*/observe(int& value) { return value; }
+int main() { /* 😀 */ return /*@call*/observe(42) - 42; }
+// --- step 2
+int observe(mut int& value) { return value; }
+int main() { /* 😀 */ return observe(42) - 42; }  //~ ERROR GTI-S2017 mutable reference to a temporary
+// --- step 3
+int observe(int& value) { return value; }
+int main() { /* 😀 */ return observe(42) - 42; }
+// --- step 4
+class Tag { public: Tag() = default; bool operator==(Tag& x) { return true; } bool operator==(Tag x) { return true; } };
+int main() { Tag a{}; Tag b{}; return a == b ? 0 : 1; }  //~ ERROR GTI-S2022
+// --- step 5
+int observe(int& value) { return value; }
+int main() { /* 😀 */ return observe(42) - 42; }

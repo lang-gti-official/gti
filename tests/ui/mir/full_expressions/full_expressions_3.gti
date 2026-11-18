@@ -1,0 +1,35 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+enum class item_error { unavailable };
+class Item {
+public:
+  Item() {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() {}
+};
+expected<Item, item_error> produce(int index) {
+  if (index == 2) { return unexpected(item_error::unavailable); }
+  return Item();
+}
+void consume(Item value) {}
+class Record {
+  int value;
+public:
+  Record(int value) : value(value) {}
+};
+expected<Record, item_error> checked_record(int divisor) {
+  return Record(12 / divisor);
+}
+expected<Record, item_error> relay_record(int divisor) {
+  return checked_record(divisor);
+}
+expected<void, item_error> collect() {
+  for (mut int outer = 0; outer < 2; outer++) {
+    for (mut int inner = 0; inner < 4; inner++) {
+      consume(?produce(inner));
+    }
+  }
+  return;
+}
+int main() { auto result = collect(); return result.has_value() ? 0 : 1; }

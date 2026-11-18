@@ -32,7 +32,7 @@ public:
 
   // Starts the process; `initialize` is sent separately so a transcript can
   // drive it.
-  bool start(std::string &error);
+  bool start(std::string &error, const std::filesystem::path &trace = {});
   // start() plus initialize/initialized with the capabilities tests need.
   bool startInitialized(double seconds, std::string &error);
   [[nodiscard]] bool running() const { return pid > 0; }
@@ -90,17 +90,20 @@ struct LspResult {
   bool timedOut = false;
   // The server exited during the test.
   bool crashed = false;
+  // CPU the server spent on the test, when it could be read.
+  std::optional<double> serverCpu;
 };
 
 // Writes the test's file sections into `directory`, opens each `.gti` one
 // (except `//@ disk-only:` ones) as a document, applies the edit steps and
 // checks each expectation directive. `standardLibrary` is the root that
-// `@std:path` expectations are relative to. `deadline` is an absolute
-// wall-clock second.
+// `@std:path` expectations are relative to. `hangGuard` is the wall time
+// allowed for each awaited response or publication (the test fails as hung
+// past it); the CPU budget is the caller's.
 [[nodiscard]] LspResult runLspTest(LspServer &server, const TestFile &test,
                                    const std::filesystem::path &directory,
                                    const std::filesystem::path &standardLibrary,
-                                   double deadline);
+                                   double hangGuard);
 
 // Runs a `.jsonl` transcript against a fresh server. An expectation fails,
 // naming what it awaited, once the server has been silent and idle (no CPU)

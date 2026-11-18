@@ -1,0 +1,12 @@
+// Generics: the program is accepted.
+//@ check-pass
+class Leaf<T> {
+public:
+  Leaf() requires std::default_initializable<T> {}
+};
+class Wrapper<T> {
+  Leaf<T> child;
+public:
+  Wrapper() requires std::default_initializable<T> : child(Leaf<T>()) {}
+};
+int main() { Wrapper<int> object{}; return 0; }

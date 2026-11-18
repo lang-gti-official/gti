@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (requires an owned temporary).
+class C { public: void take() && {}  public: C() = default; }; void run(C& borrowed) { borrowed.take(); } int main() { return 0; }  //~ ERROR GTI-S2022

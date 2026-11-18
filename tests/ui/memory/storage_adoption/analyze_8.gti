@@ -1,0 +1,12 @@
+// Analyze: fixed-address storage does not admit untracked borrowed elements.
+import std.memory;
+
+struct View {
+  int& value;
+  View(int& source) : value(source) {}
+};
+int main() {
+  std::allocator allocator{};
+  [[discard]] allocator.try_storage<View>(std::size_t(1));  //~ ERROR GTI-S2029
+  return 0;
+}

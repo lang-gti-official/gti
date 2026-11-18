@@ -82,9 +82,15 @@ task update and continue without claiming a rename. Follow the canonical
 for completion and intermediate statuses.
 
 1. Inspect status; preserve other tasks' work. Fetch current `origin/main`.
-   Give each task its own `codex/` branch and worktree. Never implement on
+   Give each task its own client-prefixed branch (`codex/` for Codex,
+   `claude/` for Claude Code) and worktree. Never implement on
    primary `main`, reuse another task's branch, or reset a checkout.
-2. Prefer the app's managed worktree creation tool, based on `origin/main`.
+2. Follow [storage selection](../../../docs/architecture/agent-workflow.md#storage-selection).
+   On the Mac mini, prefer `start <task> --title <text> --branch codex/<task>`
+   without `--worktree`: it selects the mounted SSD, otherwise the internal
+   sibling worktree directory. Build inside that worktree. If a managed app
+   cannot select that destination, use the helper; do not move active work.
+   Otherwise prefer the app's managed worktree creation tool, based on `origin/main`.
    Switch its clean checkout to the new task branch, then register it:
 
    ```sh
@@ -113,7 +119,7 @@ for VERSION decisions.
 **You validate the change; the merge queue validates integration.** Run the
 exact reproducer or new regression (failing on the parent revision for a fix),
 the owning subsystem's tests and the affected cross-phase and tooling
-consumers, plus `compiler_pipeline` and the native smoke. Never run the
+consumers, plus `gti_test_ui` and the native smoke. Never run the
 complete suite to finish a task: the queue runs it on the exact candidate that
 becomes `main`, sharded across macOS arm64 and Linux x64, and its `CI gate`
 proves every registered test ran. Full integration also builds the bundled
@@ -154,8 +160,7 @@ integration is complete contributor work; report it as deferred, never as passed
    which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated (a new
-   `gti-test` case runs in `gti_test_ui_shard_1` through `_4`;
-   `gti_test_ui` alone runs only self-tests/tidy). Other items (`tier`, `T2`,
+   `gti-test` case is `gti_test_ui`); other items (`tier`, `T2`,
    `reproduction`, `unaffected`, `expectations`, `T3`) are prose. A PR that
    also changes the compiler and removes an annotation, deletes a test or
    downgrades a mode gives the one-line reason as `expectations`:
@@ -163,9 +168,9 @@ integration is complete contributor work; report it as deferred, never as passed
    ```text
    Validation:
    - tier: T2 (MIR cleanup publication for a new borrow shape)
-   - T0: gti_test_ui_shard_1, gti_test_ui_shard_2, gti_test_ui_shard_3, gti_test_ui_shard_4
-   - T1: gti_test_ui, mir_full_expression, compiler_pipeline
-   - T2: llvm_cleanup_context_execution, mir_census_profile_controls
+   - T0: gti_test_ui
+   - T1: gti_test_ui, mir_full_expression, optimizer_conformance
+   - T2: llvm_place_execution, mir_census_profile_controls
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
    - expectations: tests/ui/borrow/carrier.gti now accepted; the rule changed
    - T3: deferred to post-integration full validation

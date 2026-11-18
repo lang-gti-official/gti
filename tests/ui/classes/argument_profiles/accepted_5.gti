@@ -1,0 +1,34 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+class Packet<void, E> {
+public:
+  Packet() {}
+  void value() {}
+  int kind() { return 2; }
+};
+
+class Packet<T&, E> {
+  T& payload;
+public:
+  Packet(T& value) : payload(value) {}
+  T& value() { return this.payload; }
+  int kind() { return 3; }
+};
+
+class Packet<T, E> {
+  T payload;
+public:
+  Packet(T value) : payload(std::move(value)) {}
+  T& value() { return this.payload; }
+  int kind() { return 1; }
+};
+
+int inspect<T, E>(Packet<T, E>& packet) { return packet.kind(); }
+int main() {
+  Packet<int, int> value{42};
+  Packet<void, int> empty{};
+  int owner = 7;
+  Packet<int&, int> reference{owner};
+  empty.value();
+  return inspect(value) + inspect(empty) + inspect(reference) - 6;
+}

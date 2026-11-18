@@ -1,0 +1,37 @@
+// Confined callable parameters: an invoked nominal callable must not escape through assignment, field storage, local copying, or capture while its boundary is confined.
+class Action {
+public:
+  void operator()() {}
+public:
+  Action() = default;
+};
+
+class Holder<T> {
+public:
+  mut T value;
+  Holder(T value) : value(value) {}
+};
+
+void invoke_and_assign<Operation>(mut Operation& target,
+                                  Operation operation) {
+  operation();
+  target = operation;  //~ ERROR GTI-S2046 cannot be used as an ordinary value
+}
+
+void invoke_and_store<Operation>(mut Holder<Operation>& target,
+                                 Operation operation) {
+  operation();
+  target.value = operation;  //~ ERROR GTI-S2046
+}
+
+void invoke_and_copy<Operation>(Operation operation) {
+  operation();
+  Operation copy = operation;  //~ ERROR GTI-S2046
+}
+
+void invoke_and_capture<Operation>(Operation operation) {
+  operation();
+  auto nested = [operation]() -> void {};  //~ ERROR GTI-S2046
+}
+
+int main() { return 0; }

@@ -1,0 +1,6 @@
+// Borrowing captures: invocation-pointer-signature-mismatch is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int main() {
+  std::function_ptr<int(int)> pointer{[](bool value) -> int { return value ? 1 : 0; }};  //~ ERROR GTI-S2093
+  return pointer(3);
+}

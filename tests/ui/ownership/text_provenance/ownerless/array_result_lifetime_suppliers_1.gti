@@ -1,0 +1,5 @@
+// Array result lifetime suppliers: the array supplier signature is valid syntax and semantics.
+//@ analyze-pass
+std::string_view<a>[2] paired<lifetime a>(std::string_view<a> first,
+          std::string_view<a> second) { return {"first", "second"}; }
+int main() { return 0; }

@@ -1,0 +1,12 @@
+// Owned storage reference receiver: owned contents accessed through a reference formal's receiver lower.
+//@ check-pass
+import std.string;
+import std.vector;
+std::string clone_first(std::vector<std::string>& values) {
+  return values[std::size_t(0)].clone();
+}
+int main() {
+  mut std::vector<std::string> values{};
+  values.push_back(std::string("kept"));
+  return clone_first(values).size() == 4 ? 0 : 1;
+}

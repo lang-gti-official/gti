@@ -1,0 +1,19 @@
+// Retaining store contract separation: the store-contract controls compile with literal inputs.
+//@ check-pass
+import std.string;
+mut std::string_view persistent = "";
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void retain(std::string_view input) mut { this.value = input; }
+  void retain_and_escape(std::string_view input) mut {
+    this.value = input;
+    persistent = input;
+  }
+};
+int main() {
+  mut Holder holder{};
+  holder.retain("first");
+  holder.retain_and_escape("second");
+  return 0;
+}

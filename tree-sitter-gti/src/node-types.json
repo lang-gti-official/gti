@@ -2962,6 +2962,10 @@
             "named": true
           },
           {
+            "type": "structured_binding_declaration",
+            "named": true
+          },
+          {
             "type": "variable_declaration",
             "named": true
           }
@@ -3674,6 +3678,24 @@
           {
             "type": "constexpr",
             "named": false
+          }
+        ]
+      },
+      "initializer": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "structured_binding_declaration",
+            "named": true
+          },
+          {
+            "type": "variable_declaration",
+            "named": true
           }
         ]
       }
@@ -5969,6 +5991,11 @@
     }
   },
   {
+    "type": "string_literal",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "structured_binding_declaration",
     "named": true,
     "fields": {
@@ -6055,6 +6082,24 @@
         "types": [
           {
             "type": "switch_body",
+            "named": true
+          }
+        ]
+      },
+      "initializer": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "structured_binding_declaration",
+            "named": true
+          },
+          {
+            "type": "variable_declaration",
             "named": true
           }
         ]
@@ -7092,10 +7137,6 @@
   {
     "type": "static_assert",
     "named": false
-  },
-  {
-    "type": "string_literal",
-    "named": true
   },
   {
     "type": "struct",

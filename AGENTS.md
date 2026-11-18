@@ -121,7 +121,7 @@ semantics.
   changed invariant needs: the exact reproducer or new regression (for a fix,
   failing on the parent revision for the intended reason), the owning
   subsystem's tests, and the affected cross-phase and tooling consumers, plus
-  `compiler_pipeline` and the native smoke. Record exactly what ran with
+  `gti_test_ui` and the native smoke. Record exactly what ran with
   `verify`. Never run the complete suite locally to finish a feature or fix:
   the merge queue proves build and fast checks on the exact candidate that
   becomes `main`, and post-integration full validation then runs the complete
@@ -142,17 +142,21 @@ semantics.
   and rejection behavior where applicable, not just absence of the crash.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
-  role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
-  a macOS arm64 and Linux x64 build with `feedback-fast`, plus
-  `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
-  exact candidate. Post-integration full validation then runs the per-commit
+  role. A PR's `CI gate` runs the fast checks (lint, the `tree-consistency` tests, and
+  a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
+  entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
+  one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
+  runs the Linux half of that set on the exact candidate (macOS too when the
+  repository variable `GTI_QUEUE_MACOS` is `true`); otherwise a macOS-only
+  failure from combining queued PRs is caught by full validation after merge. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
   Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
   ABI/layout; `tests/ci_darwin_tests.json`) and installed-toolchain checks,
   produces the production archives, and proves each platform's shards covered
-  its inventory. The compiler, LLVM-backend and thread sanitizers
+  its inventory. A run that is red only because required jobs never got a
+  hosted runner is re-run once (`validation-retry.yml`) instead of reported. The compiler, LLVM-backend and thread sanitizers
   (`sanitizers.yml`) and the slow tier (`slow.yml`: the `slow`-labelled tests
   at `-O0` and `-O3`, plus an `-O3` re-run of the per-commit runtime harnesses)
   run daily on the nightly commit; neither gates `main` or nightly, and the
@@ -169,6 +173,15 @@ semantics.
   A failure in the queue belongs to the change that introduced it: its
   owner repairs it, and other agents never weaken unrelated expectations to
   accommodate it. Do not start a local suite to duplicate a queue run.
+- When a test fails in post-integration full validation on a merge that is
+  the only change since a green main, `auto-revert.yml` may revert it (once
+  `GTI_AUTO_REVERT` is `true`): an `auto-revert`-labelled PR joins the queue
+  and the original PR gets a comment naming the failing tests. Do not fight
+  it with a second revert. A merged PR cannot be reopened: after the revert
+  merges, open a fresh PR from the same branch that merges `main`, reverts
+  the revert commit and fixes the failure; if the failure is not yours, close
+  the revert PR with the evidence. See
+  [automatic revert](docs/architecture/agent-workflow.md#automatic-revert-of-a-red-main).
 - Degraded mode: if GitHub Actions is unavailable for more than four hours, a
   designated integrator may validate one combined candidate with `batch` on a
   remote runner and record that evidence on the PR. Agents never fall back to
@@ -251,6 +264,30 @@ semantics.
   deleting its branches. Preserve needed ignored files and any residual source
   first. Explicitly mark and publish abandoned/superseded work; never silently
   discard it. See [the lifecycle contract](docs/architecture/agent-workflow.md).
+
+## Mac mini storage preference
+
+For new worktrees, builds and runner scratch on the Mac mini, prefer
+`~/Documents/External-projects/gti/` when the symlink resolves to a writable,
+mounted external volume. Otherwise use internal-storage defaults. Never create
+an ordinary internal directory to replace a missing external mount or symlink.
+
+Use `agent_workflow.py start <task> --title '<outcome>'` without `--worktree`
+for automatic selection: external `gti/worktrees/<task>`, otherwise
+`<primary-parent>/gti-worktrees/<task>`. An explicit `--worktree` or adoption
+keeps the caller's path. Build inside the selected worktree (`build-release/`)
+so build products follow it. Prefer this helper when a client's worktree tool
+cannot choose the external destination; do not move existing active worktrees.
+
+Selection is made once. Resumed tasks and remote runs keep their recorded
+absolute paths. If their volume disconnects, stop/report the failure and
+reconnect it; do not silently restart elsewhere. The Mac mini runner selects
+external `gti/gti-remote-runner` for new runs, falling back to its configured
+root; explicit `--root`/`GTI_REMOTE_ROOT` overrides automatic selection. Both
+roots retain the original shared build window and the same cleanup/retention
+rules. Preserve source changes, verification evidence and installed toolchains
+on either disk. macOS removable-volume access must be granted to the agent app.
+See [storage selection](docs/architecture/agent-workflow.md#storage-selection).
 
 ## Execution Discipline
 
@@ -364,24 +401,41 @@ one-off implementation-note or redesign files when an existing category fits.
   project transcript 20 s. A test over half its limit goes to `tests/slow/`
   with `//@ slow`. `//@ opt: O3` and `//@ only:` need a `//@ reason:` line.
   Per-commit runs are `-O0`; the daily slow tier runs `tests/slow/` and `-O3`.
-- The old harnesses are frozen: `scripts/check_test_freeze.py` rejects a new
-  `tests/**/*_test.py`, `*_tests.cpp` or `add_test(` outside the new
-  directories. When a change breaks a case in an old harness, fix that case
-  or convert it to a new-style test and delete it there; never add to it. Add
-  no CMake registration, `tests/ownership.toml` entry, census baseline or
-  manifest for a new test.
+- The old harnesses are frozen, as a standing rule:
+  `scripts/check_test_freeze.py` rejects a new `tests/**/*_test.py`,
+  `*_tests.cpp` or `add_test(` outside `tests/{ui,slow,lsp,project,unit,runner}/`
+  and `tests/gti_test.cmake`. When a change breaks a case in an old harness,
+  fix that case or convert it to a new-style test and delete it there; never
+  add to it. Add no CMake registration, `tests/ownership.toml` entry, census
+  baseline or manifest for a new test.
+- Deleting, adding or renaming a test file, script or fixture can break a
+  meta-test that cross-references the tree. Before pushing, run the
+  `tree-consistency` label from a configure-only tree (the CI gate runs it too):
+  `cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"`
+  then `ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'`.
 - Never weaken an expectation to get green. A removed annotation, deleted
   test or downgraded mode in a PR that also changes the compiler needs a
   one-line reason in the PR body (`- expectations:` in its `Validation:`
   block).
 - In the PR's `Validation:` block, a new-style test is covered by
-  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). Do not run sanitizers,
-  `-O3`, corpus walks or the complete suite to finish a task.
+  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
+  runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
+  in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
+  it on Linux (macOS runs one rotating shard per pull request and every shard
+  after integration). Declared names the gate already ran are not re-run, and
+  macOS re-runs only declared tests in the `darwin` set. Run them all with
+  `ctest --test-dir build-release -R '^gti_test_ui'`.
+  Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish
+  a task.
 
-Until the migration completes, the old suite still runs in full validation,
-`compiler_pipeline` still gates PRs and belongs in focused checks, and the
-families already converted are listed in the
-[campaign section](docs/plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16).
+The conversion campaign is closed. The old-style entries that remain run in
+full validation and stay deliberately: tooling, CI and release scripts,
+installed-toolchain smokes (`cli_workflow`, `project_cli_workflow`,
+`lsp_protocol`), genuine C++ unit tests, terminal, fake-server, binary-probe
+and evidence-manifest tests, mutation machinery, and convertible entries that
+need runner features not built. The
+[plan's end state](docs/plans/test-suite-redesign.md#end-state-2026-11-18)
+lists them.
 
 ## Release Channels And VERSION
 

@@ -1,0 +1,38 @@
+// Cleanup free move only payloads: a payload enum over a move-only class without a destructor is cleanup-free and move-only through verified MIR.
+//@ check-pass
+struct token {
+  int32_t id;
+  token(int32_t raw) : id(raw) {}
+  token(token& other) = delete;
+  token(token&& other) = default;
+};
+enum class choice {
+  none,
+  some(token item),
+};
+token pick(choice value) {
+  switch (std::move(value)) {
+  case choice::some(item):
+    return item;
+  case choice::none:
+    return token(0);
+  }
+}
+int32_t tag(choice value) {
+  switch (value) {
+  case choice::some:
+    return 1;
+  case choice::none:
+    return 0;
+  }
+}
+int main() {
+  choice named = choice::some(token(2));
+  switch (named) {
+  case choice::some:
+    break;
+  case choice::none:
+    return 1;
+  }
+  return pick(std::move(named)).id + tag(choice::none) - 2;
+}

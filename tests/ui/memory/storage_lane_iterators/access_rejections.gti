@@ -1,0 +1,27 @@
+// Exclusive storage and mask cursors cannot be copied, and a shared mask cursor cannot write.
+import std.memory;
+import std.resource;
+import std.simd;
+
+int storage_exclusive_copy() {
+  std::allocator allocator{};
+  mut auto result = allocator.try_storage<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  values.construct(std::size_t(1), 42);
+  auto cursor = values.begin_mut(); auto copied = cursor; return *copied;  //~ ERROR GTI-S2003
+}
+
+int mask_exclusive_copy() {
+  mut std::simd_mask<4> values{}; auto cursor = values.begin_mut(); auto copied = cursor; return *copied ? 0 : 1;  //~ ERROR GTI-S2003
+}
+
+int mask_shared_write() {
+  mut std::simd_mask<4> values{}; mut auto cursor = values.begin(); *cursor = true; return 0;  //~ ERROR GTI-S2002
+}
+
+int mask_reverse_exclusive_copy() {
+  mut std::simd_mask<4> values{}; auto cursor = values.rbegin_mut(); auto copied = cursor; return *copied ? 0 : 1;  //~ ERROR GTI-S2003
+}
+
+int main() { return 0; }

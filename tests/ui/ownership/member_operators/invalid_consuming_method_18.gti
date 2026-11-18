@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (consuming method cannot return).
+interface I { int& take() &&; }; int main() { return 0; }  //~ ERROR GTI-S2022

@@ -21,6 +21,7 @@ import unittest.mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import agent_workflow as module
+import tree_consistency
 import validation_checks as validation
 from validation_batch import Batches
 git = module.git
@@ -221,9 +222,9 @@ class DeclaredTests(unittest.TestCase):
             "Validation:\n- T1: " + ", ".join(f"t{i:03}" for i in range(validation.DECLARED_LIMIT + 5)))
         self.assertEqual(len(names), validation.DECLARED_LIMIT)
         self.assertTrue(any("at most" in problem for problem in problems))
-        document = {"tests": [{"name": "registered"}, {"name": "compiler_pipeline"},
+        document = {"tests": [{"name": "registered"}, {"name": "gti_test_ui"},
                               {"name": "off", "properties": [{"name": "DISABLED", "value": True}]}]}
-        selected, problems = validation.runnable_declared(document, ["registered", "compiler_pipeline",
+        selected, problems = validation.runnable_declared(document, ["registered", "gti_test_ui",
                                                                      "off", "missing"])
         self.assertEqual(selected, ["registered"])
         self.assertEqual(len(problems), 2)
@@ -269,7 +270,7 @@ class DeclaredTests(unittest.TestCase):
                       ["python3", "scripts/validation_checks.py", "focused", "--build", "build", "--plan", "plan.json"],
                       ["python3", "-c", "print('-R not_a_ctest_pattern')"]]
             names = ["llvm_scalar_execution", "llvm_class_execution", "lsp_protocol", "planned_owner",
-                     "compiler_pipeline", "llvm_place_execution", "not_a_ctest_pattern"]
+                     "gti_test_ui", "llvm_place_execution", "not_a_ctest_pattern"]
             self.assertEqual(validation.uncovered_declarations(names, checks, directory),
                              ["llvm_place_execution", "not_a_ctest_pattern"])
 
@@ -350,6 +351,8 @@ class Lifecycle(unittest.TestCase):
         for name in list(os.environ):
             if name.startswith(module.build_window.ENV_PREFIX):
                 del os.environ[name]
+        # Default branch names follow the running agent client; tests pick it.
+        os.environ.pop("CLAUDECODE", None)
         self.flow = module.Workflow(self.primary, self.api, enforce_origin=False)
         self.flow.lock_wait = 0
         self.flow.window.poll = 0.05
@@ -775,6 +778,27 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(state["phase"], "active")
         self.assertTrue((self.flow.state_dir / "evidence/old/legacy-record.json").is_file())
         self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/codex/old"))
+
+    def test_task_branches_use_the_client_prefix(self):
+        prefix = module.Workflow.branch_prefix
+        self.assertEqual(prefix({"CLAUDECODE": "1"}), "claude/")
+        self.assertEqual(prefix({}), "codex/")
+        self.assertEqual(prefix({"CLAUDECODE": "0"}), "codex/")
+        os.environ["CLAUDECODE"] = "1"
+        claude = self.flow.start("claude-task", "Claude task", self.root / "claude-task")
+        self.assertRegex(claude["branch"], r"\Aclaude/claude-task-[0-9a-f]{8}\Z")
+        self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/" + claude["branch"]))
+        del os.environ["CLAUDECODE"]
+        codex = self.flow.start("codex-task", "Codex task", self.root / "codex-task")
+        self.assertRegex(codex["branch"], r"\Acodex/codex-task-[0-9a-f]{8}\Z")
+        # Either client may name the other's prefix explicitly, so a task
+        # started by one client stays resumable by the other.
+        explicit = self.flow.start("explicit", "Explicit", self.root / "explicit", "claude/explicit")
+        self.assertEqual(explicit["branch"], "claude/explicit")
+        with self.assertRaisesRegex(Error, "claude/ or codex/"):
+            self.flow.start("other", "Other", self.root / "other", "feature/other")
+        with self.assertRaisesRegex(Error, "claude/ or codex/"):
+            self.flow.start("other", "Other", self.root / "other", "claude/bad..name")
 
     def test_lock_ownership_and_scope_guards(self):
         with self.flow.lock():
@@ -1441,6 +1465,76 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("full", gate, "push")
 
+    def test_ci_gate_requires_each_events_fast_platforms(self):
+        """A pull request's gate needs fast checks on Linux and macOS (its gate
+        is what admits it to the queue); a queue candidate's needs Linux only,
+        or both when GTI_QUEUE_MACOS is `true`;
+        a main dispatch (judged as merge_group) needs both. needs.fast.result
+        is the aggregate of the rows the matrix held, so the matrix's platforms
+        decide which rows the success covers."""
+        lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
+        gate = {**lint, "fast": {"result": "success"}}
+        rows = [{"os": "ubuntu-24.04", "platform": "linux", "rotate": 0, "gate": "gti_test_ui"},
+                {"os": "macos-26", "platform": "darwin", "rotate": 1, "gate": "gti_test_ui"}]
+        both, linux = validation.fast_matrix(rows, "pull_request"), validation.fast_matrix(rows, "merge_group")
+        darwin = {"include": [rows[1]]}
+        self.assertEqual(validation.fast_matrix(rows, "workflow_dispatch"), both)
+        validation.admission("full", gate, "pull_request", both, "pull_request")
+        validation.admission("full", gate, "merge_group", linux, "merge_group")
+        validation.admission("full", gate, "merge_group", both, "workflow_dispatch")
+        for event, trigger, matrix in (("pull_request", "pull_request", linux),
+                                       ("pull_request", "pull_request", darwin),
+                                       ("merge_group", "merge_group", darwin),
+                                       ("merge_group", "merge_group", both),
+                                       ("merge_group", "workflow_dispatch", linux),
+                                       ("merge_group", "merge_group", {"include": []}),
+                                       ("merge_group", "merge_group", {}),
+                                       ("merge_group", "push", linux)):
+            with self.assertRaises(ValueError, msg=(event, trigger, matrix)):
+                validation.admission("full", gate, event, matrix, trigger)
+        # With GTI_QUEUE_MACOS on, a queue candidate needs exactly both rows the
+        # plan scheduled; Linux alone or macOS alone fails. Off or unset, Linux.
+        queued = validation.fast_matrix(rows, "merge_group", True)
+        self.assertEqual(queued, both)
+        validation.admission("full", gate, "merge_group", both, "merge_group", True)
+        for matrix in (linux, darwin, {"include": []}):
+            with self.assertRaises(ValueError):
+                validation.admission("full", gate, "merge_group", matrix, "merge_group", True)
+        validation.admission("full", gate, "pull_request", both, "pull_request", True)
+        with self.assertRaises(ValueError):
+            validation.admission("full", gate, "pull_request", linux, "pull_request", True)
+        for setting, enabled in (("true", True), ("TRUE", True), ("", False), (None, False),
+                                 ("false", False), ("1", False), ("yes", False)):
+            self.assertEqual(validation.queue_macos_enabled(setting), enabled, setting)
+        # The Linux row skipped, failed or cancelled never passes, on any event.
+        for state in ("skipped", "failure", "cancelled"):
+            for event, matrix, enabled in (("pull_request", both, False), ("merge_group", linux, False),
+                                           ("merge_group", both, True)):
+                with self.assertRaises(ValueError):
+                    validation.admission("full", {**lint, "fast": {"result": state}}, event, matrix, event,
+                                         enabled)
+        # The command line refuses full mode without the plan's matrix.
+        results = json.dumps(gate)
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "pull_request",
+                             "--fast-matrix", json.dumps(linux), "--trigger", "pull_request"])
+        validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                         "--fast-matrix", json.dumps(linux), "--trigger", "merge_group"])
+        validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                         "--fast-matrix", json.dumps(both), "--trigger", "merge_group", "--queue-macos", "true"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                             "--fast-matrix", json.dumps(linux), "--trigger", "merge_group",
+                             "--queue-macos", "true"])
+        with self.assertRaises(ValueError):
+            validation.main(["ci-gate", "--mode", "full", "--results", results, "--event", "merge_group",
+                             "--fast-matrix", json.dumps(both), "--trigger", "merge_group",
+                             "--queue-macos", "false"])
+        validation.main(["ci-gate", "--mode", "automation", "--results", json.dumps(lint),
+                         "--event", "merge_group", "--fast-matrix", "", "--trigger", "merge_group"])
+
     def test_ci_draft_and_component_report_incomplete_integration(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
         for draft in (True, False):
@@ -1456,14 +1550,13 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("draft", lint, "merge_group")
 
-    def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
-        slow = {"failure_metadata", "llvm_dispatch_execution", "instance_reuse", "instance_reuse_0"}
+    def test_shard_inventory_runs_split_parts_instead_of_aggregates(self):
+        slow = {"failure_metadata", "llvm_dispatch_execution"}
         sensitive = {"other_runtime", "llvm_backend_scalar", "llvm_dispatch_execution"}
-        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
-                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "other_runtime",
-                      "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution",
-                      *validation.GATE_EXCLUDED}
-        aggregates = {"compiler_pipeline", "instance_reuse"}
+        registered = {"smoke", "allocator_raw_audit_independence", "allocator_raw_audit_independence_a",
+                      "allocator_raw_audit_independence_b", "other", "other_runtime",
+                      "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution"}
+        aggregates = {"allocator_raw_audit_independence"}
 
         def inventory(test_set, names=registered, darwin=None):
             return validation.shard_inventory(names, test_set, darwin, slow, sensitive)
@@ -1471,8 +1564,7 @@ class ValidationChecks(unittest.TestCase):
         full = inventory("full")
         # The aggregates are replaced by their registered parts; slow-labelled
         # tests leave for the daily slow tier.
-        self.assertNotIn("compiler_pipeline", full)
-        self.assertNotIn("instance_reuse", full)
+        self.assertNotIn("allocator_raw_audit_independence", full)
         self.assertEqual(full, registered - aggregates - slow)
         # The slow tier runs exactly the slow-labelled tests (O0 and O3) and
         # re-runs the per-commit level-sensitive harnesses at O3.
@@ -1483,13 +1575,8 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(validation.TEST_SET_LEVELS["slow"], "O0,O3")
         self.assertEqual(validation.TEST_SET_LEVELS["o3"], "O3")
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
-        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
-        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
-        gate = inventory("gate")
-        self.assertEqual(gate, full - validation.GATE_EXCLUDED)
-        self.assertTrue(gate < full)
-        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
-        self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
+        alone = {"smoke", "allocator_raw_audit_independence", "other"}
+        self.assertIn("allocator_raw_audit_independence", validation.shard_inventory(alone, "full"))
         # macOS runs only the platform-specific inventory: listed names and prefixed families.
         listed = (("llvm_",), {"other"})
         darwin = inventory("darwin", darwin=listed)
@@ -1499,9 +1586,7 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(inventory("darwin-o3", darwin=listed), {"llvm_backend_scalar"})
         with self.assertRaises(ValueError):
             inventory("darwin", darwin=((), {"missing"}))  # stale names fail the shard
-        with self.assertRaises(ValueError):
-            validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
-        for retired in ("nightly", "cpp"):
+        for retired in ("nightly", "cpp", "gate"):
             with self.assertRaises(ValueError):
                 inventory(retired)
 
@@ -1693,14 +1778,18 @@ class ValidationChecks(unittest.TestCase):
     def test_ci_automation_paths_name_real_files_that_ci_runs(self):
         # A name for a missing harness would let a future file of that name
         # skip native CI without review, so the inventory names only real
-        # scripts and exactly the harnesses the workflow-regression job runs.
+        # scripts and harnesses the workflow-regression job runs: each is the
+        # command of a tree-consistency entry, the label that job runs.
         root = Path(__file__).resolve().parents[1]
         for name in validation.AUTOMATION_SCRIPTS:
             self.assertTrue((root / "scripts" / name).is_file(), name)
         workflow = (root / ".github/workflows/ci.yml").read_text()
         job = workflow.split("  automation-tests:", 1)[1].split("\n  formatting:", 1)[0]
-        executed = set(re.findall(r"python3 tests/([A-Za-z0-9_]+_test\.py)", job))
-        self.assertEqual(validation.AUTOMATION_TESTS, executed)
+        self.assertIn("-L '^tree-consistency$'", job)
+        self.assertNotIn("cmake --build", job)
+        commands = tree_consistency.harness_files(root)
+        executed = {harness for name in tree_consistency.listed(root) for harness in commands.get(name, [])}
+        self.assertLessEqual(validation.AUTOMATION_TESTS, executed)
         for name in validation.AUTOMATION_TESTS:
             self.assertTrue((root / "tests" / name).is_file(), name)
 
@@ -1797,16 +1886,16 @@ class ValidationChecks(unittest.TestCase):
                              ["run " + name for name in expected])
 
     def test_automation_job_harnesses_are_classified_as_automation(self):
-        _, script = CIEnvironment.step("automation-tests", "Verify workflow, batch, preservation and resource rules")
-        harnesses = re.findall(r"^python3 tests/([A-Za-z0-9_]+_test\.py)\b", script, re.M)
+        harnesses = sorted(validation.AUTOMATION_TESTS)
         self.assertIn("ownership_map_test.py", harnesses)
         self.assertIn("plan_checks_test.py", harnesses)
         for harness in harnesses:
             with self.subTest(harness=harness):
                 self.assertTrue((ROOT / "tests" / harness).is_file())
-                self.assertIn(harness, validation.AUTOMATION_TESTS)
                 expected = "full" if "tests/" + harness in validation.FULL_VALIDATION_FILES else "automation"
                 self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), expected)
+        # A labelled harness outside the automation set still needs native CI.
+        self.assertEqual(validation.ci_mode({}, ["tests/semantic_header_boundary_test.py"]), "full")
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
@@ -1922,49 +2011,28 @@ class CIEnvironment(unittest.TestCase):
             self.assertEqual(execute(False), "")
         self.assertIn("GTI_EVENT_PATH: ${{ github.event_path }}", step)
 
-    @unittest.skipIf(os.name == "nt", "The ubuntu-24.04 bootstrap uses POSIX tools")
-    def test_workflow_bootstrap_supplies_real_cmake_ctest_and_make(self):
-        _, script = self.step("automation-tests", "Install workflow test prerequisites")
-        binaries = {name: shutil.which(name) for name in ("cmake", "ctest", "make")}
-        self.assertTrue(all(binaries.values()), "Local verification requires CMake, CTest and Make")
-        with tempfile.TemporaryDirectory(prefix="gti-ci-bootstrap-") as temporary:
-            root = Path(temporary)
-            tools = root / "tools"
-            tools.mkdir()
-            calls = root / "apt-calls.json"
-            sudo = tools / "sudo"
-            # Intercept package installation locally; expose the real tools only
-            # when the workflow requests their actual Debian package names.
-            sudo.write_text(f"#!{sys.executable}\nimport json, pathlib, sys\n"
-                            f"tools=pathlib.Path({str(tools)!r})\nlog=pathlib.Path({str(calls)!r})\n"
-                            f"binaries={binaries!r}\n"
-                            "args=sys.argv[1:]\nassert args[0]=='apt-get'\n"
-                            "calls=json.loads(log.read_text()) if log.exists() else []\n"
-                            "calls.append(args)\nlog.write_text(json.dumps(calls))\n"
-                            "if args[1]=='install':\n"
-                            " for package, names in {'cmake':['cmake','ctest'],'make':['make']}.items():\n"
-                            "  if package in args:\n"
-                            "   for name in names: (tools/name).symlink_to(binaries[name])\n")
-            sudo.chmod(0o755)
-            env = dict(os.environ, PATH=str(tools))
-            with self.assertRaises(FileNotFoundError):
-                subprocess.run(["cmake", "--version"], env=env, check=True)
-            subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", script],
-                           cwd=root, env=env, check=True, capture_output=True, timeout=30)
-            installed = json.loads(calls.read_text())
-            self.assertEqual(installed[0], ["apt-get", "update"])
-            self.assertTrue(any(row[:2] == ["apt-get", "install"] and
-                                {"cmake", "make"} <= set(row) for row in installed))
-            (root / "CMakeLists.txt").write_text(
-                'cmake_minimum_required(VERSION 3.20)\nproject(CIBootstrap NONE)\n'
-                'enable_testing()\nadd_custom_target(workflow_fixture)\n'
-                f'add_test(NAME ci_bootstrap COMMAND "{sys.executable}" -c "pass")\n')
-            for argv in (["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Unix Makefiles"],
-                         ["cmake", "--build", str(root / "build"), "--target", "workflow_fixture"],
-                         ["ctest", "--test-dir", str(root / "build"), "--no-tests=error", "--output-on-failure"]):
-                subprocess.run(argv, cwd=root, env=env, check=True, capture_output=True, timeout=30)
+    def test_workflow_job_runs_the_label_from_a_configure_only_tree(self):
+        # The workflow-regression job runs the tree-consistency label from a
+        # configure-only tree: the reviewed toolchain supplies CMake, CTest,
+        # Ninja and Make, the configure precedes the run, nothing is built, and
+        # the run is checked for skipped or missing entries afterwards.
         job = (ROOT / ".github/workflows/ci.yml").read_text().split("  automation-tests:\n", 1)[1].split("  formatting:\n", 1)[0]
-        self.assertLess(job.index("Install workflow test prerequisites"), job.index("python3 tests/agent_workflow_test.py"))
+        ordered = ["bash scripts/configure_ci_toolchain.sh", "cmake -S . -B build -G Ninja",
+                   'git config --global user.name "GTI CI"', "ctest --test-dir build",
+                   "python3 scripts/tree_consistency.py run --build build --junit"]
+        positions = [job.index(text) for text in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('GTI_CI_CONFIGURE_ONLY: "1"', job)
+        self.assertIn("--no-tests=error", job)
+        self.assertNotIn("cmake --build", job)
+        self.assertNotIn("python3 tests/", job, "harnesses run through the label, not by name")
+        toolchain = (ROOT / "scripts/configure_ci_toolchain.sh").read_text()
+        install = toolchain.split("apt_get install", 1)[1].split("cc=gcc-14", 1)[0]
+        for package in ("build-essential", "cmake", "ninja-build"):
+            self.assertIn(package, install)
+        # Configuring only skips the disk clearance a build needs, nothing else.
+        self.assertEqual(toolchain.count("GTI_CI_CONFIGURE_ONLY"), 2)
+        self.assertIn('"${GTI_CI_CONFIGURE_ONLY:-}" != 1 ]]; then', toolchain)
 
 
 class BatchLifecycle(unittest.TestCase):

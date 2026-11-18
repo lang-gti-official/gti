@@ -12,8 +12,8 @@ gti examples/owning-enum-arrays/main.gti --backend llvm -O3 -o /tmp/enum-arrays
 /tmp/enum-arrays
 ```
 
-The program exits successfully without output. `generic_payload_enum_runtime`
-runs this example at LLVM O0 and O3, alongside nested-array, thread-local,
+The program exits successfully without output. `tests/ui/types/payload_enums/owning_arrays/`
+runs a copy of this example, alongside nested-array, thread-local,
 field, move-only, replacement, and failure-cleanup cases. Ordinary exact-extent
 initialization and constant-index element-move rules still apply. Arrays of
 borrowed payload enums and cleanup-owning whole-array function parameters or

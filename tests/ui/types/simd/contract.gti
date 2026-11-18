@@ -1,0 +1,16 @@
+// Contract: SIMD should compose inside an unrelated user class.
+//@ check-pass
+import std.simd;
+class UserVector {
+  std::simd<float, 4> lanes;
+public:
+  UserVector(float value) : lanes(std::simd<float, 4>(value)) {}
+  float sum(UserVector& other) {
+    std::simd<float, 4> added = this.lanes + other.lanes;
+    return added.reduce();
+  }
+};
+int main() {
+  UserVector a{2.0}; UserVector b{3.0};
+  return int(a.sum(b));
+}

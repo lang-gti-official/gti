@@ -1,0 +1,20 @@
+// Analyze: user-defined collection protocol and designated nesting.
+//@ check-pass
+class Numbers {
+public:
+  mut int total = 0;
+  Numbers() {}
+  static Numbers collection_init(uint64_t count) { return Numbers(); }
+  static Numbers collection_insert(mut Numbers values, int value) {
+    values.total += value;
+    return std::move(values);
+  }
+};
+
+struct Config { Numbers numbers{};  public: Config() = default; };
+int main() {
+  Numbers empty = {};
+  Numbers numbers = {1, 2, 3};
+  Config config = {.numbers = {4, 5}};
+  return numbers.total + config.numbers.total;
+}

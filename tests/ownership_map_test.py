@@ -16,7 +16,13 @@ risk (which would under-select checks) still fail.
 With --ctest-inventory <json> (the output of `ctest --show-only=json-v1`), or
 with --ctest <ctest> --build <dir> to produce it, it also requires every owner
 and consumer to name at least one registered test. --inventory-only skips the
-Git-based checks, for running inside CTest.
+Git-based checks, for a source tree without a checkout.
+
+With --build it also runs scripts/tree_consistency.py's checks on that tree:
+the tree-consistency label is exactly the entries its rule selects, every
+module a tests/ or scripts/ file imports exists, and every harness name in an
+expectation table names a file. CTest runs it that way, under the label it
+polices.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".codex/skills/verify-change/scripts"))
 import plan_checks  # noqa: E402
+import tree_consistency  # noqa: E402
 from validation_checks import SHARED, advisory  # noqa: E402
 
 COVERED_ROOTS = ("src/", "include/", "runtime/", "stdlib/", "scripts/", "lua/")
@@ -111,16 +118,13 @@ def inventory_errors(ownership: plan_checks.OwnershipMap, inventory: list[str],
     return errors
 
 
-def load_inventory(args: argparse.Namespace) -> list[str] | None:
+def load_inventory(args: argparse.Namespace) -> list[dict] | None:
     if args.ctest_inventory:
         document = json.loads(Path(args.ctest_inventory).read_text(encoding="utf-8"))
-    elif args.ctest:
-        result = subprocess.run([args.ctest, "--test-dir", args.build, "--show-only=json-v1"],
-                                check=True, capture_output=True, text=True, timeout=300)
-        document = json.loads(result.stdout)
-    else:
-        return None
-    return [test["name"] for test in document.get("tests", [])]
+        return document.get("tests", [])
+    if args.ctest:
+        return tree_consistency.inventory(Path(args.build).resolve(), args.ctest)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -162,10 +166,16 @@ def main(argv: list[str] | None = None) -> int:
         else:
             advisory("Ownership map coverage", findings)
         checked.append("tracked-file coverage" + (f", {len(findings)} advisory" if findings else ""))
-    inventory = load_inventory(args)
-    if inventory is not None:
+    tests = load_inventory(args)
+    if tests is not None:
+        inventory = [test["name"] for test in tests]
         errors += inventory_errors(ownership, inventory, registered)
         checked.append(f"inventory of {len(inventory)} tests")
+    if args.build:
+        tree_consistency.self_test()
+        errors += tree_consistency.membership_errors(tests, Path(args.build).resolve(), root)
+        errors += tree_consistency.repository_errors(root)
+        checked.append(f"{len(tree_consistency.listed(root))} tree-consistency entries, imports and harness tables")
     if errors:
         print("ownership map: " + str(len(errors)) + " error(s):\n  " + "\n  ".join(errors),
               file=sys.stderr)

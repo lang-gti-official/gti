@@ -1,0 +1,30 @@
+// A nested carrier argument's loan blocks writing its source, with the raw-pointer audit on.
+//@ slow
+//@ check-fail
+//@ raw-pointer-audit: warn
+class Read {
+  int& value;
+public:
+  Read(int& value) : value(value) {}
+  int get() { return this.value; }
+};
+class Pair {
+  Read first;
+  Read second;
+public:
+  Pair(Read first, Read second) : first(first), second(second) {}
+  int get() { return this.first.get() + this.second.get(); }
+};
+class Context {
+  Pair pair;
+public:
+  Context(int& left, int& right) : pair(Pair(Read(right), Read(left))) {}
+  int get() { return this.pair.get(); }
+};
+int main() {
+  mut int left = 3;  //~ WARN GTI-S2096
+  mut int right = 7;
+  Context nested{left, right};
+  right = 11;  //~ ERROR GTI-S2017
+  return nested.get();
+}

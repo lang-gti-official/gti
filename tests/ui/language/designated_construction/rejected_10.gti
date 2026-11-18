@@ -1,0 +1,2 @@
+// Rejected: invalid construction must stop compilation.
+struct B { int x = 0;  public: B() = default; }; struct S : B { int y = 0;  public: S() = default; }; int main(){ S s = {.y = 1}; return 0; }  //~ ERROR GTI-S2040 //~ ERROR GTI-S2091

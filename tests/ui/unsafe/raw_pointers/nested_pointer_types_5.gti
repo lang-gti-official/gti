@@ -1,0 +1,2 @@
+// Nested pointer types: unsafe-slot-read should retain mandatory pointer checking.
+int main() { mut int* p = nullptr; int** s = &p; int* read = *s; return 0; }  //~ ERROR GTI-S2055

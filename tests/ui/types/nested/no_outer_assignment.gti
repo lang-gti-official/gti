@@ -1,0 +1,3 @@
+// A nested type's method has no implicit enclosing instance to write.
+//@ check-fail
+struct C { mut int value = 1; struct N { void write() mut { value = 2; }  public: N() = default; };  public: C() = default; }; int main() { C outer{}; mut C::N inner{}; inner.write(); return 0; }  //~ ERROR GTI-S2001 value

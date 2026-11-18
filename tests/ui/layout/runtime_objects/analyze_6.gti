@@ -1,0 +1,9 @@
+// Analyze: constant layout_of agrees with sizeof and alignof.
+//@ check-pass
+import std.memory;
+struct Ordinary { int value; double real; };
+constexpr std::layout descriptor = std::layout_of<int>();
+constexpr std::layout ordinary = std::layout_of<Ordinary>();
+static_assert(descriptor.bytes == sizeof(int));
+static_assert(ordinary.bytes == sizeof(Ordinary) && ordinary.alignment == alignof(Ordinary));
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// A std::unordered_map subscript reference into a local cannot be returned.
+//@ check-fail
+import std.unordered_map;
+mut int& leak() { mut std::unordered_map<int, int> values{}; return values[1]; } int main() { return leak(); }  //~ ERROR GTI-S2017 outlives the result

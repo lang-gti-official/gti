@@ -1,0 +1,13 @@
+// At O3, the zero-count reserve path discharges exactly one arithmetic-overflow check.
+//@ slow
+//@ check-pass
+//@ opt: O3
+//@ reason: the discharge is an optimizer result
+//@ snapshot: optimization-report
+// CHECK: safety family arithmetic-overflow {{.*}} statically-discharged=1
+import std.vector;
+int main() {
+  mut std::vector<int32_t> values{};
+  values.reserve(uint64_t(8));
+  return int32_t(values.size() * uint64_t(18446744073709551615));
+}

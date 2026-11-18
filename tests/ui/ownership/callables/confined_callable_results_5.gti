@@ -1,0 +1,9 @@
+// Confined callable results: nested inference must reject void producers with a semantic diagnostic.
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));  //~ ERROR GTI-S2046 inferred generic callable result must be a non-void value
+}
+int main() {
+  auto inner = [](int value) -> void {};
+  auto outer = [](int value) -> int { return value; };
+  return compose(outer, inner, 4);
+}

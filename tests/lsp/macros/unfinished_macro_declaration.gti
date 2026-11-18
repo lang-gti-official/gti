@@ -1,0 +1,9 @@
+// An unfinished macro declaration before overloaded macros recovers.
+// (From deferred_assertion_lsp_test.py.)
+#macro unfinished(int value
+import std.assert;  //~ ERROR GTI-P0001
+namespace application {
+  /*😀*/ #macro check(int value) { std::assert!(value == 7); }
+  #macro check(bool value) { std::assert!(value); }
+}
+int main() { /*😀*/ application::check!(7); return 0; }

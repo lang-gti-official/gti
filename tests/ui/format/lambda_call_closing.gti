@@ -1,0 +1,13 @@
+// A lambda body stays beside the closing delimiters of its enclosing call.
+//@ snapshot: format
+//@ format-stable
+int invoke<F>(F action) { return action(); }
+int main() {
+  return invoke([]() -> int {
+    return invoke([]() -> int {
+      return 0;
+    }
+    );
+  }
+  );
+}

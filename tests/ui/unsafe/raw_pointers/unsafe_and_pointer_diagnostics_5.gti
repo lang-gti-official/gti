@@ -1,0 +1,12 @@
+// Unsafe and pointer diagnostics: a generic field instantiated as a raw pointer needs no declaration initializer.
+//@ check-pass
+class Slot<T> {
+  mut T stored;
+public:
+  Slot(T stored) : stored(stored) {}
+};
+int main() {
+  mut int32_t value = 1;
+  Slot<int32_t*> slot = Slot<int32_t*>(&value);
+  return 0;
+}

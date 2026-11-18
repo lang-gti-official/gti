@@ -1,0 +1,67 @@
+// A once failure after the initializer returned cleans up its owner too.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: once-cleaned
+//@ stdout: owner-cleaned
+//@ stderr-contains: GTI-R0002
+//@ stderr-contains: cthread_once_failure
+// --- cthread_once_failure_after_return.gti
+import std.cthread;
+import std.thread;
+extern "C" { int32_t once_zero(); void once_cleanup(); void once_owner_cleanup(); }
+class Guard { public: Guard() {} ~Guard() { once_cleanup(); } };
+class Owner { public: Owner() {} ~Owner() { once_owner_cleanup(); } };
+std::once_flag flag{};
+void initialize() {}
+int main() {
+  mut std::thread_result<int32_t> task{};
+  auto started = task.start([]() -> int32_t {
+    unsafe { std::call_once(flag, initialize); }
+    Guard guard{};
+    return 100 / once_zero();
+  });
+  if (!started.has_value()) { return 2; }
+  Owner owner{};
+  auto joined = task.join();
+  return 1;
+}
+// --- cthread_once_context.cpp
+#include "gti/cthread.h"
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <thread>
+namespace {
+std::int32_t counts[4] = {};
+}
+extern "C" void once_arrive() {
+  static std::atomic<int> arrived{0};
+  arrived.fetch_add(1);
+  while (arrived.load() != 8) {
+    std::this_thread::yield();
+  }
+}
+extern "C" void once_write(std::int32_t slot) { ++counts[slot]; }
+extern "C" std::int32_t once_read(std::int32_t slot) { return counts[slot]; }
+extern "C" std::int32_t once_zero() { return 0; }
+extern "C" void once_cleanup() {
+  std::fputs("once-cleaned\n", stdout);
+  std::fflush(stdout);
+}
+extern "C" void once_owner_cleanup() {
+  std::fputs("owner-cleaned\n", stdout);
+  std::fflush(stdout);
+}
+extern "C" void once_terminal() {
+  std::set_terminate([] { std::_Exit(86); });
+}
+extern "C" void once_unregistered(gti_once_initializer_v1 callback) {
+  callback();
+}
+extern "C" void once_foreign(gti_once_initializer_v1 callback) {
+  std::thread worker([=] { gti_rt_once_invoke_v1(callback); });
+  worker.join();
+}

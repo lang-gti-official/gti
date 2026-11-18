@@ -1,0 +1,22 @@
+// Nested nominal results publish only on success, including erased callbacks.
+//@ run-pass
+import std.functional;
+
+namespace api {
+  class Target {
+  public:
+    Packet operator()(int value) { return Packet(Target(), value); }
+   public: Target() = default; };
+
+  struct Packet {
+    Target target;
+    int value;
+    Packet(Target target, int value) : target(std::move(target)), value(value) {}
+  };
+}
+
+int main() {
+  std::function<api::Packet(int)> callback{api::Target()};
+  api::Packet packet = callback(7);
+  return packet.value - 7;
+}

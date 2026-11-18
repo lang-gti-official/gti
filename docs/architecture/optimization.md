@@ -39,6 +39,13 @@ Only analysis-owned canonical sets use this path. External evidence and loan
 source lists do not acquire a new canonicality assumption. Public proof
 records retain their existing vectors, ordering and complete identities.
 
+During safety analysis, facts carry shared evidence. Forking a control-flow
+path shares the sorted IDs. Adding a new witness detaches the evidence for
+that path, and joining paths unions their IDs. A normal return from a checked
+instruction carries its refined facts, while the failure edge receives the
+state captured before the instruction. Independent replay builds its own
+facts and evidence from the input MIR.
+
 SCCP joins detect changes per fact instead of copying the entire destination
 state for a final comparison. Equality includes type, lattice
 value and all evidence; equal constants with different provenance still merge
@@ -51,13 +58,14 @@ than one fact copy per block. A transfer or join that leaves a value's fact
 unchanged keeps the existing allocation, and a join that adopts the incoming
 fact shares it; the stored facts are never mutated in place, so every state
 exposes exactly the contents the copying representation produced, and the
-public `MirSccpAnalysis` is unchanged. This bounds the solver near the number
-of distinct facts plus one pointer per block and value instead of B*V complete
-facts, each carrying a semantic type and three evidence vectors. Measured on
-the `stdlib_surface_json.gti` fixture, whose `main` body has about 63,000
-blocks and 600 values, the pass fell from about 18.5 GiB of transient footprint
-and 36 s to about 0.7 GiB and 2 s, and the whole `-O3 --emit-cpp` compile from
-roughly 11 GiB peak resident memory to roughly 3 GiB with byte-identical C++.
+public `MirSccpAnalysis` is unchanged. States share pages of 64 fact pointers.
+A changed slot detaches its page, and joins skip identical pages. The final
+partial page contains only the remaining values. On the `stdlib_surface_json.gti`
+fixture, whose `main` body has about 63,000 blocks and 600 values, the original
+switch to shared facts reduced the pass's transient footprint from about
+18.5 GiB to 0.7 GiB and its runtime from 36 s to 2 s. Peak resident memory
+for the whole `-O3 --emit-cpp` compile fell from roughly 11 GiB to 3 GiB
+with byte-identical C++.
 The remaining peak is the safety discharge analyses' per-block abstract states
 on the same body; `json_stdlib` guards the optimized compile's peak resident
 size with generous headroom.
@@ -83,6 +91,9 @@ continue to come from `mir_effects` and verified semantic/MIR metadata. In
 particular, registering a new member does not supply its transfer function,
 effect summary, backend representation, or replay proof.
 
+When a pass explains a barrier, it passes the containing MIR body to the
+effects query. This avoids scanning the program to locate each instruction.
+
 The audit boundary is:
 
 | Surface | Current handling and enforcement |
@@ -100,6 +111,11 @@ Vocabulary admission runs even when optional full optimizer verification is
 disabled. Direct dominance, CFG, SCCP, loop, alias, and safety entry points also
 fail closed; callers cannot obtain proofs by bypassing the pipeline. O0 still
 runs no transformations and retains identical source/output MIR.
+
+Closed-call safety analysis uses the containing body for effect queries. Within
+each analysis of an immutable body, cleanup queries share a lazily constructed
+invoke-continuation table. The independent replay builds its own table from its
+candidate MIR.
 
 Range transfer also checks authoritative effects before interpreting a
 `Compute`: raw/unsafe access, place/unknown-memory writes, user-code invocation,
@@ -180,7 +196,7 @@ alone adds a provenance use and invalidates that proof; these passes leave
 the chain intact until a whole-literal replacement is available. LLVM consumes
 the existing verified literal contract, so this does not add a runtime check
 or conversion. The optimizer regression covers grouped minima at O0–O3;
-`literal_call_arguments_runtime` checks their native O0/O3 execution.
+`tests/ui/language/temporaries/literal_call_arguments.gti` checks their native O0/O3 execution.
 
 
 `dead-unused-computations` removes only a neutral `Compute` whose result has
@@ -1107,7 +1123,7 @@ state keeps at most 64 carriers and 64 facts per alternative. Nothing here
 names a library type: the prelude's result class, `std::vector`'s and
 `std::detail::prefix_owner`'s allocation results and an unrelated user result
 class over a user payload enum share the rule. The user control
-(`optimizer_payload_result_postconditions.gti`) proves its relayed, negated
+(`tests/slow/optimizer/returned_field_address/payload_result_postconditions.gti`) proves its relayed, negated
 and directly switched success additions and keeps the failed-path, reassigned,
 later-call, native-write, mixed unknown-exit, wrong-case and active-destructor
 negatives checked, with independent replay and runtime overflow evidence.
@@ -1339,7 +1355,7 @@ justified scalar facts. Live, conditionally moved and reinitialized cleanup
 retain their ordinary effects; native counter controls observe those cases.
 
 The focused `optimizer_prefix_relocation` and
-`optimizer_prefix_relocation_runtime` controls use an application-owned
+`tests/ui/optimizer/prefix_relocation/` (and its O3 copies in `tests/slow`) controls use an application-owned
 carrier, overwritten values, retired sources, vacant capacity and failed
 transfers. Owning assertions select the exact downstream multiplication in
 reference-return getter cases; unrelated arithmetic is not evidence. Scalar
@@ -2085,8 +2101,10 @@ this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and
 transformed executions, including fallback, wraparound, effects and poison
-controls. `llvm_checked_reduction_runtime` checks native results, exact failure
-locations and destructor order at LLVM O0/O2/O3 against the existing C++ oracle.
+controls. `tests/slow/optimizer/checked_reductions/` checks native results, exact
+failure locations and destructor order at LLVM O3 against an exact oracle for
+every mode and count; `tests/ui/optimizer/checked_reductions/` runs one count per
+mode at O0.
 These are correctness gates; comparative performance workloads remain manual.
 
 ### Guarded checked scans

@@ -1,0 +1,4 @@
+// Rejected: one causal error without follow-on diagnostics.
+int dynamic_value() { return 7; }
+consteval int check(int value) { return value; }
+int main() { return check(dynamic_value()); }  //~ ERROR GTI-S2057

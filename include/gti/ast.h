@@ -2462,7 +2462,7 @@ public:
                const VariableDecl *sentinelBinding,
                const VariableDecl *elementBinding, const ForStmt *coreLoop,
                const VariableDecl *elementOwnerBinding = nullptr,
-               const Stmt *sourceBody = nullptr)
+               const Stmt *sourceBody = nullptr, StmtPtr initializer = nullptr)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
@@ -2470,7 +2470,7 @@ public:
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
         coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding),
-        sourceBody_(sourceBody) {}
+        sourceBody_(sourceBody), initializer_(std::move(initializer)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -2505,6 +2505,10 @@ public:
   [[nodiscard]] const VariableDecl *elementOwnerBinding() const {
     return elementOwnerBinding_;
   }
+  // The written C++20 init statement of `for (init; binding : range)`. It
+  // precedes the range owner and stays in scope for the whole loop; lowered()
+  // does not contain it.
+  [[nodiscard]] const StmtPtr &initializer() const { return initializer_; }
 
 private:
   Token keyword_;
@@ -2521,6 +2525,7 @@ private:
   const ForStmt *coreLoop_ = nullptr;
   const VariableDecl *elementOwnerBinding_ = nullptr;
   const Stmt *sourceBody_ = nullptr;
+  StmtPtr initializer_;
 };
 
 class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {
@@ -2721,10 +2726,12 @@ private:
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {
 public:
   IfStmt(ExprPtr condition, StmtPtr thenBranch, StmtPtr elseBranch,
-         std::optional<Token> constexprKeyword = std::nullopt)
+         std::optional<Token> constexprKeyword = std::nullopt,
+         StmtPtr initializer = nullptr)
       : condition_(std::move(condition)), thenBranch_(std::move(thenBranch)),
         elseBranch_(std::move(elseBranch)),
-        constexprKeyword_(std::move(constexprKeyword)) {}
+        constexprKeyword_(std::move(constexprKeyword)),
+        initializer_(std::move(initializer)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitIfStmt(*this);
@@ -2739,12 +2746,16 @@ public:
   [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
     return constexprKeyword_;
   }
+  // The written C++17 init statement of `if (init; condition)`. Its names
+  // are scoped to the whole statement, both branches included.
+  [[nodiscard]] const StmtPtr &initializer() const { return initializer_; }
 
 private:
   ExprPtr condition_;
   StmtPtr thenBranch_;
   StmtPtr elseBranch_;
   std::optional<Token> constexprKeyword_;
+  StmtPtr initializer_;
 };
 
 // `constexpr for ( [mut] type IDENTIFIER : sequence ) statement`.
@@ -2894,9 +2905,10 @@ struct SwitchArm {
 class SwitchStmt final : public StmtOfKind<StmtKind::SwitchStmt> {
 public:
   SwitchStmt(Token keyword, ExprPtr expression, std::vector<SwitchArm> arms,
-             Token closingBrace = {})
+             Token closingBrace = {}, StmtPtr initializer = nullptr)
       : keyword_(std::move(keyword)), expression_(std::move(expression)),
-        arms_(std::move(arms)), closingBrace_(std::move(closingBrace)) {}
+        arms_(std::move(arms)), closingBrace_(std::move(closingBrace)),
+        initializer_(std::move(initializer)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitSwitchStmt(*this);
@@ -2906,12 +2918,15 @@ public:
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
   [[nodiscard]] const std::vector<SwitchArm> &arms() const { return arms_; }
   [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
+  // The written C++17 init statement of `switch (init; subject)`.
+  [[nodiscard]] const StmtPtr &initializer() const { return initializer_; }
 
 private:
   Token keyword_;
   ExprPtr expression_;
   std::vector<SwitchArm> arms_;
   Token closingBrace_;
+  StmtPtr initializer_;
 };
 
 class TypeAliasDecl final : public StmtOfKind<StmtKind::TypeAliasDecl> {
@@ -3310,6 +3325,20 @@ private:
   StmtList declarations_;
   std::uint64_t snapshotId_ = 0;
 };
+
+// The C++17/C++20 init statement written in an if, switch or range-for
+// header, or null. It is scoped like the first statement of a block that
+// encloses the whole statement.
+[[nodiscard]] inline const StmtPtr *headerInitializer(const Stmt *statement) {
+  const StmtPtr *initializer = nullptr;
+  if (const auto *branch = stmtAs<IfStmt>(statement))
+    initializer = &branch->initializer();
+  else if (const auto *selection = stmtAs<SwitchStmt>(statement))
+    initializer = &selection->initializer();
+  else if (const auto *loop = stmtAs<RangeForStmt>(statement))
+    initializer = &loop->initializer();
+  return initializer != nullptr && *initializer ? initializer : nullptr;
+}
 
 // The token that anchors a diagnostic about an expression.
 [[nodiscard]] Token expressionAnchorToken(const Expr &expression);

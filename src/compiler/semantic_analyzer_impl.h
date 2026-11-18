@@ -9,6 +9,7 @@
 #include "gti/frontend_work.h"
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/lowered_program.h"
 #include "gti/object_layout.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
@@ -110,6 +111,7 @@ public:
   enum class ProgramEffectOwnerKind {
     None,
     Initializer,
+    ProgramCleanup,
     Function,
     Constructor,
     FunctionDefaultArgument,
@@ -559,6 +561,9 @@ public:
   // Drops the caller-owned graph, sources and metrics a frozen preamble
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
+  std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &,
+                     const std::atomic<bool> *) const;
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
   [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
@@ -822,6 +827,8 @@ public:
   void visitForStmt(const ForStmt &stmt) override;
 
   void visitRangeForStmt(const RangeForStmt &stmt) override;
+  void analyzeRangeForStatement(const RangeForStmt &stmt);
+  void analyzeInitStatement(const StmtPtr &initializer, bool constantBranch);
 
   void visitFunctionDecl(const FunctionDecl &stmt) override;
   void
@@ -833,10 +840,12 @@ public:
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
                            bool constexprDeclarationValid,
-                           bool explainMissingReturnAfterBody = false);
+                           bool explainMissingReturnAfterBody = false,
+                           const BlockStmt *editedBody = nullptr);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
+  void analyzeIfStatement(const IfStmt &stmt);
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override;
 
@@ -849,6 +858,7 @@ public:
   void visitReturnStmt(const ReturnStmt &stmt) override;
 
   void visitSwitchStmt(const SwitchStmt &stmt) override;
+  void analyzeSwitchStatement(const SwitchStmt &stmt);
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override;
 
@@ -1188,6 +1198,10 @@ private:
     bool requiresUnsafe = false;
     // Index in arguments: receiver=0, result=1 (never an origin), operands>=2.
     std::optional<std::size_t> borrowSource;
+    // Free calls retain their declaration-site query and lookup scope. Their
+    // arguments are the read-only parameter types followed by the result.
+    const MemberRequirement *freeCallQuery = nullptr;
+    std::vector<std::string> freeCallScope;
   };
 
   struct ContextualCallableResult {
@@ -1903,6 +1917,8 @@ private:
       bool mutableReceiver = false;
       bool requiresUnsafe = false;
       std::optional<std::size_t> borrowSource;
+      const MemberRequirement *freeCallQuery = nullptr;
+      std::vector<std::string> freeCallScope;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -2153,6 +2169,9 @@ private:
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
+    // The if or switch whose header init statement just executed in its own
+    // scope; that statement's next execution runs the rest of the header.
+    const Stmt *initializedHeader = nullptr;
   };
 
   enum class ConstexprControlFlow {
@@ -2422,6 +2441,25 @@ private:
   // A readonly iterator can yield an independent ordinary value instead of
   // lending an element. Shared by operator and structural range contracts.
   [[nodiscard]] bool readableIteratorValue(const SemanticType &type) const;
+  // A readonly iterator can also yield a copyable value that carries borrowed
+  // state when its written result regions name only the class's own lifetime
+  // parameters or `static`: the yield borrows what the cursor stores, never
+  // the cursor itself.
+  [[nodiscard]] bool readableIteratorYield(const FunctionDecl &syntax,
+                                           const SemanticType &type,
+                                           ClassId ownerClass) const;
+  // Whether every region of a by-value result is written and external to the
+  // receiver: a binder of `ownerClass` or `static`. With `elidedPositions`,
+  // the declaration's own scope also proves that no written type elides a
+  // region; a use site, outside that scope, checks only the written regions.
+  [[nodiscard]] bool
+  resultBorrowsOnlyStoredRegions(const FunctionDecl &syntax, ClassId ownerClass,
+                                 bool elidedPositions = true) const;
+  // A selected read-only operator* whose copyable, borrow-carrying `value`
+  // result its signature writes only in its cursor's stored regions.
+  [[nodiscard]] bool
+  cursorRegionDereference(const ResolvedOperatorInfo *dereference,
+                          const SemanticType &value) const;
 
   struct ActiveCleanupCause {
     const Token *source = nullptr;
@@ -3126,8 +3164,9 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
-  // A result in a region the class stores is supplied by references the
-  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  // A result in a region the class stores is supplied by the references the
+  // receiver stores in that region, never by storage the receiver owns or a
+  // reference stored in another region (GTI-S2127).
   void validateReturnedReceiverRegion(const FunctionDecl &syntax, ClassId owner,
                                       const ExprPtr &value);
   // `requires outlives<T, r>` on a callee: the type bound to T must outlive
@@ -3722,11 +3761,16 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
-      SemanticConstraintGuidance *guidance = nullptr) const;
+      SemanticConstraintGuidance *guidance = nullptr,
+      FunctionId *selectedFreeCall = nullptr) const;
   [[nodiscard]] bool expressionRequirementSatisfiedOnce(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason, const std::vector<std::string> *lookupScope,
-      SemanticConstraintGuidance *guidance) const;
+      SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const;
+  [[nodiscard]] bool
+  applyRequiredFreeCall(const Call &call,
+                        std::span<const SemanticType> argumentTypes,
+                        Symbol &callee);
   // A query's reported outcome (reason and guidance) belongs to its last
   // attempt: a repeated attempt starts from the caller's values.
   template <typename Once>
@@ -3785,7 +3829,8 @@ private:
     std::unique_ptr<Impl> impl;
     std::vector<SemanticCatalog> *idleCatalogs = nullptr;
   };
-  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker() const;
+  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker(
+      const SemanticModel *publishedBase = nullptr) const;
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
@@ -3797,10 +3842,11 @@ private:
                                    std::string *reason,
                                    const std::vector<std::string> *lookupScope,
                                    SemanticConstraintGuidance *guidance) const;
-  [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
-      const ConceptApplication &application,
-      const std::vector<SemanticType> &arguments,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::optional<PredicateCapability>
+  predicateCapabilityFor(const ConceptApplication &application,
+                         const std::vector<SemanticType> &arguments,
+                         const std::vector<std::string> *lookupScope = nullptr,
+                         bool admitNegation = false) const;
   mutable std::size_t expressionRequirementDepth = 0;
   mutable std::shared_ptr<std::size_t> requirementQueryWork;
   [[nodiscard]] bool
@@ -3859,6 +3905,23 @@ private:
   [[nodiscard]] bool activeRequirementsImply(
       std::span<const AppliedConceptRequirement> requirements,
       const ConstraintExpression &expression, std::size_t root) const;
+  // Whether `wanted` has the trusted fact `fact` (negated: lacks it) while
+  // `parameter` is assumed to have `assumed` (negated: to lack it). The
+  // ordinary structural evaluator answers under that temporary hypothesis;
+  // a fact it cannot derive from fields yields no proof.
+  [[nodiscard]] bool liftedParameterFact(const SemanticType &parameter,
+                                         GenericConstraintKind assumed,
+                                         const SemanticType &wanted,
+                                         GenericConstraintKind fact,
+                                         bool negated) const;
+  // Case-analysis hypotheses of the active implication proof: a type
+  // parameter assumed to have trusted facts, or to carry borrowed state.
+  struct AssumedParameterFact {
+    GenericParameterId parameter = 0;
+    GenericConstraintSet constraints = 0;
+    bool borrowedState = false;
+  };
+  mutable std::vector<AssumedParameterFact> assumedParameterFacts;
 
   [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
       const AppliedConceptRequirement &requirement) const;
@@ -4486,6 +4549,10 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren);
 
+  bool analyzeStringViewAddition(const Binary &expression,
+                                 const SemanticType &rightType);
+  void recordLiteralTextConcatenation(const Binary &expression);
+
   void
   analyzeStringViewMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -5051,7 +5118,8 @@ private:
       const std::vector<ConceptApplication> &requirements);
   [[nodiscard]] std::optional<PredicateCapability>
   constraintPredicateCapability(const Call &call,
-                                const std::vector<SemanticType> &typeArguments);
+                                const std::vector<SemanticType> &typeArguments,
+                                bool admitNegation = false);
 
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
@@ -5753,6 +5821,7 @@ private:
 
   void
   validateProgramInitializationEffects(const ProgramInitializationPlan &plan);
+  void validateProgramCleanupEffects(const ProgramInitializationPlan &plan);
 
   void finalizeDeferredProgramConstantSubstitutions(
       const ProgramInitializationPlan &plan);
@@ -5990,6 +6059,10 @@ private:
     bool requiresUnsafe = false;
     bool generic = false;
     bool constrained = false;
+    // The result never borrows the receiver: it carries no borrowed state,
+    // or its signature writes every region in the class's own lifetime
+    // parameters, `static`, or regions its parameters supply.
+    bool resultOutlivesReceiver = false;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     std::vector<std::string> parameterNames;
@@ -6388,6 +6461,7 @@ private:
                                bool mutableReceiver);
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const;
+  void suggestVisibleLocalName(const Token &name, Diagnostic &diagnostic) const;
   [[nodiscard]] const Symbol *
   resolveGeneratedTestReference(const NamePath &path) const;
 
@@ -6582,6 +6656,8 @@ private:
   // (L-OWN-02).
   [[nodiscard]] bool
   receiverTextFieldRelay(const CallableCandidate &function) const;
+  [[nodiscard]] bool
+  receiverClassRegionRelay(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
@@ -6952,6 +7028,18 @@ private:
   contextualIntegerLiteral(const Expr *expression, bool allowSign = true);
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
+
+  // A written integer literal with a numeric suffix (`10u8`), optionally
+  // parenthesized and optionally carrying one sign. Its type is the suffix
+  // type; it never adopts a contextual type.
+  [[nodiscard]] static const LiteralExpr *
+  suffixedIntegerLiteral(const Expr *expression, bool allowSign = true);
+
+  [[nodiscard]] static SemanticType integerSuffixType(NumericSuffix suffix);
+
+  // Reports a suffixed literal whose signed value is outside its suffix type.
+  void checkSuffixedIntegerLiteralRange(const Expr &expression,
+                                        const LiteralExpr &literal);
 
   SemanticType analyzeContextualIntegerOperand(const ExprPtr &expression,
                                                SemanticType target);
@@ -7614,6 +7702,8 @@ private:
     // The value of the return statement whose declared type it initializes.
     const Expr *contextualReturnValue = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
+    // The suffixed literal whose range its enclosing sign already checked.
+    const LiteralExpr *signedSuffixedIntegerLiteral = nullptr;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<ResultUse> contextualResultUse;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -8224,6 +8314,8 @@ private:
   const Expr *&contextualReturnValue = requestSession.contextualReturnValue;
   std::optional<SemanticType> &contextualOperatorIntegerType =
       requestSession.contextualOperatorIntegerType;
+  const LiteralExpr *&signedSuffixedIntegerLiteral =
+      requestSession.signedSuffixedIntegerLiteral;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
   std::optional<ResultUse> &contextualResultUse =

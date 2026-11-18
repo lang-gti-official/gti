@@ -1,0 +1,48 @@
+// Storage: foreign storage vertical fixture must lower.
+//@ check-pass
+using Callback = (c_int) -> c_int;
+[[c_abi]] struct Record { mut c_int value; mut c_int* pointer; };
+[[c_abi]] struct Wrapper { mut Record record; };
+Record relay(Record value) { return value; }
+namespace native {
+extern "C" {
+  mut c_int counter;
+  c_int limit;
+  mut Callback callback;
+  mut c_int* pointer;
+  mut Record record;
+  mut Record other;
+  mut Wrapper wrapper;
+  Record relay_native(Record value);
+  [[link_name("actual_epoch")]] mut c_int epoch;
+  void mutate();
+}
+}
+int main() {
+  auto address = &native::counter;
+  auto readonly_address = &native::limit;
+  auto field_address = &native::record.value;
+  unsafe {
+    native::counter = c_int(7);
+    native::counter++;
+    auto previous = native::counter;
+    native::mutate();
+    native::pointer = address;
+    native::record.value = native::limit;
+    mut Record copy = native::record;
+    native::record = copy;
+    native::record = native::other;
+    native::wrapper.record = native::record;
+    native::record = native::record;
+    copy = native::relay_native(native::record);
+    copy = relay(native::record);
+    native::record = copy;
+    native::record = native::relay_native(native::other);
+    native::wrapper.record = native::relay_native(native::record);
+    native::record = std::move(copy);
+    mut Record moved_to_field = native::other;  //~ WARN GTI-S2096
+    native::wrapper.record = std::move(moved_to_field);
+    native::epoch = native::callback(previous);
+    return int(native::counter + native::record.value + native::epoch);
+  }
+}

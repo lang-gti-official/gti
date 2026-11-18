@@ -117,6 +117,7 @@ struct Options {
   bool failed = false;
   std::optional<fs::path> junit;
   bool list = false;
+  bool listEvidence = false;
   bool tidy = false;
   bool bless = false;
   bool isolate = false;
@@ -146,7 +147,10 @@ void usage(std::ostream &out) {
          "                [--shard I/N] [--bless [--bless-directives]]\n"
          "                [--opt O0|O3] [--isolate] [--gti PATH] [--lsp PATH]\n"
          "                [--json FILE] [--junit FILE] [--slowest N]\n"
-         "                [--cpu-budget SECONDS] [--list] [--tidy]\n"
+         "                [--cpu-budget SECONDS] [--list | --list-evidence] "
+         "[--tidy]\n"
+         "       gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY "
+         "O0|O2\n"
          "Runs every test under tests/ui, tests/project and tests/lsp (or\n"
          "--root DIR). A positional argument that names a file or directory\n"
          "selects it; any other selects tests whose path contains it.\n"
@@ -386,7 +390,8 @@ int tidy(const fs::path &root) {
       const TestFile owner = parseTestFile(testPath, display);
       if (!hasSnapshot(owner, kind) ||
           (kind == Snapshot::Mir && !owner.checks.empty() &&
-           !hasSnapshot(owner, Snapshot::LlvmIr)))
+           !hasSnapshot(owner, Snapshot::LlvmIr) &&
+           !hasSnapshot(owner, Snapshot::OptimizationReport)))
         problems.push_back(display + ": expected file without `//@ snapshot: " +
                            snapshotName(kind) + "` in its test");
       const std::optional<std::string> text = readFile(file);
@@ -416,9 +421,7 @@ int tidy(const fs::path &root) {
       if (!text || text->rfind("// ", 0) != 0)
         problems.push_back(display + ": the first line must be a `// ` comment "
                                      "saying what the transcript checks");
-      std::vector<std::string> errors;
-      (void)parseProjectTranscript(text.value_or(""), errors);
-      for (const std::string &error : errors)
+      for (const std::string &error : parseTestFile(file, display).errors)
         problems.push_back(display + ": " + error);
       continue;
     }
@@ -450,8 +453,10 @@ int tidy(const fs::path &root) {
       problems.push_back(display + ": runner-fault is not allowed in tests");
     for (const Snapshot kind : test.snapshots) {
       const bool patterns = kind == Snapshot::LlvmIr ||
+                            kind == Snapshot::OptimizationReport ||
                             (kind == Snapshot::Mir && !test.checks.empty() &&
-                             !hasSnapshot(test, Snapshot::LlvmIr));
+                             !hasSnapshot(test, Snapshot::LlvmIr) &&
+                             !hasSnapshot(test, Snapshot::OptimizationReport));
       if (!patterns && !fs::exists(snapshotPath(test, kind)))
         problems.push_back(display + ": no " +
                            snapshotPath(test, kind).filename().string() +
@@ -527,6 +532,11 @@ Outcome decode(const std::string &payload) {
   return outcome;
 }
 
+#ifdef GTI_SOURCE_COVERAGE
+// The profile runtime writes at exit, which _exit skips.
+extern "C" int __llvm_profile_write_file(void);
+#endif
+
 [[noreturn]] void workerMain(int input, int output,
                              const EngineOptions &options,
                              const std::vector<TestFile> &tests) {
@@ -544,6 +554,9 @@ Outcome decode(const std::string &payload) {
       if (count <= 0) {
         if (count < 0 && errno == EINTR)
           continue;
+#ifdef GTI_SOURCE_COVERAGE
+        __llvm_profile_write_file();
+#endif
         _exit(0);
       }
       buffer.append(chunk, static_cast<std::size_t>(count));
@@ -613,6 +626,16 @@ std::string jsonString(const std::string &text) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "--llvm-admission-evidence") {
+    if (argc < 5) {
+      std::cerr << "usage: gti-test --llvm-admission-evidence SOURCE "
+                   "NEW_OUTPUT_DIRECTORY O0|O2 [--execution-profile PROFILE] "
+                   "[--library FUNCTION=SYMBOL ...]\n";
+      return 2;
+    }
+    return gti_test::writeAdmissionEvidence(argv[0], argv[2], argv[3], argv[4],
+                                            {argv + 5, argv + argc});
+  }
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -628,6 +651,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (argument == "--list") {
       options.list = true;
+    } else if (argument == "--list-evidence") {
+      options.listEvidence = true;
     } else if (argument == "--tidy") {
       options.tidy = true;
     } else if (argument == "--bless") {
@@ -846,6 +871,29 @@ int main(int argc, char **argv) {
               << " tests\n";
     return 0;
   }
+  if (options.listEvidence) {
+    // Describe the same parsed, filtered and sharded cases execution uses.
+    // The coverage probe currently accepts only ordinary single-file hosted
+    // programs; reject every configuration it cannot reproduce exactly.
+    for (const TestFile &test : tests) {
+      const bool compatible =
+          modeRuns(test.mode) && test.errors.empty() && hostAdmits(test) &&
+          test.sections.size() == 1 && test.stdlibOverlay.empty() &&
+          test.compileLimits.empty() && test.target.empty() &&
+          !test.noPrelude && !test.optimize && test.defines.empty() &&
+          test.rawPointerAudit == "off" &&
+          !test.rawPointerAuditLibraryFindings && test.nativeArgs.empty() &&
+          test.importDirectories.empty() && test.runnerFault.empty();
+      std::cout << "{\"path\":" << jsonString(test.path.generic_string())
+                << ",\"mode\":" << jsonString(modeName(test.mode))
+                << ",\"probe-compatible\":" << (compatible ? "true" : "false")
+                << ",\"execution-profile\":"
+                << jsonString(test.concurrent ? "concurrent"
+                                              : "single-threaded")
+                << "}\n";
+    }
+    return 0;
+  }
   if (options.list) {
     for (const TestFile &test : tests)
       std::cout << test.display << " [" << modeName(test.mode) << "]\n";
@@ -875,6 +923,7 @@ int main(int argc, char **argv) {
   engineOptions.limits.run *= scale;
   engineOptions.limits.slow *= scale;
   engineOptions.limits.lsp *= scale;
+  engineOptions.limits.lspHang *= scale;
   engineOptions.limits.project *= scale;
   engineOptions.limits.coldAllowance *= scale;
   if (options.isolate && !fs::exists(engineOptions.gti)) {
@@ -1032,7 +1081,10 @@ int main(int argc, char **argv) {
 
   const auto backstop = [&](const TestFile &test) {
     const Limits &limits = engineOptions.limits;
-    return 4 * limits.forTest(test) + 2 * limits.coldAllowance;
+    // An LSP test's waits are bounded by its hang guard, not its budget.
+    const bool lsp = test.mode == Mode::Lsp || test.mode == Mode::LspTranscript;
+    return 4 * limits.forTest(test) + 2 * limits.coldAllowance +
+           (lsp ? 2 * limits.lspHang : 0.0);
   };
   const auto reap = [&](Worker &worker, bool killedForTime) {
     if (worker.pid > 0) {
@@ -1171,13 +1223,17 @@ int main(int argc, char **argv) {
       junit << "  <testcase classname=\""
             << xmlEscape(fs::path(test.display).parent_path().generic_string())
             << "\" name=\"" << xmlEscape(test.display) << "\" time=\""
-            << fixed(outcome.wall, 3) << "\"";
+            << fixed(outcome.wall, 3) << "\">";
+      // The CPU the limit judges (the server's, for LSP tests) beside the
+      // wall time in `time`.
+      junit << "<properties><property name=\"cpu\" value=\""
+            << fixed(outcome.cpu, 3) << "\"/></properties>";
       if (outcome.status == Status::Pass) {
-        junit << "/>\n";
+        junit << "</testcase>\n";
       } else if (outcome.status == Status::Skip) {
-        junit << "><skipped/></testcase>\n";
+        junit << "<skipped/></testcase>\n";
       } else {
-        junit << "><failure type=\"" << statusName(outcome.status)
+        junit << "<failure type=\"" << statusName(outcome.status)
               << "\" message=\"" << statusName(outcome.status) << ' '
               << modeName(test.mode) << "\">" << xmlEscape(outcome.detail)
               << "</failure></testcase>\n";

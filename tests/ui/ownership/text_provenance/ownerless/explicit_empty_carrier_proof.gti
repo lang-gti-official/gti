@@ -1,0 +1,12 @@
+// Explicit empty carrier proof: a copied explicitly empty alternative remains publishable without a loan.
+//@ check-pass
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+Reading<static> empty_reading() {
+  auto first = Reading<static>::empty;
+  auto copied = first;
+  return copied;
+}
+int main() {
+  auto reading = empty_reading();
+  return 0;
+}

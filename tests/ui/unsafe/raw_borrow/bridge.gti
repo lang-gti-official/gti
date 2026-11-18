@@ -1,0 +1,17 @@
+// Bridge: unrelated owner witnesses read and mutable borrowing.
+//@ check-pass
+import std.memory;
+struct Witness { mut int value = 42;  public: Witness() = default; };
+unsafe int& relay(const int* address, Witness& witness) {
+  const int* alias = address;
+  unsafe { return std::assume_ref(alias, witness); }
+}
+int main() {
+  mut Witness owner{};
+  unsafe {
+    int* address = &owner.value;
+    { mut int& edit = std::assume_mut(address, owner); edit = 43; }
+    int& read = relay(address, owner);
+    return read - 43;
+  }
+}

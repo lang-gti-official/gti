@@ -1,0 +1,13 @@
+// An unchecked text reference blocks mutating its string.
+//@ check-fail
+import std.string;
+
+int main() {
+  mut std::string text{"loan"};
+  unsafe {
+    mut char& first = text.get_unchecked_mut(std::size_t(0));
+    text.clear();  //~ ERROR GTI-S2017
+    first = 'L';
+  }
+  return 0;
+}

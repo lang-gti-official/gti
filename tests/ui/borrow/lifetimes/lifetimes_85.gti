@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2127.
+thread_local int value = 7;
+int&<static> forever() { return value; }  //~ ERROR GTI-S2127

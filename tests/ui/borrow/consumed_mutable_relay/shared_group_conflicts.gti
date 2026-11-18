@@ -1,0 +1,26 @@
+// A read-only result relayed from a shared group of a mutable reference keeps that reference's referent borrowed.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  int&<owner> consumed() && { return this.direct.value; }
+};
+int&<a> returned<lifetime a>(mut Box&<a> mine) {
+  return Reader(mine).consumed();
+}
+int reborrowed() {
+  mut Box mine{9};
+  int& first = returned(mine);
+  int& second = returned(mine);  //~ ERROR GTI-S2017
+  return first + second;
+}
+int&<a> written_inside<lifetime a>(mut Box&<a> mine) {
+  int& kept = Reader(mine).consumed();
+  mine.value = 3;  //~ ERROR GTI-S2017
+  return kept;
+}
+int main() { return 0; }

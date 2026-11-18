@@ -1,0 +1,9 @@
+// Borrowing captures: gti-invocation-pointer.
+//@ check-pass
+import std.functional;
+int increment(int value) { return value + 1; }
+int main() {
+  std::function_ptr<int(int)> first{increment};
+  std::function_ptr<int(int)> second{[](int value) -> int { return value + 2; }};
+  return first(3) + second(4) - 10;
+}

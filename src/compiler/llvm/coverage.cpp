@@ -20,8 +20,8 @@ constexpr CoverageClaim pendingCoverageClaim() {
 
 constexpr CoverageClaim nonExecutingCoverageClaim() {
   return {LlvmCoverageState::VerifiedNonExecuting,
-          "llvm_admission",
-          "ledger.nonexecuting",
+          "gti_unit_tests",
+          "llvm_admission_ledger",
           {}};
 }
 

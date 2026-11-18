@@ -1,0 +1,1 @@
+import "api/processing.gti"; int main() { processing::Envelope value{}; return value.packet.point.x - 3; }

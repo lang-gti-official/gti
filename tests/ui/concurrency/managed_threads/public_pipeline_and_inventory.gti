@@ -1,0 +1,63 @@
+// Public pipeline and inventory: the public thread workflow should complete frontend analysis.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+import std.memory;
+
+class resource {
+  int32_t value;
+public:
+  resource(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+
+class class_task {
+public:
+  void operator()() { std::println("class read task"); }
+  void operator()() mut { std::println("class mutable task"); }
+  void operator()() && { std::println("class once task"); }
+public:
+  class_task() = default;
+};
+
+class fresh_task {
+public:
+  void operator()() { std::println("fresh class task"); }
+public:
+  fresh_task() = default;
+};
+
+int main() {
+  auto first_started = std::thread::start(
+      []() -> void { std::println("first task"); });
+  if (!first_started.has_value()) { return 1; }
+  std::thread first = std::move(first_started).value();
+  mut std::thread moved = std::move(first);
+  auto first_join = moved.join();
+  if (!first_join.has_value() || moved.joinable()) { return 2; }
+
+  auto owner = std::make_unique<resource>(42);
+  auto second_started = std::thread::start(
+      [owned = std::move(owner)]() -> void {
+        std::println(owned->read());
+      });
+  if (!second_started.has_value()) { return 3; }
+  mut std::thread second = std::move(second_started).value();
+  auto second_join = second.join();
+  if (!second_join.has_value()) { return 4; }
+
+  class_task task = class_task();
+  auto third_started = std::thread::start(std::move(task));
+  if (!third_started.has_value()) { return 5; }
+  mut std::thread third = std::move(third_started).value();
+  auto third_join = third.join();
+  if (!third_join.has_value()) { return 6; }
+
+  {
+    auto fourth_started = std::thread::start(fresh_task());
+    if (!fourth_started.has_value()) { return 7; }
+    std::thread fourth = std::move(fourth_started).value();
+  }
+  std::println("after automatic join");
+  return 0;
+}

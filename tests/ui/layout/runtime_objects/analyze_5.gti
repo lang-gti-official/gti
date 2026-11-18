@@ -1,0 +1,5 @@
+// Analyze: ordinary object sizeof is a native constant independently of the runtime layout descriptor.
+//@ check-pass
+import std.memory;
+struct Ordinary { int value; };
+constexpr uint64_t bytes = sizeof(Ordinary); static_assert(bytes == uint64_t(4)); int main() { return 0; }

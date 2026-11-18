@@ -1,0 +1,4 @@
+// Structural_relocation: invalid structural relocation is rejected before lowering.
+    class Fixed { public: Fixed() {} Fixed(Fixed&& source) = delete; };
+    void accept<std::relocatable T>() {}
+    int main() { accept<Fixed>(); return 0; }  //~ ERROR GTI-S2029

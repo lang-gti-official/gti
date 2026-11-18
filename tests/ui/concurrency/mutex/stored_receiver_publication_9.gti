@@ -1,0 +1,25 @@
+// Stored receiver publication: unrelated shared carriers retain overlapping read permission.
+//@ check-pass
+//@ execution-profile: concurrent
+class Lease {
+  int& value;
+public:
+  Lease(int& value) : value(value) {}
+  int get() { return this.value; }
+  ~Lease() {}
+};
+class Holder {
+  int& value;
+public:
+  Holder(int& value) : value(value) {}
+  int get() {
+    Lease first{this.value};
+    Lease second{this.value};
+    return first.get() + second.get();
+  }
+};
+int main() {
+  int value = 7;
+  Holder holder{value};
+  return holder.get() - 14;
+}

@@ -1,0 +1,35 @@
+// `gti test` reports an invalid test signature as a runner error, runs a
+// legacy `main` suite (exit status, output and panic report) and keeps two
+// test targets' same-named tests apart. (From test_command_controls_test.py,
+// with tests/project/test_command_controls.)
+$ cd project
+$ gti test --progress never --format json
+? 65
+stdout: "runner_errors":1,
+stdout: "complete":false
+!stdout: suite_discovered
+$ cp ../variants/exit23.gti tests/main.gti
+$ gti test --progress never --format json
+? 23
+stdout: "discovered":1,"selected":1,"started":1,"completed":1,
+stdout: "status":"failed"
+$ cp ../variants/legacy.gti tests/main.gti
+$ gti test --progress never
+? 70
+stdout: legacy-stdout
+!stdout: legacy-stderr
+stderr: legacy-stderr
+stderr: Failed engine-tests (exit code 70)
+!stderr: [engine-tests] engine-tests ...
+$ gti test --progress never --format json
+? 70
+stdout: legacy-stdout
+stdout: legacy-stderr
+$ cp ../variants/first.gti tests/main.gti
+$ cp ../variants/other.gti tests/other.gti
+$ sh -c "cat ../variants/other_target.toml >> gti.toml"
+$ gti test --progress never --jobs 2
+stderr: [engine-tests] shared ... passed
+stderr: [other-tests] shared ... passed
+stderr: first-suite
+stderr: second-suite

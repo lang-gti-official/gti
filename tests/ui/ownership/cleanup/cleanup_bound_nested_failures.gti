@@ -1,0 +1,63 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default primary primary-secondary only-destructor-failure
+//@[default] stdout: 41
+//@[default] stdout: 55
+//@[default] stdout: 99
+//@[primary] run-fail
+//@[primary] args: primary
+//@[primary] exit-code: 70
+//@[primary] stdout: 41
+//@[primary] stdout: 55
+//@[primary] stdout: 99
+//@[primary] stderr-contains: cleanup_bound_nested_failures.gti:30: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[primary-secondary] run-fail
+//@[primary-secondary] args: primary secondary
+//@[primary-secondary] exit-code: 70
+//@[primary-secondary] stdout: 41
+//@[primary-secondary] stderr-contains: cleanup_bound_nested_failures.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at cleanup_bound_nested_failures.gti:30; secondary [GTI-R0002]
+//@[only-destructor-failure] run-fail
+//@[only-destructor-failure] args: only destructor failure
+//@[only-destructor-failure] exit-code: 70
+//@[only-destructor-failure] stdout: 41
+//@[only-destructor-failure] stdout: 55
+//@[only-destructor-failure] stdout: 99
+//@[only-destructor-failure] stderr-contains: cleanup_bound_nested_failures.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- cleanup_bound_nested_failures.gti
+import std.string;
+import std.vector;
+
+class Resource {
+public:
+  int divisor;
+  Resource(int divisor) : divisor(divisor) {}
+  ~Resource() { std::println(99); }
+};
+class Trace {
+  int id;
+public:
+  Trace(int id) : id(id) {}
+  ~Trace() { std::println(this.id); }
+};
+class Guard {
+  Resource& resource;
+  Trace trace;
+public:
+  Guard(Resource& resource) : resource(resource), trace(Trace(55)) {}
+  ~Guard() {
+    std::println(41);
+    int cleanup = 7 / this.resource.divisor;
+  }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item, int divisor) : item(std::move(item)) {
+    int primary = 1 / divisor;
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{argc > 2 ? 0 : 1};
+  Box<Guard> box{Guard(resource), argc == 2 or argc == 3 ? 0 : 1};
+  return 0;
+}

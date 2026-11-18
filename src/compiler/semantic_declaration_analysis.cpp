@@ -702,9 +702,24 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
             symbols.addAlternative(name, published);
           return;
         }
-        existing->second.overloads.insert(existing->second.overloads.end(),
-                                          published.overloads.begin(),
-                                          published.overloads.end());
+        for (const CallableCandidate &candidate : published.overloads) {
+          // Visibility is filtered before coalescing: each package can use its
+          // own declaration without importing another binding's source API.
+          // The external-symbol catalog still validates every declaration's
+          // signature and safety contract before code generation.
+          const bool sameNativeBinding =
+              candidate.record().linkage == LanguageLinkage::C &&
+              std::any_of(existing->second.overloads.begin(),
+                          existing->second.overloads.end(),
+                          [&](const CallableCandidate &previous) {
+                            return previous.record().linkage ==
+                                       LanguageLinkage::C &&
+                                   previous.record().externalSymbol ==
+                                       candidate.record().externalSymbol;
+                          });
+          if (!sameNativeBinding)
+            existing->second.overloads.push_back(candidate);
+        }
         existing->second.compilerPrivate =
             !existing->second.overloads.empty() &&
             std::all_of(existing->second.overloads.begin(),
@@ -1446,6 +1461,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
             pattern.mutableReceiver = fact->mutableReceiver;
             pattern.requiresUnsafe = fact->requiresUnsafe;
             pattern.borrowSource = fact->borrowSource;
+            pattern.freeCallQuery = fact->freeCallQuery;
+            if (pattern.freeCallQuery)
+              pattern.freeCallScope = conceptInfo.namespaceScope;
             for (const auto &type : fact->arguments)
               pattern.arguments.push_back({.concrete = type});
             leafStructuralConstraints[requirementIndex].push_back(
@@ -1569,6 +1587,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         mapped.mutableReceiver = pattern.mutableReceiver;
         mapped.requiresUnsafe = pattern.requiresUnsafe;
         mapped.borrowSource = pattern.borrowSource;
+        mapped.freeCallQuery = pattern.freeCallQuery;
+        mapped.freeCallScope = pattern.freeCallScope;
         std::vector<SemanticType> mappedTypes;
         for (const auto &argument : argumentMap)
           mappedTypes.push_back(
@@ -2029,6 +2049,22 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
           value = {.negative = constant->negative,
                    .magnitude = constant->magnitude};
           valueKnown = true;
+          // A suffixed value keeps its written type; it must be the backing
+          // type exactly, as an enum value never converts implicitly.
+          if (const LiteralExpr *suffixed =
+                  suffixedIntegerLiteral(enumerator.initializer.get());
+              suffixed != nullptr &&
+              integerSuffixType(suffixed->token().numericSuffix) !=
+                  underlying) {
+            report(suffixed->token(),
+                   "Scoped enum value has suffix type '" +
+                       typeSpelling(
+                           integerSuffixType(suffixed->token().numericSuffix)) +
+                       "', but the enum's backing type is '" +
+                       typeSpelling(underlying) + "'.",
+                   "GTI-S2036");
+            valueKnown = false;
+          }
         }
       } else if (!nextValue) {
         report(enumerator.name,
@@ -4049,6 +4085,25 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
   }
   for (const Parameter &parameter : declaration.parameters()) {
     facts.parameterNames.push_back(parameter.name.lexeme);
+  }
+  const SemanticType &result = facts.returnType;
+  if (facts.staticMember) {
+    facts.resultOutlivesReceiver = true;
+  } else if (result.kind == SemanticType::StringView ||
+             result.kind == SemanticType::CString) {
+    // A legacy text handle's owner is tracked per value, not by signature.
+    facts.resultOutlivesReceiver = false;
+  } else if (result.kind != SemanticType::Reference &&
+             !typeTraits(result).containsBorrowedState) {
+    facts.resultOutlivesReceiver = true;
+  } else {
+    const auto lifetime = explicitLifetimeResult(
+        declaration, facts.parameterTypes, function->ownerClass);
+    facts.resultOutlivesReceiver =
+        resultBorrowsOnlyStoredRegions(declaration, function->ownerClass,
+                                       false) ||
+        (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+         !lifetime.classBinder && !lifetime.parameters.empty());
   }
   return facts;
 }
@@ -8076,6 +8131,8 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
     }
     return;
   }
+  if (const StmtPtr *initializer = headerInitializer(statement))
+    collectBorrowReturnExpressions(initializer->get(), returns, locals);
   if (const auto *branch = stmtAs<IfStmt>(statement)) {
     collectBorrowReturnExpressions(branch->thenBranch().get(), returns, locals);
     collectBorrowReturnExpressions(branch->elseBranch().get(), returns, locals);
@@ -8966,25 +9023,33 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
           for (const auto &nested : *branch)
             self(self, nested.get(), depth + 1);
       } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+        const auto outer = textBorrowAliases;
+        self(self, branch->initializer().get(), depth + 1);
         const auto enclosing = textBorrowAliases;
         self(self, branch->thenBranch().get(), depth + 1);
         textBorrowAliases = enclosing;
         self(self, branch->elseBranch().get(), depth + 1);
-        textBorrowAliases = enclosing;
+        textBorrowAliases = outer;
       } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+        const auto outer = textBorrowAliases;
+        self(self, selection->initializer().get(), depth + 1);
         const auto enclosing = textBorrowAliases;
         for (const auto &arm : selection->arms()) {
           for (const auto &nested : arm.statements)
             self(self, nested.get(), depth + 1);
           textBorrowAliases = enclosing;
         }
+        textBorrowAliases = outer;
       } else if (const auto *loop = stmtAs<ForStmt>(statement)) {
         const auto enclosing = textBorrowAliases;
         self(self, loop->initializer().get(), depth + 1);
         self(self, loop->body().get(), depth + 1);
         textBorrowAliases = enclosing;
       } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->initializer().get(), depth + 1);
         self(self, loop->lowered().get(), depth + 1);
+        textBorrowAliases = enclosing;
       } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
         if (const auto *expansion =
                 semanticModel.findConstexprForExpansion(*loop)) {
@@ -9098,9 +9163,11 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
       for (const StmtPtr &nested : block->statements())
         self(self, nested.get());
     } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+      self(self, branch->initializer().get());
       self(self, branch->thenBranch().get());
       self(self, branch->elseBranch().get());
     } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+      self(self, selection->initializer().get());
       for (const SwitchArm &arm : selection->arms()) {
         if (const auto relay = payloadReferenceRelayArm(
                 *selection, arm, function, ownerType, conditional))
@@ -9324,7 +9391,8 @@ auto SemanticVisitor::Impl::accessorReceiverFields(
           block->statements().begin(), block->statements().end(),
           [&](const StmtPtr &nested) { return self(self, nested.get()); });
     if (const auto *branch = stmtAs<IfStmt>(statement))
-      return self(self, branch->thenBranch().get()) &&
+      return self(self, branch->initializer().get()) &&
+             self(self, branch->thenBranch().get()) &&
              self(self, branch->elseBranch().get());
     return false;
   };
@@ -10030,7 +10098,8 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
       if (!body || body->statements().size() != 1)
         return std::nullopt;
       const auto *branch = stmtAs<IfStmt>(body->statements().front().get());
-      if (!branch || branch->isConstexpr() || branch->elseBranch())
+      if (!branch || branch->isConstexpr() || branch->elseBranch() ||
+          branch->initializer())
         return std::nullopt;
       const auto *condition = exprAs<Binary>(branch->condition().get());
       if (!condition || condition->oper().kind != TokenKind::BANG_EQUAL)

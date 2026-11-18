@@ -1,0 +1,7 @@
+// Reference payloads: the program is accepted.
+//@ analyze-pass
+enum Reading { empty, value(int& owner) };
+Reading<a> read<lifetime a>(int&<a> owner) {
+  return Reading::value(owner);
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }  //~ WARN GTI-S2096

@@ -1,0 +1,24 @@
+// Mutable range loans: a structural range without a mutable endpoint should receive the mutable-range protocol diagnostic and actionable hint.
+class Iterator {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(Iterator& other) { return this.current != other.current; }
+public:
+  Iterator() = default;
+};
+
+class ReadOnlyRange {
+public:
+  Iterator begin() { return Iterator(); }
+  Iterator end() { return Iterator(); }
+public:
+  ReadOnlyRange() = default;
+};
+
+int main() {
+  mut ReadOnlyRange values{};
+  for (mut int32_t& value : values) { value = 1; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2022 //~ ERROR GTI-S2083
+  return 0;
+}

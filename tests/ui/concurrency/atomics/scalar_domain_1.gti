@@ -1,0 +1,23 @@
+// Scalar domain: bool and every fixed-width integer should satisfy atomic_scalar.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<bool> b{false};
+  std::atomic<int8_t> i8{int8_t(1)};
+  std::atomic<int16_t> i16{int16_t(2)};
+  std::atomic<int32_t> i32{int32_t(3)};
+  std::atomic<int64_t> i64{int64_t(4)};
+  std::atomic<uint8_t> u8{uint8_t(5)};
+  std::atomic<uint16_t> u16{uint16_t(6)};
+  std::atomic<uint32_t> u32{uint32_t(7)};
+  std::atomic<uint64_t> u64{uint64_t(8)};
+  if (b.load() || i8.load() != int8_t(1) ||
+      i16.load() != int16_t(2) || i32.load() != int32_t(3) ||
+      i64.load() != int64_t(4) || u8.load() != uint8_t(5) ||
+      u16.load() != uint16_t(6) || u32.load() != uint32_t(7) ||
+      u64.load() != uint64_t(8)) {
+    return 1;
+  }
+  return 0;
+}
