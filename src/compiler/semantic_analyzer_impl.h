@@ -1189,6 +1189,10 @@ private:
     bool requiresUnsafe = false;
     // Index in arguments: receiver=0, result=1 (never an origin), operands>=2.
     std::optional<std::size_t> borrowSource;
+    // Free calls retain their declaration-site query and lookup scope. Their
+    // arguments are the read-only parameter types followed by the result.
+    const MemberRequirement *freeCallQuery = nullptr;
+    std::vector<std::string> freeCallScope;
   };
 
   struct ContextualCallableResult {
@@ -1904,6 +1908,8 @@ private:
       bool mutableReceiver = false;
       bool requiresUnsafe = false;
       std::optional<std::size_t> borrowSource;
+      const MemberRequirement *freeCallQuery = nullptr;
+      std::vector<std::string> freeCallScope;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -3742,11 +3748,15 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
-      SemanticConstraintGuidance *guidance = nullptr) const;
+      SemanticConstraintGuidance *guidance = nullptr,
+      FunctionId *selectedFreeCall = nullptr) const;
   [[nodiscard]] bool expressionRequirementSatisfiedOnce(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason, const std::vector<std::string> *lookupScope,
-      SemanticConstraintGuidance *guidance) const;
+      SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const;
+  [[nodiscard]] bool applyRequiredFreeCall(
+      const Call &call, std::span<const SemanticType> argumentTypes,
+      Symbol &callee);
   // A query's reported outcome (reason and guidance) belongs to its last
   // attempt: a repeated attempt starts from the caller's values.
   template <typename Once>
