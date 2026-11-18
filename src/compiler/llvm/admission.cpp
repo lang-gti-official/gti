@@ -4305,7 +4305,13 @@ public:
              representedAddress(stage.info.type) &&
              representedAddress(stage.parameterTypes[1].arguments.front());
     }
-    if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
+    // Borrowing a text-view object transports its address, not its counted
+    // bytes. rawBorrowResultLoan already proves the exact typed pointer and
+    // owner witness; keep ordinary raw loads/arithmetic separately gated.
+    const bool textReferent = stage.info.type == pointer.arguments.front() &&
+                              stage.info.type.kind == SemanticType::StringView;
+    if (!textReferent &&
+        !(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
         !nativeRecordObject(pointer.arguments.front()) &&
         // A raw borrow may name an already adjusted hierarchy view, including
@@ -5490,6 +5496,8 @@ public:
         // its storage witness does not itself grant raw reference formation.
         const auto rawReferenceShape =
             !rawReference ? std::nullopt
+            : stage.info.type.kind == SemanticType::StringView
+                ? std::optional(Shape::CountedText)
             : nativePayloadPointee(stage.info.type)
                 ? std::optional(Shape::NativePayloadRawAccess)
             : dispatchProofs.contains(stage.info.type)

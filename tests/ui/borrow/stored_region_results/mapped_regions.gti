@@ -1,0 +1,63 @@
+// A stored-region result may borrow through a carrier field or base field in its region.
+//@ run-pass
+//@ exit-code: 0
+
+// The region a stored reference supplies is read through each carrier
+// field's lifetime arguments and each base class's: `pair.first` holds `a`
+// when `pair` is a `Pair<a, b>`, and a base `Base<a>` stores `a`.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Pair<lifetime x, lifetime y> {
+  Box&<x> first;
+  Box&<y> second;
+  Pair(Box&<x> first, Box&<y> second) : first(first), second(second) {}
+};
+int&<r> pass<lifetime r>(Box&<r> box) { return box.value; }
+
+class Holder<lifetime a, lifetime b> {
+  Pair<a, b> pair;
+  Pair<b, a> swapped;
+public:
+  Holder(Box&<a> first, Box&<b> second)
+      : pair(Pair<a, b>(first, second)), swapped(Pair<b, a>(second, first)) {}
+  int&<a> first() && { return this.pair.first.value; }
+  int&<b> second() && { return this.pair.second.value; }
+  int&<a> swapped_second() && { return pass(this.swapped.second); }
+};
+
+class Base<lifetime r> {
+protected:
+  Box&<r> stored;
+public:
+  Base(Box&<r> stored) : stored(stored) {}
+};
+class Derived<lifetime a, lifetime b> : public Base<a> {
+  Box&<b> other;
+public:
+  Derived(Box&<a> mine, Box&<b> other) : Base<a>(mine), other(other) {}
+  int&<a> inherited() { return this.stored.value; }
+  int&<b> own() { return this.other.value; }
+};
+
+// Each result keeps only its own region's referent borrowed.
+int&<a> first_of<lifetime a, lifetime b>(Box&<a> kept, Box&<b> dropped) {
+  return Holder(kept, dropped).first();
+}
+int&<a> swapped_of<lifetime a, lifetime b>(Box&<a> kept, Box&<b> dropped) {
+  return Holder(kept, dropped).swapped_second();
+}
+
+int main() {
+  Box kept{3};
+  mut int total = 0;
+  {
+    Box dropped{4};
+    total = first_of(kept, dropped) + swapped_of(kept, dropped);
+  }
+  Box mine{5};
+  Box other{6};
+  Derived derived = Derived(mine, other);
+  return total == 6 && derived.inherited() == 5 && derived.own() == 6 ? 0 : 1;
+}
