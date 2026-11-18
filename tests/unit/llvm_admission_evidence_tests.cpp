@@ -2,10 +2,14 @@
 // exact counts, and nested hierarchy scopes report cache hits and rejections.
 #include "../../src/compiler/llvm/placement.h"
 #include "../lowered_program_test_support.h"
+#include "../temporary_directory.h"
 #include "gti/llvm_admission.h"
+#include "gti/support.h"
 #include "unit_test.h"
 
+#include <fstream>
 #include <iomanip>
+#include <llvm/Support/JSON.h>
 #include <sstream>
 #include <stdexcept>
 
@@ -33,7 +37,29 @@ GTI_UNIT_TEST(llvm_admission_evidence) {
   std::vector<lang::LoweredProgramIssue> issues;
   auto verified = lang::verifiedLoweredProgram(lowered, issues);
   require(verified.has_value(), "evidence input did not verify");
+  gti_test::TemporaryDirectory temporary("gti-admission-trace");
+  const auto tracePath = temporary.root() / "trace.json";
+  lang::beginTimeTrace("gti-admission-test");
   const auto measured = lang::planLlvmAdmission(*verified);
+  require(lang::endTimeTrace(tracePath.string()), "trace publication failed");
+  std::ifstream traceFile(tracePath);
+  const std::string traceText((std::istreambuf_iterator<char>(traceFile)), {});
+  const auto trace = llvm::json::parse(traceText);
+  require(trace && trace->getAsObject(), "invalid trace JSON");
+  const auto *events = trace->getAsObject()->getArray("traceEvents");
+  require(events != nullptr, "missing trace events");
+  for (const char *name :
+       {"llvm-admission", "llvm-admission-closure",
+        "llvm-admission-dispatch-proofs", "llvm-admission-inventory"}) {
+    std::size_t count = 0;
+    for (const auto &event : *events) {
+      const auto *object = event.getAsObject();
+      if (object && object->getString("name") == name &&
+          object->getString("ph") == "X")
+        ++count;
+    }
+    require(count == 1, "missing or double-counted admission trace region");
+  }
   require(measured.admitted(), "evidence input was rejected");
   require(measured.statistics().has_value(), "validation counters are missing");
   require(measured.statistics()->nativeValueQueries > 0 &&
@@ -67,6 +93,30 @@ GTI_UNIT_TEST(llvm_admission_evidence) {
   lang::printLlvmAdmissionPlan(actual, unmeasured);
   require(actual.str() == expected.str(),
           "telemetry/stream flags changed the admission dump");
+  // A forged unsupported record tests the inspection contract, without
+  // depending on a source feature that a future backend may implement.
+  auto rejected = lang::planLlvmAdmission(*verified);
+  require(!rejected.requirements().empty(), "missing forgery storage");
+  const lang::LlvmCoverageEntry unknown{
+      .family = "Fixture", .name = "Unknown", .milestone = 7};
+  auto &use =
+      const_cast<lang::LlvmCoverageUse &>(rejected.requirements().front());
+  use.entry = &unknown;
+  use.implementedShape = nullptr;
+  use.required = true;
+  use.source = {"quoted\"source.gti", 19, 25, 3};
+  use.occurrences = 17;
+  std::ostringstream rejection;
+  lang::printLlvmAdmissionPlan(rejection, rejected);
+  require(rejection.str().find("use 0 Fixture.Unknown ") != std::string::npos &&
+              rejection.str().find(" occurrences 17 ") != std::string::npos &&
+              rejection.str().find("source \"quoted\\\"source.gti\" 19 25 3 "
+                                   "first-unsupported 1") !=
+                  std::string::npos &&
+              rejection.str().find("admitted 0\nlimitation \"") !=
+                  std::string::npos &&
+              rejection.str().find(rejected.limitation()) != std::string::npos,
+          "unsupported inspection lost the first use, span, count or reason");
   lang::setLoweredProgramSealValidation(true);
   {
     const lang::MirProgram program;

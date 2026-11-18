@@ -67,14 +67,29 @@ int writeAdmissionEvidence(const char *self, const fs::path &source,
         throw std::runtime_error(std::string("cannot write evidence: ") + name);
     };
     const auto layout = lang::driver::discoverToolchainLayout(self);
-    const auto request = lang::driver::CompilationRequest(
-                             fs::absolute(source), layout.standardLibrary,
-                             lang::TargetInfo::host(),
-                             optimization == "O0" ? lang::OptimizationLevel::O0
-                                                  : lang::OptimizationLevel::O2,
-                             lang::CppStandard::Cpp23)
-                             .withBackend(lang::BackendKind::Llvm)
-                             .withDefinitionClosure();
+    const auto test = parseTestFile(fs::absolute(source), source.string());
+    if (!test.errors.empty())
+      throw std::invalid_argument(test.errors.front());
+    if (test.sections.size() != 1 || !test.stdlibOverlay.empty() ||
+        !test.target.empty() || !test.compileLimits.empty() ||
+        !test.nativeArgs.empty())
+      throw std::invalid_argument(
+          "admission evidence requires an ordinary, single-file host input; "
+          "materialize multi-file/overlay inputs separately");
+    const lang::driver::AnalysisConfiguration configuration(
+        lang::TargetInfo::host(),
+        test.concurrent ? lang::ExecutionProfile::Concurrent
+                        : lang::ExecutionProfile::SingleThreaded,
+        lang::driver::RuntimeProfile::Hosted, test.defines);
+    const auto request =
+        lang::driver::CompilationRequest(
+            fs::absolute(source), layout.standardLibrary,
+            configuration.target(),
+            optimization == "O0" ? lang::OptimizationLevel::O0
+                                 : lang::OptimizationLevel::O2,
+            lang::CppStandard::Cpp23, {}, configuration.configurationFlags())
+            .withBackend(lang::BackendKind::Llvm)
+            .withDefinitionClosure();
     class EvidenceBackend final : public lang::Backend {
     public:
       std::function<void(lang::LoweredProgram)> inspect;

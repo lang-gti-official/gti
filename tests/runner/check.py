@@ -112,6 +112,12 @@ def admission_evidence_test(runner):
                         captures[0], "O0")
         expect(code == 1 and "already exists" in out,
                "evidence cannot reuse a stale directory", out)
+        source.write_text("//@ execution-profile: concurrent\nint main() { return 0; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "concurrent", "O0")
+        expect(code == 0 and "ExecutionProfile.Concurrent" in
+               (root / "concurrent/plan.txt").read_text(),
+               "evidence preserves the input execution profile", out)
         source.write_text("int main() { return undefined_name; }\n")
         code, out = run(runner, "--llvm-admission-evidence", source,
                         root / "invalid", "O0")

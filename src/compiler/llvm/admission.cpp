@@ -6238,8 +6238,24 @@ void printLlvmAdmissionPlan(std::ostream &out, const LlvmAdmissionPlan &plan) {
   for (const auto &body : plan.requiredBodies())
     text << "body " << coverage(body.kind).name << '/' << body.owner << '\n';
   const auto *unsupported = plan.firstUnsupported();
+  std::set<const LlvmCoverageEntry *> printedEntries;
+  const auto entry = [&](const LlvmCoverageEntry *row) {
+    if (!row || !printedEntries.insert(row).second)
+      return;
+    text << "entry " << row->key() << " milestone " << row->milestone
+         << " state " << static_cast<int>(row->state) << " nonexecuting "
+         << static_cast<int>(row->nonExecuting) << " predicate "
+         << std::quoted(row->predicate) << " positive-test "
+         << std::quoted(row->positiveTest) << " positive-assertion "
+         << std::quoted(row->positiveAssertion) << " evidence-gap "
+         << std::quoted(row->positiveEvidenceGap) << " negative-test "
+         << std::quoted(row->negativeTest) << " negative-assertion "
+         << std::quoted(row->negativeAssertion) << '\n';
+  };
   std::size_t ordinal = 0;
   for (const auto &use : plan.requirements()) {
+    entry(use.entry);
+    entry(use.implementedShape);
     text << "use " << ordinal++ << ' ' << use.entry->key() << " shape ";
     if (use.implementedShape)
       text << use.implementedShape->key();

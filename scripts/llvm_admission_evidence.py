@@ -52,10 +52,17 @@ def capture(args: argparse.Namespace) -> int:
               sorted((root / "stdlib").rglob("*")) if p.is_file()}
     if not stdlib:
         raise ValueError("source root has no standard library")
+    defaults = {}
+    for _, source, _ in sources:
+        for directory in source.parents:
+            path = directory / "gti-test.defaults"
+            if path.is_file():
+                defaults[str(path)] = digest(path)
     report = {"schema": 1, "source_root": str(root),
               "platform": [platform.system(), platform.machine()],
               "runner": str(runner), "runner_sha256": digest(runner),
               "validation": args.validation, "stdlib": stdlib,
+              "defaults": defaults,
               "sources": {name: sha for name, _, sha in sources},
               "complete": False, "cases": {}}
     environment = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"),
@@ -94,7 +101,9 @@ def capture(args: argparse.Namespace) -> int:
             print(f"{'captured' if valid else 'FAILED'} {identity}", flush=True)
     # Changing inputs during a long corpus capture is not valid evidence.
     unchanged = all(digest(path) == sha for _, path, sha in sources)
+    unchanged &= digest(runner) == report["runner_sha256"]
     unchanged &= all(digest(root / name) == sha for name, sha in stdlib.items())
+    unchanged &= all(digest(Path(name)) == sha for name, sha in defaults.items())
     report["complete"] = not failed and unchanged
     save(args.output / "manifest.json", report)
     return 0 if report["complete"] else 1
@@ -104,7 +113,7 @@ def compare(before: Path, after: Path) -> list[str]:
     left = json.loads((before / "manifest.json").read_text())
     right = json.loads((after / "manifest.json").read_text())
     differences = []
-    for field in ("schema", "source_root", "platform", "stdlib", "sources"):
+    for field in ("schema", "source_root", "platform", "stdlib", "defaults", "sources"):
         if left.get(field) != right.get(field):
             differences.append(f"incomparable {field}")
     if not left.get("complete") or not right.get("complete"):
