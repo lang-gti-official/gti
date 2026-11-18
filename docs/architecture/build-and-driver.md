@@ -2978,9 +2978,16 @@ development escape hatch for running possibly stale output.
 ## Current Limits
 
 The executable cache is whole-program and workspace-local. It does not yet
-persist individual parsed units, HIR/MIR bodies, independently reusable native
-objects, or remote/shared
-artifacts. The separate in-process frontend cache used by editor analysis is
+persist individual parsed units, HIR/MIR bodies, or remote/shared artifacts.
+When a declared `-l` library cannot be resolved inside the declared search
+directories, an ordinary LLVM executable can reuse its whole-program GTI
+object on a later project build. The driver always recompiles the native
+sources and relinks with the current system libraries. The managed
+`compile-object-v1` record binds the compiler and LLVM identity, frontend
+policy, target and source graph to a checksummed object. Only diagnostic-free
+builds can populate this record. Test catalogs, embedding companions, compiled
+imports, build reports and requested optimization outputs require their existing
+build paths. The separate in-process frontend cache used by editor analysis is
 not a project executable-cache entry.
 Git dependencies support pinned full revisions only; mutable branch/tag
 selectors and replacement/override authority are not implemented. Registry

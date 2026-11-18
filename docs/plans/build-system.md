@@ -1382,6 +1382,9 @@ Acceptance criteria:
   by CLI tests, including opaque argument vectors, name resolution, library
   search directories, non-content-complete link inputs, injected environment
   search paths, and time-sensitive macros;
+- **Implemented:** a system library outside the declared search directories
+  still bypasses executable reuse, while an unchanged diagnostic-free LLVM
+  executable can reuse its compiled GTI object and relink native inputs.
 - **Passed:** an unchanged Apple framework build hits the cache, changing the
   exact linker-selected framework stub misses, and untraceable framework
   selection bypasses;
