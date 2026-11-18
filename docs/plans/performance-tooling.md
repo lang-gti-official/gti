@@ -10,8 +10,9 @@ RSS. The repeated measurements meet both targets at O0/O2: admission is
 5.50–8.33x faster, with median peak RSS at most 3.24% higher and the largest
 measured peak at most 2.80% higher. Non-throwing outcomes, plan-local type indexes,
 whole-query memoization/replay, and stable coverage-identity hash keys are
-implemented in separate RFC branches. Equivalence and performance evidence are
-complete; final focused verification and integration handoff remain in progress.
+implemented through separate RFC PRs. Equivalence, performance and final focused
+verification are complete for the recorded implementation heads. Required CI
+still owns validation of the integrated candidate and its full suite.
 
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
@@ -69,11 +70,10 @@ reconciliation; it is not compared only against an older, different parent.
 
 Focused memo tests inject a wrong answer and a reordered trace; coverage-index
 tests compare all context distinctions and detect a forged index. These checks
-supplement the corpus comparisons. The telemetry and non-throwing slices' final
-owning checks passed: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
+supplement the corpus comparisons. All five implementation heads in the table
+passed their final owning checks: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
 CLI workflow, 29 admission UI fixtures and scalar/owner native smoke at O0.
-Both PRs are handed off through GitHub merge-when-ready. Other slices' final
-owning/consumer checks remain pending. Full integration validation is
+Each has its own exact-head verification record. Full integration validation is
 CI's responsibility and has not been claimed by these local results.
 
 ### Measurement protocol
@@ -201,8 +201,9 @@ still queued during those rebuilds.
 
 The at-least-2x admission target and at-most-5% peak-RSS bound are met on all
 four named programs at both levels. These are measured results for the retained
-compiler pair, not a guarantee for every workload or host. Remaining final
-focused verification and integration handoff keep the implementation campaign open.
+compiler pair, not a guarantee for every workload or host. All five implementation
+heads also passed the focused checks above. The complete suite remains a CI
+integration responsibility and is not claimed by these local measurements.
 
 ### Follow-up decisions
 
