@@ -5,6 +5,7 @@
 #include "checked_reductions.h"
 #include "debug_info.h"
 #include "dispatch.h"
+#include "gti/support.h"
 #include "instrumentation.h"
 #include "loop_invariants.h"
 #include "private_atomics.h"
@@ -28,7 +29,9 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/TimeProfiler.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
@@ -904,58 +907,63 @@ BackendArtifact Session::emitObject() {
     debugInfo_->finalize();
   verify();
   emissionStarted_ = true;
-  // A sealed hosted entry and no embedding plan delimit the existing private
-  // whole-program executable ABI. Library/embedding compilation stays open.
-  // Taking an address is conservatively a root, including callbacks/llvm.used;
-  // no escape summary, external linkage promise or function attribute is
-  // invented.
-  const auto &mir = program().mir();
-  if ((mir.hostedStartupPlan() || program().compiledScalarProducer()) &&
-      !program().embeddingPlan()) {
-    std::set<HirFunctionInstanceId> retained;
-    for (const auto &callback : mir.nativeCallbackAdapters())
-      retained.insert(callback.target);
-    for (const auto &task : mir.threadTaskAdapters())
-      if (task.functionTarget)
-        retained.insert(*task.functionTarget);
-    for (const auto &row : program().bodies()) {
-      const auto *body = findMirBody(mir, row.identity.address);
-      if (!body)
-        continue;
-      for (const auto &block : body->blocks)
-        for (const auto &instruction : block.instructions)
-          if (instruction.functionPointerFunctionTarget)
-            retained.insert(*instruction.functionPointerFunctionTarget);
-    }
-    for (const auto &[id, function] : sourceDefinitions_) {
-      const auto &source = *mir.findFunctionInstance(id);
-      if (source.linkage != LanguageLinkage::Gti ||
-          !source.externalSymbol.empty() || source.virtualMethod ||
-          retained.contains(id) || source.entryKind != ProgramEntryKind::None ||
-          (mir.hostedStartupPlan() && id == mir.hostedStartupPlan()->entry) ||
-          function->hasAddressTaken(nullptr, false, false, false, false,
-                                    false) ||
-          function->hasDLLExportStorageClass() ||
-          !function->hasExternalLinkage() || function->hasComdat())
-        continue;
-      function->setLinkage(llvm::GlobalValue::InternalLinkage);
-    }
-  }
   const auto mode = diagnosticMode(options_.instrumentation);
-  if (options_.optimization != LlvmCodegenOptimization::None)
-    promotePrivateScalarResults(module_);
-  if (instrumentsUndefinedMemory(mode)) {
-    instrumentUndefinedMemory(module_);
-    verify();
+  {
+    const PhaseTimeScope timing("llvm-module-transforms",
+                                "before optimization");
+    // A sealed hosted entry and no embedding plan delimit the existing private
+    // whole-program executable ABI. Library/embedding compilation stays open.
+    // Taking an address is conservatively a root, including
+    // callbacks/llvm.used; no escape summary, external linkage promise or
+    // function attribute is invented.
+    const auto &mir = program().mir();
+    if ((mir.hostedStartupPlan() || program().compiledScalarProducer()) &&
+        !program().embeddingPlan()) {
+      std::set<HirFunctionInstanceId> retained;
+      for (const auto &callback : mir.nativeCallbackAdapters())
+        retained.insert(callback.target);
+      for (const auto &task : mir.threadTaskAdapters())
+        if (task.functionTarget)
+          retained.insert(*task.functionTarget);
+      for (const auto &row : program().bodies()) {
+        const auto *body = findMirBody(mir, row.identity.address);
+        if (!body)
+          continue;
+        for (const auto &block : body->blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.functionPointerFunctionTarget)
+              retained.insert(*instruction.functionPointerFunctionTarget);
+      }
+      for (const auto &[id, function] : sourceDefinitions_) {
+        const auto &source = *mir.findFunctionInstance(id);
+        if (source.linkage != LanguageLinkage::Gti ||
+            !source.externalSymbol.empty() || source.virtualMethod ||
+            retained.contains(id) ||
+            source.entryKind != ProgramEntryKind::None ||
+            (mir.hostedStartupPlan() && id == mir.hostedStartupPlan()->entry) ||
+            function->hasAddressTaken(nullptr, false, false, false, false,
+                                      false) ||
+            function->hasDLLExportStorageClass() ||
+            !function->hasExternalLinkage() || function->hasComdat())
+          continue;
+        function->setLinkage(llvm::GlobalValue::InternalLinkage);
+      }
+    }
+    if (options_.optimization != LlvmCodegenOptimization::None)
+      promotePrivateScalarResults(module_);
+    if (instrumentsUndefinedMemory(mode)) {
+      instrumentUndefinedMemory(module_);
+      verify();
+    }
+    // Tuning changes only cost-model and scheduling choices. Features, and so
+    // the instructions a program may execute, stay at the machine baseline:
+    // Apple M1's LSE atomics measured slower than the baseline sequences for
+    // GTI's uncontended scalar atomics.
+    if (const auto tune = tuneCpu(program().target()); !tune.empty())
+      for (auto &function : module_)
+        if (!function.isDeclaration() && !function.hasFnAttribute("tune-cpu"))
+          function.addFnAttr("tune-cpu", tune);
   }
-  // Tuning changes only cost-model and scheduling choices. Features, and so
-  // the instructions a program may execute, stay at the machine baseline:
-  // Apple M1's LSE atomics measured slower than the baseline sequences for
-  // GTI's uncontended scalar atomics.
-  if (const auto tune = tuneCpu(program().target()); !tune.empty())
-    for (auto &function : module_)
-      if (!function.isDeclaration() && !function.hasFnAttribute("tune-cpu"))
-        function.addFnAttr("tune-cpu", tune);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
@@ -969,7 +977,14 @@ BackendArtifact Session::emitObject() {
                             level == llvm::OptimizationLevel::O3;
   if (options_.optimization == LlvmCodegenOptimization::Aggressive)
     tuning.InlinerThreshold = 400;
-  llvm::PassBuilder builder(machine_.get(), tuning);
+  llvm::PassInstrumentationCallbacks passCallbacks;
+  std::optional<llvm::TimeProfilingPassesHandler> passTiming;
+  if (llvm::timeTraceProfilerEnabled()) {
+    passTiming.emplace();
+    passTiming->registerCallbacks(passCallbacks);
+  }
+  llvm::PassBuilder builder(machine_.get(), tuning, std::nullopt,
+                            passTiming ? &passCallbacks : nullptr);
   registerPrivateAtomicPass(builder);
   registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
@@ -981,50 +996,67 @@ BackendArtifact Session::emitObject() {
   builder.registerLoopAnalyses(loops);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
   if (level == llvm::OptimizationLevel::O2 ||
-      level == llvm::OptimizationLevel::O3)
-    (void)promoteGuardedDispatchCalls(module_);
-  auto pipeline = level == llvm::OptimizationLevel::O0
-                      ? builder.buildO0DefaultPipeline(level)
-                      : builder.buildPerModuleDefaultPipeline(level);
-  pipeline.run(module_, modules);
-  if (level == llvm::OptimizationLevel::O2 ||
       level == llvm::OptimizationLevel::O3) {
-    const bool specialized = specializeBoundedRecursion(module_);
-    if (specialized)
-      modules.invalidate(module_, llvm::PreservedAnalyses::none());
-    // Inlining exposes complete checked-failure/cleanup regions only after
-    // the ordinary pipeline has simplified their ownership state. Outline
-    // LLVM's profitable cold regions, then give the now-smaller hot helpers
-    // one ordinary simplification/optimization round. No failure edge is
-    // erased or assigned invented likelihood, and there is no retry loop.
-    const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
-    modules.invalidate(module_, outlined);
-    const auto optimizeExposed = [&] {
-      auto exposed = builder.buildModuleSimplificationPipeline(
-          level, llvm::ThinOrFullLTOPhase::None);
-      exposed.addPass(builder.buildModuleOptimizationPipeline(
-          level, llvm::ThinOrFullLTOPhase::None));
-      exposed.run(module_, modules);
-    };
-    if (specialized || !outlined.areAllPreserved())
-      optimizeExposed();
-    // The smaller helpers above can now inline and create pointer PHIs that
-    // did not exist after the first pipeline. Prove those late loop invariants
-    // before one final ordinary cleanup round; do not retry to a fixed point.
-    if (foldInductivePointerLoops(module_)) {
-      modules.invalidate(module_, llvm::PreservedAnalyses::none());
-      optimizeExposed();
+    const PhaseTimeScope timing("llvm-module-transforms", "guarded dispatch");
+    (void)promoteGuardedDispatchCalls(module_);
+  }
+  {
+    const PhaseTimeScope timing("llvm-optimize");
+    auto pipeline = level == llvm::OptimizationLevel::O0
+                        ? builder.buildO0DefaultPipeline(level)
+                        : builder.buildPerModuleDefaultPipeline(level);
+    pipeline.run(module_, modules);
+    if (level == llvm::OptimizationLevel::O2 ||
+        level == llvm::OptimizationLevel::O3) {
+      const bool specialized = [&] {
+        const PhaseTimeScope timing("llvm-module-transforms",
+                                    "bounded recursion");
+        return specializeBoundedRecursion(module_);
+      }();
+      if (specialized)
+        modules.invalidate(module_, llvm::PreservedAnalyses::none());
+      // Inlining exposes complete checked-failure/cleanup regions only after
+      // the ordinary pipeline has simplified their ownership state. Outline
+      // LLVM's profitable cold regions, then give the now-smaller hot helpers
+      // one ordinary simplification/optimization round. No failure edge is
+      // erased or assigned invented likelihood, and there is no retry loop.
+      const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
+      modules.invalidate(module_, outlined);
+      const auto optimizeExposed = [&] {
+        auto exposed = builder.buildModuleSimplificationPipeline(
+            level, llvm::ThinOrFullLTOPhase::None);
+        exposed.addPass(builder.buildModuleOptimizationPipeline(
+            level, llvm::ThinOrFullLTOPhase::None));
+        exposed.run(module_, modules);
+      };
+      if (specialized || !outlined.areAllPreserved())
+        optimizeExposed();
+      // The smaller helpers above can now inline and create pointer PHIs that
+      // did not exist after the first pipeline. Prove those late loop
+      // invariants before one final ordinary cleanup round; do not retry to a
+      // fixed point.
+      const bool folded = [&] {
+        const PhaseTimeScope timing("llvm-module-transforms", "pointer loops");
+        return foldInductivePointerLoops(module_);
+      }();
+      if (folded) {
+        modules.invalidate(module_, llvm::PreservedAnalyses::none());
+        optimizeExposed();
+      }
     }
   }
-  reuseCheckedArithmeticResults(module_);
-  modules.invalidate(module_, llvm::PreservedAnalyses::none());
-  if (instrumentsAddress(mode))
-    instrumentAddress(module_, modules);
-  if (instrumentsThread(mode))
-    instrumentThread(module_, modules);
-  if (debugInfo_)
-    debugInfo_->prepareCodegen();
-  verify();
+  {
+    const PhaseTimeScope timing("llvm-module-transforms", "after optimization");
+    reuseCheckedArithmeticResults(module_);
+    modules.invalidate(module_, llvm::PreservedAnalyses::none());
+    if (instrumentsAddress(mode))
+      instrumentAddress(module_, modules);
+    if (instrumentsThread(mode))
+      instrumentThread(module_, modules);
+    if (debugInfo_)
+      debugInfo_->prepareCodegen();
+    verify();
+  }
   if (options_.textualIr) {
     // The same module, stopped where target code generation would begin.
     std::string text;
@@ -1033,6 +1065,8 @@ BackendArtifact Session::emitObject() {
     stream.flush();
     return {BackendArtifactKind::Source, std::move(text), ".ll"};
   }
+  const PhaseTimeScope codegenTiming("llvm-codegen");
+  const PhaseTimeScope unitTiming("llvm-codegen-unit", "0");
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);
   llvm::legacy::PassManager passes;
