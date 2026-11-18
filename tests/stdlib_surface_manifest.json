@@ -4279,10 +4279,12 @@
       "evidence": [
         "tests/llvm_memory_execution_test.py",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/ui/borrow/retained-storage"
       ],
       "required_instantiations": [
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ]
     },
     {
@@ -4307,10 +4309,12 @@
         "tests/fixtures/process_storage_policy.gti",
         "tests/ui/stdlib/process/storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/ui/borrow/retained-storage"
       ],
       "required_instantiations": [
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ]
     },
     {
@@ -5691,7 +5695,12 @@
         "std::assume_ref<T,Owner>",
         "std::erase_address<T>",
         "std::storage_element<T>",
-        "std::typed_address<T>"
+        "std::typed_address<T>",
+        "std::construct_owned_at",
+        "std::initialize_owned_at",
+        "std::relocate_owned_at",
+        "std::borrow_owned_at",
+        "std::borrow_owned_mut_at"
       ],
       "case_ids": [
         "allocator-storage",
@@ -5719,7 +5728,8 @@
         "std::storage<tracked>",
         "std::storage<immovable object> with final-address emplacement",
         "std::alloc_errc invalid_region and invalid_state",
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ],
       "evidence": [
         "tests/ui/stdlib/memory/allocator_storage",
@@ -5735,7 +5745,8 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/source_sparse_slots.gti",
         "stdlib/std/memory.gti",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/ui/borrow/retained-storage"
       ]
     },
     {
@@ -6385,12 +6396,14 @@
         "owning application element",
         "shared child copies",
         "exclusive subviews",
-        "mutable iterators"
+        "mutable iterators",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ],
       "evidence": [
         "tests/ui/borrow/carrier_shell",
         "docs/language/ranges.md",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/ui/borrow/retained-storage"
       ]
     },
     {
@@ -7125,7 +7138,8 @@
         "int and std::string",
         "owning Item with an observable destructor",
         "application-defined arena and allocation-budget provider",
-        "growth, iteration, mutable element access, owner movement and recoverable growth failure"
+        "growth, iteration, mutable element access, owner movement and recoverable growth failure",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ],
       "evidence": [
         "examples/121-programmable-allocators.gti",
@@ -7135,7 +7149,8 @@
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/fixtures/resource_vector_constructor_rollback.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/ui/borrow/retained-storage"
       ]
     },
     {
@@ -7531,12 +7546,14 @@
       ],
       "required_instantiations": [
         "std::span<int32_t>",
-        "std::span<char>"
+        "std::span<char>",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
         "stdlib/std/span.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/ui/borrow/retained-storage"
       ]
     },
     {
@@ -8564,7 +8581,8 @@
         "construction-only Message",
         "std::vector<std::optional<std::string>>",
         "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -8576,7 +8594,8 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
         "tests/ui/memory/source_prefix",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/ui/borrow/retained-storage"
       ]
     },
     {
