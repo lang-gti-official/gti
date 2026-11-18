@@ -2703,11 +2703,6 @@ if(Python3_Interpreter_FOUND)
 
   # One entry: the shared harness runs the LLVM modes tests/backend_modes.py
   # selects; no separate C++-only boundary registration remains.
-  add_test(NAME consuming_range_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(consuming_range_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME consuming_range_performance
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_performance_test.py"
             "$<TARGET_FILE:gti>")

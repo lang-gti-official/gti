@@ -1,0 +1,46 @@
+// Range-for structured bindings reject copies of move-only elements, partial moves, owner invalidation, immutable writes, aliasing and wrong arity.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+
+namespace case_owner_invalidation {
+struct Entry {
+  mut std::string key;
+  mut int value;
+  Entry(std::string key, int value) : key(std::move(key)), value(value) {}
+};
+struct Frozen { int a; int b; Frozen():a(1),b(2){} };
+int entry() {
+  mut std::vector<Entry> entries{};
+  entries.emplace_back(std::string("key"), 1);
+for (auto& [key, value] : entries) { entries.clear(); int size = int(key.size()); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_mutable_invalidation {
+struct Entry {
+  mut std::string key;
+  mut int value;
+  Entry(std::string key, int value) : key(std::move(key)), value(value) {}
+};
+struct Frozen { int a; int b; Frozen():a(1),b(2){} };
+int entry() {
+  mut std::vector<Entry> entries{};
+  entries.emplace_back(std::string("key"), 1);
+for (mut auto& [key, value] : entries) { entries.clear(); value += 1; } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_mutable_alias {
+struct Entry {
+  mut std::string key;
+  mut int value;
+  Entry(std::string key, int value) : key(std::move(key)), value(value) {}
+};
+struct Frozen { int a; int b; Frozen():a(1),b(2){} };
+int entry() {
+  mut std::vector<Entry> entries{};
+  entries.emplace_back(std::string("key"), 1);
+for (mut auto& [key, value] : entries) { auto& held = value; value += 1; int copy = held; } return 0; }  //~ ERROR GTI-S2017
+}
+
+int main() { return 0; }

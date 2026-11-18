@@ -1,3 +1,5 @@
+// Range-for structured bindings bind owned and borrowed element fields.
+//@ run-pass
 import std.vector;
 import std.string;
 import std.utility;
@@ -86,7 +88,7 @@ int main() {
   if (mutate_entries<int>(mutable_entries) != 23) return 4;
   if (mutable_entries[0].key.view() != "a!") return 5;
   if (mutate_temporary() != 6) return 6;
-  mut int matrix[2][2] = {{1, 2}, {3, 4}};
+  mut int matrix[2][2] = {{1, 2}, {3, 4}};  //~ WARN GTI-S2096
   for (mut auto& [left, right] : matrix) {
     left += 10;
     right += left;

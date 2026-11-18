@@ -5915,9 +5915,8 @@
       ],
       "evidence": [
         "tests/ui/ownership/consuming_ranges",
-        "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
-        "tests/fixtures/consuming_range_failures.gti",
+        "tests/ui/ranges/consuming",
         "examples/186-consuming-ranges.gti"
       ]
     },
@@ -8461,9 +8460,8 @@
       ],
       "evidence": [
         "tests/ui/ownership/consuming_ranges",
-        "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
-        "tests/fixtures/consuming_range_failures.gti",
+        "tests/ui/ranges/consuming",
         "examples/186-consuming-ranges.gti"
       ]
     },

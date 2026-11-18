@@ -1,3 +1,8 @@
+// Range-for structured bindings clean up each element once, in order.
+//@ run-pass
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 3
 import std.string;
 import std.utility;
 

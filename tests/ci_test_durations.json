@@ -93,7 +93,6 @@
   "constructor_owned_call_runtime": 6.1,
   "constructor_transport": 0.0,
   "consuming_range_performance": 17.6,
-  "consuming_range_runtime": 29.0,
   "coverage_native_fixture_policy": 0.2,
   "cpp_identifier_relocation": 7.3,
   "cthread_condition_runtime": 3,
