@@ -5262,8 +5262,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       const bool shellResult =
           isCarrierReferenceResult(program, instruction) ||
           (instruction.info.category == ValueCategory::Place &&
-           (instruction.info.type.kind == SemanticType::StringView ||
-            instruction.info.type.kind == SemanticType::CString ||
+           // An opaque range cursor carries the traversal authority, not a
+           // borrow of its own shell (lowering's borrowsCarrierStorage):
+           // a text element it designates borrows the retained owner.
+           ((!opaqueRangeCarrier &&
+             (instruction.info.type.kind == SemanticType::StringView ||
+              instruction.info.type.kind == SemanticType::CString)) ||
             (instruction.info.type.kind == SemanticType::Class &&
              instruction.info.traits.containsBorrowedState) ||
             (exactMirCapabilityClass(
@@ -8611,7 +8615,10 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // supplier each of those owners must be that same supplier as well: a
     // field borrowed from body storage escapes, and one borrowed from another
     // formal is outside the signature's contract.
+    // A returned reference has one referent, its loan's source; further
+    // dependencies of that loan only retain the carrier it was read through.
     if (instance.returnBorrowParameters.empty() &&
+        instance.returnType.kind != SemanticType::Reference &&
         (instance.returnBorrowOrigin == BorrowOriginKind::Argument ||
          instance.returnBorrowOrigin == BorrowOriginKind::Receiver)) {
       const auto formal =

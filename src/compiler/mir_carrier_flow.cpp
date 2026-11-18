@@ -1651,6 +1651,65 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                        ? Fact{std::vector<MirLoanId>{*instruction.loan}}
                        : Fact{};
         expiredProduced = produced ? empty() : Fact{};
+        // Copy construction of a shared carrier (`Carrier copy{source};`)
+        // stages a transient Stored loan for the same owners, while the copy
+        // joins the source's own group. The copy holds what the source holds;
+        // the transient loan ends with the initialization. Accept the source's
+        // groups only when each states exactly the transient loan's owners.
+        if (!symbolicSummary &&
+            instruction.kind == MirInstructionKind::Construct &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::BorrowRead &&
+            instruction.operands.front().type.kind == SemanticType::Reference &&
+            instruction.operands.front().type.referenceAccess ==
+                AccessMode::ReadOnly &&
+            instruction.operands.front().type.arguments.size() == 1 &&
+            instruction.operands.front().type.arguments.front() ==
+                instruction.info.type) {
+          const auto *fresh = body.findLoan(*instruction.loan);
+          const Fact copiedContents =
+              operandFact(body, state, instruction.operands.front());
+          const Fact expiredCopied =
+              operandFact(body, state, instruction.operands.front(), true);
+          // A compact group names no field; it is the carrier's sole
+          // stored-reference path, which the copy's loan may spell out.
+          const auto solePath =
+              program ? soleSharedReferencePath(*program, instruction.info.type)
+                      : std::nullopt;
+          const auto sameFields = [&](const std::vector<SymbolId> &fields) {
+            if (fields == fresh->designatedFields)
+              return true;
+            return solePath &&
+                   ((fields.empty() && fresh->designatedFields == *solePath) ||
+                    (fresh->designatedFields.empty() && fields == *solePath));
+          };
+          const auto sameOwners = [&](MirLoanId id) {
+            const auto *held = body.findLoan(id);
+            return held && held != fresh && held->kind == MirLoanKind::Stored &&
+                   !held->escapes && !held->lifecycleBound && !held->twoPhase &&
+                   held->access == fresh->access &&
+                   !state.unavailable.contains(id) &&
+                   held->source == fresh->source &&
+                   // A group reborrowed through a reference binding protects
+                   // the same owner as a direct copy loan, and its parent too.
+                   (held->parent == fresh->parent || fresh->parent == 0) &&
+                   held->storedDependency == fresh->storedDependency &&
+                   sameFields(held->designatedFields) &&
+                   held->conditions == fresh->conditions &&
+                   held->additionalDependencies ==
+                       fresh->additionalDependencies;
+          };
+          if (fresh && fresh->kind == MirLoanKind::Stored &&
+              fresh->carriers.empty() && !fresh->escapes &&
+              !fresh->lifecycleBound && copiedContents &&
+              !copiedContents->empty() && expiredCopied &&
+              expiredCopied->empty() &&
+              std::all_of(copiedContents->begin(), copiedContents->end(),
+                          sameOwners)) {
+            produced = copiedContents;
+            expiredProduced = empty();
+          }
+        }
         // A source-call result loan can name a direct caller binding without
         // a parent-loan edge. In the private symbolic summary, reconstruct
         // by-value contents through the proved callee return relation instead

@@ -1,0 +1,13 @@
+// The owner of a brace-copied shared carrier stays borrowed while the source
+// is still read.
+struct Reading {
+  int& value;
+  Reading(int& input) : value(input) {}
+};
+int main() {
+  mut int right = 9;
+  Reading reading{right};
+  Reading copied{reading};
+  right = 4;  //~ ERROR GTI-S2017 overlapping borrow
+  return reading.value + copied.value;
+}

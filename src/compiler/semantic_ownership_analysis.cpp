@@ -3057,6 +3057,25 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
                                        .field = field});
     for (const auto &payload : textPayloadFields(type, use.formal))
       (void)requireOwnerlessTextField(use.function, payload);
+    // In a generic class a field typed by a class parameter may be text in
+    // an instance (`T elements[N]` of `array<std::string_view, N>`). Require
+    // it here; each instance keeps only the fields that are text there.
+    if (const ClassInfo *owner = classInfo(type);
+        owner != nullptr && !owner->genericParameters.empty())
+      for (const FieldInfo &entry : owner->fields) {
+        if (entry.declaration == nullptr)
+          continue;
+        const auto member =
+            owner->members.find(entry.declaration->name().lexeme);
+        if (member == owner->members.end() ||
+            !containsOpenTypeParameter(member->second.symbol.type))
+          continue;
+        (void)requireOwnerlessTextField(
+            use.function,
+            {.receiver = use.formal.receiver,
+             .parameter = use.formal.parameter,
+             .field = symbolForDeclaration(member->second.symbol.declaration)});
+      }
   }
   // Finite monotone closure over exact (formal, field) pairs.
   bool changed = true;
