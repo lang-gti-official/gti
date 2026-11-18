@@ -471,6 +471,20 @@ instances resolve and validate ordinary operations again before HIR/MIR.
 For a direct member call, dereference or subscript, the provisional fact retains
 the named receiver/argument origin and reference access. Composition and
 disjunction cannot erase that lifetime contract or substitute another input.
+A direct unqualified free-function call can also supply a provisional fact
+when it passes each read-only reference parameter exactly once, in declaration
+order, and states an exact owned, non-borrowing result. A matching call in the
+generic body, including a nested lambda, borrows named places of those same
+types.
+The concrete instance selects the overload in the requirement's declaration
+scope with ordinary overload resolution. The body must be able to see that
+same declaration and uses it through the ordinary argument and safety checks.
+An ambiguous requirement is false. The selected function must have those
+exact read-only parameters and take no explicit or inferred generic arguments;
+typed calls, omitted default arguments and borrowing results do not supply
+this fact. A disjunction exposes a call fact only if both branches guarantee
+the same source requirement.
+
 Owned receiver queries are concrete filters until an exact consuming-access
 proof is available; they never manufacture a borrowed receiver capability.
 Compound expressions may filter concrete types, but do not manufacture proofs

@@ -1,0 +1,11 @@
+// An unordered first difference stops array comparison before later elements.
+//@ run-pass
+import std.array;
+
+int main() {
+  float nan = 0.0 / 0.0;
+  auto left = std::array<float, 2>({nan, float(1)});
+  auto right = std::array<float, 2>({nan, float(2)});
+  if (left == right || left < right || left > right || left <= right || left >= right) { return 1; }
+  return left != right ? 0 : 2;
+}

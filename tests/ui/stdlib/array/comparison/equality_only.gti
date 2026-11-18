@@ -1,0 +1,16 @@
+// Fixed arrays of equality-only elements provide equality without ordering.
+import std.array;
+
+struct Key {
+  int value = 0;
+  bool operator==(Key& other) { return this.value == other.value; }
+  bool operator!=(Key& other) { return !(this == other); }
+};
+
+int main() {
+  std::array<Key, 1> first{};
+  std::array<Key, 1> second{};
+  bool equal = first == second;
+  bool before = first < second;  //~ ERROR GTI-S2029
+  return equal && before ? 1 : 0;
+}

@@ -1,0 +1,91 @@
+// A stored-region result may come from the receiver's stored fields or a parameter in that region.
+//@ run-pass
+//@ exit-code: 0
+
+// In `View<lifetime a>`, `int&<a>` is supplied by the receiver's fields
+// stored in `a` and by every parameter lane written in `a`, the union, as
+// `choose<lifetime a>(int&<a> left, int&<a> right)` names both inputs.
+struct Table {
+  mut int values[4];
+  Table() : values({10, 20, 30, 40}) {}
+  bool has(uint64_t key) { return key < uint64_t(4); }
+  int& at(uint64_t key) { return this.values[key]; }
+  mut int& at_mut(uint64_t key) mut { return this.values[key]; }
+};
+int&<r> pick<lifetime r>(int&<r> only) { return only; }
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  View(Table&<a> table) : table(table) {}
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+  // A consumed receiver's result outlives it, from either supplier.
+  int&<a> take_or(uint64_t key, int&<a> fallback) && {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+  // Every lane of a reference pack written in `a` supplies it too.
+  int&<a> first_or<Args...>(uint64_t key, Args&<a>... fallbacks) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return pick(fallbacks...);
+  }
+};
+class Slots<lifetime a> {
+  mut Table&<a> table;
+public:
+  Slots(mut Table&<a> table) : table(table) {}
+  mut int&<a> slot_or(uint64_t key, mut int&<a> fallback) mut {
+    if (this.table.has(key)) { return this.table.at_mut(key); }
+    return fallback;
+  }
+};
+class Either<T, lifetime a> {
+  T&<a> source;
+public:
+  Either(T&<a> source) : source(source) {}
+  T&<a> or_else(bool use, T&<a> other) {
+    if (use) { return this.source; }
+    return other;
+  }
+};
+
+int&<a> consumed<lifetime a>(Table&<a> table, int&<a> fallback) {
+  return View(table).take_or(uint64_t(9), fallback);
+}
+
+int main() {
+  mut Table table{};
+  int fallback = 7;
+  View view = View(table);
+  if (view.get_or(uint64_t(1), fallback) != 20 ||
+      view.get_or(uint64_t(9), fallback) != 7) {
+    return 1;
+  }
+  int& kept = View(table).take_or(uint64_t(2), fallback);
+  if (kept != 30 || consumed(table, fallback) != 7) {
+    return 2;
+  }
+  int other = 8;
+  if (view.first_or(uint64_t(9), other) != 8) {
+    return 3;
+  }
+  mut int spare = 3;
+  {
+    mut Slots slots = Slots(table);
+    mut int& missing = slots.slot_or(uint64_t(9), spare);
+    missing = 5;
+    mut int& found = slots.slot_or(uint64_t(0), spare);
+    found = 11;
+  }
+  if (spare != 5 || table.at(uint64_t(0)) != 11) {
+    return 4;
+  }
+  int first = 1;
+  int second = 2;
+  Either<int, _> either = Either<int, _>(first);
+  return either.or_else(true, second) + either.or_else(false, second) == 3
+             ? 0
+             : 5;
+}

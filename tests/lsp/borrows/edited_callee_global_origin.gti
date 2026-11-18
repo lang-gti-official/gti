@@ -1,0 +1,27 @@
+// Editing a callee that supplies a different global borrow rechecks its caller.
+mut int a = 1;
+mut int b = 2;
+mut int& pick() { return b; }
+int main() {
+  mut int& left = a;
+  mut int& right = pick();
+  return left + right;
+}
+// --- step 2
+mut int a = 1;
+mut int b = 2;
+mut int& pick() { return a; }
+int main() {
+  mut int& left = a;
+  mut int& right = pick();
+  return left + right; //~ ERROR GTI-S2017 Cannot read storage
+}
+// --- step 3
+mut int a = 1;
+mut int b = 2;
+mut int& pick() { return b; }
+int main() {
+  mut int& left = a;
+  mut int& right = pick();
+  return left + right;
+}

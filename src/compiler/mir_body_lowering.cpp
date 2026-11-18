@@ -896,6 +896,37 @@ public:
   }
 
 private:
+  // Whether `loan` is produced by a call whose result is written in one of
+  // its receiver's class regions, designating one stored path of `stored`:
+  // its primary path or one of its additional dependencies' paths.
+  [[nodiscard]] bool classRegionCallResult(MirLoanId loan,
+                                           const MirLoan &stored) const {
+    const MirInstruction *producer = nullptr;
+    for (const MirBlock &block : output.blocks)
+      for (const MirInstruction &instruction : block.instructions)
+        if (instruction.loan == loan &&
+            instruction.kind == MirInstructionKind::Call) {
+          if (producer != nullptr)
+            return false;
+          producer = &instruction;
+        }
+    if (producer == nullptr || !producer->functionTarget ||
+        producer->borrowOrigin != BorrowOriginKind::Receiver ||
+        producer->borrowFields.size() != 1)
+      return false;
+    const BorrowedFieldOrigin &mapping = producer->borrowFields.front();
+    const std::vector<SymbolId> &fields = mapping.sourceFields;
+    return mapping.origin == BorrowOriginKind::Receiver && !fields.empty() &&
+           mapping.resultFields.empty() && mapping.resultConditions.empty() &&
+           mapping.sourceConditions.empty() &&
+           (fields == stored.designatedFields ||
+            std::any_of(stored.additionalDependencies.begin(),
+                        stored.additionalDependencies.end(),
+                        [&](const MirLoanDependency &dependency) {
+                          return dependency.designatedFields == fields;
+                        }));
+  }
+
   void reject(HirValueId value, std::string message) {
     valid = false;
     if (!firstRejection)
@@ -8446,8 +8477,8 @@ private:
     return visit(visit, type);
   }
 
-  // The one stored reference field path of a class without bases, through
-  // its owned class fields, with that reference's referent type.
+  // The one stored reference field path, including inherited fields and owned
+  // class fields, with that reference's referent type.
   [[nodiscard]] std::optional<std::pair<std::vector<SymbolId>, SemanticType>>
   soleStoredReferencePath(const SemanticType &type) const {
     std::vector<std::pair<std::vector<SymbolId>, SemanticType>> paths;
@@ -8465,12 +8496,14 @@ private:
           [&](const HirClassInstance &candidate) {
             return candidate.type == current;
           });
-      if (instance == program.classInstances().end() ||
-          !instance->bases.empty()) {
+      if (instance == program.classInstances().end()) {
         exact = false;
         return;
       }
       visiting.push_back(current);
+      for (const auto &base : instance->bases)
+        if (!base.interface && resolvedTraits(base.type).containsBorrowedState)
+          self(self, base.type);
       for (const auto &field : instance->fields) {
         const SemanticType &fieldType = field.info.type;
         prefix.push_back(field.info.symbol);
@@ -10152,8 +10185,11 @@ private:
     // A text field result (L-OWN-02) holds what its origin holds in that
     // field: the retained loan of a dependent carrier that designates it, or
     // no dependency here at all (ownerless text, another field's owner, or a
-    // formal's field whose text is the caller's).
+    // formal's field whose text is the caller's). Only a by-value result
+    // copies that text: a text-view reference result (a Place) names the
+    // view object itself and borrows its region like any other reference.
     const bool textFieldResult =
+        value.info.category == ValueCategory::Value &&
         mir_detail::textFieldResult(value.info.type, value.borrowOrigin,
                                     value.borrowArgument, value.borrowFields);
     // A temporary argument holds its dependency as the Stored loan that its
@@ -10176,6 +10212,18 @@ private:
               ? MirLoanKind::Stored
               : MirLoanKind::CallResult;
       MirLoanId parent = 0;
+      // A text-view reference mapped through a stored reference field names
+      // a view object inside that field's external referent, not the
+      // carrier's own shell. Like any other reference into the referent it
+      // is a child of the carrier's Stored group, so writes through it use
+      // that group's authority, and it holds exactly the group's own stored
+      // dependency (issue #565).
+      const bool mappedTextReferent =
+          shellReference &&
+          (value.info.type.kind == SemanticType::StringView ||
+           value.info.type.kind == SemanticType::CString) &&
+          !value.borrowFields.empty() &&
+          !value.borrowFields.front().sourceFields.empty();
       // A carrier alias's access reaches a receiver behind one of its stored
       // references only as far as that reference allows. Through a read-only
       // reference the alias cannot parent an exclusive carrier; the
@@ -10257,9 +10305,12 @@ private:
             originPlace->type.kind != SemanticType::Reference &&
             std::find(held.carriers.begin(), held.carriers.end(),
                       originPlace->binding) != held.carriers.end();
+        // An abstract entry group stays the separate stored dependency.
+        const bool localTextReferent =
+            mappedTextReferent && !output.loans[originLoan - 1].entry;
         if ((derivedCallResult || derivedOriginCarrier) &&
             !carrierShellOrigin &&
-            !(shellReference &&
+            !(shellReference && !localTextReferent &&
               output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
           parent = originLoan;
         }
@@ -10293,6 +10344,41 @@ private:
           *value.callableInvocation == CallableInvocationCapability::Once &&
           parent == originLoan)
         parent = output.loans[originLoan - 1].parent;
+      // A fresh carrier temporary's class-region result likewise borrows what
+      // the temporary stores, not the temporary: it forwards the ancestry of
+      // the stored dependency its field designates (the primary one or an
+      // additional one), so it can outlive the full expression that destroys
+      // the shell while that external owner stays borrowed.
+      if (kind == MirLoanKind::CallResult && originLoan != 0 &&
+          originLoan <= output.loans.size() && parent == originLoan &&
+          output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
+          !output.loans[originLoan - 1].entry &&
+          value.borrowOrigin == BorrowOriginKind::Receiver &&
+          value.borrowFields.size() == 1 &&
+          value.borrowFields.front().origin == BorrowOriginKind::Receiver &&
+          !value.borrowFields.front().sourceFields.empty() &&
+          value.borrowFields.front().resultFields.empty() && call.receiver &&
+          call.receiver->kind == MirOperandKind::Value) {
+        const auto *stage =
+            mir_detail::definitionFor(output, call.receiver->value);
+        const MirLoan &stored = output.loans[originLoan - 1];
+        const auto &fields = value.borrowFields.front().sourceFields;
+        if (stage != nullptr && stage->kind == MirInstructionKind::CallInput &&
+            stage->callInputRole == MirCallInputRole::Receiver &&
+            stage->callInputKind == HirCallInputKind::ReadTemporaryBorrow) {
+          const auto additional =
+              std::find_if(stored.additionalDependencies.begin(),
+                           stored.additionalDependencies.end(),
+                           [&](const MirLoanDependency &dependency) {
+                             return dependency.designatedFields == fields;
+                           });
+          if (additional != stored.additionalDependencies.end())
+            parent = additional->parent;
+          else if (stored.designatedFields.empty() ||
+                   stored.designatedFields == fields)
+            parent = stored.parent;
+        }
+      }
       if (parent == 0 && kind == MirLoanKind::Stored &&
           isLifecycleBoundBorrowCarrier(value.info.type)) {
         const auto *dependency =
@@ -10494,10 +10580,19 @@ private:
       // A fresh carrier receiver whose producer recorded no field map (its
       // signature contract names the region, not a field) still stores its
       // sole reference at that one path. A field-mapped result selecting
-      // exactly that path names it on the temporary's own stored group.
-      if (selectedReceiverPlace != nullptr && value.borrowFields.size() == 1 &&
-          value.borrowFields.front().origin == BorrowOriginKind::Receiver &&
-          !value.borrowFields.front().sourceFields.empty())
+      // exactly that path names it on the temporary's own stored group. A
+      // stored class region's union result maps its named argument lanes
+      // beside that one receiver mapping; they do not touch the receiver.
+      const BorrowedFieldOrigin *receiverMapping = nullptr;
+      bool onlyReceiverAndLanes = true;
+      for (const auto &mapping : value.borrowFields) {
+        if (mapping.origin == BorrowOriginKind::Receiver && !receiverMapping)
+          receiverMapping = &mapping;
+        else if (mapping.origin != BorrowOriginKind::Argument)
+          onlyReceiverAndLanes = false;
+      }
+      if (selectedReceiverPlace != nullptr && receiverMapping &&
+          onlyReceiverAndLanes && !receiverMapping->sourceFields.empty())
         if (const auto carrier = findMirTemporaryCarrierDependency(
                 output, *selectedReceiverPlace);
             carrier && carrier.loan->kind == MirLoanKind::Stored &&
@@ -10506,7 +10601,7 @@ private:
             carrier.loan->carriers.empty())
           if (const auto path =
                   soleStoredReferencePath(selectedReceiverPlace->type);
-              path && path->first == value.borrowFields.front().sourceFields)
+              path && path->first == receiverMapping->sourceFields)
             output.loans[carrier.loan->id - 1].designatedFields = path->first;
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
@@ -10559,6 +10654,11 @@ private:
             output.loans[loan - 1].parent ==
                 output.loans[loan - 1].storedDependency)
           output.loans[loan - 1].parent = 0;
+      } else if (mappedTextReferent && parent != 0 &&
+                 output.loans[parent - 1].kind == MirLoanKind::Stored &&
+                 !output.loans[parent - 1].entry) {
+        output.loans[loan - 1].storedDependency =
+            output.loans[parent - 1].storedDependency;
       } else if (shellReference) {
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
@@ -10653,6 +10753,16 @@ private:
         }
         HirValue dependency = value;
         dependency.borrowArgument = parameter;
+        // A stored class region's named lanes supply beside the receiver:
+        // each lane is an argument dependency with its own field mapping.
+        if (value.borrowOrigin == BorrowOriginKind::Receiver) {
+          dependency.borrowOrigin = BorrowOriginKind::Argument;
+          std::erase_if(dependency.borrowFields,
+                        [&](const BorrowedFieldOrigin &mapping) {
+                          return mapping.origin != BorrowOriginKind::Argument ||
+                                 mapping.parameter != parameter;
+                        });
+        }
         const MirPlaceId source = borrowOriginPlace(dependency, originCall);
         const MirLoanId inherited = operandLoan(originCall.operands[parameter]);
         const AccessMode access =
@@ -10988,6 +11098,13 @@ private:
           resultDependencies = MirBorrowDependencySet{
               .possibleAlternatives = instantiated->possibleAlternatives};
         resultDependencies->dependencies = std::move(complete);
+      }
+      // A direct read-only reference publishes shared access to each possible
+      // referent, even when the call borrowed a supplier exclusively.
+      if (kind == MirLoanKind::CallResult &&
+          value.borrowAccess == AccessMode::ReadOnly && !shellReference) {
+        for (auto &dependency : output.loans[loan - 1].additionalDependencies)
+          dependency.access = AccessMode::ReadOnly;
       }
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
@@ -14824,8 +14941,31 @@ private:
           // even when an accessor selects a different runtime referent. Keep
           // the owner loan here; reference initialization separately captures
           // the checked descendant call-result address before its loan ends.
+          // A call result that also borrows further suppliers (a stored
+          // class region's parameter lanes) is no alias of the owner loan.
+          const bool furtherSuppliers =
+              transient != nullptr && retained != nullptr &&
+              transient->kind == MirLoanKind::CallResult &&
+              !transient->additionalDependencies.empty() &&
+              std::any_of(transient->additionalDependencies.begin(),
+                          transient->additionalDependencies.end(),
+                          [&](const MirLoanDependency &dependency) {
+                            return dependency.source != 0 &&
+                                   !retained->protectsSource(dependency.source);
+                          });
+          // A shared alias of a reference already carrying such a call
+          // result carries that same loan, every supplier included.
+          if (furtherSuppliers && !transient->carriers.empty() &&
+              bindingReferenceAccess(binding) == AccessMode::ReadOnly &&
+              transient->access == AccessMode::ReadOnly) {
+            bindCarrier(existing, binding);
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
+          }
           if (transient == nullptr || retained == nullptr ||
               bindingReferenceAccess(binding) != AccessMode::ReadOnly ||
+              furtherSuppliers ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, reuseLoan, valueId,
                                           bindingReferenceAccess(binding)) &&
@@ -18543,6 +18683,31 @@ private:
                 referenceParameterEntry = borrow.loan;
             }
           }
+          // A same-region result can return any of its declared suppliers.
+          // Publish a fresh result permission for a secondary reference entry
+          // too; reclassifying an exclusive entry would leak its access mode.
+          if (referenceParameterEntry == 0 && storedCarrierEntry == 0 &&
+              function != nullptr &&
+              function->returnBorrowOrigin == BorrowOriginKind::Argument) {
+            const MirLoan *entry = output.findLoan(borrow.loan);
+            const MirPlace *source =
+                entry ? output.findPlace(entry->source) : nullptr;
+            if (entry && entry->kind == MirLoanKind::Parameter &&
+                entry->entry && entry->storedDependency == 0 && source &&
+                source->type.kind == SemanticType::Reference &&
+                source->root == MirPlaceRootKind::Binding &&
+                source->projections.empty()) {
+              for (const auto position : function->returnBorrowParameters) {
+                const auto formal = mir_detail::returnOriginFormal(
+                    function->parameterTypes, function->parameterBindings,
+                    position);
+                if (formal && formal->binding == source->binding &&
+                    std::find(entry->carriers.begin(), entry->carriers.end(),
+                              formal->binding) != entry->carriers.end())
+                  referenceParameterEntry = borrow.loan;
+              }
+            }
+          }
           // A reference read out of one stored reference field of a local
           // carrier names that field's own dependency, not the carrier's
           // whole group: each field of a composed carrier keeps its own
@@ -18809,14 +18974,33 @@ private:
                            alias->info.type.kind == SemanticType::Reference;
                   });
               // A local reference alias passed as a returned call's argument
-              // relays the authority it borrows from: an incoming entry, or
-              // receiver storage itself. The alias ends with the return.
+              // relays the authority it borrows from: an incoming entry,
+              // receiver storage itself, or a stored class region's named
+              // lane, which a receiver contract supplies without an entry
+              // loan. The alias ends with the return.
               const MirPlace *aliased = output.findPlace(candidate.source);
+              const bool namedLane =
+                  aliased != nullptr &&
+                  function->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+                  aliased->root == MirPlaceRootKind::Binding &&
+                  (aliased->projections.empty() ||
+                   (aliased->projections.size() == 1 &&
+                    aliased->projections.front().kind ==
+                        MirProjectionKind::Dereference)) &&
+                  std::any_of(
+                      function->returnBorrowParameters.begin(),
+                      function->returnBorrowParameters.end(),
+                      [&](std::size_t position) {
+                        const auto formal = mir_detail::returnOriginFormal(
+                            function->parameterTypes,
+                            function->parameterBindings, position);
+                        return formal && formal->binding == aliased->binding;
+                      });
               const bool localAlias =
                   candidate.kind == MirLoanKind::Local &&
                   !transientChain.empty() && !candidate.carriers.empty() &&
                   referenceAliases &&
-                  (candidate.parent != 0 ||
+                  (candidate.parent != 0 || namedLane ||
                    (aliased != nullptr &&
                     aliased->root == MirPlaceRootKind::This));
               if ((candidate.kind != MirLoanKind::CallResult && !localAlias) ||
@@ -18862,6 +19046,25 @@ private:
                     origin->root == MirPlaceRootKind::This)
                   mappedEntry = tail->id;
               }
+            }
+            // A method result written in a carrier's class region borrows
+            // what the carrier stores there (its designated stored referent),
+            // never the carrier: a returned call result parented directly to
+            // the formal's stored entry relays that entry, as returning the
+            // designated field itself does.
+            if (mappedEntry != 0 && mappedEntry == summarizedEntry &&
+                transient != 0 && transient != mappedEntry &&
+                transientChain.size() == 1) {
+              const MirLoan *entry = output.findLoan(summarizedEntry);
+              const MirLoan *stored = output.findLoan(transient);
+              const MirLoan *result = output.findLoan(transientChain.front());
+              if (entry != nullptr && stored != nullptr && result != nullptr &&
+                  entry->storedDependency == transient &&
+                  stored->kind == MirLoanKind::Stored && stored->entry &&
+                  result->kind == MirLoanKind::CallResult &&
+                  result->parent == transient &&
+                  classRegionCallResult(result->id, *stored))
+                mappedEntry = transient;
             }
             // A consuming extraction already transferred the summarized
             // parameter's entry group into this exact call result and retired

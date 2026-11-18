@@ -1,0 +1,18 @@
+// A requires call with two equally viable borrowed overloads cannot authorize an invocation.
+int describe(int& error) { return 12; }
+int describe<T>(T& error) { return 25; }
+
+concept Described<E> = requires(E& error) {
+  { describe(error) } -> int;
+};
+
+static_assert(!Described<int>);
+
+int checked<E>(E& error) requires Described<E> {
+  return describe(error);
+}
+
+int main() {
+  int error = 2;
+  return checked(error);  //~ ERROR GTI-S2029
+}

@@ -608,6 +608,15 @@ manufactured loan. The current source constructor slice uses an empty body
 and one common nominal field prefix; unrelated sibling obligations cannot be
 dropped during projection.
 
+A direct reference result supplied by several mutable parameters publishes the
+result's declared access for every possible owner, rather than retaining the
+call's temporary exclusive access. Returning a secondary supplier publishes a
+fresh return loan with the same rule; it never reclassifies that parameter's
+entry authority. The program verifier independently checks owner completeness
+and access, while ordinary loan conflicts continue to protect every supplier.
+Single stored-reference path discovery includes inherited class fields, with
+multiple paths remaining ambiguous rather than selecting an arbitrary base.
+
 A consuming receiver transfers its complete stored group through the ordinary
 ordered call-input stages. A reference result may outlive the consumed shell
 only when the independently checked callee contract derives it from the
@@ -1075,6 +1084,20 @@ it does not infer ownerlessness from missing loan metadata. A lowered range
 iterator retaining an exact local owner uses that owner's layout for this
 proof. The physical source, parent and call contract remain independently
 verified, including raw borrows' explicit unsafe owner witness.
+A call returning a text-view reference (`std::string_view&<o>`) is a Place
+result, never the by-value text field relay that `textFieldResult` describes;
+lowering keys that rule on the call's value category. When the result is
+mapped through a stored reference field of a local carrier, it borrows the
+view object in that field's external referent: its `CallResult` loan is a
+child of the carrier's non-entry `Stored` group, holding that group's stored
+dependency, so writes through it use the group's authority and writes to the
+owner conflict with it. An abstract entry group remains the separate stored
+dependency instead. A shell loan whose source is checked text storage (a
+record's text field or a text array element, `isOwnerlessTextStorageProjection`)
+owes no stored dependency even when its path crosses an abstract entry, as in
+`return this.box.text;` through a stored `Box&<o>`: the storage invariant,
+verified independently for the whole program, already proves the view holds
+ownerless text, and its physical source still names the external record.
 A reference return preserves both its physical source and stored dependency.
 A copied by-value return instead publishes a fresh external-owner loan from
 the exact copied SSA value. Its original entry remains live until physical
@@ -3349,6 +3372,22 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+A method result in a region its class stores has a union contract: origin
+`Receiver` for the receiver's fields stored in that region plus the named
+parameter lanes written in it, carried in `returnBorrowParameters` (empty for
+a receiver-only result) and stated exactly by `completeReturnBorrow`. The
+program verifier admits an `Argument` mapping in such a contract only for a
+named lane, checks each return's source and every additional source against
+`this` or a named lane, and lets a consumed temporary receiver relay a named
+lane, never the temporary itself. At a call, the result loan keeps the
+receiver's stored dependency as its parent and each named lane's argument as
+an additional dependency, an owned local argument under its ordinary
+ownership, so a reference binding retains that call-result loan rather than
+the receiver's owner loan alone. A named lane has no entry loan in such a
+body, so a returned call that relays a local reference alias of one
+(`int& local = fallback; return pick(local);`) walks through the alias's
+`Local` loan, as it does through an alias of receiver storage.
+
 A consumed temporary receiver whose stored group is exclusive may hand its
 read-only class-region result to the group's suspended parent authority only
 when that group is not lifecycle-bound and retires within the full
@@ -3357,7 +3396,24 @@ result's own publication (a return borrow or a reference binding) and drops.
 Verification checks that exact sequence. A further stored path of the same
 carrier is another field's owner and never the relayed one; and the referent
 of a read-only reference formal may be an additional source of a stored
-group without a loan of the body's own, as an owned local input may.
+group without a loan of the body's own, as an owned local input may. A
+shared stored group taken from an exclusive authority (`Reader(mine)` with
+`mut Box&<a> mine`) suspends that authority; its read-only result may join
+the group's readers while every live child of the authority reads. A union
+result relays the same way: its receiver mapping names the group, and each
+named argument lane is a further read-only dependency, which for a call
+result, as for a stored group, may be a read-only reference formal's
+referent, or a field or element of it, without a loan of the body's own.
+
+Those exemptions hold only inside the body. A loan that leaves it never
+depends on an object the body owns: a local, or a by-value formal other
+than a borrow carrier, whose dependency stands for the caller-owned
+referents it stores (rejected as a borrow escape at its return); and a returned loan under a
+one-formal contract publishes only that formal (or static storage): each
+argument that the producing call, and any call nested in its arguments,
+borrows must be that formal, and, unless a receiver's stored group relays
+the result, so must each further dependency of the returned loan. The
+program verifier checks this independently of semantics.
 
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly
@@ -4816,6 +4872,9 @@ leave the input byte-identical.
 small pass framework. The manager revisions bodies and caches CFG/reachability,
 dominance, value uses, effects, scalar-promotion inputs, safety proofs,
 place-alias/escape facts, natural-loop/range facts, and sparse constants.
+Each reachable block records its immediate dominator and the inclusive preorder
+interval of its dominator subtree. An interval containment test answers each
+dominance query in constant time. Unreachable blocks dominate no block.
 Explicit preservation retains an analysis; unknown preservation invalidates
 conservatively. There is no arbitrary insertion API, ID compaction,
 incremental dominance update, memory SSA, or loop/memory transformation.
@@ -4850,6 +4909,22 @@ full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
+
+A call whose result is written in its receiver's class region
+(`receiverClassRegionRelay`) borrows what the receiver stores, never the
+receiver. Lowering parents a fresh temporary receiver's call-result loan to
+the ancestry of the stored dependency its single source field designates
+(the primary path or the matching additional dependency), so the shell may
+end with its full expression while only that region's external owner stays
+borrowed. A returned call result parented to a carrier formal's stored entry
+relays that entry, as returning the designated field does; when the carrier
+is a local relayed by a reference formal, `canonicalPlace` identifies the
+dereferenced field as the formal's whole referent. The verifier admits the
+temporary receiver input under the same summary shape, accepts the
+call-result source one dereference below the designated stored path
+(`staticStorageLoan`, `independentlyStaticTextBinding`), and lets
+`referenceParameterReturnPublication` accept a local carrier whose single
+initialization stores a call result sourced at the formal.
 
 A transient call-result loan used only as the receiver of a non-borrowing
 member call ends immediately after that call. Lowering carries the source HIR

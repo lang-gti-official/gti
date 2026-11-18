@@ -168,7 +168,13 @@ authoritative work inventory and verification record.
 ## Task identity and operations
 
 `scripts/agent_workflow.py` uses Python's standard library and Git. One task
-owns a unique `codex/` branch, a separate worktree and one PR. The worktree
+owns a unique branch, a separate worktree and one PR. The branch carries the
+agent client's prefix: `claude/` from Claude Code, which marks its shells with
+`CLAUDECODE=1`, and `codex/` from every other client. `start` names the branch
+`<prefix><task>-<8 hex>` unless `--branch` gives one, and every command accepts
+either prefix, so either client can resume a task. Two automation-owned names
+keep `codex/`: the auto-revert bot's `codex/revert-<pr>-<sha10>` and degraded-mode
+batch branches `codex/<batch>`. The worktree
 must lie outside the primary checkout: `start` refuses nested paths, including
 Claude Code's managed `.claude/worktrees/`, so such clients let `start` create
 the task worktree elsewhere. GitHub PRs and published commits are authoritative
@@ -190,7 +196,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 
 | Command | Result |
 | --- | --- |
-| `start <task> --title <text> [--worktree <path>] [--branch codex/<name>] [--adopt]` | Fetch main, create or register a clean worktree, publish its branch; rediscover a PR after the first meaningful commit. |
+| `start <task> --title <text> [--worktree <path>] [--branch claude/<name> \| codex/<name>] [--adopt]` | Fetch main, create or register a clean worktree, publish its branch; rediscover a PR after the first meaningful commit. |
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch to resolve a conflict, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing focused checks against the published clean head. An advancing main does not void them. |

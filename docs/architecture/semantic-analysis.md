@@ -2249,7 +2249,14 @@ processes. Include-fix trials of such a compilation run without the cache.
 
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
-  the program's declaration list. A `SemanticPreambleKey` names the analysis
+  the program's declaration list. For bounded editor analysis the prefix can
+  include imported module interfaces when the entry comes last, source
+  ownership is known, no implementation units participate, and every
+  untrusted import declares a named module without visibility of the entry.
+  These modules retain ordinary body checking and can demand trusted bodies.
+  If checking this prefix fails, construction retries the leading trusted
+  declarations and adoption checks the remaining declarations normally.
+  A `SemanticPreambleKey` names the analysis
   configuration, every prefix unit by identity, path, digests and exact
   parsed declarations, and the whole source graph by unit identity and
   import/re-export edges (registration publishes each declaration's visibility per
@@ -3869,6 +3876,21 @@ named value's. Only the fresh-temporary receiver mode is extended:
 text field of its receiver. That result holds the owner's text and borrows
 nothing of the temporary, so `ephemeralBorrowResultSupported` does not apply
 to it.
+
+`receiverClassRegionRelay` is the general form for any borrowed state. It
+admits a read-only method whose result (a reference, or a carrier holding
+borrowed state) is written in one of its class's lifetime regions and whose
+summary maps exactly one stored receiver field, or, for a generic member
+resolved before its instance maps fields, whose signature names a class binder
+the class stores. Such a result is what the receiver stores in that region,
+so a fresh temporary receiver may supply it beyond its full expression. The
+signature-level region check is shared by fields and methods:
+`validateReturnedCallRegion` resolves a returned field or method result of a
+carrier parameter to the region the parameter's type supplies for the
+written binder. Anything else read from the carrier itself, a value field or
+a `this`-region result, lives in the carrier's own storage: the reference's
+region for a carrier reference (GTI-S2127 unless it outlives the result),
+and, for a by-value parameter, storage that MIR reports escaping.
 
 A function may return a fresh value that holds one of its by-value text
 formals in a direct text field (phase 2a). Its `publishedTextFields` lists

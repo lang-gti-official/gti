@@ -1,0 +1,11 @@
+// Editing only a consteval body updates a diagnostic in an unchanged caller.
+consteval bool enabled() { return true; }
+int caller() { static_assert(enabled()); return 0; }
+
+// --- step 2
+consteval bool enabled() { return false; }
+int caller() { static_assert(enabled()); return 0; } //~ ERROR GTI-S2079
+
+// --- step 3
+consteval bool enabled() { return true; }
+int caller() { static_assert(enabled()); return 0; }

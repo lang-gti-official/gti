@@ -1,0 +1,31 @@
+// With an elided result region, a returned call result, direct or through local references, borrows only the summarized parameter.
+int&<r> either<lifetime r>(int&<r> first, int&<r> second) { return second; }
+
+int& direct_local(int& keep) {
+  int local = 42;
+  return either(keep, local);  //~ ERROR GTI-S2017
+}
+int& bound_local(int& keep) {
+  int local = 42;
+  int& kept = either(keep, local);
+  return kept;  //~ ERROR GTI-S2017
+}
+int& realiased_local(int& keep) {
+  int local = 42;
+  int& kept = either(keep, local);
+  int& again = kept;
+  return again;  //~ ERROR GTI-S2017
+}
+int& init_statement_local(int& keep) {
+  int local = 42;
+  if (int& kept = either(keep, local); kept > 0) {
+    return kept;  //~ ERROR GTI-S2017
+  }
+  return keep;
+}
+int& nested_local(int& keep) {
+  int local = 42;
+  int& kept = either(keep, either(keep, local));
+  return kept;  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

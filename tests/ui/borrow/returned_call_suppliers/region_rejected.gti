@@ -1,0 +1,61 @@
+// A returned local reference bound to a region call carries every supplier of that call, so one in another region is rejected.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+};
+class Writer<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Writer(mut Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+};
+int&<r> either<lifetime r>(int&<r> first, int&<r> second) { return second; }
+
+int&<a> bound<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  int& kept = either(keep, other);  //~ ERROR GTI-S2127
+  return kept;
+}
+int&<a> realiased<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  int& kept = either(keep, other);  //~ ERROR GTI-S2127
+  int& again = kept;
+  return again;
+}
+int&<a> init_statement<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  if (int& kept = either(keep, other); kept > 0) {  //~ ERROR GTI-S2127
+    return kept;
+  }
+  return keep;
+}
+int&<a> nested<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  int& kept = either(keep, either(keep, other));  //~ ERROR GTI-S2127
+  return kept;
+}
+int&<a> shared_temporary<lifetime a, lifetime b>(Box&<a> mine, int&<b> other) {
+  int& kept = Reader(mine).pick(false, other);  //~ ERROR GTI-S2127
+  return kept;
+}
+int&<a> mut_temporary<lifetime a, lifetime b>(mut Box&<a> mine, int&<b> other) {
+  int& kept = Reader(mine).pick(false, other);  //~ ERROR GTI-S2127
+  return kept;
+}
+int&<a> exclusive_temporary<lifetime a, lifetime b>(mut Box&<a> mine, int&<b> other) {
+  int& kept = Writer(mine).pick(false, other);  //~ ERROR GTI-S2127
+  return kept;
+}
+// The direct form gives the same diagnostic.
+int&<a> direct<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  return either(keep, other);  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

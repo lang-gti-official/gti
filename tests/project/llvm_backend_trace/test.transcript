@@ -1,0 +1,4 @@
+// The LLVM backend and the new pass manager are visible in a native time trace.
+$ gti main.gti -O0 --progress=never --time-trace trace.json -o traced
+$ ./traced
+$ python3 check_trace.py
