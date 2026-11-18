@@ -1,0 +1,8 @@
+// Ownerless array elements still cannot lend references past their physical owner.
+import std.array;
+import std.string;
+std::string_view& escape() { //~ ERROR GTI-S2017
+  std::array<std::string_view, 1> items{};
+  unsafe { return items.get_unchecked(std::size_t(0)); } //~ ERROR GTI-S2017
+}
+int main() { return 0; }
