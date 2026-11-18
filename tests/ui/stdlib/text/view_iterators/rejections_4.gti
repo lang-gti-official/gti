@@ -1,0 +1,6 @@
+// A cursor into a local view's shell cannot be returned. Under RFC 0003 the
+// MIR borrow checker rejects it, so it needs a file without semantic errors.
+import std.string;
+import std.string_view;
+std::string_view_iterator escape(std::string& owner) { std::string_view view = owner.view(); return view.begin(); }  //~ ERROR GTI-S2045
+int main() { return 0; }

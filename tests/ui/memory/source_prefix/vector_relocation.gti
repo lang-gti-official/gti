@@ -3,8 +3,8 @@
 //@ snapshot: mir
 //@ mir-function: relocate_at
 //@ mir-function: relocate_range_at
-// CHECK: intrinsic=object-relocate{{$| }}
 // CHECK: intrinsic=object-relocate-range
+// CHECK: intrinsic=object-relocate{{$| }}
 import std.vector;
 import std.span;
 

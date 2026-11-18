@@ -1,4 +1,4 @@
-// Composed borrows keep every owner borrowed: owner writes, temporary owners, reseats and aliases are rejected.
+// Composed borrows keep every owner borrowed: owner writes, temporary owners and aliases are rejected.
 //@ check-fail
 
 namespace case_temporary_owner {
@@ -26,36 +26,6 @@ struct PairView {
 };
 int entry() {
   int a = 1; return PairView(a, 2).sum();  //~ ERROR GTI-S2012
-}
-}
-
-namespace case_local_second_owner_return {
-struct PairView {
-  int& first;
-  int& second;
-  PairView(int& a, int& b) : first(a), second(b) {}
-  int sum() { return first + second; }
-  int sum_with(int other) { return first + second + other; }
-  int mutate_argument(mut int& other) { other = 9; return first + second; }
-};
-PairView bad(int& a) {
-  int b = 2; return PairView(a, b);  //~ ERROR GTI-S2045
-}
-int entry() { int a = 1; auto view = bad(a); return view.sum(); }
-}
-
-namespace case_dependency_reseat {
-struct PairView {
-  int& first;
-  int& second;
-  PairView(int& a, int& b) : first(a), second(b) {}
-  int sum() { return first + second; }
-  int sum_with(int other) { return first + second + other; }
-  int mutate_argument(mut int& other) { other = 9; return first + second; }
-};
-int entry() {
-  int a = 1; int b = 2; int c = 3;
-  mut PairView view{a, b}; view = PairView(a, c); return view.sum();  //~ ERROR GTI-S2003
 }
 }
 

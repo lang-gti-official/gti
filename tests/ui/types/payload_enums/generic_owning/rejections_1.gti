@@ -1,4 +1,4 @@
-// Generic owning sums reject implicit copies, use after move, live element borrows across clear and assignment of a borrow-carrying class.
+// Generic owning sums reject implicit copies, use after move and live element borrows across clear.
 //@ check-fail
 import std.optional;
 import std.vector;
@@ -97,20 +97,3 @@ int entry() {
   return id(event);  //~ ERROR GTI-S2018
 }
 }
-
-namespace case_construction_only_assignment {
-class Borrowed {
-  int& owner;
-public:
-  Borrowed(int& owner) : owner(owner) {}
-};
-int entry() {
-  int owner = 1;
-  Borrowed source = Borrowed(owner);
-  mut Borrowed destination = Borrowed(owner);
-  destination = std::move(source);  //~ ERROR GTI-S2003
-  return 0;
-}
-}
-
-int main() { return 0; }

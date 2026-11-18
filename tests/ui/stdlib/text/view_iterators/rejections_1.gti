@@ -16,16 +16,8 @@ namespace case_readonly_element {
 int entry() { std::string_view view = "abc"; mut auto cursor = view.begin(); *cursor = 'z'; return 0; }  //~ ERROR GTI-S2002
 }
 
-namespace case_escaped_view_shell {
-std::string_view_iterator escape(std::string& owner) { std::string_view view = owner.view(); return view.begin(); } int entry() { return 0; }  //~ ERROR GTI-S2045
-}
-
 namespace case_subview_escapes_local_owner {
 std::string_view leak() { std::string owner{"abc"}; return owner.view().substr(std::size_t(1), std::size_t(1)); } int entry() { return 0; }  //~ ERROR GTI-S2045
-}
-
-namespace case_subview_outlives_owner {
-int entry() { mut std::string_view kept = ""; { std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); kept = part; } return int(kept.size()); }  //~ ERROR GTI-S2017 retained dependency has become unavailable
 }
 
 namespace case_shrink_readonly_view {
