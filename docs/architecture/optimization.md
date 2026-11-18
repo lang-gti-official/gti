@@ -378,6 +378,14 @@ or checked operation. This envelope is derived only from the existing MIR
 predicate and exact comparison operand; it is not a relational solver or a
 source-name rule.
 
+A single closed-call analysis reuses a body's alias facts, dominance, loops,
+and widening headers across calling contexts and its body-local proof pass.
+Independent replay constructs new inputs from its own program snapshot. The
+body-local pass needs only blocks with local failure origins and transfers
+instructions through the last such site when collecting proofs. Its solver
+still follows predecessor blocks to establish the incoming facts. Contextual
+collection also visits check-free bodies and instructions for call discovery.
+
 Block transfer retains a pre-instruction abstract-state snapshot only for the
 instruction named by an `Invoke` terminator. Its failure edge consumes that
 snapshot; normal edges consume the completed block state. Other intermediate
