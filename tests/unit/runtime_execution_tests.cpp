@@ -123,7 +123,10 @@ GTI_UNIT_TEST(runtime_execution_boundary) {
 }
 
 // Checked hosted TLS draining returns the first failure after completing
-// cleanup.
+// cleanup. Only the gti_unit_tests runner registers it: the installed-library
+// smoke compiles this file as the one-case runtime_execution_boundary program
+// (unit_test.h makes each case `main` outside the runner).
+#if defined(GTI_UNIT_TESTS_RUNNER)
 GTI_UNIT_TEST(runtime_execution_checked_drain) {
   bool valid = false;
   std::thread worker([&] {
@@ -167,3 +170,4 @@ GTI_UNIT_TEST(runtime_execution_checked_drain) {
   worker.join();
   return valid ? 0 : 1;
 }
+#endif
