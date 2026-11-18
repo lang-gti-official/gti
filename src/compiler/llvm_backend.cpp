@@ -3,6 +3,7 @@
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/native_header.h"
+#include "gti/support.h"
 #include "gti/target.h"
 #include "llvm/body.h"
 #include "llvm/placement.h"
@@ -262,7 +263,10 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
   }
 
   native_llvm::Session session(*verified, options);
-  native_llvm::lowerScalarProgram(session, admission);
+  {
+    const PhaseTimeScope timing("llvm-lower");
+    native_llvm::lowerScalarProgram(session, admission);
+  }
   auto artifact = session.emitObject();
   if (const auto &plan = verified->program().embeddingPlan()) {
     EmbeddingCompanion companion;

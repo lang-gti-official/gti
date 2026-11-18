@@ -1,6 +1,7 @@
 #include "atomic_types.h"
 #include "gti/llvm_admission.h"
 #include "gti/mir_effects.h"
+#include "gti/support.h"
 
 #include "../mir_verification_queries.h"
 #include "closure_environment.h"
@@ -6209,6 +6210,7 @@ std::string LlvmAdmissionPlan::limitation() const {
 
 LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                                     LlvmBackendOptions options) {
+  const PhaseTimeScope timing("llvm-admission");
   LlvmAdmissionPlan plan(std::move(program), options);
   const auto &input = plan.program();
   const auto &mir = input.mir();
@@ -6236,9 +6238,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                     ? std::optional(Shape::InfallibleEmbedding)
                     : std::nullopt);
   inventory.add(mir.executionProfile());
-  for (const auto &body : input.bodies())
-    inventory.inspect(body, *findMirBody(mir, body.identity.address),
-                      closure.contains(body.identity.address));
+  {
+    const PhaseTimeScope inventoryTiming("llvm-admission-inventory");
+    for (const auto &body : input.bodies())
+      inventory.inspect(body, *findMirBody(mir, body.identity.address),
+                        closure.contains(body.identity.address));
+  }
   inventory.body.reset();
   inventory.block = 0;
   inventory.instruction = 0;
