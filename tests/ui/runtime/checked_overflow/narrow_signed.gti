@@ -1,6 +1,6 @@
 // Checked, saturating and ordinary arithmetic on int8_t, int16_t match exact math at every boundary pair (a hash of each sweep's results, from an exact oracle); 8- and 16-bit operators promote to int32.
 //@ run-pass
-//@ revisions: sweep_int8 sweep_int16 ops_int8 ops_int16 
+//@ revisions: sweep_int8 sweep_int16 ops_int8 ops_int16
 //@[sweep_int8] args: int8 sweep -128 -127 -65 -64 -9 -8 -7 -3 -2 -1 0 1 2 3 7 8 9 63 64 126 127
 //@[sweep_int8] stdout: 2646
 //@[sweep_int8] stdout: -3414172565162591107
