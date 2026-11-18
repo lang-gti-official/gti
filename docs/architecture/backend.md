@@ -648,12 +648,30 @@ including absence, with the original linear scans and reports an internal
 compiler error naming the query and type on disagreement. Indexing changes
 neither containment-path checks nor coverage ordering or occurrence counts.
 
+Native-value queries memoize only whole answers, separately for dispatch and
+inventory because their pointee predicates differ. Dispatch memoization starts
+after construction has finished all body and operation facts. Reentrant queries
+and queries under an active pointee/mutex path run uncached; their answers can
+depend on that path even when the native-value walk starts fresh containment
+sets. Each ordinary whole query keeps its original inline/owner cycle checks.
+The target and sealed program remain fixed for the table's entire lifetime.
+
+Inventory type and cleanup walks retain the exact ordered sequence of coverage
+additions, including repeats and each addition's required/executable context.
+Keys use complete type/recipe equality and the incoming context; type keys also
+distinguish concrete-pack metadata. Replay applies the current body's source,
+block and instruction as the witness, so sharing a sequence across bodies does
+not share their first-use locations. No sequence is deduplicated before replay.
+Validation mode recomputes every memo hit; walk recomputation bypasses nested
+walk memos and compares all recorded additions before publishing occurrences.
+Disagreement throws a compiler-integrity error naming the query and root type.
+Failed computations never populate a memo table.
+
 Admission time traces separate `llvm-admission`, `llvm-admission-closure`,
 `llvm-admission-dispatch-proofs` and `llvm-admission-inventory`. Under
 `GTI_COMPILER_VALIDATION`, the plan also retains query counters: hierarchy
 queries/hits/rejections, native-value queries/memo hits, and type/cleanup
-walks/replays. The current uncached native and inventory walks report zero
-memo hits/replays. Hierarchy counters belong to the immutable program's scope;
+walks/replays. Hierarchy counters belong to the immutable program's scope;
 a plan takes a delta so enclosing backend scopes do not contribute old work.
 The counters are observational and absent in ordinary compilation.
 

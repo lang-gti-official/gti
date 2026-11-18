@@ -1,3 +1,4 @@
+#include "admission_memo.h"
 #include "atomic_types.h"
 #include "gti/llvm_admission.h"
 #include "gti/mir_effects.h"
@@ -173,13 +174,31 @@ public:
                const native_llvm::AdmissionTypeIndex &types,
                const TargetInfo &nativeTarget,
                std::function<bool(const SemanticType &)> pointee,
+               std::function<bool()> memoEligible,
                LlvmAdmissionStatistics *statistics)
       : program(program), types(types), nativeTarget(nativeTarget),
-        pointee(std::move(pointee)), statistics(statistics) {}
+        pointee(std::move(pointee)), memoEligible(std::move(memoEligible)),
+        statistics(statistics) {}
 
   bool operator()(const SemanticType &type) const {
     if (statistics)
       ++statistics->nativeValueQueries;
+    // A predicate can call back into this instance or read an external owner
+    // path. Neither is a whole query, even though compute starts fresh sets.
+    if (computing || !memoEligible())
+      return compute(type);
+    struct Guard {
+      bool &active;
+      explicit Guard(bool &active) : active(active) { active = true; }
+      ~Guard() { active = false; }
+    } guard(computing);
+    return memo.query(type, type, statistics != nullptr,
+                      statistics ? &statistics->nativeValueMemoHits : nullptr,
+                      [&] { return compute(type); });
+  }
+
+private:
+  bool compute(const SemanticType &type) const {
     // `visiting` and `payloads` hold the current inline containment path. An
     // owner's pointee lives behind a handle, so it starts a new path, and a
     // class or payload enum reached again beneath an owner (a node owning its
@@ -332,7 +351,11 @@ private:
   const native_llvm::AdmissionTypeIndex &types;
   const TargetInfo &nativeTarget;
   std::function<bool(const SemanticType &)> pointee;
+  std::function<bool()> memoEligible;
   LlvmAdmissionStatistics *statistics;
+  mutable bool computing = false;
+  native_llvm::AdmissionMemo<SemanticType, bool, native_llvm::TypeBucketHash>
+      memo{"native-value"};
 };
 
 // Representation facts never grant an operation permission. Gather every
@@ -365,7 +388,7 @@ public:
             [this](const SemanticType &pointee) {
               return pointeeMetadata(pointee) || mutexPointee(pointee);
             },
-            statistics) {
+            [this] { return memoReady && pointeeVisits.empty(); }, statistics) {
     for (const auto address : plan.requiredBodies()) {
       const auto &body = *findMirBody(program, address);
       native_llvm::Placement placement(body);
@@ -589,6 +612,9 @@ public:
             operations[key(address, block.id, stage.id)].shape =
                 proveOperation(address, body, placement, stage);
     }
+    // The pointee predicate may consult dispatch/body facts. Constructor-time
+    // answers precede their completion and must never enter the memo table.
+    memoReady = true;
   }
 
   bool contains(const SemanticType &type) const {
@@ -1110,6 +1136,7 @@ private:
   // Non-hierarchy field representations use the same rules as values.
   NativeValues natives;
   std::vector<SemanticType> pointeeVisits;
+  bool memoReady = false;
   std::map<Key, Operation> operations;
   std::map<BodyKey, Operation> bodies;
   std::map<const MirBody *, std::set<MirValueId>> temporaries;
@@ -2953,6 +2980,48 @@ private:
   }
 };
 
+// A trace stores calls, not deduplicated uses: repeating a node repeats its
+// occurrence, and replay applies the current body/location as its witness.
+struct AdmissionCoverageStep {
+  const LlvmCoverageEntry *entry;
+  const LlvmCoverageEntry *shape;
+  bool required;
+  bool executable;
+  friend bool operator==(const AdmissionCoverageStep &,
+                         const AdmissionCoverageStep &) = default;
+};
+struct AdmissionTypeWalkKey {
+  SemanticType type;
+  bool concretePackMetadata;
+  bool required;
+  bool executable;
+  friend bool operator==(const AdmissionTypeWalkKey &,
+                         const AdmissionTypeWalkKey &) = default;
+};
+struct AdmissionCleanupWalkKey {
+  MirDropType recipe;
+  bool required;
+  bool executable;
+  friend bool operator==(const AdmissionCleanupWalkKey &,
+                         const AdmissionCleanupWalkKey &) = default;
+};
+struct AdmissionWalkHash {
+  std::size_t operator()(const AdmissionTypeWalkKey &key) const {
+    return native_llvm::TypeBucketHash{}(key.type) ^
+           (std::size_t(key.concretePackMetadata) << 1) ^
+           (std::size_t(key.required) << 2) ^
+           (std::size_t(key.executable) << 3);
+  }
+  std::size_t operator()(const AdmissionCleanupWalkKey &key) const {
+    // The full recipe equality includes every selector, cleanup flag and
+    // ordered child; this is only a bucket selector, never recipe identity.
+    return native_llvm::TypeBucketHash{}(key.recipe.type) ^
+           (key.recipe.aggregate.size() << 1) ^
+           (std::size_t(key.required) << 2) ^
+           (std::size_t(key.executable) << 3);
+  }
+};
+
 // One representative witness and count per requirement/body/context. Repeated
 // scalar operations do not allocate a duplicate diagnostic record per use.
 class Inventory final {
@@ -2971,7 +3040,7 @@ public:
               return this->dispatchProofs.metadata(pointee).has_value() ||
                      this->ownedMutexPointee(pointee);
             },
-            statistics),
+            [this] { return ownedMutexPointees.empty(); }, statistics),
         statistics(statistics) {}
 
   std::optional<MirBodyAddress> body;
@@ -4965,16 +5034,26 @@ public:
   }
 
   template <class T> void add(T value, std::optional<Shape> implemented = {}) {
-    const LlvmCoverageEntry &entry = coverage(value);
-    const auto *shape = implemented ? &coverage(*implemented) : nullptr;
-    const auto key =
-        std::tuple(entry.family, entry.name, body.has_value(),
-                   body ? body->kind : MirBodyKind::Module,
-                   body ? body->owner : 0, required, executable, shape);
+    const AdmissionCoverageStep step{
+        &coverage(value), implemented ? &coverage(*implemented) : nullptr,
+        required, executable};
+    if (trace)
+      trace->push_back(step);
+    else
+      replay(step);
+  }
+
+  void replay(const AdmissionCoverageStep &step) {
+    const auto &entry = *step.entry;
+    const auto *shape = step.shape;
+    const auto key = std::tuple(entry.family, entry.name, body.has_value(),
+                                body ? body->kind : MirBodyKind::Module,
+                                body ? body->owner : 0, step.required,
+                                step.executable, shape);
     auto [found, inserted] = indices.try_emplace(key, uses.size());
     if (inserted) {
-      uses.push_back({&entry, body, source, block, instruction, 0, required,
-                      executable, shape});
+      uses.push_back({&entry, body, source, block, instruction, 0,
+                      step.required, step.executable, shape});
     }
     ++uses[found->second].occurrences;
   }
@@ -5019,6 +5098,21 @@ public:
   void type(const SemanticType &root, bool concretePackMetadata = false) {
     if (statistics)
       ++statistics->typeWalks;
+    if (trace) {
+      walkType(root, concretePackMetadata);
+      return;
+    }
+    const auto &steps = typeMemo.query(
+        {root, concretePackMetadata, required, executable}, root,
+        statistics != nullptr,
+        statistics ? &statistics->typeWalkReplays : nullptr, [&] {
+          return captureWalk([&] { walkType(root, concretePackMetadata); });
+        });
+    for (const auto &step : steps)
+      replay(step);
+  }
+
+  void walkType(const SemanticType &root, bool concretePackMetadata) {
     if (concretePackMetadata) {
       if (root.kind != SemanticType::TypePack || !root.concretePack)
         throw std::logic_error(
@@ -5169,6 +5263,19 @@ public:
   void cleanup(const MirDropType &root) {
     if (statistics)
       ++statistics->cleanupWalks;
+    if (trace) {
+      walkCleanup(root);
+      return;
+    }
+    const auto &steps = cleanupMemo.query(
+        {root, required, executable}, root.type, statistics != nullptr,
+        statistics ? &statistics->cleanupWalkReplays : nullptr,
+        [&] { return captureWalk([&] { walkCleanup(root); }); });
+    for (const auto &step : steps)
+      replay(step);
+  }
+
+  void walkCleanup(const MirDropType &root) {
     std::vector<const MirDropType *> pending{&root};
     while (!pending.empty()) {
       const auto &drop = *pending.back();
@@ -6153,6 +6260,32 @@ public:
   }
 
 private:
+  using Trace = std::vector<AdmissionCoverageStep>;
+  template <class Walk> Trace captureWalk(Walk &&walk) {
+    Trace result;
+    // During collection all nested type/cleanup calls execute their original
+    // walks. Validation therefore compares the whole uncached add sequence,
+    // including temporary context changes, before any occurrence is replayed.
+    struct Restore {
+      Inventory &inventory;
+      Trace *previous;
+      bool required;
+      bool executable;
+      ~Restore() {
+        inventory.trace = previous;
+        inventory.required = required;
+        inventory.executable = executable;
+      }
+    } restore{*this, trace, required, executable};
+    trace = &result;
+    walk();
+    return result;
+  }
+  Trace *trace = nullptr;
+  native_llvm::AdmissionMemo<AdmissionTypeWalkKey, Trace, AdmissionWalkHash>
+      typeMemo{"type-walk"};
+  native_llvm::AdmissionMemo<AdmissionCleanupWalkKey, Trace, AdmissionWalkHash>
+      cleanupMemo{"cleanup-walk"};
   using Key = std::tuple<std::string_view, std::string_view, bool, MirBodyKind,
                          std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
