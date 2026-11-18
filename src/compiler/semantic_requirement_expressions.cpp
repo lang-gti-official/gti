@@ -995,7 +995,7 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfiedOnce(
 auto SemanticVisitor::Impl::predicateCapabilityFor(
     const ConceptApplication &application,
     const std::vector<SemanticType> &arguments,
-    const std::vector<std::string> *lookupScope) const
+    const std::vector<std::string> *lookupScope, bool admitNegation) const
     -> std::optional<PredicateCapability> {
   const auto *call = exprAs<Call>(application.predicate.get());
   if (!call)
@@ -1015,7 +1015,8 @@ auto SemanticVisitor::Impl::predicateCapabilityFor(
     bindQueryType(application.arguments[index], arguments[index], bindings);
   context.typeParameterScopes.push_back(std::move(bindings));
   context.typePackScopes.emplace_back();
-  auto capability = context.constraintPredicateCapability(*call, arguments);
+  auto capability =
+      context.constraintPredicateCapability(*call, arguments, admitNegation);
   context.typePackScopes.pop_back();
   context.typeParameterScopes.pop_back();
   context.currentSourceUnit = enclosingUnit;
