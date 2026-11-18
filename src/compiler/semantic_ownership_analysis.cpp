@@ -641,6 +641,14 @@ auto SemanticVisitor::Impl::typeTraits(
                                  GenericConstraintKind::Relocatable))
         traits.relocation = RelocationKind::Structural;
     }
+    // An implication case may assume that the parameter carries borrowed
+    // state; storage of it by value then carries that state too.
+    for (const AssumedParameterFact &assumed : assumedParameterFacts)
+      if (assumed.borrowedState &&
+          assumed.parameter == type.genericParameterId) {
+        traits.containsBorrowedState = true;
+        traits.relocation = RelocationKind::Unavailable;
+      }
     return traits;
   }
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {

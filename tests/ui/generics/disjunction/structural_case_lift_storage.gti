@@ -1,0 +1,23 @@
+// Requires disjunction: a fact lifts only where the wrapper's storage derives it; pointers, references and a deleted move yield no proof.
+import std.meta;
+constexpr bool has_borrowed<T>() { return !std::meta::is_borrow_free<T>(); }
+concept borrowing<T> = has_borrowed<T>();
+concept element<T> = std::relocatable<T> || has_borrowed<T>();
+int need<borrowing T>() { return 0; }
+int keep<std::relocatable T>() { return 0; }
+int any<element T>() { return 0; }
+class Address<T> { T* data = nullptr; public: Address() {} };
+class View<T> { T& data; public: View(T& value) : data(value) {} };
+class Pinned<T> {
+  T data;
+public:
+  Pinned(T value) : data(std::move(value)) {}
+  Pinned(Pinned<T>&& other) = delete;
+};
+int pointer<T>() requires borrowing<T> { return need<Address<T>>(); }  //~ ERROR GTI-S2029 Type 'Address<T>' does not satisfy concept 'borrowing<Address<T>>'
+int reference<T>() requires std::relocatable<T> { return keep<View<T>>(); }  //~ ERROR GTI-S2029 Type 'View<T>' does not satisfy concept 'std::relocatable<View<T>>'
+int pinned<T>() requires std::relocatable<T> { return keep<Pinned<T>>(); }  //~ ERROR GTI-S2029 Type 'Pinned<T>' does not satisfy concept 'std::relocatable<Pinned<T>>'
+// Borrowed state lifts into Pinned<T>; relocation does not, so the
+// relocatable case proves neither alternative.
+int one_case<T>() requires element<T> { return any<Pinned<T>>(); }  //~ ERROR GTI-S2029 Required application 'element<Pinned<T>>'
+int main() { return 0; }
