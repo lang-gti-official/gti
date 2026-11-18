@@ -6538,9 +6538,9 @@ fails after constructing one slot: partial members, the completed slot and
 outer locals are cleaned exactly once, the incomplete owner's destructor is
 not called, and the original constructor failure survives.
 
-`raw_native_record_transport_runtime` passes C++20/C++23 at O0/O2/O3 with
-elision disabled. It checks emitted internal reference/output signatures as
-well as inert expired-address transport through source calls, lambdas,
+`tests/ui/unsafe/native_record_transport/` runs the LLVM program at O0 (the
+C++ backend's internal signature checks went with that backend). It checks
+inert expired-address transport through source calls, lambdas,
 virtual dispatch and retained generic callables. The separate native-record
 container matrix additionally passes all eight C++20/C++23 O0/O1/O3,
 no-elide and ASan/UBSan modes, including Expected and enum transport,

@@ -2736,10 +2736,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_record_containers_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(raw_record_containers_runtime PROPERTIES TIMEOUT 600)
-  add_test(NAME raw_native_record_transport_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_native_record_transport_runtime_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(raw_native_record_transport_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_payload_pair_arguments_runtime
     COMMAND "${Python3_EXECUTABLE}"

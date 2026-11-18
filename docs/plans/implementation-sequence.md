@@ -4916,7 +4916,8 @@ do not expose C++ object layout as GTI semantics.
   query selects a uniform optional output channel for class-bound symbolic
   results and every connected override. Native-record instances use indirect
   publication; scalar and owning instances retain their existing return/drop
-  convention. The optimized `raw_native_record_transport_runtime` gate passes
+  convention. The optimized `raw_native_record_transport_runtime` gate (now
+  `tests/ui/unsafe/native_record_transport/`) passed
   C++20/C++23 at O0/O2/O3 for unrelated generic interface/model relays,
   nongeneric overrides of generic bases, and exactly-once owning-result
   cleanup. This preserves a family accepted by the canonical `Release`

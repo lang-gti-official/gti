@@ -1,3 +1,6 @@
+// Without auditing, an unknown erased call over expired storage is accepted (never executed).
+//@ check-pass
+//@ raw-pointer-audit: off
 import std.functional;
 
 [[c_abi]] struct NativeAddress {

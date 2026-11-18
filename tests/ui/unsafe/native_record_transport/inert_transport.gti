@@ -1,3 +1,6 @@
+// Inert native records carrying raw pointers move through generic, erased and pack transport without reading expired pointers.
+//@ run-pass
+// --- inert_transport.gti
 import std.utility;
 import std.string;
 import std.functional;
@@ -184,4 +187,17 @@ int main() {
   ReadingFactory factory{};
   if (inspect_reading(factory.read()) != 7) return 22;
   return assigned.code - 18;
+}
+// --- native.c
+#include <stdint.h>
+
+/* The record GTI's --emit-native-header declares for NativeAddress. */
+typedef struct NativeAddress {
+  const int32_t* pointer;
+  int32_t code;
+} NativeAddress;
+
+NativeAddress native_empty(void) {
+  NativeAddress value = {0};
+  return value;
 }
