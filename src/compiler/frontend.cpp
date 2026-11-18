@@ -1590,6 +1590,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       return result;
     }
 
+    if (options.workMetrics != nullptr)
+      ++options.workMetrics->hirPasses;
     const auto hirStart = std::chrono::steady_clock::now();
     const std::size_t lateDemandStart =
         options.workMetrics == nullptr
