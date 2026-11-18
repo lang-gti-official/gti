@@ -66,7 +66,61 @@ def block(output, status, name):
     return match.group(0) if match else ""
 
 
+def admission_evidence_test(runner):
+    """The test-only evidence command preserves bytes and fails closed."""
+    with tempfile.TemporaryDirectory(prefix="gti-admission-self-") as directory:
+        root = Path(directory)
+        (root / "stdlib").symlink_to(ROOT / "stdlib", target_is_directory=True)
+        source = root / "main.gti"
+        source.write_text("int main() { return 0; }\n")
+        inputs = root / "inputs.json"
+        inputs.write_text(json.dumps(["main.gti"]))
+        tool = ROOT / "scripts/llvm_admission_evidence.py"
+        captures = [root / "ordinary", root / "validation"]
+        for index, output in enumerate(captures):
+            argv = [sys.executable, str(tool), "capture", "--root", str(root),
+                    "--runner", str(runner), "--output", str(output),
+                    "--inputs", str(inputs)]
+            if index:
+                argv += ["--validation"]
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "admission evidence capture succeeds",
+                   result.stdout + result.stderr)
+        def compare():
+            return subprocess.run([sys.executable, str(tool), "compare",
+                                   *map(str, captures)], capture_output=True,
+                                  text=True, timeout=30)
+        result = compare()
+        expect(result.returncode == 0, "validation preserves plan/IR/object bytes",
+               result.stdout + result.stderr)
+        manifest_path = captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        plan = captures[1] / entry["directory"] / "plan.txt"
+        original = plan.read_bytes()
+        plan.write_bytes(original + b"forged occurrence\n")
+        result = compare()
+        expect(result.returncode == 1 and "evidence changed" in result.stdout,
+               "changed admission evidence is rejected", result.stdout)
+        plan.write_bytes(original)
+        manifest["complete"] = False
+        manifest_path.write_text(json.dumps(manifest))
+        result = compare()
+        expect(result.returncode == 1 and "incomplete" in result.stdout,
+               "incomplete admission capture is rejected", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        captures[0], "O0")
+        expect(code == 1 and "already exists" in out,
+               "evidence cannot reuse a stale directory", out)
+        source.write_text("int main() { return undefined_name; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "invalid", "O0")
+        expect(code == 1 and "GTI-S2001" in out,
+               "failed compilation cannot become admission evidence", out)
+
+
 def self_test(runner):
+    admission_evidence_test(runner)
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
     expect(code == 0 and "RESULT ok: 8 passed, 0 failed" in out,
            "passing fixtures pass", out)

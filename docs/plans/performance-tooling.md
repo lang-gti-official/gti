@@ -1,5 +1,33 @@
 # GTI Performance Measurement And Optimization Tooling Plan
 
+## RFC 0007: LLVM admission cost (2026-11-18)
+
+Implementation of [RFC 0007](https://github.com/lang-gti-official/rfcs/pull/8)
+starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
+is unchanged admission and output, at least 2x faster admission on examples
+091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
+RSS. No speedup is claimed yet. Non-throwing outcomes, plan-local type indexes,
+whole-query memoization/replay, and integer coverage keys remain to implement.
+
+The first slice adds admission time-trace regions, validation-only counters,
+and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
+capture --runner BUILD/gti-test --output NEW_DIRECTORY --validation` captures
+the numbered single-file examples at O0/O2; `--inputs MANIFEST.json` names an
+explicit JSON array of repository-relative source paths for other corpora.
+Multi-file project examples and embedded UI sections need their own explicit
+input setup; the default capture does not claim those as covered. The tool
+retains raw artifacts, input identities, checksums, command failures, and a
+completion marker. `compare BEFORE AFTER` checks the actual retained bytes and
+rejects incomplete captures, changed input inventories and tampered artifacts.
+Use identical input/stdlib paths for each compiler, retaining the baseline
+source checkout throughout the campaign; no identity normalization is allowed.
+
+Corpus baseline capture, equivalence across each optimization slice, validation
+cross-checks and fault injection, and the O0/O2 wall/CPU/RSS/admission/backend
+measurements remain acceptance work. The capture tool intentionally repeats
+backend planning to collect independent IR and object artifacts: performance
+measurements must use ordinary compiler invocations and time traces instead.
+
 ## Current Status and Evidence Policy (2026-10-28)
 
 The benchmark foundation, complete-state/provenance validation, compile-time

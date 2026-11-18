@@ -96,6 +96,9 @@ builds; no source identities or coverage counts are normalized. Counters are
 observations and are deliberately excluded from byte-equivalence comparisons.
 This command does not run the executable or establish performance evidence:
 it emits IR and object bytes separately and repeats backend planning.
+`scripts/llvm_admission_evidence.py capture` runs this over numbered examples
+or an explicit input manifest at O0/O2; `compare` verifies retained bytes,
+input identities and complete case inventories without accepting a new baseline.
 
 `//@ snapshot: KIND` (repeatable, one per kind) adds an output check after the
 test's other expectations pass. `--bless` writes the sibling expected file;

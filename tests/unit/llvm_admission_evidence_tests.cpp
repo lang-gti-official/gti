@@ -26,7 +26,8 @@ GTI_UNIT_TEST(llvm_admission_evidence) {
   lang::setLoweredProgramSealValidation(true);
   const auto frontend = lang::Frontend().analyze(
       "admission-evidence.gti",
-      "int main() { mut int x = 1; x += 2; return x; }");
+      "struct Box { int value; Box(int n) : value(n) {} }; "
+      "int main() { Box box{3}; return box.value; }");
   require(frontend.canGenerateCode(), "evidence fixture did not compile");
   auto lowered = gti_test::lowerOptimizedProgram(frontend);
   std::vector<lang::LoweredProgramIssue> issues;
