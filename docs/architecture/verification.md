@@ -7687,7 +7687,7 @@ user's active installation remain deliberately unchanged.
 These gates supplement the existing full optimized CTest, corpus,
 optimization-report/replay, staged-consumer, and editor/package completion
 checks below. The subsequent public formatter slice adds
-`tests/ui/stdlib/format/` and `tests/lsp/formatting/formatter_specialization_contract.gti`: unrelated
+`tests/ui/stdlib/format/` and `tests/slow/lsp/formatting/formatter_specialization_contract.gti`: unrelated
 source-defined identifier/record formatters, exact mutable receiver/parameter
 signature concepts, generic symbolic calls, owned argument cleanup, repeated
 indexed fields, error-category preservation, transactional destination output,
