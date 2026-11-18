@@ -207,6 +207,32 @@ tracking identifies each region by its keyword; expression warnings omit the
 statement-only keyword-removal edit. Constant evaluation reuses existing
 grouping and staged MIR execution rather than gaining a second operation rule.
 
+## Header init statements
+
+`IfStmt`, `SwitchStmt` and `RangeForStmt` keep a written C++17/C++20 init
+statement as `initializer()`, with the parser-recorded extent of the written
+init; `headerInitializer()` in `ast.h` returns it for any of the three. Range
+for keeps it outside `lowered()`. Nothing in the parser wraps the statement in
+a block, so the formatter, Tree-sitter and LSP see the source form.
+
+Semantics owns the scope: `visitIfStmt`, `visitSwitchStmt` and
+`visitRangeForStmt` open one scope, analyze the init in the enclosing
+statement's loan-flow position and then analyze the unchanged statement inside
+it, exactly as a block whose first statement is the init. The AST-walking
+helpers that collect locals, borrows, text aliases or macro scopes visit the
+init first under the same scope. `if constexpr` requires a `constexpr`
+variable init (`GTI-S2057`). The compatibility constexpr interpreter runs the
+init in its own scope before the statement, the same rule it applies to a
+block.
+
+HIR publishes that scope rather than rediscovering it: a statement with an
+init lowers to an ordinary `Block` whose source is the statement and whose two
+children are the init and the statement itself. The block shares the
+statement's source but owns none of its full expressions, so the statement
+keeps them. Verified MIR lowers the block with its normal scope exit, so the
+init is dropped after the taken branch and on every `break`, `continue`,
+`return` and propagation exit, and its loans end with the block.
+
 ## Local reference inference
 
 `analyzeInferredVariable` resolves written `auto&`/`mut auto&` from the analyzed

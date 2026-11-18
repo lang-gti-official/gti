@@ -10,9 +10,11 @@ name: Full validation retry
 # completion event. A job that executed any step is never retried, so a test
 # that ran and failed stays red; the second attempt reports like any other
 # failure; and only the newest full validation of main is retried, since a
-# newer run covers an older head and re-running an older run would cancel the
-# newer pending one. The report job leaves `main-broken` alone exactly when
-# this will retry (scripts/validation_retry.py holds both rules).
+# newer run covers an older head. Runs of different commits overlap; each is
+# decided by its own run id and attempt, and newest means the highest run
+# number, which follows main's push order. The report job leaves `main-broken`
+# alone exactly when this will retry (scripts/validation_retry.py holds both
+# rules).
 on:
   workflow_run:
     workflows: [Full validation]
@@ -64,12 +66,15 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
+          # main's history orders this result against newer commits' verdicts.
+          fetch-depth: 0
       - name: Open or update the main-broken issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,4 +82,4 @@ jobs:
           GTI_SHA: ${{ github.event.workflow_run.head_sha }}
         run: >-
           python3 scripts/full_validation_report.py --run-url "${GTI_RUN_URL}"
-          --sha "${GTI_SHA}" --status failed
+          --sha "${GTI_SHA}" --status failed --repository "${GITHUB_REPOSITORY}"

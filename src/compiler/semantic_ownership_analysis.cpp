@@ -1847,7 +1847,8 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
           block->statements().begin(), block->statements().end(),
           [&](const StmtPtr &nested) { return self(self, nested.get()); });
     if (const auto *branch = stmtAs<IfStmt>(statement))
-      return self(self, branch->thenBranch().get()) &&
+      return self(self, branch->initializer().get()) &&
+             self(self, branch->thenBranch().get()) &&
              self(self, branch->elseBranch().get());
     return false;
   };

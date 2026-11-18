@@ -173,6 +173,15 @@ semantics.
   A failure in the queue belongs to the change that introduced it: its
   owner repairs it, and other agents never weaken unrelated expectations to
   accommodate it. Do not start a local suite to duplicate a queue run.
+- When a test fails in post-integration full validation on a merge that is
+  the only change since a green main, `auto-revert.yml` may revert it (once
+  `GTI_AUTO_REVERT` is `true`): an `auto-revert`-labelled PR joins the queue
+  and the original PR gets a comment naming the failing tests. Do not fight
+  it with a second revert. A merged PR cannot be reopened: after the revert
+  merges, open a fresh PR from the same branch that merges `main`, reverts
+  the revert commit and fixes the failure; if the failure is not yours, close
+  the revert PR with the evidence. See
+  [automatic revert](docs/architecture/agent-workflow.md#automatic-revert-of-a-red-main).
 - Degraded mode: if GitHub Actions is unavailable for more than four hours, a
   designated integrator may validate one combined candidate with `batch` on a
   remote runner and record that evidence on the PR. Agents never fall back to

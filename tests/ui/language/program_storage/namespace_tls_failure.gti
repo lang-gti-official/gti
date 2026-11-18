@@ -1,0 +1,21 @@
+// A first TLS destructor failure still destroys namespace objects.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: division_by_zero
+class Marker {
+  int value;
+  int divisor;
+public:
+  Marker(int value, int divisor) : value(value), divisor(divisor) {}
+  int read() { return value; }
+  ~Marker() {
+    std::println(value);
+    int checked = 12 / divisor;
+    if (checked == 99) { std::println(99); }
+  }
+};
+Marker global{1, 1};
+thread_local Marker local{2, 0};
+int main() { return local.read() - 2; }

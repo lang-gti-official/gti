@@ -258,16 +258,20 @@ void collectActiveProgramStatement(const Stmt *statement,
   } else if (const auto *function = stmtAs<FunctionDecl>(statement)) {
     collectActiveProgramStatement(function->body().get(), target, result);
   } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+    collectActiveProgramStatement(branch->initializer().get(), target, result);
     collectActiveProgramStatement(branch->thenBranch().get(), target, result);
     collectActiveProgramStatement(branch->elseBranch().get(), target, result);
   } else if (const auto *space = stmtAs<NamespaceDecl>(statement)) {
     collectActiveProgramStatements(space->declarations(), target, result);
   } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
+    collectActiveProgramStatement(loop->initializer().get(), target, result);
     collectActiveProgramStatement(loop->lowered().get(), target, result);
   } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
     collectActiveProgramStatement(loop->elementBinding().get(), target, result);
     collectActiveProgramStatement(loop->body().get(), target, result);
   } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+    collectActiveProgramStatement(selection->initializer().get(), target,
+                                  result);
     for (const SwitchArm &arm : selection->arms()) {
       collectActiveProgramStatements(arm.statements, target, result);
     }

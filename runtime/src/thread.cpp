@@ -382,11 +382,13 @@ void drain_thread_local_cleanup_legacy(
   drain_thread_local_cleanup(&promoted, primaryArtifact);
 }
 
-void drain_thread_local_cleanup(
+static bool drainThreadLocalCleanup(
     const gti_failure_record_v2 *primary,
-    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept {
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact,
+    gti_failure_record_v2 *deferredFailure,
+    const gti_failure_artifact_descriptor_v1 **deferredArtifact) noexcept {
   if (threadLocalCleanupPhase == ThreadLocalCleanupPhase::Complete)
-    return;
+    return true;
   if (threadLocalCleanupPhase == ThreadLocalCleanupPhase::Draining)
     std::terminate();
   threadLocalCleanupPhase = ThreadLocalCleanupPhase::Draining;
@@ -485,8 +487,29 @@ void drain_thread_local_cleanup(
   threadLocalCleanup = nullptr;
   threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
   threadLocalStorageAttached = false;
-  if (hasPrimary && primary == nullptr && activeWorker == nullptr)
+  if (hasPrimary && primary == nullptr && activeWorker == nullptr) {
+    if (deferredFailure && deferredArtifact) {
+      *deferredFailure = pending;
+      *deferredArtifact = primaryArtifact;
+      return false;
+    }
     gti_rt_failure_terminate_v2(&pending, primaryArtifact, nullptr, nullptr);
+  }
+  return true;
+}
+
+void drain_thread_local_cleanup(
+    const gti_failure_record_v2 *primary,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept {
+  (void)drainThreadLocalCleanup(primary, primaryArtifact, nullptr, nullptr);
+}
+
+bool drain_thread_local_cleanup_checked(
+    gti_failure_record_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 **artifact) noexcept {
+  if (!failure || !artifact || activeWorker)
+    std::terminate();
+  return drainThreadLocalCleanup(nullptr, nullptr, failure, artifact);
 }
 
 bool managed_worker_active() noexcept {

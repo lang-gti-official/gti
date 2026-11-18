@@ -90,6 +90,7 @@ paths = [
   "include/gti/token.h",
   "include/gti/configuration_flags.h",
   "tests/source_text_tests.cpp",
+  "tests/ui/language/init_statements/*.gti",
 ]
 owners = [
   "gti_test_ui",

@@ -1387,8 +1387,23 @@ unsafe-statement       = "unsafe" block ;
    provenance, writable access, and native-call requirements as applicable;
    violating one of those obligations is undefined behavior. *)
 
-if-statement           = "if" [ "constexpr" ] "(" expression ")" statement
-                         [ "else" statement ] ;
+if-statement           = "if" [ "constexpr" ] "(" [ init-statement ] expression ")"
+                         statement [ "else" statement ] ;
+
+init-statement         = variable-declaration
+                       | structured-binding-declaration
+                       | expression-statement ;
+
+(* C++17/C++20 init statements. An `if`, `switch` or range `for` header may
+   begin with one init statement, which ends with its own `;`. The statement
+   means exactly a block whose first statement is the init: its names are in
+   scope in the condition, subject or range and in every branch, `else`
+   included, and its objects are destroyed after the taken branch when the
+   whole statement ends, on every exit (`break`, `continue`, `return` and `?`
+   propagation run that cleanup). Its names may shadow enclosing names and be
+   shadowed by nested blocks like any block-scoped declaration. The init of
+   `if constexpr` must be a `constexpr` variable declaration (or empty). The
+   C++98 declaration-as-condition `if (T x = e)` is not part of GTI. *)
 
 while-statement        = "while" "(" expression ")" statement ;
 
@@ -1404,8 +1419,8 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
 
 for-init               = variable-declaration | expression-statement ;
 
-range-for-statement    = "for" "(" range-for-declaration ":" expression ")"
-                         statement ;
+range-for-statement    = "for" "(" [ init-statement ] range-for-declaration ":"
+                         expression ")" statement ;
 
 range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent }
                        | "auto" [ "&" ] "[" IDENTIFIER { "," IDENTIFIER } "]"
@@ -1443,7 +1458,7 @@ constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
    child loans, ending the element before increment or every exit. General
    proxy iterators and paired mutable subranges need separate contracts. *)
 
-switch-statement       = "switch" "(" expression ")"
+switch-statement       = "switch" "(" [ init-statement ] expression ")"
                          "{" { switch-item } "}" ;
 
 switch-item            = switch-label | block-item ;

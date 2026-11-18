@@ -1,0 +1,59 @@
+// A range over a borrowed-state formal yields owner-region elements from its cursor.
+//@ run-pass
+//@ exit-code: 0
+
+// `Bag<r>` stores a reference, so ranging over a `Bag<r>&` formal keeps a
+// Stored cursor loan below the formal's entry. The cursor's `operator*`
+// returns `int&<owner>`, what its stored reference holds: each element
+// borrows that cursor loan, which advancing the cursor's shell leaves alone.
+struct Slots {
+  mut int items[3];
+  Slots() : items({1, 2, 3}) {}
+  int& at(uint64_t i) { return this.items[i]; }
+};
+class End {
+public:
+  End() {}
+};
+class Cursor<lifetime owner> {
+  Slots&<owner> slots;
+  mut uint64_t position;
+public:
+  Cursor(Slots&<owner> slots) : slots(slots), position(uint64_t(0)) {}
+  int&<owner> operator*() { return this.slots.at(this.position); }
+  void operator++() mut { this.position = this.position + uint64_t(1); }
+  bool operator!=(End end) { return this.position != uint64_t(3); }
+};
+struct Resource {
+  int id;
+  Resource(int id) : id(id) {}
+};
+class Bag<lifetime r> {
+  Slots slots;
+  Resource&<r> resource;
+public:
+  Bag(Resource&<r> resource) : slots(Slots()), resource(resource) {}
+  Cursor<this> begin() { return Cursor(this.slots); }
+  End end() { return End(); }
+};
+
+int sum<lifetime r>(Bag<r>& bag) {
+  mut int total = 0;
+  for (auto& value : bag) { total += value; }
+  return total;
+}
+int weighted<lifetime r>(Bag<r>& bag) {
+  mut int total = 0;
+  mut int weight = 1;
+  for (int& value : bag) {
+    total += value * weight;
+    weight += 1;
+  }
+  return total;
+}
+
+int main() {
+  Resource resource{1};
+  Bag bag = Bag(resource);
+  return sum(bag) == 6 && weighted(bag) == 14 ? 0 : 1;
+}
