@@ -970,7 +970,7 @@ def validate(report: dict, registered: set[str],
                 errors.append(f"{key}: pending row cannot be observed passed")
         elif state == "verified-nonexecuting":
             if (acceptance.get("test"), acceptance.get("assertion")) != (
-                    "llvm_admission", "ledger.nonexecuting"):
+                    "gti_unit_tests", "llvm_admission_ledger"):
                 errors.append(f"{key}: nonexecuting structural evidence is missing")
             if acceptance.get("test") not in registered:
                 errors.append(f"{key}: nonexecuting evidence test is unavailable")
