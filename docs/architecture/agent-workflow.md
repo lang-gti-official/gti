@@ -676,7 +676,12 @@ passes; it removes a failing PR and rebuilds the entries behind it. The
 complete suite runs after integration on each main head
 (`full-validation.yml`); a red main is reported in the `main-broken` issue and
 is fixed forward or reverted, and no channel selects a main commit full
-validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+validation has not passed. A run red only because required jobs never got a
+hosted runner (cancelled with zero steps executed) is not reported:
+`validation-retry.yml` re-runs those jobs once when it is the newest run of
+main, and the re-run attempt's own verdict and report decide. A job that
+executed any step is never retried; a superseded or second starved attempt is
+reported like any failure. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -747,7 +752,8 @@ runtime services and allocation, CMake/toolchain, CI and release workflows,
 test infrastructure) validate alone and are never combined with other
 changes. It is the one source the planner, PR CI and reviewers share: the
 verify-change planner selects from it, CI's workflow regression job
-validates it, and reviewers check a change's evidence against it. Its
+validates it (as the `test_ownership_map` entry of the `tree-consistency`
+label), and reviewers check a change's evidence against it. Its
 selection is a lower bound that the author extends from the changed
 invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
@@ -909,7 +915,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, the `gti-test` entries and the PR's declared T0/T1 tests on both) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` on both; every `gti-test` entry on Linux, and on macOS `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit; then the PR's declared T0/T1 tests the gate did not just run, on macOS only those in the `darwin` set) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
@@ -1091,11 +1097,13 @@ A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the
 owner reproduces the failing tests locally, repairs the change without
 weakening unrelated expectations, verifies and re-queues. The Linux
-workflow-regression job installs CMake (including CTest) and Make explicitly
-before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
-`agent_workflow` executes these shell steps with missing event aliases and an
-initially tool-free PATH. The lightweight job also runs `repository_hosting`,
-the ownership-map coverage check and the planner's tests.
+workflow-regression job installs the reviewed toolchain
+(`configure_ci_toolchain.sh` with `GTI_CI_CONFIGURE_ONLY=1`, which keeps the
+preinstalled toolchains a build would delete), configures without building
+and runs the `tree-consistency` CTest label: `agent_workflow` with its real,
+disposable CMake/CTest batch fixtures, `repository_hosting`, the
+ownership-map coverage check, the planner's tests and every other entry that
+checks the tree against itself without a built compiler.
 
 ### LSP adapter CI classification
 

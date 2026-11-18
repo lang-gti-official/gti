@@ -1,0 +1,4 @@
+// Structural_relocation: invalid structural relocation is rejected before lowering.
+    class Resource { public: Resource() {} ~Resource() {} };
+    void accept<std::bitwise_relocatable T>() {}
+    int main() { accept<Resource>(); return 0; }  //~ ERROR GTI-S2029

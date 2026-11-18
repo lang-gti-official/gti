@@ -1,0 +1,15 @@
+// The dangling-pointer audit finding follows the server's policy (warn); repaired,
+// incomplete and repaired-again versions publish fresh diagnostics.
+// (From raw_pointer_audit_policy_test.py.)
+//@ raw-pointer-audit: warn
+int main() {
+  mut const int* pointer = nullptr;
+  { int value = 7; pointer = &value; }
+  unsafe { /*😀*/ return *pointer; }  //~ WARN GTI-S2101
+}
+// --- step 2
+int main() { return 0; }
+// --- step 3
+int main( {  //~ ERROR GTI-P0001
+// --- step 4
+int main() { return 0; }

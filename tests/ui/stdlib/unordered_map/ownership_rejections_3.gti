@@ -1,0 +1,36 @@
+// unordered_map rejects key writes, live loans across mutation, container copies, mutable or missing hashers and borrowed values.
+//@ check-fail
+import std.functional;
+import std.unordered_map;
+
+namespace case_live_iterator {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  auto first = values.begin();
+  values.clear();  //~ ERROR GTI-S2017
+  return (*first).second;
+}
+}
+
+namespace case_live_value {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  int key = 1;
+  int& value = values.at(key);
+  [[discard]] values.erase(key);  //~ ERROR GTI-S2017
+  return value;
+}
+}
+
+namespace case_live_insertion_result {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  auto result = values.insert(1, 2);
+  values.rehash(std::size_t(100));  //~ ERROR GTI-S2017
+  return result.first->second;
+}
+}
+
+int main() { return 0; }

@@ -1,0 +1,2 @@
+// Structural_relocation: invalid structural relocation is rejected before lowering.
+struct Parcel<T> { T item; }; void accept<std::relocatable U>() {} void check<T>() requires std::relocatable<T> || std::move_constructible<T> { accept<Parcel<T>>(); } int main() { return 0; }  //~ ERROR GTI-S2029

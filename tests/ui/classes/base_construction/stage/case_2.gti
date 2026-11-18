@@ -1,0 +1,8 @@
+// Base_constructor_stage: a base initializer cannot read an uninitialized derived field.
+class Base { public: Base(int value) {}  public: Base() = default; };
+class Derived : public Base {
+  int field;
+public:
+  Derived() : Base(this.field), field(1) {}  //~ ERROR GTI-S2000
+};
+int main() { Derived value = Derived(); return 0; }

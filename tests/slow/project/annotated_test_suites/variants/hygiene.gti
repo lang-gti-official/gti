@@ -1,0 +1,4 @@
+[[test]] void gti_test_argc() {}
+[[test]] void gti_test_argc_() {}
+[[test]] void gti_test_argv() {}
+[[test]] void gti_test_argv_() {}

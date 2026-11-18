@@ -1,0 +1,39 @@
+// A [[test]] function must return void, take no parameters, be a non-generic, non-static free definition, and carry the attribute once.
+//@ check-fail
+
+namespace case_returns_value {
+[[test]] int invalid() { return 0; }  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_takes_parameter {
+[[test]] void invalid(int parameter) {}  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_generic {
+[[test]] void invalid<T>() {}  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_declaration_only {
+[[test]] void invalid();  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_repeated {
+[[test, test]] void invalid() {}  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_member {
+struct Object { [[test]] void invalid() {}  public: Object() = default; };  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+namespace case_static {
+[[test]] static void invalid() {}  //~ ERROR GTI-S2099
+int entry() { return 0; }
+}
+
+int main() { return 0; }

@@ -44,7 +44,6 @@ tests = [
   "lsp_scalability_benchmark_smoke",
   "module_map_lsp",
   "module_navigation_lsp",
-  "raw_pointer_audit_policy",
   "source_modules_lsp",
   "module_discovery_lsp",
 
@@ -257,7 +256,6 @@ owners = [
   "trusted_body_analysis_fixtures",
   "gti_corpus",
   "executable_entry_semantics",
-  "bounded_array_borrows_runtime",
   "unsafe_function_contract",
   "^gti_test_ui(_[0-9]+)?$",
 ]
@@ -909,7 +907,6 @@ owners = [
   "stdlib_modules",
   "stdlib_module_boundaries",
   "stdlib_include_sweep",
-  "stdlib_adoption_runtime",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -1008,24 +1005,13 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "complete_containers",
-  "container_contract_failure",
-  "container_iterator_movement",
-  "contiguous_iterator_completion",
-  "paired_span_iterator_completion",
-  "forward_list_iterator_runtime",
-  "associative_map",
   "associative_hash_contracts",
   "associative_constructor_runtime",
-  "unordered_map",
-  "map_mutable_entry_projection",
   "mir_associative_determinism",
-  "storage_lane_iterator_runtime",
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
   "^gti_test_ui(_[0-9]+)?$",
-  "generic_algorithm_cluster",
 ]
 consumers = [
   "collection_initialization_runtime",
@@ -1045,7 +1031,6 @@ paths = [
 ]
 owners = [
   "string_c_string_runtime",
-  "text_view_iterator_runtime",
   "encoding_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]
@@ -1114,9 +1099,7 @@ paths = [
 ]
 owners = [
   "panic_adoption_runtime",
-  "deferred_assertions_runtime",
   "source_location_runtime",
-  "annotated_test_suites",
 ]
 consumers = [
   "gti_unit_tests",
@@ -1262,7 +1245,6 @@ owners = [
   "gti_unit_tests",
   "test_report",
   "test_command_controls",
-  "annotated_test_suites",
 ]
 consumers = []
 
@@ -1314,7 +1296,6 @@ owners = [
   "gti_test_ui",
   "cli_workflow",
   "project_cli_workflow",
-  "cli_color",
   "cli_progress",
   "cli_install",
   "cli_hardlink_fixture",
@@ -1377,7 +1358,6 @@ owners = [
   "^(lsp_.*|.*_lsp)$",
   "frontend_cache_invalidation",
   "diagnostic_explanations",
-  "raw_pointer_audit_policy",
 ]
 consumers = [
   "neovim_lsp_configuration",
@@ -1484,6 +1464,7 @@ paths = [
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
   "scripts/gti_test_budget.py",
+  "scripts/tree_consistency.py",
 ]
 owners = [
   "agent_workflow",
@@ -1497,6 +1478,7 @@ owners = [
   "named_test_shards",
   "neovim_local_installer",
   "remote_runner",
+  "test_ownership_map",
 ]
 consumers = [
   "release_version_policy",
