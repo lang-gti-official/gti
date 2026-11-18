@@ -26,7 +26,6 @@ int main() { return 0; }
 //~? ERROR GTI-S2102
 //~? ERROR GTI-S2102
 //~? ERROR GTI-S2102
-//~? ERROR GTI-S2102
 //~? ERROR GTI-S2103
 //~? ERROR GTI-S2103
 //~? ERROR GTI-S2102

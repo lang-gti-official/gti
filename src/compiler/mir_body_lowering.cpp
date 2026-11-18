@@ -9095,11 +9095,36 @@ private:
     // Value-specific retained contents need not appear in the static traits
     // of a record (for example a by-value text field). A reference to such a
     // record still addresses its physical storage, not an external owner.
+    // A by-value argument's (or moved receiver's) storage ends with the call,
+    // so a reference result selected from it can only relay a reference the
+    // input stores (expected<T&, E>::take_value, for example), not its shell.
+    const bool byValueArgumentOrigin = [&] {
+      // A moved receiver is consumed by the call in the same way.
+      if (value.borrowOrigin == BorrowOriginKind::Receiver) {
+        const auto receiver = receiverValue(value);
+        const HirValue *input = receiver ? findValue(*receiver) : nullptr;
+        return input != nullptr && input->kind == HirValueKind::Move;
+      }
+      if (value.borrowOrigin != BorrowOriginKind::Argument)
+        return false;
+      const auto *callee =
+          value.functionTarget
+              ? program.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const auto &parameters = !value.parameterTypes.empty() || !callee
+                                   ? value.parameterTypes
+                                   : callee->parameterTypes;
+      return value.borrowArgument < parameters.size() &&
+             parameters[value.borrowArgument].kind != SemanticType::Reference &&
+             parameters[value.borrowArgument].kind != SemanticType::TypePack;
+    }();
     if (value.info.type.kind == SemanticType::StringView ||
         value.info.type.kind == SemanticType::CString ||
         ((value.info.type.kind == SemanticType::Class ||
           value.info.type.kind == SemanticType::Lambda) &&
-         mirTypeMayHoldDependencies(value.info.type, value.info.traits)))
+         (value.info.traits.containsBorrowedState ||
+          (!byValueArgumentOrigin &&
+           mirTypeMayHoldDependencies(value.info.type, value.info.traits)))))
       return true;
     // Erasure removes the visible referent layout, not the addressable
     // shell's lifetime or its inherited owners. Preserve the selected
@@ -10997,7 +11022,11 @@ private:
           output.loans[originLoan - 1].designatedFields ==
               value.borrowFields.front().sourceFields));
     bool copiesReferenceContents = false;
+    // The copied contents are tracked through the local binding the result
+    // initializes. A temporary result (a receiver, an argument) keeps the
+    // ordinary result loan that its temporary borrow stages depend on.
     if (retainingProgram && value.functionTarget &&
+        initializedBindings.contains(value.id) &&
         value.dispatch == CallDispatch::Static &&
         value.info.category == ValueCategory::Value &&
         value.borrowAccess == AccessMode::ReadOnly) {

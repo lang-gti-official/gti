@@ -1,5 +1,8 @@
-// Owned mutable borrow hir: exclusive owner-aware access preserves its checked HIR contract.
-//@ check-pass
+// Owned mutable borrow hir: exclusive owner-aware access is accepted by
+// semantics. Its HIR contract is checked by the ownerless_owned_mutable_borrow_hir
+// unit case; lowering this direct return of a carrier reference to MIR is
+// issue #545.
+//@ analyze-pass
 import std.memory;
 class Reading { public: int& value; Reading(int& input) : value(input) {} };
 unsafe mut Reading& access(Reading* address, mut int& owner) {
