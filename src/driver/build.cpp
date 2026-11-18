@@ -1533,6 +1533,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("llvm.relocation", backend->relocation);
     identity.add("llvm.code-model", backend->codeModel);
     identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.codegen-units",
+                 static_cast<std::uint64_t>(backend->codegenUnits));
+    identity.add("llvm.codegen-partitioner", backend->partitioner);
     identity.add("llvm.debug-info",
                  static_cast<std::uint64_t>(backend->debugInfo));
     identity.add("llvm.instrumentation", backend->instrumentation);
@@ -4091,6 +4094,19 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
 
   const bool compiledLibrary = request.compiledLibrary().has_value();
   const bool compiledImport = !request.compiledImports().empty();
+  const auto codegen = request.compilation().llvmCodegenUnits();
+  if (codegen.units == 0 || codegen.units > maxLlvmCodegenUnits ||
+      ((codegen.units > 1 || codegen.threads > 0) &&
+       request.compilation().backend() != BackendKind::Llvm) ||
+      (codegen.units > 1 && (library || compiledLibrary ||
+                             request.compilation().llvmInstrumentation() !=
+                                 LlvmInstrumentationMode::None))) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    result.driverDiagnostic = "gti: multiple LLVM code generation units "
+                              "require an uninstrumented hosted executable";
+    return result;
+  }
+
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;

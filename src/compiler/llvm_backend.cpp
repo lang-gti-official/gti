@@ -205,6 +205,9 @@ queryLlvmBackendIdentity(const TargetInfo &target, LlvmBackendOptions options,
         .codeModel = static_cast<std::uint64_t>(machine->getCodeModel()),
         .codegenOptimization =
             static_cast<std::uint64_t>(machine->getOptLevel()),
+        .codegenUnits = options.codegen.units,
+        .partitioner =
+            options.codegen.units == 1 ? "single" : "llvm-name-hash-v1",
         .debugInfo = options.debugInfo,
         .instrumentation =
             std::string(llvmInstrumentationModeName(options.instrumentation)),
@@ -220,6 +223,18 @@ LlvmBackend::LlvmBackend(LlvmBackendOptions options) : options(options) {}
 std::string_view LlvmBackend::name() const { return "llvm"; }
 
 BackendArtifact LlvmBackend::generate(LoweredProgram program) {
+  if (options.codegen.units == 0 || options.codegen.units > maxLlvmCodegenUnits)
+    throw BackendUnsupportedError(
+        "LLVM code generation unit count is outside 1–256");
+  if (!options.textualIr && options.codegen.units > 1) {
+    if (program.programKind() != ProgramKind::Executable ||
+        program.compiledScalarProducer() || program.embeddingPlan())
+      throw BackendUnsupportedError(
+          "multiple LLVM code generation units require a hosted executable");
+    if (options.instrumentation != LlvmInstrumentationMode::None)
+      throw BackendUnsupportedError(
+          "instrumented LLVM builds require one code generation unit");
+  }
   std::vector<LoweredProgramIssue> issues;
   std::optional<VerifiedLoweredProgram> verified =
       verifiedLoweredProgram(std::move(program), issues);

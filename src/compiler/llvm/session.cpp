@@ -5,12 +5,17 @@
 #include "checked_reductions.h"
 #include "debug_info.h"
 #include "dispatch.h"
+#include "gti/support.h"
 #include "instrumentation.h"
 #include "loop_invariants.h"
 #include "private_atomics.h"
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/StringSet.h>
+#include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/CodeGen/TargetLowering.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
@@ -29,21 +34,27 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/TimeProfiler.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/thread.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/IPO/HotColdSplitting.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/Utils/SplitModule.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <utility>
 
 namespace lang::native_llvm {
 
@@ -892,6 +903,225 @@ void reuseCheckedArithmeticResults(llvm::Module &module) {
   }
 }
 
+namespace {
+
+std::string emitMachineObject(llvm::Module &module,
+                              llvm::TargetMachine &machine) {
+  llvm::SmallVector<char, 0> bytes;
+  llvm::raw_svector_ostream stream(bytes);
+  llvm::legacy::PassManager passes;
+  if (machine.addPassesToEmitFile(passes, stream, nullptr,
+                                  llvm::CodeGenFileType::ObjectFile))
+    throw std::runtime_error("LLVM target cannot emit object files");
+  passes.run(module);
+  return {bytes.begin(), bytes.end()};
+}
+} // namespace
+
+void consumeCodegenUnitDefinitions(const llvm::Module &unit,
+                                   CodegenDefinitionInventory &remaining) {
+  for (const auto &value : unit.global_values()) {
+    if (value.isDeclaration())
+      continue;
+    const auto expected = remaining.find(value.getName());
+    if (expected == remaining.end() || expected->second != value.getLinkage())
+      throw std::logic_error("LLVM partition changed definition '" +
+                             value.getName().str() + "'");
+    remaining.erase(expected);
+  }
+}
+
+void requireCompleteCodegenDefinitions(
+    const CodegenDefinitionInventory &remaining) {
+  if (!remaining.empty())
+    throw std::logic_error("LLVM partition lost one or more definitions");
+}
+
+// Runs after the whole-module LLVM pipeline and final verification. All
+// partitioning and bitcode serialization take place on the owning thread.
+BackendArtifact emitObjectUnits(
+    llvm::Module &module, const TargetInfo &target, LlvmBackendOptions options,
+    llvm::function_ref<void(unsigned, llvm::LLVMContext &)> testProbe) {
+  const PhaseTimeScope codegenTiming("llvm-codegen");
+  const auto unitCount = options.codegen.units;
+  if (unitCount < 2 || unitCount > maxLlvmCodegenUnits)
+    throw std::invalid_argument("LLVM splitting requires 2–256 units");
+  struct OriginalSymbol {
+    std::string name;
+    llvm::GlobalValue::LinkageTypes linkage;
+    llvm::GlobalValue::VisibilityTypes visibility;
+    bool dsoLocal;
+  };
+  llvm::StringMap<OriginalSymbol> locals;
+  CodegenDefinitionInventory definitions;
+  const bool validate = loweredProgramSealValidation();
+  unsigned symbolIndex = 0;
+  for (auto &value : module.global_values()) {
+    if (value.isDeclaration())
+      continue;
+    if (value.hasLocalLinkage()) {
+      OriginalSymbol original{value.getName().str(), value.getLinkage(),
+                              value.getVisibility(), value.isDSOLocal()};
+      std::string name;
+      do {
+        name = "__gti_native_v1_codegen_" + std::to_string(symbolIndex++);
+      } while (module.getNamedValue(name));
+      value.setName(name);
+      locals.try_emplace(name, std::move(original));
+    }
+    if (validate)
+      definitions.try_emplace(value.getName(),
+                              value.hasLocalLinkage()
+                                  ? llvm::GlobalValue::ExternalLinkage
+                                  : value.getLinkage());
+  }
+  struct Unit {
+    llvm::SmallVector<char, 0> bitcode;
+    std::string object;
+    std::exception_ptr failure;
+    std::vector<std::string> diagnostics;
+    bool diagnosticError = false;
+  };
+  std::vector<Unit> units(unitCount);
+  llvm::StringSet<> crossesUnit;
+  unsigned nextPartition = 0;
+  // Hold one cloned LLVM module at a time. The remaining partitions live
+  // only as bitcode until a bounded worker materializes them in its context.
+  llvm::SplitModule(module, unitCount, [&](std::unique_ptr<llvm::Module> part) {
+    if (validate)
+      consumeCodegenUnitDefinitions(*part, definitions);
+    for (auto &value : part->global_values()) {
+      if (!value.isDeclaration() || !locals.contains(value.getName()))
+        continue;
+      value.removeDeadConstantUsers();
+      if (!value.use_empty())
+        crossesUnit.insert(value.getName());
+    }
+    llvm::raw_svector_ostream buffer(units.at(nextPartition++).bitcode);
+    llvm::WriteBitcodeToFile(*part, buffer);
+  });
+  if (nextPartition != unitCount)
+    throw std::logic_error("LLVM partition count differs from the request");
+  if (validate)
+    requireCompleteCodegenDefinitions(definitions);
+
+  const auto emit = [&](unsigned i) {
+    auto &unit = units[i];
+    try {
+      const PhaseTimeScope timing("llvm-codegen-unit", std::to_string(i));
+      llvm::LLVMContext context;
+      context.setDiagnosticHandler(std::make_unique<Diagnostics>(
+          unit.diagnostics, unit.diagnosticError));
+      auto part = llvm::parseBitcodeFile(
+          llvm::MemoryBufferRef(
+              llvm::StringRef(unit.bitcode.data(), unit.bitcode.size()),
+              "unit"),
+          context);
+      if (!part)
+        throw std::runtime_error(llvm::toString(part.takeError()));
+      // SplitModule externalizes every local. Only definitions referenced
+      // by another partition need to retain external linkage and a reserved
+      // name. Restore the rest in the worker's own context.
+      llvm::SmallVector<llvm::GlobalValue *> unused;
+      for (auto &value : (*part)->global_values()) {
+        const auto original = std::as_const(locals).find(value.getName());
+        if (original == std::as_const(locals).end())
+          continue;
+        if (value.isDeclaration() && value.use_empty()) {
+          unused.push_back(&value);
+        } else if (std::as_const(crossesUnit).contains(value.getName())) {
+          value.setVisibility(llvm::GlobalValue::HiddenVisibility);
+          value.setDSOLocal(true);
+        } else {
+          value.setVisibility(original->second.visibility);
+          value.setLinkage(original->second.linkage);
+          value.setDSOLocal(original->second.dsoLocal);
+          if (!original->second.name.empty())
+            value.setName(original->second.name);
+        }
+      }
+      for (auto *value : unused)
+        value->eraseFromParent();
+      if (validate) {
+        std::string error;
+        llvm::raw_string_ostream stream(error);
+        if (llvm::verifyModule(**part, &stream))
+          throw std::logic_error("invalid LLVM code generation unit: " + error);
+      }
+      if (testProbe)
+        testProbe(i, context);
+      if (unit.diagnosticError)
+        return;
+      auto machine = makeMachine(target, options);
+      unit.object = emitMachineObject(**part, *machine);
+    } catch (...) {
+      unit.failure = std::current_exception();
+    }
+  };
+  const unsigned workers = std::min(
+      unitCount, options.codegen.threads != 0
+                     ? options.codegen.threads
+                     : std::max(1u, llvm::thread::hardware_concurrency()));
+  if (workers == 1) {
+    for (unsigned i = 0; i < unitCount; ++i)
+      emit(i);
+  } else {
+    std::atomic<unsigned> next{0};
+    const bool tracing = llvm::timeTraceProfilerEnabled();
+    std::vector<llvm::thread> threads;
+    threads.reserve(workers);
+    const auto join = [&] {
+      for (auto &thread : threads)
+        thread.join();
+    };
+    try {
+      for (unsigned worker = 0; worker < workers; ++worker) {
+        threads.emplace_back(std::optional<unsigned>{8U * 1024 * 1024}, [&] {
+          if (tracing)
+            llvm::timeTraceProfilerInitialize(0, "gti-codegen");
+          for (;;) {
+            const unsigned i = next.fetch_add(1, std::memory_order_relaxed);
+            if (i >= unitCount)
+              break;
+            emit(i);
+          }
+          if (tracing)
+            llvm::timeTraceProfilerFinishThread();
+        });
+      }
+    } catch (...) {
+      join();
+      throw;
+    }
+    join();
+  }
+
+  BackendArtifact artifact{.kind = BackendArtifactKind::Object,
+                           .extension = ".o"};
+  artifact.objects.reserve(unitCount);
+  std::string errors;
+  for (unsigned i = 0; i < unitCount; ++i) {
+    auto &unit = units[i];
+    if (unit.failure || unit.diagnosticError) {
+      errors += "LLVM object unit " + std::to_string(i) + ":";
+      for (const auto &diagnostic : unit.diagnostics)
+        errors += "\n" + diagnostic;
+      if (unit.failure) {
+        try {
+          std::rethrow_exception(unit.failure);
+        } catch (const std::exception &error) {
+          errors += "\n" + std::string(error.what());
+        }
+      }
+      errors += "\n";
+    }
+    artifact.objects.push_back(std::move(unit.object));
+  }
+  if (!errors.empty())
+    throw std::runtime_error(errors);
+  return artifact;
+}
+
 BackendArtifact Session::emitObject() {
   if (emissionStarted_)
     throw std::logic_error("LLVM emission sessions are single-use");
@@ -1033,19 +1263,15 @@ BackendArtifact Session::emitObject() {
     stream.flush();
     return {BackendArtifactKind::Source, std::move(text), ".ll"};
   }
-  llvm::SmallVector<char, 0> bytes;
-  llvm::raw_svector_ostream stream(bytes);
-  llvm::legacy::PassManager passes;
-  if (machine_->addPassesToEmitFile(passes, stream, nullptr,
-                                    llvm::CodeGenFileType::ObjectFile))
-    throw std::runtime_error("LLVM target cannot emit object files");
-  passes.run(module_);
+  if (options_.codegen.units > 1)
+    return emitObjectUnits(module_, program().target(), options_);
+  auto bytes = emitMachineObject(module_, *machine_);
   if (diagnosticError_)
     throw std::runtime_error("LLVM object emission diagnostic: " +
                              diagnostics_.back());
   BackendArtifact artifact{.kind = BackendArtifactKind::Object,
                            .extension = ".o"};
-  artifact.objects.emplace_back(bytes.begin(), bytes.end());
+  artifact.objects.push_back(std::move(bytes));
   return artifact;
 }
 
