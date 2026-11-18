@@ -7,7 +7,6 @@
   "agent_workflow": 39.9,
   "aggregate_cleanup_failure_runtime": 13.6,
   "aggregate_projection": 10.1,
-  "aggregate_projection_runtime": 42.5,
   "allocation_abort_runtime": 1.1,
   "allocator_raw_audit_independence": 2400.0,
   "allocator_raw_audit_independence_121_programmable_allocators": 340.2,

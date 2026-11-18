@@ -1,3 +1,5 @@
+// References to fixed-array elements read and write the element.
+//@ run-pass
 // Named references bound to checked fixed-array elements (issue #112).
 struct Point {
   mut int32_t x = 0;

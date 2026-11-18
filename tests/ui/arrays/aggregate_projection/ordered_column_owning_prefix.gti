@@ -1,0 +1,28 @@
+// A failing inner index (owning prefix) reports its own site after the outer index, cleaning up in order.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: row
+//@ stdout: column
+//@ stdout: 4
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+//@ stdout: guard dropped
+//@ stderr-contains: main.gti:27: runtime error[GTI-R0007]: index_out_of_bounds in fixed_array
+class Guard { public: Guard() {} ~Guard() { std::println("guard dropped"); } };
+class Resource { int id; public: Resource(int value) : id(value) {}
+Resource(Resource& other) = delete; ~Resource() { std::println(this.id); }
+int get() { return this.id; } };
+class Plain { int id; public: Plain(int value) : id(value) {} int get() { return this.id; } };
+int read_arg(Resource& value, int later) { return value.get() + later; }
+int copy_arg(Plain value, int later) { return value.get() + later; }
+int row() { std::println("row"); return 1; }
+int column() { std::println("column"); return 2; }
+int depth() { std::println("depth"); return 0; }
+int main() {
+  Guard guard{};
+  Resource values[2][2] = {{Resource(1), Resource(2)}, {Resource(3), Resource(4)}};
+  return values
+    [row()]
+    [column()].get();
+}

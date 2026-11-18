@@ -161,7 +161,6 @@ if(Python3_Interpreter_FOUND)
     allocator_raw_audit_independence 290
     operator_relay_pipeline 285
     language_coverage_corpus 170
-    aggregate_projection_runtime 140
     cli_workflow 95
     mir_cutover_corpus_oracle 85
     simd_runtime 85)
