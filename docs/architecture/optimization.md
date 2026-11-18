@@ -51,13 +51,14 @@ than one fact copy per block. A transfer or join that leaves a value's fact
 unchanged keeps the existing allocation, and a join that adopts the incoming
 fact shares it; the stored facts are never mutated in place, so every state
 exposes exactly the contents the copying representation produced, and the
-public `MirSccpAnalysis` is unchanged. This bounds the solver near the number
-of distinct facts plus one pointer per block and value instead of B*V complete
-facts, each carrying a semantic type and three evidence vectors. Measured on
-the `stdlib_surface_json.gti` fixture, whose `main` body has about 63,000
-blocks and 600 values, the pass fell from about 18.5 GiB of transient footprint
-and 36 s to about 0.7 GiB and 2 s, and the whole `-O3 --emit-cpp` compile from
-roughly 11 GiB peak resident memory to roughly 3 GiB with byte-identical C++.
+public `MirSccpAnalysis` is unchanged. States share pages of 64 fact pointers.
+A changed slot detaches its page, and joins skip identical pages. The final
+partial page contains only the remaining values. On the `stdlib_surface_json.gti`
+fixture, whose `main` body has about 63,000 blocks and 600 values, the original
+switch to shared facts reduced the pass's transient footprint from about
+18.5 GiB to 0.7 GiB and its runtime from 36 s to 2 s. Peak resident memory
+for the whole `-O3 --emit-cpp` compile fell from roughly 11 GiB to 3 GiB
+with byte-identical C++.
 The remaining peak is the safety discharge analyses' per-block abstract states
 on the same body; `json_stdlib` guards the optimized compile's peak resident
 size with generous headroom.
@@ -100,6 +101,11 @@ Vocabulary admission runs even when optional full optimizer verification is
 disabled. Direct dominance, CFG, SCCP, loop, alias, and safety entry points also
 fail closed; callers cannot obtain proofs by bypassing the pipeline. O0 still
 runs no transformations and retains identical source/output MIR.
+
+Closed-call safety analysis uses the containing body for effect queries. Within
+each analysis of an immutable body, cleanup queries share a lazily constructed
+invoke-continuation table. The independent replay builds its own table from its
+candidate MIR.
 
 Range transfer also checks authoritative effects before interpreting a
 `Compute`: raw/unsafe access, place/unknown-memory writes, user-code invocation,
