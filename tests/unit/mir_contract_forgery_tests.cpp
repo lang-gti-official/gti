@@ -3141,6 +3141,29 @@ int main() { return 0; }
            std::string("singleton returned contract independently checks "
                        "secondary owners") +
                (verified.valid() ? " (forged MIR was accepted)" : ""));
+    // A syntactically well-formed complete claim is not evidence when
+    // executable reconstruction cannot normalize its undeclared supplier.
+    // Keep a coherent singleton claim and require the same body-owned proof.
+    changed->completeReturnBorrow = function.completeReturnBorrow;
+    expect(changed->completeReturnBorrow.has_value(),
+           "valid relay exposes its complete caller-relative contract");
+    if (changed->completeReturnBorrow) {
+      std::erase_if(changed->completeReturnBorrow->dependencies,
+                    [](const auto &dependency) {
+                      return dependency.origin ==
+                                 lang::BorrowOriginKind::Argument &&
+                             dependency.parameter != 0;
+                    });
+      const auto claimed = lang::verifyMirProgram(forged);
+      expect(!claimed.valid() &&
+                 std::any_of(claimed.errors.begin(), claimed.errors.end(),
+                             [](const auto &error) {
+                               return error.message.find(
+                                          "full formal dependency set") !=
+                                      std::string::npos;
+                             }),
+             "an unproved complete claim cannot waive secondary-owner checks");
+    }
     exercised = true;
   }
   expect(exercised, "forgery exercises the concrete relay body");
@@ -3193,5 +3216,77 @@ int main() { return 0; }
                                std::string::npos;
                       }),
       "read-only supplier views do not prove mutable globals live statically");
+  return ::failures == 0 ? 0 : 1;
+}
+
+// Observed field selection comes from the executed address, not a retained loan
+// claim.
+GTI_UNIT_TEST(projected_return_address_forgery) {
+  const auto frontend = analyzeEmissionFixture(R"(
+struct Cell { int value; Cell(int v) : value(v) {} };
+struct Pair<lifetime a, lifetime b> {
+  Cell&<a> first;
+  Cell&<b> second;
+  Pair(Cell&<a> x, Cell&<b> y) : first(x), second(y) {}
+};
+class Carrier<lifetime a, lifetime b> {
+  Pair<a,b> pair;
+  Pair<b,a> swapped;
+public:
+  Carrier(Cell&<a> x, Cell&<b> y)
+      : pair(Pair<a,b>(x,y)), swapped(Pair<b,a>(y,x)) {}
+  int&<a> get() && {
+    auto& unused = this.pair.second.value;
+    return this.pair.first.value;
+  }
+};
+int&<a> relay<lifetime a, lifetime b>(Cell&<a> x, Cell&<b> y) {
+  return Carrier(x,y).get();
+}
+int main() { Cell x{1}; Cell y{2}; return relay(x,y); }
+)");
+  if (!frontend.canGenerateCode())
+    return 1;
+  bool exercised = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *info = frontend.semantics.findFunction(function.declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "get")
+      continue;
+    for (const auto &block : function.body.blocks) {
+      if (!block.terminator.returnLoan)
+        continue;
+      auto forged = frontend.mir;
+      auto *body =
+          lang::findMirBody(forged, {lang::MirBodyKind::Function, function.id});
+      for (auto &candidateBlock : body->blocks)
+        for (auto &instruction : candidateBlock.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Borrow ||
+              instruction.loan != block.terminator.returnLoan ||
+              instruction.operands.size() != 1)
+            continue;
+          auto &operand = instruction.operands.front();
+          const auto *original = body->findPlace(operand.place);
+          if (!original)
+            continue;
+          for (const auto &other : body->places) {
+            if (other.id == original->id ||
+                other.root != lang::MirPlaceRootKind::This ||
+                other.type != original->type ||
+                other.projections.size() != original->projections.size() ||
+                other.projections == original->projections)
+              continue;
+            operand.place = other.id;
+            exercised = true;
+            break;
+          }
+        }
+      expect(lang::rebuildMirValueUses(*body) &&
+                 !lang::verifyMirProgram(forged).valid(),
+             "a different executed referent cannot inherit the selected "
+             "field's owner proof");
+    }
+  }
+  expect(exercised, "forgery selects another typed projected referent");
   return ::failures == 0 ? 0 : 1;
 }

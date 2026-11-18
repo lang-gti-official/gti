@@ -1875,7 +1875,8 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       failingSupplier;
   const auto failingArguments =
       [&](std::span<const Parameter> parameters, const ExprList &arguments,
-          const Token &region) -> std::optional<std::string> {
+          const Token &region,
+          bool constructorSuppliers = false) -> std::optional<std::string> {
     // A final forwarded pack supplies every remaining fixed parameter.
     const bool forwardedPack =
         !arguments.empty() &&
@@ -1929,7 +1930,7 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           source = group->expression().get();
         if (const auto *variable = exprAs<Variable>(source))
           if (const Symbol *symbol = regionExpressionSymbol(*variable);
-              symbol != nullptr &&
+              constructorSuppliers && symbol != nullptr &&
               (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
                symbol->bindingKind == SemanticBindingKind::Parameter) &&
               symbol->type.kind != SemanticType::Reference &&
@@ -1955,7 +1956,7 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           arguments != nullptr)
         if (auto failed =
                 failingArguments(construction->declaration->parameters(),
-                                 arguments->arguments(), region))
+                                 arguments->arguments(), region, true))
           return failed;
     }
     return failingArguments(relayed.parameters(), relay.arguments(), region);
