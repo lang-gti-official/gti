@@ -960,7 +960,7 @@ failure(const MirBody &body, std::size_t owner, std::string message,
         MirBlockId block = 0, MirInstructionId instruction = 0) {
   MirVerificationResult result;
   if (std::getenv("GTI_DEBUG_MIR_FAILURE")) { // TEMP-DEBUG
-    std::fprintf(stderr, "MIR FAILURE: %s\n%s\n", message.c_str(), // TEMP-DEBUG
+    std::fprintf(stderr, "MIR FAILURE: %s (bb%zu i%zu)\n%s\n", message.c_str(), (size_t)block, (size_t)instruction, // TEMP-DEBUG
                  MirPrinter{}.print(body).c_str()); // TEMP-DEBUG
   } // TEMP-DEBUG
   result.errors.push_back({.bodyKind = body.kind,

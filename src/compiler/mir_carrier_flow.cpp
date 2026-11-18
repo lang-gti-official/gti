@@ -1388,19 +1388,23 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           // owners stored inside that container.
           auto retained = callReturned;
           const auto *represented = body.findLoan(*instruction.loan);
-          const auto independentShared = [](const MirLoan *loan) {
+          // A cleanup-bound result may replace an equally cleanup-bound
+          // input: the moved argument's carrier no longer runs cleanup, and
+          // the result's own loan protects the same owners until its drop.
+          const bool cleanupBoundResult =
+              represented != nullptr && represented->lifecycleBound;
+          const auto independentShared = [&](const MirLoan *loan) {
             return loan && loan->kind == MirLoanKind::Stored &&
                    loan->access == AccessMode::ReadOnly && !loan->parent &&
-                   !loan->storedDependency && !loan->lifecycleBound &&
+                   !loan->storedDependency &&
+                   (!loan->lifecycleBound || cleanupBoundResult) &&
                    !loan->twoPhase && !loan->escapes && loan->source &&
-                   !loan->storedField && loan->conditions.empty() &&
-                   !loan->referenceSelection &&
+                   !loan->storedField && !loan->referenceSelection &&
                    std::all_of(loan->additionalDependencies.begin(),
                                loan->additionalDependencies.end(),
                                [](const auto &part) {
                                  return part.source && !part.parent &&
-                                        part.access == AccessMode::ReadOnly &&
-                                        part.conditions.empty();
+                                        part.access == AccessMode::ReadOnly;
                                });
           };
           if (retained && independentShared(represented)) {
@@ -1456,23 +1460,30 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                                                  id) != actual->end();
                     });
               };
-              const auto covers = [&](MirPlaceId source, const auto &fields) {
+              // A conditional dependency (an enum payload's owner, held only
+              // under one variant) is covered only under the same condition.
+              const auto covers = [&](MirPlaceId source, const auto &fields,
+                                      const auto &conditions) {
                 return (source == represented->source &&
+                        conditions == represented->conditions &&
                         fieldsMatch(fields, represented->designatedFields)) ||
                        std::any_of(represented->additionalDependencies.begin(),
                                    represented->additionalDependencies.end(),
                                    [&](const auto &part) {
                                      return part.source == source &&
+                                            conditions == part.conditions &&
                                             fieldsMatch(fields,
                                                         part.designatedFields);
                                    });
               };
-              return covers(prior->source, prior->designatedFields) &&
+              return covers(prior->source, prior->designatedFields,
+                            prior->conditions) &&
                      std::all_of(prior->additionalDependencies.begin(),
                                  prior->additionalDependencies.end(),
                                  [&](const auto &part) {
                                    return covers(part.source,
-                                                 part.designatedFields);
+                                                 part.designatedFields,
+                                                 part.conditions);
                                  });
             });
           }
@@ -1551,15 +1562,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
               previous->additionalDependencies ==
                   published->additionalDependencies &&
               !state.unavailable.contains(previous->id)) {
-            for (const auto &move : block->instructions) {
-              if (move.id == instruction.id)
-                break;
-              if (move.kind != MirInstructionKind::Move || !move.result ||
-                  move.hirValue != instruction.hirValue ||
-                  move.info.type != instruction.info.type)
-                continue;
-              auto held = state.values.find(*move.result);
-              const auto expired = state.expiredValues.find(*move.result);
+            const auto rename = [&](MirValueId id) {
+              auto held = state.values.find(id);
+              const auto expired = state.expiredValues.find(id);
               if (held != state.values.end() && held->second &&
                   expired != state.expiredValues.end() && expired->second &&
                   std::find(expired->second->begin(), expired->second->end(),
@@ -1572,7 +1577,30 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                        Fact{std::vector<MirLoanId>{published->id}});
                 }
               }
+            };
+            bool renamed = false;
+            for (const auto &move : block->instructions) {
+              if (move.id == instruction.id)
+                break;
+              if (move.kind != MirInstructionKind::Move || !move.result ||
+                  move.hirValue != instruction.hirValue ||
+                  move.info.type != instruction.info.type)
+                continue;
+              rename(*move.result);
+              renamed = true;
             }
+            // A carrier constructed directly in the return expression has no
+            // moved copy: its producing value is the one the publication
+            // renames (the same HIR value, possibly defined in an earlier
+            // block before a fallible constructor's success edge).
+            if (!renamed)
+              for (const auto &value : body.values)
+                if (value.sourceValue == instruction.hirValue &&
+                    value.info.type == instruction.info.type &&
+                    value.definition != 0)
+                  if (const auto *producer = body.findLoan(previous->id);
+                      producer && producer->producedBy == instruction.hirValue)
+                    rename(value.id);
           }
         }
         state.unavailable.erase(*instruction.loan);
