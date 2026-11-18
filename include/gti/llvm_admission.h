@@ -3,6 +3,7 @@
 #include "gti/llvm_backend.h"
 #include "gti/lowered_program.h"
 
+#include <iosfwd>
 #include <span>
 #include <string>
 #include <string_view>
@@ -70,6 +71,20 @@ enum class LlvmAdmissionClosure {
   SealedEntryDependencies,
 };
 
+// Observations only, collected under GTI_COMPILER_VALIDATION. Never part of
+// admission identity: optimizations should change these, not the plan.
+struct LlvmAdmissionStatistics {
+  std::size_t hierarchyQueries = 0;
+  std::size_t hierarchyCacheHits = 0;
+  std::size_t hierarchyRejections = 0;
+  std::size_t nativeValueQueries = 0;
+  std::size_t nativeValueMemoHits = 0;
+  std::size_t typeWalks = 0;
+  std::size_t typeWalkReplays = 0;
+  std::size_t cleanupWalks = 0;
+  std::size_t cleanupWalkReplays = 0;
+};
+
 class LlvmAdmissionPlan final {
 public:
   [[nodiscard]] const LoweredProgram &program() const {
@@ -86,6 +101,10 @@ public:
   [[nodiscard]] const LlvmCoverageUse *firstUnsupported() const;
   [[nodiscard]] bool admitted() const { return firstUnsupported() == nullptr; }
   [[nodiscard]] std::string limitation() const;
+  [[nodiscard]] const std::optional<LlvmAdmissionStatistics> &
+  statistics() const {
+    return statistics_;
+  }
 
 private:
   LlvmAdmissionPlan(VerifiedLoweredProgram program, LlvmBackendOptions options);
@@ -97,6 +116,7 @@ private:
   std::vector<LlvmCoverageUse> uses;
   std::vector<MirBodyAddress> bodies;
   LlvmAdmissionClosure closure_ = LlvmAdmissionClosure::AllExecutableBodies;
+  std::optional<LlvmAdmissionStatistics> statistics_;
 
   friend LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                                              LlvmBackendOptions options);
@@ -105,5 +125,11 @@ private:
 [[nodiscard]] LlvmAdmissionPlan
 planLlvmAdmission(VerifiedLoweredProgram program,
                   LlvmBackendOptions options = {});
+
+// Lossless, ordered inspection for equivalence tests. Deliberately excludes
+// query counts and timings; no pointers, hash iteration or normalized IDs.
+void printLlvmAdmissionPlan(std::ostream &out, const LlvmAdmissionPlan &plan);
+void printLlvmAdmissionStatistics(std::ostream &out,
+                                  const LlvmAdmissionStatistics &statistics);
 
 } // namespace lang
