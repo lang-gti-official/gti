@@ -2162,7 +2162,9 @@ runtime calls, traps, user-code invocation, moves, drops, loans,
 synchronization, and receiver/argument escape.
 
 `deriveMirProgramEffectSummaries` computes the least summaries justified by
-MIR through a deterministic call-graph fixed point. An exact acyclic static
+MIR through a deterministic call-graph fixed point. Each derivation indexes
+callable bodies by kind and owner once, so looking up an exact callee does
+not scan the program for each call. An exact acyclic static
 target may refine its call instruction through that proved summary. Recursive
 SCCs, virtual dispatch, declarations, native/runtime boundaries, and
 unresolved targets remain maximally conservative unless an existing trusted
