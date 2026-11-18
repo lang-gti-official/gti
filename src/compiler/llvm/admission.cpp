@@ -6455,9 +6455,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                     ? std::optional(Shape::InfallibleEmbedding)
                     : std::nullopt);
   inventory.add(mir.executionProfile());
-  for (const auto &body : input.bodies())
-    inventory.inspect(body, *findMirBody(mir, body.identity.address),
-                      closure.contains(body.identity.address));
+  {
+    const PhaseTimeScope inventoryTiming("llvm-admission-inventory");
+    for (const auto &body : input.bodies())
+      inventory.inspect(body, *findMirBody(mir, body.identity.address),
+                        closure.contains(body.identity.address));
+  }
   inventory.body.reset();
   inventory.block = 0;
   inventory.instruction = 0;
