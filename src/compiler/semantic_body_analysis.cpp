@@ -3165,6 +3165,18 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     -> void {
+  if (!stmt.initializer()) {
+    analyzeRangeForStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), false);
+  analyzeRangeForStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeRangeForStatement(const RangeForStmt &stmt)
+    -> void {
   const auto *syntax = stmtAs<BlockStmt>(stmt.lowered().get());
   if (syntax == nullptr || syntax->statements().empty())
     return;
@@ -5401,7 +5413,42 @@ auto SemanticVisitor::Impl::finalizeLateDemand(
   lateFinalization = nullptr;
 }
 
+// C++17/C++20 init statements: `if (init; c)`, `switch (init; s)` and
+// `for (init; binding : range)` mean exactly a block whose first statement is
+// the init. Its names reach the condition and every branch, and its objects
+// end with the whole statement.
+auto SemanticVisitor::Impl::analyzeInitStatement(const StmtPtr &initializer,
+                                                 bool constantBranch) -> void {
+  if (constantBranch && !stmtAs<EmptyStmt>(initializer.get())) {
+    const auto *variable = stmtAs<VariableDecl>(initializer.get());
+    if ((variable == nullptr || !variable->constexprKeyword()) &&
+        initializer->extent()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2057", DiagnosticPhase::Semantics, *initializer->extent(),
+          "The init statement of 'if constexpr' must declare a constexpr "
+          "variable.");
+      diagnostic.hints.emplace_back(
+          "The branch is selected at compile time; declare the init variable "
+          "'constexpr', or move a runtime init statement into a block around "
+          "the 'if constexpr'.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+  analyze(initializer);
+}
+
 auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
+  if (!stmt.initializer()) {
+    analyzeIfStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), stmt.isConstexpr());
+  analyzeIfStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeIfStatement(const IfStmt &stmt) -> void {
   if (!stmt.isConstexpr()) {
     semanticModel.recordFullExpression(stmt, stmt.condition());
   }
@@ -5767,6 +5814,18 @@ auto SemanticVisitor::Impl::reportMoveOnlyReturnCopy(
 }
 
 auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
+  if (!stmt.initializer()) {
+    analyzeSwitchStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), false);
+  analyzeSwitchStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
+    -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
   // A payload-enum field subject is observed in place, not copied out.
   const Expr *subject = stmt.expression().get();
@@ -15794,6 +15853,22 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     return constexprStatementFailure(
         constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
   }
+  // A header init statement runs exactly like the first statement of a block
+  // enclosing the whole statement.
+  const bool headerInitialized =
+      std::exchange(context.initializedHeader, nullptr) == statement;
+  if (const StmtPtr *initializer = headerInitializer(statement);
+      initializer != nullptr && !headerInitialized) {
+    context.scopes.emplace_back();
+    ConstexprStatementEvaluation evaluated =
+        executeConstexprStatement(initializer->get(), context);
+    if (evaluated.control == ConstexprControlFlow::Next) {
+      context.initializedHeader = statement;
+      evaluated = executeConstexprStatement(statement, context);
+    }
+    context.scopes.pop_back();
+    return evaluated;
+  }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
     context.scopes.emplace_back();
     ConstexprStatementEvaluation evaluated =
@@ -16491,6 +16566,12 @@ auto SemanticVisitor::Impl::summarizeFlow(
   if (statement == nullptr) {
     return {};
   }
+  if (const StmtPtr *initializer = headerInitializer(statement)) {
+    const FlowSummary flow =
+        summarizeFlow(initializer->get(), normalReturns, structural);
+    if (!flow.canFallThrough)
+      return flow;
+  }
   if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
     const bool returns = !expressionNeverReturns(returned->value().get());
     if (returns && normalReturns)
@@ -16681,6 +16762,11 @@ auto SemanticVisitor::Impl::summarizeLoanFlow(const Stmt *statement) const
     -> FlowSummary {
   if (statement == nullptr) {
     return {};
+  }
+  if (const StmtPtr *initializer = headerInitializer(statement)) {
+    const FlowSummary flow = summarizeLoanFlow(initializer->get());
+    if (!flow.canFallThrough)
+      return flow;
   }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
     return summarizeLoanFlow(block->statements());

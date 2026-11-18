@@ -1,0 +1,56 @@
+// A reference init statement's loan ends with the whole statement: a
+// conflicting mutation inside it is rejected, one after it is accepted.
+import std.string;
+import std.vector;
+
+int conflict() {
+  mut std::string text = "abc";
+  if (auto& view = text; view.size() == 3) {
+    text = "changed"; //~ ERROR GTI-S2017
+    return int(view.size());
+  }
+  text = "after";
+  return 0;
+}
+
+int switched() {
+  mut std::string text = "abc";
+  switch (auto& view = text; int(view.size())) {
+  case 3:
+    text = "changed"; //~ ERROR GTI-S2017
+    return int(view.size());
+  default:
+    break;
+  }
+  text = "after";
+  return 0;
+}
+
+int ranged() {
+  mut std::vector<int> values = std::vector<int>();
+  values.push_back(1);
+  mut int total = 0;
+  for (auto& owner = values; int value : owner) {
+    values.push_back(value); //~ ERROR GTI-S2017
+    total += value;
+  }
+  values.push_back(2);
+  return total;
+}
+
+int accepted() {
+  mut std::string text = "abc";
+  if (auto& view = text; view.size() == 3) {
+    std::println(view);
+  }
+  text = "after";
+  switch (mut auto& target = text; int(target.size())) {
+  default:
+    target = "assigned";
+    break;
+  }
+  text = "again";
+  return int(text.size());
+}
+
+int main() { return conflict() + switched() + ranged() + accepted(); }
