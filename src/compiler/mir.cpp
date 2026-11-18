@@ -8864,6 +8864,9 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.bodyTarget.has_value();
   case FailurePropagationKind::Destructor:
     return instruction.kind == MirInstructionKind::Drop ||
+           ((instruction.kind == MirInstructionKind::CleanupProgramStorage ||
+             instruction.kind == MirInstructionKind::DrainThreadLocals) &&
+            instruction.hostedStartupOperation != 0) ||
            (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
             instruction.replacementCleanup) ||
            (instruction.kind == MirInstructionKind::Call &&
@@ -9596,7 +9599,23 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
               suffix->kind == MirInstructionKind::DrainThreadLocals)
             nativeShutdown = nativeShutdown || suffix->id == instruction.id;
         }
-        if (!failureDrop && !failureBoundary && !nativeShutdown) {
+        const bool hasSourceShutdown =
+            std::any_of(block.instructions.begin(), block.instructions.end(),
+                        [](const auto &candidate) {
+                          return candidate.kind ==
+                                 MirInstructionKind::CleanupProgramStorage;
+                        });
+        const bool sourceShutdown =
+            hasSourceShutdown && instruction.hostedStartupOperation != 0 &&
+            instruction.definedFailure.empty() &&
+            (instruction.kind == MirInstructionKind::CleanupProgramStorage ||
+             instruction.kind == MirInstructionKind::DrainThreadLocals ||
+             (instruction.kind == MirInstructionKind::Call &&
+              instruction.functionTarget &&
+              instruction.info.type == SemanticType::Void &&
+              !instruction.result && instruction.operands.empty()));
+        if (!failureDrop && !failureBoundary && !nativeShutdown &&
+            !sourceShutdown) {
           return failure(body, owner,
                          "hosted-startup active-failure block contains a "
                          "non-cleanup instruction",
@@ -9719,6 +9738,10 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
            (producer->kind == MirInstructionKind::CallBody &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::BodyCall) ||
+           ((producer->kind == MirInstructionKind::CleanupProgramStorage ||
+             producer->kind == MirInstructionKind::DrainThreadLocals) &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Destructor) ||
            (block.activeFailure != 0 &&
             producer->kind == MirInstructionKind::Drop &&
             producer->definedFailure.propagation ==
@@ -13402,9 +13425,21 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              (instruction.definedFailure.propagation ==
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
+    case MirInstructionKind::CleanupProgramStorage:
+    case MirInstructionKind::DrainThreadLocals:
+      return body.kind == MirBodyKind::HostedStartup && noOperation &&
+             !hasResult && !instruction.destination && !instruction.receiver &&
+             instruction.operands.empty() &&
+             instruction.parameterTypes.empty() && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
+             !instruction.lambdaTarget && !instruction.bodyTarget &&
+             (instruction.definedFailure.empty() ||
+              instruction.definedFailure.propagation ==
+                  FailurePropagationKind::Destructor) &&
+             instruction.info.type == SemanticType::Void &&
+             instruction.lifecycle.empty();
     case MirInstructionKind::BeginThreadLocals:
     case MirInstructionKind::RetireProgramStorage:
-    case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&
              instruction.operands.empty() &&

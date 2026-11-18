@@ -1511,6 +1511,9 @@ private:
            .nativeRetirement = step.requiresNativeRetirement
                                    ? std::optional{dropTypeFor(info->type)}
                                    : std::nullopt,
+           .sourceCleanup = step.requiresSourceCleanup
+                                ? std::optional{dropTypeFor(info->type)}
+                                : std::nullopt,
            .binding = binding,
            .initializer = initializer,
            .statement = statement});

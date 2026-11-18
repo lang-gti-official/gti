@@ -1,4 +1,4 @@
-// Concurrent global policy: single-threaded namespace globals and static fields should reject cleanup-owning aliases, arrays, fields, and bases without unrelated generic or assignment diagnostics until global shutdown is defined.
+// Namespace owners admit aliases, arrays, nested fields, bases and class static fields.
 class Cleanup {
 public:
   Cleanup() {}
@@ -20,12 +20,12 @@ public:
   DerivedCleanup() : CleanupBase() {}
 };
 using Wrapped = Wrapper;
-Wrapped global_cleanup{};  //~ ERROR GTI-S2061
-Wrapped cleanup_array[2] = {Wrapped(), Wrapped()};  //~ ERROR GTI-S2061
-DerivedCleanup base_cleanup{};  //~ ERROR GTI-S2061
+Wrapped global_cleanup{};
+Wrapped cleanup_array[2] = {Wrapped(), Wrapped()};
+DerivedCleanup base_cleanup{};
 class Registry {
 public:
-  static Wrapped static_cleanup{};  //~ ERROR GTI-S2061 Static field 'static_cleanup'
+  static Wrapped static_cleanup{};
 public:
   Registry() = default;
 };

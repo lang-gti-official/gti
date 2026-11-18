@@ -1,0 +1,8 @@
+// A compiled owning regex can have namespace scope and be reused from main.
+import std.regex;
+std::regex sha_pattern{"^[0-9a-f]{40}$"};
+int main() {
+  if (!std::regex_match("0123456789abcdef0123456789abcdef01234567", sha_pattern)) { return 1; }
+  if (std::regex_match("not-a-sha", sha_pattern)) { return 2; }
+  return 0;
+}

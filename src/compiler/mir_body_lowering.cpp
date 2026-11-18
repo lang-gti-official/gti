@@ -16528,12 +16528,18 @@ private:
               step.nativeRetirement
                   ? std::optional{lowerDropType(*step.nativeRetirement)}
                   : std::nullopt,
+          .sourceCleanup =
+              step.sourceCleanup
+                  ? std::optional{lowerDropType(*step.sourceCleanup)}
+                  : std::nullopt,
           .binding = step.binding,
           .storagePlace = storagePlace,
           .entryBlock = entryBlock};
       if (binding == nullptr || binding->info.symbol != step.symbol ||
           storagePlace == 0 ||
-          step.requiresActiveCleanup != step.nativeRetirement.has_value()) {
+          step.requiresActiveCleanup != (step.nativeRetirement.has_value() ||
+                                         step.sourceCleanup.has_value()) ||
+          (step.nativeRetirement && step.sourceCleanup)) {
         valid = false;
       }
 

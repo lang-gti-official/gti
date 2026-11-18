@@ -672,12 +672,37 @@ a frontend-computed `constexpr` value without forming a place, address,
 reference, or runtime load does not access its storage and is independent of
 the runtime step.
 
-The current language does not admit program-wide values that require active
-cleanup, so this contract does not create a global shutdown mechanism. Initializer temporaries
-still receive ordinary full-expression and failure cleanup. Any later feature
-that admits cleanup-owning program storage must use reverse successful
-program-initialization order and separately define persistent context and
-shutdown behavior.
+Hosted programs admit namespace objects and non-generic class static fields
+with source-defined destruction, including nested fields, bases and fixed
+arrays. Each successfully constructed root acquires one program-lifetime cleanup
+obligation. Shutdown destroys those roots in reverse successful initialization
+order; each root uses the ordinary class, field, base and element cleanup rules.
+A root is disarmed before its destructor starts, so a failed destructor is never
+retried. Initializer temporaries still receive ordinary full-expression cleanup.
+
+If initialization fails, the current partial object is rolled back and only
+completed earlier roots are destroyed. A failure from source `main` first
+cleans its local state. Hosted shutdown drains thread-local state and ends the
+C-thread runtime before destroying program roots; native resource retirement
+follows source destruction. A first cleanup failure preserves its failure
+record while remaining roots are cleaned. A second failure during cleanup uses
+the ordinary cleanup-emergency termination rule and abandons remaining
+lifetimes.
+
+The compiler proves a global destructor's transitive storage dependencies.
+It may access earlier program roots, which remain alive, but not later roots,
+its own root through a global name, or thread-local storage whose lifetime has
+ended. Receiver-relative access to the object being destroyed remains valid.
+Unknown cleanup effects fail this proof. Initialization retains its independent
+proof against accessing roots that have not yet completed, including accesses
+on failure paths.
+
+This does not permit runtime ownership in `constexpr` program storage or
+stored borrowed state in globals. The concurrent profile still requires
+immutable, share-capable globals. Compiler-private unique-owner bindings retain
+their separate storage restrictions. Restricted persistent embedding contracts
+that disallow active-cleanup program storage remain restricted; hosted shutdown
+does not implicitly define an embedding/unload lifetime.
 
 ### 4.2.5 Required Traces
 
