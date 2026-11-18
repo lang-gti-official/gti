@@ -6,10 +6,12 @@ Implementation of [RFC 0007](https://github.com/lang-gti-official/rfcs/pull/8)
 starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
 is unchanged admission and output, at least 2x faster admission on examples
 091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
-RSS. Final performance acceptance is still pending. Non-throwing outcomes, plan-local type indexes,
+RSS. The repeated measurements meet both targets at O0/O2: admission is
+5.50–8.33x faster, with median peak RSS at most 3.24% higher and the largest
+measured peak at most 2.80% higher. Non-throwing outcomes, plan-local type indexes,
 whole-query memoization/replay, and stable coverage-identity hash keys are
-implemented in separate RFC branches; final equivalence, performance and
-integration evidence remain required before this campaign is complete.
+implemented in separate RFC branches. Equivalence and performance evidence are
+complete; final focused verification and integration handoff remain in progress.
 
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
@@ -67,13 +69,14 @@ reconciliation; it is not compared only against an older, different parent.
 
 Focused memo tests inject a wrong answer and a reordered trace; coverage-index
 tests compare all context distinctions and detect a forged index. These checks
-supplement the corpus comparisons. The non-throwing slice's final owning checks
-passed: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
+supplement the corpus comparisons. The telemetry and non-throwing slices' final
+owning checks passed: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
 CLI workflow, 29 admission UI fixtures and scalar/owner native smoke at O0.
-Other slices' final owning/consumer checks remain pending. Full integration validation is
+Both PRs are handed off through GitHub merge-when-ready. Other slices' final
+owning/consumer checks remain pending. Full integration validation is
 CI's responsibility and has not been claimed by these local results.
 
-### Measurement protocol and pending acceptance
+### Measurement protocol
 
 The capture tool intentionally repeats backend planning to collect independent
 IR and object artifacts. Its duration is not a compile-time benchmark.
@@ -82,8 +85,10 @@ cross-checks disabled and exactly one `llvm-admission` and `gti-backend`
 time-trace region. They record wall time, child CPU time and peak resident set,
 and compare the actual resulting executable bytes.
 
-The queued target run uses five interleaved measured baseline/candidate pairs
-after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. The completed
+The completed target run uses five interleaved measured baseline/candidate pairs
+after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. Pair order
+uses seed 7007. Child CPU and peak RSS come from `wait4`; wall time uses a
+monotonic clock. The completed
 corpus run measured all 207 examples at both levels in one paired pass. It is
 descriptive corpus data, not a repeated-sample estimate.
 Sources, example helpers, execution profiles, standard library, runtime archive
@@ -97,6 +102,55 @@ the index branch also incorporated the structural concept-fact fix in
 does not alter backend/admission source, but total wall/CPU/RSS differences
 must not be attributed exclusively to admission without accounting for it.
 The exact admission plans and generated artifacts above remain equal.
+
+### Repeated four-program measurements
+
+Each target value is the median of five measured compiles after one warm-up. RSS is the per-compile peak resident set, reported in MiB. Both variants use identical source, standard library, runtime, and native linker inputs. Validation cross-checks are disabled for timings. Generated executable bytes match.
+
+| Example | Opt | Admission ms (before / after) | Speedup | Backend ms (before / after) | Wall s (before / after) | CPU s (before / after) | Peak RSS MiB (before / after) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 091-json-documents | O0 | 558.32 / 72.53 | 7.70× | 1113.73 / 624.06 | 4.69 / 4.21 | 4.74 / 4.26 | 903.53 / 914.97 |
+| 091-json-documents | O2 | 552.92 / 69.32 | 7.98× | 3420.31 / 2885.30 | 8.67 / 8.21 | 8.73 / 8.27 | 963.50 / 976.02 |
+| 093-http-json-client | O0 | 745.73 / 112.69 | 6.62× | 1586.63 / 954.99 | 6.46 / 5.84 | 6.49 / 5.89 | 1333.17 / 1357.61 |
+| 093-http-json-client | O2 | 746.70 / 105.72 | 7.06× | 4577.94 / 4013.31 | 14.72 / 14.38 | 14.75 / 14.41 | 1394.56 / 1402.97 |
+| 141-reflected-json | O0 | 657.85 / 78.95 | 8.33× | 1293.49 / 718.79 | 5.22 / 4.63 | 5.23 / 4.65 | 971.36 / 975.16 |
+| 141-reflected-json | O2 | 656.49 / 83.15 | 7.90× | 3784.45 / 3200.70 | 10.24 / 9.70 | 10.29 / 9.76 | 1039.44 / 1051.06 |
+| 194-regular-expressions | O0 | 603.97 / 109.89 | 5.50× | 1251.61 / 750.67 | 4.59 / 4.09 | 4.64 / 4.13 | 997.52 / 1004.28 |
+| 194-regular-expressions | O2 | 602.23 / 106.36 | 5.66× | 3143.03 / 2654.94 | 12.79 / 12.15 | 12.81 / 12.19 | 1078.06 / 1113.02 |
+
+Acceptance also compares the largest per-compile peak from the five measured
+samples of each variant. Every row passes both the median and largest-peak
+comparison, as well as the admission speed target.
+
+| Example | Opt | Largest peak RSS MiB (before / after) | Change |
+| --- | --- | ---: | ---: |
+| 091-json-documents | O0 | 906.45 / 918.09 | +1.28% |
+| 091-json-documents | O2 | 980.19 / 1006.59 | +2.69% |
+| 093-http-json-client | O0 | 1347.91 / 1385.53 | +2.79% |
+| 093-http-json-client | O2 | 1407.97 / 1428.95 | +1.49% |
+| 141-reflected-json | O0 | 975.95 / 980.41 | +0.46% |
+| 141-reflected-json | O2 | 1045.06 / 1064.97 | +1.90% |
+| 194-regular-expressions | O0 | 1001.88 / 1012.48 | +1.06% |
+| 194-regular-expressions | O2 | 1086.91 / 1117.12 | +2.78% |
+
+Both the target and corpus passes ran on a shared development host. The suite
+reservation prevents overlapping suites, but does not exclude other agents’
+builds; these are not isolated-machine wall-time measurements. All measured
+outputs match and the fixed-input checks passed at completion.
+
+Retained measurement reports (SHA-256):
+
+- `measure-four/report.json`: `71089bf6ffcbb1fd48d03142420bd2bb6c1073d0e8618aafb465e70eb40251ab`.
+- `measure-corpus/report.json`: `e370ad2f216fccb33e9c62970b521d518433a0f2805d4880fef47d5d8f5d7ce7`.
+- `measure-rss-followup/report.json`: `44e29d3f0025441613adb841e6c1ab3e99924e6a09ab31cae4e714d41a6f9019`.
+
+The baseline compiler binary is
+`ef3abbbe3369ce0e583896e531580ec70813c7b43763341d8c0927ec99b0ccfe`;
+the candidate is
+`5d93a70d1b931e076d4daa20957aa281ef0e901437344d76d4fa9bf651008cea`.
+The fixed native compiler is Apple clang 21.0.0 (`clang-2100.4.1.1`).
+Raw reports retain command arguments, interleaving, every sample, trace and
+executable hashes, source/profile identities and the compiler/runtime inputs.
 
 ### Corpus measurements (single paired pass)
 
@@ -145,9 +199,10 @@ with the upstream frontend change noted above, this limits attribution of the
 single-pass total wall/CPU differences. The separate repeated target run was
 still queued during those rebuilds.
 
-The at-least-2x target on all four named programs, the peak-RSS acceptance,
-remaining repeated measurements, and follow-up decisions remain open. The
-implementation campaign is not complete.
+The at-least-2x admission target and at-most-5% peak-RSS bound are met on all
+four named programs at both levels. These are measured results for the retained
+compiler pair, not a guarantee for every workload or host. Remaining final
+focused verification and integration handoff keep the implementation campaign open.
 
 ### Follow-up decisions
 
