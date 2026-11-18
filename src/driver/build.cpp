@@ -4383,8 +4383,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
             result.driverDiagnostic = diagnostic;
             return result;
           }
-          if (auto object = readCompilationObjects(*objectEntry, *key, 1,
-                                                   result.cache.warning)) {
+          if (auto object = readCompilationObjects(
+                  *objectEntry, *key, codegen.units, result.cache.warning)) {
             result.compilation.artifact =
                 BackendArtifact{.kind = BackendArtifactKind::Object,
                                 .objects = std::move(*object),
