@@ -21,6 +21,7 @@ import json
 import os
 from xml.etree import ElementTree
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -124,9 +125,60 @@ def admission_evidence_test(runner):
         expect(code == 1 and "GTI-S2001" in out,
                "failed compilation cannot become admission evidence", out)
 
+def ui_evidence_test(runner):
+    # The existing coverage claim must follow actual shard selection, not the
+    # self-test/tidy entry or a second implementation of the shard hash.
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        audit = runpy.run_path(str(ROOT / "tests/llvm_coverage_evidence_test.py"))
+    finally:
+        sys.path.pop(0)
+    with tempfile.TemporaryDirectory(prefix="gti-ui-evidence-") as raw:
+        root = Path(raw).resolve()
+        relative = "tests/ui/owner.gti"
+        source = root / relative
+        source.parent.mkdir(parents=True)
+        original = "// Execution evidence.\n//@ run-pass\nint main() { return 0; }\n"
+        source.write_text(original)
+        report = {"rows": [{"state": "implemented", "acceptance": {
+            "test": "gti_test_ui", "assertion": relative}}]}
+        inventory = {f"gti_test_ui_{i}": {
+            "command": [str(runner), str(source.parent), "--shard", f"{i}/2"],
+            "properties": [{"name": "LABELS", "value": ["gti-test-ui"]},
+                           {"name": "WORKING_DIRECTORY", "value": str(root)}]}
+            for i in (1, 2)}
+        resolve = audit["ui_profile_sources"]
+        records = resolve(report, root, inventory)
+        expect(records[relative]["source"] == original and
+               records[relative]["execution-profile"] == "single-threaded" and
+               records[relative]["shard"] in inventory,
+               "UI evidence uses the exact source and registered shard", records)
+        source.write_text(original.replace("//@ run-pass", "//@ run-pass\n//@ execution-profile: concurrent"))
+        expect(resolve(report, root, inventory)[relative]["execution-profile"] == "concurrent",
+               "UI evidence preserves the parsed execution profile", records)
+
+        def rejected(entries, message):
+            try:
+                resolve(report, root, entries)
+            except AssertionError as error:
+                expect(message in str(error), "UI evidence rejection", str(error))
+            else:
+                raise AssertionError("invalid UI execution evidence was accepted")
+
+        for directive in ("check-pass", "run-pass\n//@ define: EXTRA",
+                          "run-pass\n//@ opt: O3\n//@ reason: control"):
+            source.write_text(original.replace("run-pass", directive))
+            rejected(inventory, "not probe-compatible")
+        source.write_text(original)
+        rejected({}, "exactly one registered")
+        duplicate = dict(inventory)
+        duplicate["duplicate"] = inventory[records[relative]["shard"]]
+        rejected(duplicate, "exactly one registered")
+
 
 def self_test(runner):
     admission_evidence_test(runner)
+    ui_evidence_test(runner)
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
     expect(code == 0 and "RESULT ok: 8 passed, 0 failed" in out,
            "passing fixtures pass", out)

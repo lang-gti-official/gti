@@ -6,6 +6,13 @@ with a `// ` line saying what it checks, and use the cheapest proof that would
 catch the bug: `check-pass`/`check-fail` (frontend through verified MIR) unless
 the behaviour only shows at run time.
 
+`gti-test --list-evidence` lists the selected cases as JSON lines with their
+path, parsed mode, execution profile and compatibility with the hosted LLVM
+coverage probe. It applies the same filtering and sharding as execution and
+does not run tests. The coverage audit uses it to bind UI-source claims to
+their actual registered execution shard; ordinary test authors need no
+evidence registration.
+
 ```gti
 // An undefined name is rejected.
 int main() {
