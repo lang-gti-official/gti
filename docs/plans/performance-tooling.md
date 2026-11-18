@@ -6,13 +6,15 @@ Implementation of [RFC 0007](https://github.com/lang-gti-official/rfcs/pull/8)
 starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
 is unchanged admission and output, at least 2x faster admission on examples
 091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
-RSS. The repeated measurements meet both targets at O0/O2: admission is
+RSS. The original repeated measurements meet both targets at O0/O2: admission is
 5.50–8.33x faster, with median peak RSS at most 3.24% higher and the largest
 measured peak at most 2.80% higher. Non-throwing outcomes, plan-local type indexes,
 whole-query memoization/replay, and stable coverage-identity hash keys are
 implemented through separate RFC PRs. Equivalence, performance and final focused
 verification are complete for the recorded implementation heads. Required CI
 still owns validation of the integrated candidate and its full suite.
+The fresh common-main comparison below also meets both targets: 6.07–8.31x
+faster admission, with median peak RSS at most 1.52% higher.
 
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
@@ -98,18 +100,70 @@ the rebuilt, reconciled heads.
 The measurements and full equivalence inventory above remain evidence for
 their explicitly named pre-reconciliation heads. Their source archive,
 compiler/runner/runtime snapshots and raw artifacts are retained; they are not
-relabelled as results from the new heads. All five rebuilt implementation heads
-passed the trace/snapshot checks, five owning CTest gates, 29 admission UI
-fixtures and native scalar/owner smoke at O0. Their ten release-version and
-stdlib-surface checks also passed.
+relabelled as results from the new heads.
 
-Fresh common-main comparison captured the four named benchmark programs at
-O0/O2 for all five compilers: eight captures each, 40 total. Every adjacent pair
-and the baseline/final pair have byte-identical plans, outcomes, LLVM IR and
-objects with validation enabled. These scoped integration comparisons
-supplement the historical full corpus; they do not replace it. The repeated
-common-main performance run is still in progress, so the report's final
-integration handoff remains pending those measurements.
+### Fresh common-main verification
+
+All five rebuilt implementation heads passed the structural snapshot and
+exact-count trace regression, the five owning CTest gates, all 29 admission
+UI fixtures, and scalar/owner native execution at O0 with validation enabled.
+The CTest gates were `gti_test_ui`, `gti_unit_tests`,
+`llvm_coverage_evidence`, `llvm_coverage_exhaustiveness` and `cli_workflow`.
+Each workflow verification record is bound to its own published head.
+
+| Slice | Reconciled head | Fresh focused checks |
+| --- | --- | --- |
+| Telemetry/evidence | `a30be18e31fed250d995151dd1f7348f8feff83e` | Passed |
+| Non-throwing outcomes | `a071b24990883ec9d7d159d172dc01420c636364` | Passed |
+| Exact-type index | `2d7b69ba2fe21956ec61c84713feddb9aef675bb` | Passed |
+| Whole-query memo/replay | `4225189e6b3c6e77e4c7e146cc1fe73640d1983e` | Passed |
+| Coverage identity keys | `41e8f854a15012e66717fba24684e066537a1412` | Passed |
+
+For the common-main follow-up, all five compilers capture the four named
+benchmark programs at O0/O2 with `GTI_COMPILER_VALIDATION=1`: eight captures
+per compiler, 40 in total. Every adjacent slice and the baseline/final pair
+have byte-identical full plans, first outcomes, LLVM IR and objects. The
+same source and standard-library paths are used throughout. This focused
+integration comparison supplements the historical 1,516-case per-compiler
+inventory; it does not relabel or replace that full inventory.
+
+The common-main baseline is `a30be18e31fed250d995151dd1f7348f8feff83e`; the final
+candidate is `41e8f854a15012e66717fba24684e066537a1412`. Both include main
+`c7985d61f17192c783c361983539d8e761ea68df`, removing the earlier upstream
+concept-fix difference from this comparison. Five interleaved measured pairs
+after one warm-up pair retain the original four workloads and O0/O2 levels.
+Validation is disabled for measurement; fixed inputs are checked at completion
+and executable bytes match for every pair. This is still a shared development
+machine measurement, not an isolated-host claim.
+
+Admission is 6.07–8.31x faster. The maximum median peak-RSS change
+is +1.52%; the maximum largest-observed-peak change is +0.43%.
+Every workload/level meets both the 2x admission and 5% peak-RSS criteria.
+
+Each target value is the median of five measured compiles after one warm-up. RSS is the per-compile peak resident set, reported in MiB. Both variants use identical source, standard library, runtime, and native linker inputs. Validation cross-checks are disabled for timings. Generated executable bytes match.
+
+| Example | Opt | Admission ms (before / after) | Speedup | Backend ms (before / after) | Wall s (before / after) | CPU s (before / after) | Peak RSS MiB (before / after) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 091-json-documents | O0 | 429.48 / 51.71 | 8.31× | 861.14 / 483.68 | 3.59 / 3.22 | 3.62 / 3.25 | 907.70 / 908.06 |
+| 091-json-documents | O2 | 430.33 / 52.67 | 8.17× | 2722.07 / 2340.44 | 6.81 / 6.40 | 6.81 / 6.43 | 1008.69 / 1010.75 |
+| 093-http-json-client | O0 | 584.96 / 82.79 | 7.07× | 1243.34 / 741.40 | 4.96 / 4.46 | 4.99 / 4.49 | 1333.16 / 1333.94 |
+| 093-http-json-client | O2 | 587.99 / 82.91 | 7.09× | 3605.62 / 3092.03 | 11.26 / 10.76 | 11.27 / 10.79 | 1484.75 / 1476.64 |
+| 141-reflected-json | O0 | 515.09 / 62.54 | 8.24× | 1018.24 / 564.80 | 4.11 / 3.65 | 4.14 / 3.67 | 970.27 / 985.00 |
+| 141-reflected-json | O2 | 517.80 / 62.37 | 8.30× | 3082.85 / 2635.63 | 8.07 / 7.62 | 8.10 / 7.64 | 1133.73 / 1125.94 |
+| 194-regular-expressions | O0 | 472.58 / 77.84 | 6.07× | 970.77 / 576.61 | 3.46 / 3.07 | 3.49 / 3.10 | 1007.58 / 1016.36 |
+| 194-regular-expressions | O2 | 472.35 / 77.86 | 6.07× | 2595.43 / 2202.60 | 9.66 / 9.27 | 9.69 / 9.29 | 1182.98 / 1150.48 |
+
+Raw common-main evidence is retained alongside the original campaign under
+`/var/folders/w8/xxc4n9jn0cd8s63ylv8gw0xm0000gn/T/gti-rfc0007-czs38umo`:
+
+- `reconciled-four-equivalence.json`: SHA-256 `365ca6c7aca96536c992ae242ebd9c125b1bb8312f055d0f71b3118d521bfeac`.
+- `reconciled-verification-results.json`: SHA-256 `a523a9ca1830a3c6a061154d1393cc37714a8533bb234a92bd8f4604ad6850f4`.
+- `measure-reconciled-four/report.json`: SHA-256 `00b5586235dc3e0d6a5a4dde07ffc8a8c504690e596f89afe3c8c2e385fd537f`.
+- Baseline compiler SHA-256: `692183157e86c5e78fcef7a2b9d30b4083f91817cf8cc56fce798fdb03b36c00`.
+- Candidate compiler SHA-256: `3634111323e919a375d45b4f46d105c68044ac7569b2a37caa5cf6f5d555834f`.
+
+Full integration and platform coverage remain CI’s responsibility; these
+focused checks and measurements do not claim a completed full CI suite.
 
 ### Measurement protocol
 
