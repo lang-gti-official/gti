@@ -3,6 +3,7 @@
 #include "gti/diagnostic.h"
 #include "gti/source_owner.h"
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -25,6 +26,19 @@ struct IncludeSearchRoot {
   std::vector<std::filesystem::path> excludedDirectories;
 };
 
+// Optional enrichment must not perform an unbounded sequence of full analyses.
+// Candidate scans and trials have deterministic caps. One confirmation may
+// finish within the scan cap before the cooperative time budget prevents more
+// work: slow preparation must not starve every otherwise valid suggestion.
+// Zero disables work; milliseconds::max() removes only the time limit.
+struct IncludeDiscoveryLimits {
+  std::size_t maximumTrials = 8;
+  std::size_t maximumCandidateScans = 16;
+  std::chrono::milliseconds timeBudget{250};
+  // Detailed frontend accounting is opt-in to keep ordinary enrichment cheap.
+  bool collectTimings = false;
+};
+
 struct IncludeDiscoveryCacheLimits {
   // Candidate interfaces and source texts remembered at once (least recently
   // used evicted). Each row is one interface's syntax-level facts.
@@ -42,6 +56,11 @@ struct IncludeDiscoveryCacheStats {
   // candidate surface cannot spell a qualifier the use still needs.
   std::size_t trials = 0;
   std::size_t qualifierSkips = 0;
+  std::size_t trialMicroseconds = 0;
+  std::size_t trialSemanticMicroseconds = 0;
+  std::size_t trialHirMicroseconds = 0;
+  std::size_t trialPreambleBuildMicroseconds = 0;
+  std::size_t trialPreambleAdoptMicroseconds = 0;
 };
 
 // Missing-import discovery facts that depend only on candidate source text:
@@ -80,6 +99,7 @@ struct IncludeSuggestionResult {
   std::vector<Diagnostic> diagnostics;
   std::vector<std::filesystem::path> inputs;
   bool cancelled = false;
+  bool budgetExhausted = false;
 };
 
 // Whether this completed snapshot can benefit from import discovery. Editors

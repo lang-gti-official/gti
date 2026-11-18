@@ -83,6 +83,9 @@ continue to come from `mir_effects` and verified semantic/MIR metadata. In
 particular, registering a new member does not supply its transfer function,
 effect summary, backend representation, or replay proof.
 
+When a pass explains a barrier, it passes the containing MIR body to the
+effects query. This avoids scanning the program to locate each instruction.
+
 The audit boundary is:
 
 | Surface | Current handling and enforcement |

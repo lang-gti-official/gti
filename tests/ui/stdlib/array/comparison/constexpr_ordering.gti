@@ -1,0 +1,10 @@
+// Fixed-array comparison participates in ordinary constexpr evaluation.
+import std.array;
+
+constexpr std::array<int, 2> first = std::array<int, 2>({1, 2});
+constexpr std::array<int, 2> second = std::array<int, 2>({1, 3});
+static_assert(first != second);
+static_assert(first < second);
+static_assert(second >= first);
+
+int main() { return 0; }
