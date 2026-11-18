@@ -1,4 +1,3 @@
-#include "mir_carrier_flow.h"
 #include "gti/mir.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -6,6 +5,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_carrier_flow.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>

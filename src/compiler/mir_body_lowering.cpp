@@ -5732,10 +5732,10 @@ private:
         });
     if (step != steps.end()) {
       const auto &bindings = program.module().bindings;
-      const auto global = std::find_if(
-          bindings.begin(), bindings.end(), [&](const HirBinding &binding) {
-            return binding.id == step->binding;
-          });
+      const auto global = std::find_if(bindings.begin(), bindings.end(),
+                                       [&](const HirBinding &binding) {
+                                         return binding.id == step->binding;
+                                       });
       if (global == bindings.end())
         return 0;
       type = &global->info.type;

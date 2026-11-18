@@ -124,8 +124,7 @@ public:
     auto found = lower(key);
     if (found != items.end() && !(key < found->first))
       return {found, false};
-    found = items.emplace(found, key,
-                          V(std::forward<Arguments>(arguments)...));
+    found = items.emplace(found, key, V(std::forward<Arguments>(arguments)...));
     return {found, true};
   }
   V &operator[](const K &key) { return emplace(key).first->second; }
@@ -192,14 +191,16 @@ public:
 
 private:
   [[nodiscard]] iterator lower(const K &key) {
-    return std::lower_bound(
-        items.begin(), items.end(), key,
-        [](const value_type &item, const K &probe) { return item.first < probe; });
+    return std::lower_bound(items.begin(), items.end(), key,
+                            [](const value_type &item, const K &probe) {
+                              return item.first < probe;
+                            });
   }
   [[nodiscard]] const_iterator lower(const K &key) const {
-    return std::lower_bound(
-        items.begin(), items.end(), key,
-        [](const value_type &item, const K &probe) { return item.first < probe; });
+    return std::lower_bound(items.begin(), items.end(), key,
+                            [](const value_type &item, const K &probe) {
+                              return item.first < probe;
+                            });
   }
   std::vector<value_type> items;
 };
@@ -769,7 +770,8 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
   if (body.valueUses.size() == body.values.size() && !body.blocks.empty()) {
     const std::size_t blockCount = body.blocks.size();
     alwaysLive.assign(body.values.size() + 1, false);
-    std::vector<std::set<MirValueId>> uses(blockCount + 1), defs(blockCount + 1);
+    std::vector<std::set<MirValueId>> uses(blockCount + 1),
+        defs(blockCount + 1);
     bool indexed = true;
     for (const auto &block : body.blocks) {
       if (block.id == 0 || block.id > blockCount) {
@@ -849,11 +851,11 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
              !std::binary_search(liveValues.begin(), liveValues.end(), value);
     };
     incoming.values.eraseIf(
-                  [&](const auto &entry) { return dead(entry.first); });
+        [&](const auto &entry) { return dead(entry.first); });
     incoming.expiredValues.eraseIf(
-                  [&](const auto &entry) { return dead(entry.first); });
+        [&](const auto &entry) { return dead(entry.first); });
     incoming.aliases.eraseIf(
-                  [&](const auto &entry) { return dead(entry.first); });
+        [&](const auto &entry) { return dead(entry.first); });
   };
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
@@ -2416,8 +2418,8 @@ deriveConstructorEffects(const MirConstructorInstance &constructor,
       cached->second.first == context.generation)
     return cached->second.second;
   // Only a top-level summary is free of recursion-guard cutoffs.
-  const bool topLevel = context.activeConstructors.empty() &&
-                        context.activeDestructors.empty();
+  const bool topLevel =
+      context.activeConstructors.empty() && context.activeDestructors.empty();
   const auto generation = context.generation;
   auto result = deriveConstructorEffectsUncached(constructor, context);
   if (topLevel && generation == context.generation)
@@ -2707,8 +2709,7 @@ const MirProgram &MirCarrierAnalysis::program() const {
 MirCarrierFlow MirCarrierAnalysis::flow(const MirBody &body,
                                         bool includeBlockEntries) {
   auto &impl = *implementation;
-  const bool memoized =
-      impl.memoize && impl.programBodies.contains(&body);
+  const bool memoized = impl.memoize && impl.programBodies.contains(&body);
   if (memoized)
     if (const auto found = impl.flows.find({&body, includeBlockEntries});
         found != impl.flows.end())
@@ -2741,11 +2742,12 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
       &activeCarrierAnalysis->program() == program)
     return activeCarrierAnalysis->flow(body, includeBlockEntries);
   // A program-less flow of one of the scope's own bodies is equally fixed.
-  auto *memo = !program && activeCarrierAnalysis &&
-                       activeCarrierAnalysis->implementation->programBodies
-                           .contains(&body)
-                   ? &activeCarrierAnalysis->implementation->programlessFlows
-                   : nullptr;
+  auto *memo =
+      !program && activeCarrierAnalysis &&
+              activeCarrierAnalysis->implementation->programBodies.contains(
+                  &body)
+          ? &activeCarrierAnalysis->implementation->programlessFlows
+          : nullptr;
   if (memo)
     if (const auto found = memo->find({&body, includeBlockEntries});
         found != memo->end())

@@ -190,5 +190,4 @@ private:
 deriveMirRetainingStoreEffects(const MirFunctionInstance &function,
                                const MirProgram *program = nullptr);
 
-
 } // namespace lang

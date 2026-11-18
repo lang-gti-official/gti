@@ -319,9 +319,9 @@ MirLoweringResult MirLowerer::lowerProgram(
   // the output program being assembled by this lowering pass. Rounds over
   // one snapshot share its analysis and call summaries.
   std::unique_ptr<MirCarrierAnalysis> ownRetainingAnalysis;
-  if (retainingProgram && (!sharedRetainingAnalysis ||
-                           &sharedRetainingAnalysis->program() !=
-                               retainingProgram))
+  if (retainingProgram &&
+      (!sharedRetainingAnalysis ||
+       &sharedRetainingAnalysis->program() != retainingProgram))
     ownRetainingAnalysis =
         std::make_unique<MirCarrierAnalysis>(*retainingProgram);
   MirCarrierAnalysis *const retainingAnalysis =
@@ -373,12 +373,12 @@ MirLoweringResult MirLowerer::lowerProgram(
   // provisional module would turn owning global receivers into unproved
   // dynamic calls, even when their declaration fixes the complete type.
   // Only the hosted entry wrapper waits for the derived failure contracts.
-  result.program.moduleBody = lowerBody(
-      source, failureMetadata, source.module(), MirBodyKind::Module,
-      SemanticType::Void, {}, definedFailureEffects, retainingProgram,
-      retainingAnalysis, valid, result.errors, 0, false, nullptr, nullptr,
-      nullptr, nullptr, &source.programInitializationPlan(),
-      &result.program.programInitialization);
+  result.program.moduleBody =
+      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
+                SemanticType::Void, {}, definedFailureEffects, retainingProgram,
+                retainingAnalysis, valid, result.errors, 0, false, nullptr,
+                nullptr, nullptr, nullptr, &source.programInitializationPlan(),
+                &result.program.programInitialization);
 
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
@@ -443,16 +443,16 @@ MirLoweringResult MirLowerer::lowerProgram(
     lowered.fieldInitializers =
         lowerBody(source, failureMetadata, instance.fieldInitializers,
                   MirBodyKind::FieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, retainingProgram,
-                  retainingAnalysis, valid, result.errors, instance.id,
-                  false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, instance.id, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     lowered.staticFieldInitializers =
         lowerBody(source, failureMetadata, instance.staticFieldInitializers,
                   MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, retainingProgram,
-                  retainingAnalysis, valid, result.errors, instance.id,
-                  false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, instance.id, false, nullptr, nullptr,
+                  nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
          ++field) {
@@ -689,11 +689,10 @@ MirLoweringResult MirLowerer::lowerProgram(
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
-             definedFailureEffects, retainingProgram, retainingAnalysis,
-             valid, result.errors, instance.id, false, &instance.initializers,
-             nullptr, signatureOnly ? &*signatureOnly : &instance, nullptr,
-             nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit),
+             definedFailureEffects, retainingProgram, retainingAnalysis, valid,
+             result.errors, instance.id, false, &instance.initializers, nullptr,
+             signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
+             nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
     auto &lowered = result.program.constructors.back();
     if (constructorOwner && constructorOwner->polymorphic &&
@@ -791,8 +790,8 @@ MirLoweringResult MirLowerer::lowerProgram(
     lowered.body = lowerBody(
         source, failureMetadata, instance.body, MirBodyKind::Lambda,
         instance.returnType, {}, definedFailureEffects, retainingProgram,
-        retainingAnalysis, valid, result.errors, instance.id, false,
-        nullptr, nullptr, nullptr, &instance, nullptr, nullptr,
+        retainingAnalysis, valid, result.errors, instance.id, false, nullptr,
+        nullptr, nullptr, &instance, nullptr, nullptr,
         instance.source != nullptr &&
             compilerTrustedSourcePath(source,
                                       instance.source->bracket().source));
@@ -807,11 +806,11 @@ MirLoweringResult MirLowerer::lowerProgram(
                                   .requiresActiveCleanup =
                                       storage.requiresActiveCleanup,
                                   .dataInitializer = storage.dataInitializer};
-    lowered.initializer = lowerBody(
-        source, failureMetadata, storage.initializer,
-        MirBodyKind::ThreadLocalInitializer, storage.type, {},
-        definedFailureEffects, retainingProgram, retainingAnalysis, valid,
-        result.errors, storage.symbol);
+    lowered.initializer =
+        lowerBody(source, failureMetadata, storage.initializer,
+                  MirBodyKind::ThreadLocalInitializer, storage.type, {},
+                  definedFailureEffects, retainingProgram, retainingAnalysis,
+                  valid, result.errors, storage.symbol);
     const auto cleanup = mirUniqueCleanupType(result.program, storage.type);
     if (!cleanup && storage.requiresActiveCleanup) {
       valid = false;
