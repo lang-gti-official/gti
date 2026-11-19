@@ -23298,16 +23298,9 @@ verifyMirProgramContracts(const MirProgram &program) {
   return result;
 }
 
-MirVerificationResult verifyMirProgram(const MirProgram &program,
-                                       MirVerificationComponents components) {
+MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
+    const MirProgram &program, const MirProgram *verifiedInput) {
   MirVerificationResult result;
-  if (components != requiredMirVerificationComponents) {
-    result.errors.push_back(
-        {.bodyKind = MirBodyKind::Module,
-         .message = "MIR verification component set is incomplete or invalid"});
-    return result;
-  }
-
   // Prove inline sum containment finite before any recursive lifecycle query.
   // Type arguments alone are not storage edges: follow exact variant fields,
   // ordinary class fields/bases and inline builtin aggregates, but never an
@@ -23664,7 +23657,10 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
            .message = "MIR body inventory contains an unresolved address"});
       continue;
     }
-    appendVerification(result, verifyMirBody(*body, address.owner));
+    const MirBody *verifiedBody =
+        verifiedInput ? findMirBody(*verifiedInput, address) : nullptr;
+    if (!verifiedBody || *verifiedBody != *body)
+      appendVerification(result, verifyMirBody(*body, address.owner));
     std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
     for (const auto &entry : body->programConstantSubstitutions)
       publishedConstants.emplace(entry.hirValue, &entry.constant);
@@ -24096,6 +24092,18 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     appendVerification(result, verifyMirPersistentStorageEffects(program));
   appendVerification(result, verifyMirEffectSummaries(program));
   return result;
+}
+
+MirVerificationResult verifyMirProgram(const MirProgram &program,
+                                       MirVerificationComponents components) {
+  if (components != requiredMirVerificationComponents) {
+    MirVerificationResult result;
+    result.errors.push_back(
+        {.bodyKind = MirBodyKind::Module,
+         .message = "MIR verification component set is incomplete or invalid"});
+    return result;
+  }
+  return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr);
 }
 
 } // namespace lang

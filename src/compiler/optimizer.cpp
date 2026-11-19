@@ -1228,7 +1228,8 @@ public:
               continue;
             }
             if (!programVerified) {
-              programVerified = verifyMirProgram(context.program).valid();
+              programVerified =
+                  analyses.verifyEditedProgram(context.program).valid();
             }
             if (*programVerified &&
                 mir_detail::canRewriteVerifiedMirDeadInstruction(
@@ -1342,7 +1343,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
 
   if (request.options.verifyMir) {
     const PhaseTimeScope timeScope("mir-verify-input");
-    result.report.inputVerification = verifyMirProgram(result.mir);
+    result.report.inputVerification = verifyMirProgram(result.sourceMir);
     if (!result.report.inputVerification.valid()) {
       return result;
     }
@@ -1357,6 +1358,8 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
       compatibility = &localCompatibility;
     }
     MirBodyAnalysisManager analyses;
+    if (request.options.verifyMir)
+      analyses.verifiedInput = &result.sourceMir;
     MirPassContext context{
         .hir = request.hir, .program = result.mir, .target = request.target};
     const auto execute = [&](MirPass &pass) {
