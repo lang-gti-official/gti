@@ -4348,6 +4348,21 @@
       ]
     },
     {
+      "id": "detail.random-engine",
+      "source": "stdlib/std/detail/random_engine.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::seed_random_engine"
+      ],
+      "case_ids": [
+        "random"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
+      ]
+    },
+    {
       "id": "detail.resource-lease",
       "source": "stdlib/std/detail/resource_lease.gti",
       "status": "executable",
@@ -6984,7 +6999,8 @@
       "required_instantiations": [],
       "evidence": [
         "tests/fixtures/random_engine.gti",
-        "stdlib/std/random.gti"
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {

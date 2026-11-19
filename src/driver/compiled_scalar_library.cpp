@@ -736,34 +736,44 @@ struct AdmittedLibraries {
 
   CompiledMirBodies optimizationBodies;
 
-  CompiledLibraryInputs bind(CompilationInputs inputs) && {
-    std::vector<CompiledScalarImport> imports;
+  void bind(CompiledLibraryInputs &inputs) && {
+    auto &graph = inputs.compilation.sourceGraph;
     for (auto &facade : facades) {
-      const auto unit = inputs.sourceGraph.sourceUnitForPath(facade.path);
+      const auto unit = graph.sourceUnitForPath(facade.path);
       if (!unit)
         continue;
-      inputs.sourceGraph.markCompiledScalarInterface(unit);
+      graph.markCompiledScalarInterface(unit);
       for (auto &signature : facade.signatures) {
         auto found = optimizationBodies.find(compiledScalarSymbol(signature));
-        imports.push_back(
+        inputs.imports.push_back(
             {std::move(signature), unit,
              found == optimizationBodies.end() ? nullptr : found->second});
       }
     }
-    return {std::move(inputs), std::move(imports), std::move(objects),
-            std::move(dependencies), std::move(symbols)};
+    std::ranges::move(objects, std::back_inserter(inputs.objects));
+    std::ranges::move(dependencies, std::back_inserter(inputs.dependencies));
+    std::ranges::move(symbols, std::back_inserter(inputs.symbols));
   }
 };
-AdmittedLibraries
-admitScalarLibraries(const CompilationRequest &request,
-                     std::vector<ScalarBundleInput> &bundles,
-                     const std::filesystem::path &runtime,
-                     LibraryProfile profile = LibraryProfile::Project) {
+
+struct AdmissionEnvironment {
+  LibraryBundleIdentity identity;
+  std::vector<std::string> runtimeSymbols;
+};
+
+AdmissionEnvironment admissionEnvironment(const CompilationRequest &request,
+                                          const std::filesystem::path &runtime,
+                                          LibraryProfile profile) {
+  auto identity = environment(request, runtime, profile);
+  auto symbols = runtimeImports(runtime, request.target(), identity.runtime);
+  return {std::move(identity), std::move(symbols)};
+}
+
+AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
+                                       std::vector<ScalarBundleInput> &bundles,
+                                       const AdmissionEnvironment &system) {
   if (bundles.empty() || bundles.size() > 64)
     throw std::invalid_argument("compiled consumer requires 1 to 64 libraries");
-  const auto environmentIdentity = environment(request, runtime, profile);
-  const auto runtimeSymbols =
-      runtimeImports(runtime, request.target(), environmentIdentity.runtime);
   struct Admission {
     std::vector<CompiledScalarSignature> signatures;
     std::vector<std::string> symbols;
@@ -927,7 +937,7 @@ admitScalarLibraries(const CompilationRequest &request,
     auto &bundle = input.bundle;
     auto &metadata = admitted[index];
     std::vector<LibraryBundleDependency> expectedDependencies;
-    auto allowedSymbols = runtimeSymbols;
+    auto allowedSymbols = system.runtimeSymbols;
     for (const auto &dependency : bundle.dependencies) {
       const auto selected = libraries.at(dependency.library);
       expectedDependencies.push_back(
@@ -936,7 +946,7 @@ admitScalarLibraries(const CompilationRequest &request,
                             admitted[selected].symbols.begin(),
                             admitted[selected].symbols.end());
     }
-    auto expected = environmentIdentity;
+    auto expected = system.identity;
     expected.library = metadata.library;
     expected.sources = bundle.identity.sources;
     requireLibraryBundleCompatibility(bundle, expected, expectedDependencies);
@@ -1010,7 +1020,9 @@ CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &request, std::vector<ScalarBundleInput> bundles,
     const std::filesystem::path &runtime, ProgressObserver *progress,
     StandardLibraryInput standardLibrary) {
-  auto admitted = admitScalarLibraries(request, bundles, runtime);
+  auto admitted = admitScalarLibraries(
+      request, bundles,
+      admissionEnvironment(request, runtime, LibraryProfile::Project));
   std::unordered_map<std::string, std::string> overlays;
   for (auto &facade : admitted.facades)
     if (!overlays.emplace(facade.path, std::move(facade.source)).second)
@@ -1024,7 +1036,8 @@ CompiledLibraryInputs prepareScalarConsumer(
                                            std::move(overlays))
                     : CompiledLibraryInputs{
                           loadCompilationInputs(effective, progress, overlays)};
-  auto inputs = std::move(admitted).bind(std::move(loaded.compilation));
+  CompiledLibraryInputs inputs{std::move(loaded.compilation)};
+  std::move(admitted).bind(inputs);
   std::ranges::move(loaded.imports, std::back_inserter(inputs.imports));
   std::ranges::move(loaded.objects, std::back_inserter(inputs.objects));
   // A private module may also be imported directly by the consumer. One
@@ -1137,43 +1150,78 @@ loadExecutableInputs(const CompilationRequest &request,
   if (!std::filesystem::is_directory(directory))
     return source();
 
-  const auto entry = root / "std/cmath.gti";
-  const auto virtualInterface = root / ".gti-compiled-cmath.gti";
-  // Follow the real import graph once. Loading the facade validates the
-  // bundle; projects that never import cmath never open its artifact.
-  if (overlays.contains(virtualInterface.string()) ||
-      !overlays
-           .emplace(entry.string(),
-                    "export module cmath;\n"
-                    "export import \"detail/cmath_declarations.gti\";\n"
-                    "export import \"../.gti-compiled-cmath.gti\";\n")
-           .second)
-    throw std::invalid_argument(
-        "project interface overlaps the installed standard library");
-  std::optional<AdmittedLibraries> admitted;
-  std::string digest;
+  struct InstalledModule {
+    std::string_view target;
+    std::string_view entry;
+    std::string_view facade;
+  };
+  static constexpr InstalledModule modules[] = {
+      {"cmath", "std/cmath.gti",
+       "export module cmath;\n"
+       "export import \"detail/cmath_declarations.gti\";\n"
+       "export import \"../.gti-compiled-cmath.gti\";\n"},
+      {"random", "std/detail/random_engine.gti",
+       "export module detail.random_engine;\n"
+       "export import \"../../.gti-compiled-random.gti\";\n"},
+  };
+  std::optional<AdmissionEnvironment> system;
+  struct LoadedModule {
+    std::string digest;
+    AdmittedLibraries admitted;
+  };
+  std::map<std::string, LoadedModule> loaded;
+  std::size_t totalBytes = 0;
+  std::size_t declarations = 0;
   SourceLoader loader;
-  loader.deferSource(virtualInterface.string(), [&] {
-    const CompiledLibraryImport selection{
-        "gti-std", "cmath", directory / "cmath.gtilib", virtualInterface};
-    auto bytes = readCompiledLibraryFileBounded(selection.artifact,
-                                                libraryBundleByteLimit);
-    digest = hash(bytes);
-    std::vector<ScalarBundleInput> bundles;
-    bundles.push_back(
-        {decodeLibraryBundle(bytes), virtualInterface, selection, digest});
-    admitted = admitScalarLibraries(request, bundles, runtime,
-                                    LibraryProfile::InstalledStdlib);
-    if (admitted->facades.size() != 1 ||
-        admitted->facades.front().path != virtualInterface.string())
-      throw std::invalid_argument("invalid installed cmath module interface");
-    return std::move(admitted->facades.front().source);
-  });
-  auto inputs = loadCompilationInputs(request, loader, progress, overlays);
-  if (!admitted)
-    return {std::move(inputs)};
-  inputs.standardLibraryBundleDigest = std::move(digest);
-  return std::move(*admitted).bind(std::move(inputs));
+  for (const auto &module : modules) {
+    const std::string name(module.target);
+    const auto path = root / (".gti-compiled-" + name + ".gti");
+    if (overlays.contains(path.string()) ||
+        !overlays.emplace((root / module.entry).string(), module.facade).second)
+      throw std::invalid_argument(
+          "project interface overlaps the installed standard library");
+    // Only the actual import graph triggers artifact reads. Share one identity
+    // and runtime symbol inventory across every module reached in this build.
+    loader.deferSource(path.string(), [&, name, path] {
+      if (!system)
+        system = admissionEnvironment(request, runtime,
+                                      LibraryProfile::InstalledStdlib);
+      const CompiledLibraryImport selection{
+          "gti-std", name, directory / (name + ".gtilib"), path};
+      auto bytes = readCompiledLibraryFileBounded(
+          selection.artifact, libraryBundleByteLimit - totalBytes);
+      totalBytes += bytes.size();
+      auto digest = hash(bytes);
+      std::vector<ScalarBundleInput> bundles;
+      bundles.push_back({decodeLibraryBundle(bytes), path, selection, digest});
+      auto admitted = admitScalarLibraries(request, bundles, *system);
+      if (admitted.facades.size() != 1 ||
+          admitted.facades.front().path != path.string())
+        throw std::invalid_argument("invalid installed " + name +
+                                    " module interface");
+      auto &facade = admitted.facades.front();
+      declarations += facade.signatures.size();
+      if (declarations > 256)
+        throw std::invalid_argument(
+            "combined compiled interface exceeds 256 declarations");
+      auto interface = std::move(facade.source);
+      loaded.emplace(name,
+                     LoadedModule{std::move(digest), std::move(admitted)});
+      return interface;
+    });
+  }
+  CompiledLibraryInputs inputs{
+      loadCompilationInputs(request, loader, progress, overlays)};
+  if (!loaded.empty()) {
+    std::string receipts;
+    for (auto &[name, module] : loaded) {
+      field(receipts, name);
+      field(receipts, module.digest);
+      std::move(module.admitted).bind(inputs);
+    }
+    inputs.compilation.standardLibraryBundleDigest = hash(receipts);
+  }
+  return inputs;
 }
 
 } // namespace

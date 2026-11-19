@@ -3364,8 +3364,13 @@ ownership and custom cleanup currently use their native definitions.
 
 ### Precompiled standard library
 
-The native Linux x64 and macOS arm64 toolchains ship the 21 runtime functions
-of `std.cmath` as `share/gti/precompiled-stdlib/<target>/<profile>/cmath.gtilib`.
+The native Linux x64 and macOS arm64 toolchains ship two libraries in
+`share/gti/precompiled-stdlib/<target>/<profile>/`. `cmath.gtilib` contains
+the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64 seed expansion
+for `std::random_engine`. It returns the four-word state by value. The public
+class keeps the xoshiro256++ transition in source so an optimized draw loop
+can carry that state in registers.
+`std::random_device` retains its source implementation and OS entropy backend.
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release object when an import or re-export reaches the
 module. An executable can link the installed object alongside inferred or
@@ -3386,7 +3391,9 @@ Staging builds these objects using its final compiler and runtime, then checks
 and runs an independent project with the implementation source removed. A
 source-only toolchain repack rebuilds the objects from the replacement library.
 Bundle compatibility and object admission apply before executable cache reuse;
-the bundle digest participates in the cache key. Both paths hash the full
+the names and digests of the reached bundles participate in the cache key in
+name order. An executable importing both modules shares one compiler/runtime
+compatibility check. Unused bundles are never opened. Both paths hash the full
 compiler and runtime files with the same SHA-256 routine used by the build
 cache. Unsupported configurations
 use source. Serialized generic bodies and MIR are outside this first module.
