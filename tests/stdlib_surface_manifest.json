@@ -4244,21 +4244,6 @@
       ]
     },
     {
-      "id": "detail.random-engine",
-      "source": "stdlib/std/detail/random_engine.gti",
-      "status": "executable",
-      "operations": [
-        "std::detail::seed_random_engine"
-      ],
-      "case_ids": [
-        "random"
-      ],
-      "evidence": [
-        "tests/ui/stdlib/random/engine.gti",
-        "tests/project/standard_library_bundle/verify_stage.py"
-      ]
-    },
-    {
       "id": "detail.function-pointer-core",
       "source": "stdlib/std/detail/function_pointer.gti",
       "status": "executable",
@@ -4360,6 +4345,21 @@
       "evidence": [
         "tests/ui/runtime/panic",
         "tests/panic_adoption_runtime_test.py"
+      ]
+    },
+    {
+      "id": "detail.random-engine",
+      "source": "stdlib/std/detail/random_engine.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::seed_random_engine"
+      ],
+      "case_ids": [
+        "random"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {
