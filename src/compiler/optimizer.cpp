@@ -1097,9 +1097,13 @@ public:
         if (cfg->reachable[index]) {
           continue;
         }
-        ++outcome.report.candidates;
         MirBody replay = *body;
         if (rewriteMirUnreachableBlock(replay, index + 1)) {
+          // A block may already be inert. Include derived facts and debug
+          // metadata in the comparison because the rewrite also repairs them.
+          if (replay == *body) {
+            continue;
+          }
           editor.queueUnreachableBlockRemoval(address, index + 1);
         } else {
           ++outcome.report.missed;
@@ -1111,6 +1115,7 @@ public:
                .body = address,
                .block = index + 1});
         }
+        ++outcome.report.candidates;
       }
     }
     if (editor.pendingUnreachableBlockCount() == 0) {

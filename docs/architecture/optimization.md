@@ -1631,7 +1631,10 @@ Each edit batch validates every guarded target before mutation, rewrites a
 copy, repairs derived facts, verifies the complete candidate, and commits
 atomically. Destructive instruction removal leaves a canonical inert
 tombstone, so instruction/result identities and proof references remain
-stable. Unaffected identities are never compacted.
+stable. Unaffected identities are never compacted. Unreachable-block cleanup
+queues an edit only when its trial rewrite changes the body, including derived
+facts and source debug metadata. Already-inert blocks produce no removal
+record and, on their own, trigger no edit batch or whole-program verification.
 
 Whole-program verification is a deterministic function of program content,
 so an operation verifies a given program once. The canonical dead-instruction
