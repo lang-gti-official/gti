@@ -3223,8 +3223,8 @@ supplies the LLVM declaration's policy; the producer applies the same mapping to
 its implementation and external wrapper. The binding is sealed and its symbol
 digest includes both policies, so a rechecksummed interface with changed hints
 cannot match an old object. This is integrity/consistency validation, not a
-cryptographic signature or a stable ABI. No body serialization, LTO, or forced
-inlining is added. Unsupported library callable shapes remain unsupported.
+cryptographic signature or a stable ABI. Eligible definitions can carry the
+separate optimization MIR section described below. Unsupported library callable shapes remain unsupported.
 
 Dependency-owned declarations retain their original identity when used as function
 parameters/results or nested fields. The consumer requires the defining artifact
@@ -3349,13 +3349,18 @@ order, result and policy against the imported interface, including unused rows.
 The native-only encoding remains byte-for-byte compatible.
 
 Optimized LLVM builds can specialize and inline these bodies at direct calls
-without access to the producer's sources. Debug builds, instrumented builds,
-cold and noinline functions, and calls through function pointers use native
-code. The initial profile covers straight-line scalar computations and local
-bindings. A failed checked operation transfers to the original native function
-with its original arguments so that it reports the producer's failure. This is
-valid for bodies whose computations have no externally observable effects
-before that transfer. Unsupported bodies retain their native definition.
+without access to the producer's sources. Builds at `-O0` use the native path. Cold functions, noinline functions
+and calls through function pointers also keep their native calls.
+The existing debug-info and instrumentation restrictions on compiled artifacts
+still apply. The profile covers straight-line integer and floating-point operations,
+local bindings, bounded private scalar helper calls and one borrowed scalar or
+plain record with directly addressed numeric fields. Field ordinals are checked
+against the interface and resolved against the consumer's own record layout.
+Reads see the latest assigned value. Stores become visible on the normal return.
+A failed check calls the original native definition with the original state,
+which preserves earlier observable writes and the producer's exact failure
+report. Branching or looping bodies, arbitrary calls, multiple references,
+ownership and custom cleanup currently use their native definitions.
 
 ### Precompiled standard library
 

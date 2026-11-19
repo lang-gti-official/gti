@@ -2,6 +2,9 @@ import "api.gti";
 
 int main() {
   int x = opaque(42);
-  return mix(uint64_t(x), uint64_t(5)) == uint64_t(47) &&
+  mut Pair state = {.low = uint64_t(7), .high = uint64_t(11)};
+  auto result = advance(state, uint64_t(x));
+  return result == uint64_t(38) && state.low == uint64_t(45) && state.high == uint64_t(38) &&
+         mix(uint64_t(x), uint64_t(5)) == uint64_t(47) &&
          checked_sum(40, 2) == 42 ? 0 : 1;
 }

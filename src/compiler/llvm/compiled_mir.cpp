@@ -35,11 +35,28 @@ void emit(Session &session, const CompiledScalarBinding &binding,
       values.push_back(copy->getArg(i));
   }
   std::vector<SemanticType> types = fn.parameterTypes;
+  const auto cellAddress = [&](unsigned cell) -> llvm::Value * {
+    const auto it =
+        std::find_if(fn.parameterTypes.begin(), fn.parameterTypes.end(),
+                     [](const SemanticType &t) {
+                       return t.kind == SemanticType::Reference;
+                     });
+    auto *base = values.at(it - fn.parameterTypes.begin());
+    if (!cell)
+      return base;
+    const auto &record = it->arguments.front();
+    auto &layouts = session.layouts();
+    const auto symbol =
+        layouts.instance(record).declaredFields.at(cell - 1).symbol;
+    return ir.CreateStructGEP(layouts.get(record).storage, base,
+                              layouts.fieldIndex(record, symbol));
+  };
   llvm::BasicBlock *fallback = nullptr;
   Scalars scalars(
       session, ir, [&](llvm::Value *invalid, DefinedFailureOutcome) {
-        // Replaying a pure body preserves the producer's failure record, source
-        // location and failure ABI. The successful path stays entirely in MIR.
+        // Replaying from the original inputs preserves the failure record,
+        // source location and failure ABI. The successful path stays entirely
+        // in MIR.
         if (!fallback)
           fallback = llvm::BasicBlock::Create(context, "native.failure", copy);
         auto *success = llvm::BasicBlock::Create(context, "ok", copy);
@@ -47,6 +64,12 @@ void emit(Session &session, const CompiledScalarBinding &binding,
         ir.SetInsertPoint(success);
       });
   for (const auto &step : binding.optimizationBody->steps) {
+    if (step.loadedCell) {
+      values.push_back(ir.CreateLoad(session.layouts().get(step.type).value,
+                                     cellAddress(*step.loadedCell)));
+      types.emplace_back(step.type);
+      continue;
+    }
     MirInstruction instruction;
     instruction.info.type = step.type;
     instruction.operation = step.operation;
@@ -63,6 +86,10 @@ void emit(Session &session, const CompiledScalarBinding &binding,
     values.push_back(scalars.compute(instruction, inputs));
     types.emplace_back(step.type);
   }
+  // Commit only after all guards succeed. Native failure replay therefore sees
+  // the exact original argument state even when MIR assigned before a check.
+  for (auto [cell, value] : binding.optimizationBody->writes)
+    ir.CreateStore(values.at(value), cellAddress(cell));
   ir.CreateStore(values.at(binding.optimizationBody->returned),
                  copy->getArg(*abi.resultDestination));
   ir.CreateRet(ir.getTrue());

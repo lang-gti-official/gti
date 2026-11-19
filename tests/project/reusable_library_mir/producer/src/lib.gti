@@ -11,3 +11,23 @@ export int checked_sum(int a, int b) {
 export [[noinline]] int opaque(int x) {
   return x;
 }
+
+export struct Pair {
+  mut uint64_t low = 0;
+  mut uint64_t high = 0;
+};
+
+uint64_t transition(uint64_t x, uint64_t mask) {
+  return x ^ mask;
+}
+
+export uint64_t advance(mut Pair& state, uint64_t mask) {
+  state.low = transition(state.low, mask);
+  state.high = state.high ^ state.low;
+  return state.high;
+}
+
+export int commit_then_add(mut int& state, int value) {
+  state = state ^ 1;
+  return state + value;
+}

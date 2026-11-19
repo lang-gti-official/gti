@@ -377,13 +377,13 @@ public:
   ScalarBackend(std::vector<CompiledScalarSignature> signatures,
                 SourceUnitId root, Backend &backend,
                 std::optional<ScalarSelection> selection = {},
-                std::vector<CompiledScalarImport> imported = {})
+                std::vector<CompiledScalarImport> imported = {},
+                CompiledMirBodies *mirOutput = nullptr)
       : signatures(std::move(signatures)), imports(std::move(imported)),
         root(root), producer(true), backend(backend),
-        selection(std::move(selection)) {}
+        selection(std::move(selection)), mirOutput(mirOutput) {}
   ScalarBackend(std::vector<CompiledScalarImport> imports, Backend &backend)
       : imports(std::move(imports)), backend(backend) {}
-  CompiledMirBodies optimizationBodies;
   bool interfaceNeedsSource() const { return needsSource; }
   const std::vector<CompiledScalarSignature> &selectedSignatures() const {
     return signatures;
@@ -427,12 +427,14 @@ public:
         (void)libraryIdentity(signatures);
         bound = CompiledScalarUnitBuilder().bindScoped(std::move(program),
                                                        exports, imports);
-        for (const auto &binding : bound->compiledScalarBindings()) {
-          if (!binding.imported) {
+        if (mirOutput) {
+          for (const auto &binding : bound->compiledScalarBindings()) {
+            if (binding.imported)
+              continue;
             const auto *function =
                 bound->mir().findFunctionInstance(binding.function);
-            if (auto body = projectCompiledMir(*function))
-              optimizationBodies.emplace(binding.symbol, std::move(body));
+            if (auto body = projectCompiledMir(bound->mir(), *function))
+              mirOutput->emplace(binding.symbol, std::move(body));
           }
         }
       } else {
@@ -453,6 +455,7 @@ private:
   bool needsSource = false;
   Backend &backend;
   std::optional<ScalarSelection> selection;
+  CompiledMirBodies *mirOutput = nullptr;
 };
 std::optional<ScalarSelection>
 producerSelection(const FrontendResult &frontend,
@@ -583,10 +586,17 @@ CompiledScalarLibraryResult buildScalarLibrary(
   auto frontend =
       detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
   auto selection = producerSelection(frontend, target, profile);
-  LlvmBackend native(libraryBackendOptions(request, profile));
+  const auto options = libraryBackendOptions(request, profile);
+  LlvmBackend native(options);
+  CompiledMirBodies optimizationBodies;
+  const bool optimizeImports =
+      options.optimization != LlvmCodegenOptimization::None &&
+      !options.debugInfo &&
+      options.instrumentation == LlvmInstrumentationMode::None;
   ScalarBackend backend(std::move(signatures), frontend.sourceGraph.entryUnit(),
                         native, std::move(selection),
-                        std::move(prepared.imports));
+                        std::move(prepared.imports),
+                        optimizeImports ? &optimizationBodies : nullptr);
   CompiledScalarLibraryResult result;
   result.sourceFiles = producerImplementations(frontend.sourceGraph);
   result.compilation = detail::generateArtifact(
@@ -626,7 +636,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
          std::move(prepared.dependencies),
          {{"unit.o", result.compilation.artifact->singleObject()}},
          metadata,
-         encodeCompiledMir(backend.optimizationBodies)});
+         encodeCompiledMir(optimizationBodies)});
   }
   return result;
 }
@@ -697,10 +707,12 @@ CompiledMirBodies checkedOptimizationBodies(
     auto found = bodies.find(compiledScalarSymbol(signature));
     if (found == bodies.end())
       continue;
+    const auto parameters = decodedKey(signature).parameters;
     if (signature.codegenAttributes.inlining == FunctionInlining::Never ||
         signature.codegenAttributes.cold ||
-        !verifyCompiledMir(*found->second, decodedKey(signature).parameters,
-                           signature.result))
+        !verifyCompiledMir(
+            *found->second, parameters, signature.result,
+            compiledMirInterfaceFields(signature.typeMetadata, parameters)))
       throw std::invalid_argument(
           "invalid compiled optimization MIR for exported signature");
     ++matched;

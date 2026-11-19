@@ -468,8 +468,9 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
         (!binding.imported ||
          binding.codegenAttributes.inlining == FunctionInlining::Never ||
          binding.codegenAttributes.cold ||
-         !verifyCompiledMir(*binding.optimizationBody, f->parameterTypes,
-                            f->returnType)))
+         !verifyCompiledMir(
+             *binding.optimizationBody, f->parameterTypes, f->returnType,
+             compiledMirFields(program.mir(), f->parameterTypes))))
       errors.push_back("invalid reusable MIR for compiled import");
     if ((!binding.imported && !program.compiledScalarProducer()) ||
         f->definitionKind != (binding.imported ? MirDefinitionKind::Declaration

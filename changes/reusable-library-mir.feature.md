@@ -1,1 +1,1 @@
-Optimized builds can inline eligible functions from a precompiled GTI library using verified MIR stored alongside its native code.
+Optimized builds can inline eligible functions from precompiled GTI libraries that ship MIR alongside native code, including numeric helpers that update borrowed state. Checked failures retain their original producer diagnostics.

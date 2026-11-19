@@ -10,4 +10,5 @@ $ python3 ../check_imports.py
 $ cp overflow.gti main.gti
 $ gti run --release
 ? 70
-stderr: integer_overflow
+stdout: 1
+stderr: integer_overflow in addition
