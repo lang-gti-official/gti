@@ -175,7 +175,7 @@ void expectSelectedDefinitions(const lang::FrontendResult &frontend,
       "compatibility_for_target",
       "compatibility_for_call",
   };
-  expect(!artifact.contents.empty(),
+  expect(!artifact.singleObject().empty(),
          "the shipped backend should accept the direct-call program");
   for (const std::string_view name : selected) {
     const lang::MirFunctionInstance *function =
@@ -459,7 +459,7 @@ int main() {
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
-  expect(!emit(frontend, frontend.mir, compatibility).contents.empty(),
+  expect(!emit(frontend, frontend.mir, compatibility).singleObject().empty(),
          "the passive direct-call bodies should emit from verified MIR");
 }
 
