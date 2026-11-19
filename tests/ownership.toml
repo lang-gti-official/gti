@@ -1453,6 +1453,7 @@ paths = [
   ".github/",
   ".gitea/",
   "scripts/validation_checks.py",
+  "scripts/fast_ci.py",
   "scripts/source_stdlib_ci.py",
   "scripts/example_gates.py",
   "tests/source_stdlib_ci_test.py",

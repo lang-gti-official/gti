@@ -1,0 +1,1 @@
+Use Enterprise runner capacity for complete macOS merge-queue coverage, four source-test jobs per platform reusing same-run compiler tools, and wider post-integration and daily test partitions. Preserve exact artifact provenance, complete coverage checks and per-runner memory limits.

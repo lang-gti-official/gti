@@ -207,7 +207,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
-| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue (one entry built at a time, up to five all-green entries merged per build, a two-hour check timeout) and the `CI gate` check required; no force pushes, deletion or bypass actors. |
+| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue (six entries built concurrently, up to five all-green entries merged per build, a two-hour check timeout) and the `CI gate` check required; no force pushes, deletion or bypass actors. |
 
 Checkpoint paths are literal files, including exact identities for deleted
 files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
@@ -923,9 +923,9 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` on both; every `gti-test` entry on Linux, and on macOS `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit; then the PR's declared T0/T1 tests the gate did not just run, on macOS only those in the `darwin` set) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` on both; runner/project/editor/example/unit baselines plus every source-test shard on both platforms, with four `fast-ui` jobs per platform reusing the native build; then the PR's declared T0/T1 tests the gate did not just run, on macOS only those in the `darwin` set) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | lint, workflow regressions and system-LLVM `fast` checks on Linux x64, plus macOS arm64 only when the repository variable `GTI_QUEUE_MACOS` is `true`, on the exact candidate (a bounded gate, as rustc and LLVM gate merges); the gate requires exactly the rows the plan scheduled and accepts a Linux-only result here and nowhere else. With the switch off (the default), macOS coverage is the PR's own check and post-integration full validation, so a macOS-only failure caused by the combination of queued PRs reaches main and full validation catches it |
+| `merge_group` | full | lint, workflow regressions, system-LLVM native builds and all fast source-test partitions on Linux x64 and macOS arm64 on the exact candidate. Enterprise capacity enables macOS by default (`GTI_QUEUE_MACOS` defaults to `true`); an explicit `false` is an outage override, under which macOS combination failures are caught after integration. The gate requires exactly the scheduled platforms and every test partition |
 | `workflow_dispatch` on main | full | the same bounded gate on both platforms, for recovery |
 | `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation, one concurrency group per commit (every push starts at once and is never cancelled or replaced by a later push; a repeated dispatch of one commit waits), so runs finish in any order and tip admission, nightly selection and the `main-broken` report order results by main's ancestry: production packaging and installed checks, bundled-release `integration` shards (Linux over the per-commit inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`; both leave out tests labelled `slow` and run runtime harnesses at `-O0`); its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | `schedule` daily, or `workflow_dispatch` (`sanitizers.yml`) | sanitizers | the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer on the commit the `nightly` tag names (or a dispatched commit on main or a `beta/*` line); its `Sanitizer verdict (<commit>)` is release-train evidence for cuts and promotions, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue or nightly |
@@ -934,6 +934,29 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | PR or merge group | lsp | lint, workflow regressions and the `lsp` lane on both platforms: the adapter rebuilt against an admitted full-CI compiler SDK, registered LSP/editor consumers, declared PR regressions, native smoke and installed checks; merge groups also package the complete toolchain with the reused compiler's provenance |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
+
+Enterprise runner capacity (2026-11-19) replaces the former five-macOS-runner
+assumption. Each platform builds once in `fast`, runs feedback and the
+runner/project/editor/example/unit baselines, and uploads only the four native
+tools needed by source tests. Four `fast-ui` jobs per platform configure the same
+CTest inventory without compiling, verify and restore those tools, then execute
+disjoint partitions of all `gti_test_ui_<i>` entries. There is no rotating macOS
+subset. The gate rejects failed, missing, duplicate or inconsistent partition
+reports; artifact and report identities bind to the candidate SHA, workflow run,
+platform and producer attempt. GitHub's failed-job retries may reuse successful
+artifacts/reports from earlier attempts of that exact run and SHA; future
+attempts and cross-run evidence are rejected. Archives have a fixed regular-file
+inventory and per-file checksums, with no archive-path extraction. These short-
+lived CI tools are not production archives or nightly evidence.
+
+Full validation uses 12 Linux and 6 macOS integration shards plus its separate
+production packaging jobs. The daily tier uses 6 Linux slow shards, 2 Linux O3
+shards, 2 macOS slow shards and 2 macOS O3 shards. Shard evidence still proves
+complete coverage. Per-runner memory-based build/test limits remain unchanged;
+Enterprise concurrency distributes work across machines, not extra compiler
+threads on one machine. The queue retains its six concurrent candidate builds,
+leaving headroom for PRs, full validation and daily jobs within the 50-macOS-job
+capacity. Publication concurrency remains serialized to protect channel state.
 
 `validation_checks.py shard` executes one cost-balanced shard of a test set.
 The frozen C++ backend is separated from default builds, tests and CI

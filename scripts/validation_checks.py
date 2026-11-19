@@ -33,7 +33,7 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml",
                         ".github/workflows/validation-retry.yml", ".github/workflows/auto-revert.yml"}
-FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
+FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/fast_ci.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
                          "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
                          "scripts/lsp_ci.py", "scripts/lsp_component.py", "scripts/lsp_compatibility.py"}
@@ -325,7 +325,7 @@ def admission(mode, results, event="pull_request", fast=None, trigger=None, queu
         required = set(LINT_JOBS)
         if mode == "full":
             # System-LLVM build and fast checks gate both the PR and the queue.
-            required |= {"fast"}
+            required |= {"fast", "fast-ui"}
         elif mode == "source-stdlib":
             required |= {"source-stdlib"}
         elif mode == "lsp":
@@ -1147,10 +1147,12 @@ def main(argv=None):
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
         return
     if args.command == "fast-matrix":
+        import fast_ci
         enabled = queue_macos_enabled(args.queue_macos)
         lines = ["matrix=" + json.dumps(fast_matrix(json.loads(args.rows), args.event, enabled),
                                         separators=(",", ":")),
-                 "queue_macos=" + ("true" if enabled else "false")]
+                 "queue_macos=" + ("true" if enabled else "false"),
+                 "test_matrix=" + json.dumps(fast_ci.matrix(fast_matrix(json.loads(args.rows), args.event, enabled)), separators=(",", ":"))]
         if args.output:
             with open(args.output, "a", encoding="utf-8") as output:
                 output.write("".join(line + "\n" for line in lines))

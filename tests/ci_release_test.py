@@ -526,7 +526,7 @@ def nightly_contract(root):
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
     gate = jobs(ci)["gate"]
-    assert "fast, source-stdlib, lsp]" in gate and "package" not in gate
+    assert "fast, fast-ui, source-stdlib, lsp]" in gate and "package" not in gate
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
         "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
@@ -893,7 +893,7 @@ def gti_test_tiers_contract(root):
     assert "queue_macos: ${{ steps.fast.outputs.queue_macos }}" in plan
     # The merge-queue macOS switch is a repository variable, read in the plan
     # the way the jobs read vars.GTI_JOBS, never hard-coded.
-    assert "GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS }}" in step
+    assert "GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS || 'true' }}" in step
     assert ('python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"\n'
             '          --rows "${GTI_FAST_ROWS}" --queue-macos "${GTI_QUEUE_MACOS}" --output "${GITHUB_OUTPUT}"') in step
     folded = step.split("GTI_FAST_ROWS: >-\n", 1)[1].split("        run:", 1)[0]
@@ -903,7 +903,7 @@ def gti_test_tiers_contract(root):
     # Linux runs every tier; macOS the platform entries plus one rotating
     # tests/ui shard, and full validation's darwin set runs the rest there.
     assert {row["platform"]: (row["os"], row["rotate"], row["gate"]) for row in rows} == {
-        "linux": ("ubuntu-24.04", 0, tiers), "darwin": ("macos-26", 1, "gti_test_ui|gti_unit_tests")}, rows
+        "linux": ("ubuntu-24.04", 0, tiers), "darwin": ("macos-26", 0, tiers)}, rows
     # What runs on each event and switch setting: both rows for a pull request
     # (its own gate, which admits it to the queue, needs the macOS row) and a
     # main dispatch; for a merge-queue candidate the Linux row alone, plus
@@ -973,12 +973,12 @@ def gti_test_tiers_contract(root):
     assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
     ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
-                   "name: Run the gti-test tiers",
+                   "name: Run the runner, project, editor, example and unit baselines",
                    "name: Hold new and modified gti-test cases to half their limit",
                    "name: Re-run the tests this pull request declares", "name: Upload gti-test reports"],
             "the tiers run after fast feedback, then the budget, then declared tests")
-    step = fast.split("name: Run the gti-test tiers", 1)[1].split("- name:", 1)[0]
-    assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in step and '-R "^(${GTI_GATE_TESTS})$"' in step
+    step = fast.split("name: Run the runner, project, editor, example and unit baselines", 1)[1].split("- name:", 1)[0]
+    assert '-R "^(gti_test_ui|gti_test_examples|gti_unit_tests)$"' in step
     declared = fast.split("name: Re-run the tests this pull request declares", 1)[1].split("- name:", 1)[0]
     assert "GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}" in declared
     assert '--platform "${GTI_PLATFORM}" --ran "${GTI_GATE_TESTS}"' in declared
@@ -1994,6 +1994,111 @@ def suite_measures_contract(root):
         run([sys.executable, str(root / "scripts" / script), "--self-test"], root, True)
 
 
+def fast_fanout_contract(root):
+    """One same-run build supplies disjoint, complete test partitions; bad
+    provenance, a failed/missing partition or a corrupt archive never admits."""
+    import copy
+    import io
+    fast = load_module(root / "scripts/fast_ci.py", "fast_ci_contract")
+    workflow = jobs((root / ".github/workflows/ci.yml").read_text())
+    assert "needs: [plan, fast]" in workflow["fast-ui"]
+    assert "cmake --build" not in workflow["fast-ui"]
+    assert "fromJSON(needs.plan.outputs.fast_test_matrix)" in workflow["fast-ui"]
+    assert "fast_ci.py pack" in workflow["fast"]
+    assert "fast_ci.py restore" in workflow["fast-ui"]
+    assert "fast_ci.py verify" in workflow["gate"]
+    assert "fast-source-*-${{ github.run_id }}" in workflow["gate"]
+    platforms = {"include": [{"platform": p, "os": p} for p in ("linux", "darwin")]}
+    rows = fast.matrix(platforms)["include"]
+    assert len(rows) == 8
+    names = [f"gti_test_ui_{i}" for i in range(1, 9)]
+    records = []
+    for row in rows:
+        ident = fast.identity("a" * 40, "42", "1", row["platform"])
+        records.append(dict(identity=ident, inventory=names, selected=fast.selection(names, row["index"]),
+                            index=row["index"], shards=4, passed=True))
+    for platform in ("linux", "darwin"):
+        selected = [n for r in records if r["identity"]["platform"] == platform for n in r["selected"]]
+        assert sorted(selected) == names
+    fast.verify(records, platforms, "a" * 40, "42", "1")
+    fast.verify(records, platforms, "a" * 40, "42", "2")  # successful jobs survive a retry
+    bads = [records[:-1], records + records[:1]]
+    for field, value in [("passed", False), ("selected", names), ("inventory", names[:-1]), ("shards", 3)]:
+        bad = copy.deepcopy(records); bad[0][field] = value; bads.append(bad)
+    for field, value in [("source", "b" * 40), ("run", "43"), ("attempt", "2"), ("platform", "windows")]:
+        bad = copy.deepcopy(records); bad[0]["identity"][field] = value; bads.append(bad)
+    for bad in bads:
+        try:
+            fast.verify(bad, platforms, "a" * 40, "42", "1")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("admitted incomplete or wrong-source fanout")
+    with tempfile.TemporaryDirectory(prefix="gti-fast-partition-") as directory:
+        home = pathlib.Path(directory)
+        cmake = "cmake_minimum_required(VERSION 3.20)\nproject(fast_fanout NONE)\nenable_testing()\n"
+        cmake += "".join(f'add_test(NAME {name} COMMAND "${{CMAKE_COMMAND}}" -E true)\n' for name in names)
+        (home / "CMakeLists.txt").write_text(cmake)
+        run(["cmake", "-S", str(home), "-B", str(home / "build")], root)
+        ident = fast.identity("a" * 40, "42", "1", "linux")
+        report = home / "report.json"
+        fast.run(home / "build", 0, report, ident, 2)
+        assert json.loads(report.read_text())["passed"]
+        (home / "CMakeLists.txt").write_text(cmake + "set_tests_properties(gti_test_ui_1 PROPERTIES DISABLED TRUE)\n")
+        run(["cmake", "-S", str(home), "-B", str(home / "build")], root)
+        try:
+            fast.run(home / "build", 0, report, ident, 2)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted a disabled source-test partition member")
+        assert not json.loads(report.read_text())["passed"]
+    with tempfile.TemporaryDirectory(prefix="gti-fast-ci-test-") as directory:
+        home = pathlib.Path(directory); build = home / "build"; build.mkdir()
+        for name in fast.TOOLS:
+            (build / name).write_bytes((name + " native fixture").encode())
+        archive = home / "tools.tar.gz"
+        ident = fast.identity("a" * 40, "42", "1", "linux")
+        fast.pack(build, archive, ident)
+        output = home / "restored"
+        fast.restore(output, archive, ident)
+        assert all((build / n).read_bytes() == (output / n).read_bytes() for n in fast.TOOLS)
+        assert (output / "gti").stat().st_mode & 0o111
+        for key, value in [("source", "b" * 40), ("run", "43"), ("platform", "darwin")]:
+            try:
+                fast.restore(output, archive, {**ident, key: value})
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("accepted wrong native-tool provenance")
+        fast.restore(output, archive, {**ident, "attempt": "2"})
+        with tarfile.open(archive) as tar:
+            original = [(m, tar.extractfile(m).read()) for m in tar.getmembers()]
+        for kind in ("missing", "duplicate", "link", "corrupt", "traversal", "future"):
+            altered = home / (kind + ".tar.gz")
+            with tarfile.open(altered, "w:gz") as tar:
+                for member, data in original:
+                    member = copy.copy(member)
+                    if member.name == "gti":
+                        if kind == "missing": continue
+                        if kind == "link": member.type = tarfile.SYMTYPE; member.linkname = "/tmp/escape"
+                        if kind == "traversal": member.name = "../gti"
+                        if kind == "corrupt": data = b"x" * len(data)
+                    if kind == "future" and member.name == "manifest.json":
+                        doc = json.loads(data); doc["identity"]["attempt"] = "2"
+                        data = json.dumps(doc).encode(); member.size = len(data)
+                    tar.addfile(member, io.BytesIO(data) if member.isfile() else None)
+                    if kind == "duplicate" and member.name == "gti": tar.addfile(member, io.BytesIO(data))
+            before = (output / "gti").read_bytes()
+            try:
+                fast.restore(output, altered, ident)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("accepted " + kind + " archive")
+            assert (output / "gti").read_bytes() == before
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=pathlib.Path)
@@ -2001,6 +2106,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     workflow_contract(root)
+    fast_fanout_contract(root)
     suite_measures_contract(root)
     installed_system_command_contract(root)
     change_review_contract(root)
