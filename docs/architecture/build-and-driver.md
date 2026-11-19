@@ -917,6 +917,26 @@ evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
 totals, attributes cost; a region that runs many times (instance analyses,
 staged evaluations) is best read as a count and a total.
 
+### LLVM code generation units
+
+`gti app.gti --codegen-units 8 --codegen-threads 4` splits machine-code
+generation into eight ordered objects and uses up to four workers. Both options
+are also available for project executable builds. Values range from 1 to 256,
+and the default unit count is 1. The default worker limit is the smaller of
+the unit count and available hardware threads. `gti build --all` caps each
+child's workers by the hardware budget divided by concurrent target builds.
+
+The unit count and partitioner version enter the executable cache identity.
+Worker count changes scheduling only. LLVM IR output remains the optimized
+whole-program module. Compiled-scalar and embedding libraries and instrumented
+builds require a single unit.
+
+For split debug builds on Darwin, the driver collects the dSYM, then removes
+the Mach-O debug map's temporary object paths from the staged executable.
+LLDB finds the dSYM by UUID, and worker-count changes leave the executable
+bytes stable. The cache fingerprints both symbol collection and stripping tools.
+
+
 ## Direct Mode
 
 Executable requests explicitly require a compiler-selected global `main`

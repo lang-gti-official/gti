@@ -1,0 +1,12 @@
+class Guard {
+  int value;
+public:
+  Guard(int value) : value(value) {}
+  ~Guard() { std::println(this.value); }
+};
+
+Guard first{1};
+Guard second{2};
+
+[[noinline]] int twice(int value) { return value * 2; }
+int main() { return twice(21) != 42 ? 1 : 0; }

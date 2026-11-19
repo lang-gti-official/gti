@@ -6616,6 +6616,24 @@ ordinary source construction, publication, transfer and cleanup integration.
 Cleanup-bearing structural relocation, boxed dynamic cleanup, and full callable
 execution remain prerequisites before admitting existing source wrappers.
 
+### LLVM code generation units
+
+[RFC 0006](https://github.com/lang-gti-official/rfcs/pull/7) places code
+generation units after the final whole-module LLVM verification. LLVM's
+name-based partitioner assigns definitions to a fixed number of ordered units.
+Private or internal definitions referenced across units get stable reserved
+names and hidden external linkage. Local-only definitions keep their original
+linkage and name. The partition keeps a single definition for text literals,
+TLS, and startup and shutdown data.
+
+The owning thread serializes each partition to bitcode. Bounded workers parse
+one unit at a time into their own LLVM contexts and create their own target
+machines. They run machine-code generation without a second IR optimization
+pipeline. The driver links and caches the resulting objects in unit order.
+Failures are reported in unit order after joining all workers, with no
+partial backend artifact returned. Compiler validation checks definition
+coverage, linkage and the LLVM verifier for each partition.
+
 ### Source function optimization policy
 
 Semantics resolves function attributes to `FunctionCodegenAttributes`, containing
