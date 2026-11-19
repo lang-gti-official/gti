@@ -944,8 +944,19 @@ if(APPLE)
     "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
 endif()
 
+file(GLOB GTI_STDLIB_FACADES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/stdlib-bundles/facades/*.gti")
+set(GTI_STDLIB_REGISTRY "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/installed_stdlib_modules.inc")
+add_custom_command(
+  OUTPUT "${GTI_STDLIB_REGISTRY}"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_stdlib_bundles.py"
+          --write-registry "${GTI_STDLIB_REGISTRY}"
+  DEPENDS scripts/build_stdlib_bundles.py cmake/stdlib-bundles/gti.toml ${GTI_STDLIB_FACADES}
+  VERBATIM
+)
 add_library(
   "gti_driver" STATIC
+  "${GTI_STDLIB_REGISTRY}"
   "src/driver/library_bundle.cpp"
   "src/driver/compiled_scalar_library.cpp"
   "src/driver/embedding_library.cpp"

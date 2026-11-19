@@ -1,5 +1,7 @@
 export module kernels;
 
+import std.numeric;
+
 export uint64_t mix(uint64_t x, uint64_t mask) {
   return x ^ mask;
 }
@@ -30,4 +32,12 @@ export uint64_t advance(mut Pair& state, uint64_t mask) {
 export int commit_then_add(mut int& state, int value) {
   state = state ^ 1;
   return state + value;
+}
+
+export uint8_t add_byte(uint8_t input, uint8_t delta) {
+  return std::saturating_add(input, delta);
+}
+
+export int16_t multiply_word(int16_t input, int16_t delta) {
+  return std::saturating_mul(input, delta);
 }

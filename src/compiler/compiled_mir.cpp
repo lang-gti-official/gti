@@ -13,9 +13,7 @@ using Op = MirOperation;
 constexpr unsigned maxSteps = 192;
 constexpr std::string_view magic = "GTIMIR01";
 
-bool integer(T::Kind t) {
-  return t == T::Int32 || t == T::UInt32 || t == T::Int64 || t == T::UInt64;
-}
+bool integer(T::Kind t) { return constantIntegerDomain(t).has_value(); }
 bool numeric(T::Kind t) {
   return integer(t) || t == T::Float || t == T::Double;
 }
@@ -71,19 +69,24 @@ bool validStep(const CompiledMirStep &s, std::span<const T> types) {
       std::any_of(s.inputs.begin(), s.inputs.end(),
                   [&](unsigned i) { return i >= types.size(); }))
     return false;
-  if (s.operation == Op::Literal && s.intrinsic == IntrinsicKind::None)
+  if (s.operation == Op::Literal && s.intrinsic == IntrinsicKind::None) {
+    const auto domain = constantIntegerDomain(s.type);
     return s.inputs.empty() && (s.type != T::Bool || s.literalBits <= 1) &&
-           ((s.type != T::Float && s.type != T::UInt32 && s.type != T::Int32) ||
-            s.literalBits <= UINT32_MAX);
+           (s.type != T::Float || s.literalBits <= UINT32_MAX) &&
+           (!domain || s.literalBits <= checkedIntegerMask(*domain));
+  }
   if (s.literalBits || s.inputs.empty())
     return false;
   const auto a = types[s.inputs[0]].kind;
   if (s.intrinsic != IntrinsicKind::None) {
     auto intrinsic = integerArithmeticIntrinsic(s.intrinsic);
-    return s.operation == Op::None && intrinsic &&
-           intrinsic->mode == IntegerArithmeticMode::Wrapping &&
-           s.inputs.size() == 2 && integer(a) && types[s.inputs[1]] == a &&
-           s.type == a;
+    if (s.operation != Op::None || !intrinsic || s.inputs.size() != 2 ||
+        !integer(a) || types[s.inputs[1]] != a)
+      return false;
+    return s.type ==
+           (intrinsic->mode == IntegerArithmeticMode::OverflowPredicate
+                ? T::Bool
+                : a);
   }
   if (s.inputs.size() == 1) {
     switch (s.operation) {
@@ -490,8 +493,7 @@ CompiledMirBodies decodeCompiledMir(std::string_view bytes) {
     for (unsigned j = 0; j < n; ++j) {
       auto op = in.word(), intrinsic = in.word(), type = in.word();
       if (op >= static_cast<unsigned>(Op::Count) ||
-          intrinsic >
-              static_cast<unsigned>(IntrinsicKind::IntegerWrappingMultiply) ||
+          intrinsic >= static_cast<unsigned>(IntrinsicKind::Count) ||
           type > static_cast<unsigned>(T::Bool))
         Reader::invalid();
       CompiledMirStep step{static_cast<Op>(op),
@@ -499,6 +501,9 @@ CompiledMirBodies decodeCompiledMir(std::string_view bytes) {
                            static_cast<T::Kind>(type),
                            {},
                            0};
+      if (!scalar(step.type) || (step.intrinsic != IntrinsicKind::None &&
+                                 !integerArithmeticIntrinsic(step.intrinsic)))
+        Reader::invalid();
       step.literalBits = in.word();
       step.literalBits |= std::uint64_t(in.word()) << 32;
       auto cell = in.word();

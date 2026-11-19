@@ -6,12 +6,18 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
+import tomllib
 
 
 def verify(stage):
     stage = stage.resolve()
     fixture = Path(__file__).resolve().parent
+    manifest = fixture.parents[2] / "cmake/stdlib-bundles/gti.toml"
+    with manifest.open("rb") as stream:
+        targets = tomllib.load(stream)["targets"]
+    entries = [Path(t["root"]).relative_to("stdlib") for t in targets.values()]
     with tempfile.TemporaryDirectory(prefix="gti-installed-stdlib-") as temporary:
         root = Path(temporary)
         stdlib = root / "stdlib"
@@ -23,7 +29,7 @@ def verify(stage):
         with (stage / "bin/gti").open("rb") as stream:
             compiler_digest = hashlib.file_digest(stream, "sha256").hexdigest().encode()
         for profile in ("dev", "release"):
-            for name in ("cmath", "random"):
+            for name in targets:
                 bundle, = bundles.glob(f"*/{profile}/{name}.gtilib")
                 with bundle.open("rb") as stream:
                     header = stream.read(20)
@@ -36,8 +42,8 @@ def verify(stage):
                         target = b"arm64-apple-macosx11.0.0"
                         if stream.read(4 + len(target)) != struct.pack("<I", len(target)) + target:
                             raise RuntimeError(f"{bundle} must target the macOS arm64 baseline across OS updates")
-        (stdlib / "std/cmath.gti").unlink()
-        (stdlib / "std/detail/random_engine.gti").unlink()
+        for entry in entries:
+            (stdlib / entry).unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
@@ -66,6 +72,13 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("run", *profile)
 
+        # These reference vectors exercise the public draw loop. Its body must
+        # be visible after packaging; only seed initialization needs a native call.
+        random_bundle, = bundles.glob("*/release/random.gtilib")
+        executable, = project.glob("build/gti/release/*/app")
+        subprocess.run([sys.executable, fixture.parent / "reusable_library_mir/check_imports.py",
+                        random_bundle, executable], check=True)
+
         # One executable can import its own compiled library and the installed
         # standard library in the same source graph.
         mixed = root / "mixed"
@@ -82,28 +95,31 @@ def verify(stage):
         if not list(mixed.glob("build/gti/release/*/mixed-lib.gtilib")):
             raise RuntimeError("mixed consumer did not build its inferred library")
         # Replace just the random bundle with a second, valid producer output.
-        # The warm mixed executable must observe the change in its second
+        # The warm executable must observe each change, to native seed or MIR draw, in its second
         # dependency even though its source and math bundle are unchanged.
         producer = root / "producer"
         producer.mkdir()
         producer_stdlib = producer / "stdlib"
         shutil.copytree(stage / "share/gti/stdlib", producer_stdlib)
-        shutil.copyfile(fixture.parents[2] / "cmake/stdlib-bundles/gti.toml", producer / "gti.toml")
+        shutil.copyfile(manifest, producer / "gti.toml")
         implementation = producer_stdlib / "std/detail/random_engine.gti"
-        implementation.write_text(implementation.read_text().replace(
-            "return state;", "state.s0 = uint64_t(0); return state;"))
+        producer_source = implementation.read_text()
         producer_env = dict(env, GTI_STDLIB_PATH=str(producer_stdlib))
-        run("build", "random", "--release", cwd=producer, environment=producer_env)
-        alternate, = (producer / "build/gti/release").glob("*/random.gtilib")
         destination, = bundles.glob("*/release/random.gtilib")
         original = destination.read_bytes()
-        destination.write_bytes(alternate.read_bytes())
-        run("build", "--release", cwd=mixed)
         executable = mixed / "build/gti/release" / destination.parents[1].name / "mixed"
-        if subprocess.run([executable], cwd=mixed).returncode != 1:
-            raise RuntimeError("warm executable did not use the replacement random bundle")
-        destination.write_bytes(original)
-        run("run", "--release", cwd=mixed)
+        for old, new in (("return state;", "state.s0 = uint64_t(0); return state;"),
+                         ("return result;", "return result ^ uint64_t(1);")):
+            assert producer_source.count(old) == 1
+            implementation.write_text(producer_source.replace(old, new))
+            run("build", "random", "--release", cwd=producer, environment=producer_env)
+            alternate, = (producer / "build/gti/release").glob("*/random.gtilib")
+            shutil.copyfile(alternate, destination)
+            run("build", "--release", cwd=mixed)
+            if subprocess.run([executable], cwd=mixed).returncode != 1:
+                raise RuntimeError("warm executable did not use the replacement random bundle")
+            destination.write_bytes(original)
+            run("run", "--release", cwd=mixed)
 
         # The previous release run left a valid warm executable. A damaged
         # receipt must still fail before any cache hit can publish that output.
@@ -130,9 +146,9 @@ def verify(stage):
 
         # A toolchain-owned module whose transitive source depends on a flag
         # must never be stamped as independent of the application's flags.
-        for implementation in ("std/cmath.gti", "std/detail/random_engine.gti"):
+        for implementation in entries:
             shutil.copyfile(stage / "share/gti/stdlib" / implementation, stdlib / implementation)
-        shutil.copyfile(fixture.parents[2] / "cmake/stdlib-bundles/gti.toml", root / "gti.toml")
+        shutil.copyfile(manifest, root / "gti.toml")
         companion = stdlib / "std/detail/cmath_declarations.gti"
         with companion.open("a") as stream:
             stream.write("\n#ifdef NDEBUG\n#endif\n")

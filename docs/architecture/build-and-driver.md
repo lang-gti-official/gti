@@ -3352,7 +3352,8 @@ Optimized LLVM builds can specialize and inline these bodies at direct calls
 without access to the producer's sources. Builds at `-O0` use the native path. Cold functions, noinline functions
 and calls through function pointers also keep their native calls.
 The existing debug-info and instrumentation restrictions on compiled artifacts
-still apply. The profile covers straight-line integer and floating-point operations,
+still apply. The profile covers straight-line arithmetic at every fixed integer width, including
+wrapping, saturating and overflow predicates, as well as floating-point operations,
 local bindings, bounded private scalar helper calls and one borrowed scalar or
 plain record with directly addressed numeric fields. Field ordinals are checked
 against the interface and resolved against the consumer's own record layout.
@@ -3366,10 +3367,10 @@ ownership and custom cleanup currently use their native definitions.
 
 The native Linux x64 and macOS arm64 toolchains ship two libraries in
 `share/gti/precompiled-stdlib/<target>/<profile>/`. `cmath.gtilib` contains
-the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64 seed expansion
-for `std::random_engine`. It returns the four-word state by value. The public
-class keeps the xoshiro256++ transition in source so an optimized draw loop
-can carry that state in registers.
+the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64
+seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
+The release artifact supplies the draw's MIR, so a caller can keep state in
+registers across iterations after the engine implementation source is removed.
 `std::random_device` retains its source implementation and OS entropy backend.
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release object when an import or re-export reaches the
@@ -3395,8 +3396,16 @@ the names and digests of the reached bundles participate in the cache key in
 name order. An executable importing both modules shares one compiler/runtime
 compatibility check. Unused bundles are never opened. Both paths hash the full
 compiler and runtime files with the same SHA-256 routine used by the build
-cache. Unsupported configurations
-use source. Serialized generic bodies and MIR are outside this first module.
+cache. Unsupported configurations use source.
+
+To ship another module, declare its library target and exports in
+`cmake/stdlib-bundles/gti.toml` and place its source facade in
+`cmake/stdlib-bundles/facades/<target>.gti`. The compiler embeds that catalog
+at build time. Staging and release packaging use the same target inventory.
+The facade re-exports the compiled interface and any source companion needed
+for early constants or generic instantiation. Add a consumer that imports the
+public module with the implementation source removed. For a hot function,
+also check optimized code generation or compare source and packaged execution.
 
 ### Compiled-library project requests
 

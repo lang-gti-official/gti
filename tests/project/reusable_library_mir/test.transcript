@@ -6,7 +6,7 @@ $ cd ..
 $ rm -r producer
 $ cd consumer
 $ gti run --release
-$ python3 ../check_imports.py
+$ sh -c "python3 ../check_imports.py kernels.gtilib build/gti/release/*/app"
 $ cp overflow.gti main.gti
 $ gti run --release
 ? 70

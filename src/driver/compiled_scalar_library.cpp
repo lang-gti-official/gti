@@ -1156,13 +1156,7 @@ loadExecutableInputs(const CompilationRequest &request,
     std::string_view facade;
   };
   static constexpr InstalledModule modules[] = {
-      {"cmath", "std/cmath.gti",
-       "export module cmath;\n"
-       "export import \"detail/cmath_declarations.gti\";\n"
-       "export import \"../.gti-compiled-cmath.gti\";\n"},
-      {"random", "std/detail/random_engine.gti",
-       "export module detail.random_engine;\n"
-       "export import \"../../.gti-compiled-random.gti\";\n"},
+#include "gti/installed_stdlib_modules.inc"
   };
   std::optional<AdmissionEnvironment> system;
   struct LoadedModule {

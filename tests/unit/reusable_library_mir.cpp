@@ -70,5 +70,26 @@ GTI_UNIT_TEST(reusable_library_mir) {
   store.writes[0] = 0;
   if (accepts(store, borrowed))
     throw std::runtime_error("accepted reference as numeric value");
+
+  const std::array<T, 2> byteParameters{T::UInt8, T::UInt8};
+  CompiledMirBody predicate;
+  predicate.steps.push_back({MirOperation::None,
+                             IntrinsicKind::IntegerAddOverflows,
+                             T::Bool,
+                             {0, 1}});
+  predicate.returned = 2;
+  if (!verifyCompiledMir(predicate, byteParameters, T::Bool, {}))
+    throw std::runtime_error("rejected byte overflow predicate");
+  predicate.steps[0].type = T::UInt8;
+  if (verifyCompiledMir(predicate, byteParameters, T::UInt8, {}))
+    throw std::runtime_error("accepted integer result for overflow predicate");
+  CompiledMirBody byteLiteral;
+  byteLiteral.steps.push_back(
+      {MirOperation::Literal, IntrinsicKind::None, T::UInt8, {}, 255});
+  if (!verifyCompiledMir(byteLiteral, {}, T::UInt8, {}))
+    throw std::runtime_error("rejected maximum byte literal");
+  byteLiteral.steps.front().literalBits = 256;
+  if (verifyCompiledMir(byteLiteral, {}, T::UInt8, {}))
+    throw std::runtime_error("accepted truncated byte literal");
   return 0;
 }
