@@ -2292,8 +2292,19 @@ mirFieldTypeThroughBases(const MirProgram &program,
             functionTarget->returnBorrowFields.size() == 1 &&
             functionTarget->returnBorrowFields.front().origin ==
                 BorrowOriginKind::Receiver &&
-            functionTarget->returnBorrowFields.front().sourceFields.size() ==
-                1 &&
+            [&] {
+              if (ownerClass == nullptr)
+                return false;
+              const auto paths =
+                  findStoredCarrierReferences(program, ownerClass->type);
+              const auto &mapping = functionTarget->returnBorrowFields.front();
+              return std::any_of(paths.begin(), paths.end(),
+                                 [&](const MirStoredCarrierReference &path) {
+                                   return path.fields == mapping.sourceFields &&
+                                          path.conditions ==
+                                              mapping.sourceConditions;
+                                 });
+            }() &&
             functionTarget->returnBorrowFields.front().resultFields.empty() ==
                 (functionTarget->returnType.kind == SemanticType::Reference) &&
             functionTarget->returnBorrowFields.front()

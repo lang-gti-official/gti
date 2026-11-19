@@ -7,12 +7,12 @@ import std.functional;
 import std.utility;
 namespace std {
 namespace detail {
-class unordered_set_key_iterator<K> {
-  mut unordered_map_iterator<K, bool> cursor;
+class unordered_set_key_iterator<K, lifetime owner> {
+  mut unordered_map_iterator<K, bool, owner> cursor;
 public:
-  unordered_set_key_iterator(unordered_map_iterator<K, bool> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  unordered_set_key_iterator(unordered_map_iterator<K, bool, owner> cursor) : cursor(std::move(cursor)) {}
+  K&<owner> operator*() { return this.cursor->first; }
+  K&<owner> operator->() { return this.cursor->first; }
   void operator++() mut { ++this.cursor; }
   bool operator!=(unordered_map_sentinel end) { return this.cursor != end; }
   bool operator==(unordered_map_sentinel end) { return this.cursor == end; }

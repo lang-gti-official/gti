@@ -8,12 +8,12 @@ import std.utility;
 namespace std {
 namespace detail {
 /// Projects immutable keys while preserving the underlying iterator's loan.
-class set_key_iterator<K, uint64_t Reverse = 0> {
-  mut map_iterator<K, bool, Reverse> cursor;
+class set_key_iterator<K, uint64_t Reverse = 0, lifetime owner> {
+  mut map_iterator<K, bool, Reverse, owner> cursor;
 public:
-  set_key_iterator(map_iterator<K, bool, Reverse> cursor) : cursor(std::move(cursor)) {}
-  K& operator*() { return this.cursor->first; }
-  K& operator->() { return this.cursor->first; }
+  set_key_iterator(map_iterator<K, bool, Reverse, owner> cursor) : cursor(std::move(cursor)) {}
+  K&<owner> operator*() { return this.cursor->first; }
+  K&<owner> operator->() { return this.cursor->first; }
   void operator++() mut { ++this.cursor; }
   void operator--() mut { --this.cursor; }
   bool operator!=(map_sentinel end) { return this.cursor != end; }

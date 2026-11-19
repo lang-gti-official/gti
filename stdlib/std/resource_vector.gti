@@ -71,24 +71,24 @@ public:
   size_t position() { return this.finish; }
 };
 
-class resource_vector_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0> {
+class resource_vector_iterator<std::storage_element T, std::memory_resource R, uint64_t Reverse = 0, lifetime owner> {
   // The source-owner/resource loan keeps the live prefix extent stable.
   size_t final_position;
-  resource_prefix_owner<T, R>& slots;
+  resource_prefix_owner<T, R>&<owner> slots;
   mut size_t position;
 public:
-  resource_vector_iterator(resource_prefix_owner<T, R>& slots, size_t position)
+  resource_vector_iterator(resource_prefix_owner<T, R>&<owner> slots, size_t position)
       : final_position(slots.length()), slots(slots), position(position) {
     if (position > this.final_position) { gti_internal::index_bounds_check(position, this.final_position); }
   }
-  T& operator*() {
+  T&<owner> operator*() {
     mut size_t position = this.position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, size_t(0), this.slots.length(), ptrdiff_t(-1));
     }
     return this.slots.get(position);
   }
-  T& operator->() { return *this; }
+  T&<owner> operator->() { return *this; }
   void operator++() mut {
     this.position = detail::checked_iterator_step<Reverse>(
         this.position, size_t(0), this.final_position);
@@ -105,7 +105,7 @@ public:
     this.position = detail::checked_iterator_position(
         this.position, size_t(0), this.slots.length(), offset, Reverse == 0);
   }
-  T& operator[](ptrdiff_t offset) {
+  T&<owner> operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(
         this.position, size_t(0), this.slots.length(), offset, Reverse != 0);
     if constexpr (Reverse != 0) {

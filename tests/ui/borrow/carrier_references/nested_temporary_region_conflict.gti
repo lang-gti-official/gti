@@ -1,0 +1,20 @@
+// A nested temporary carrier reference keeps its external owner borrowed.
+class Inner<T, lifetime owner> {
+  T&<owner> value;
+public:
+  Inner(T&<owner> value) : value(value) {}
+  T&<owner> get() { return this.value; }
+};
+class Outer<T, lifetime owner> {
+  Inner<T, owner> inner;
+public:
+  Outer(T&<owner> value) : inner(Inner<T>(value)) {}
+  T&<owner> get() { return this.inner.get(); }
+};
+Outer<T> make<T>(T& value) { return Outer<T>(value); }
+int main() {
+  mut int value = 7;
+  int& result = make(value).get();
+  value = 8; //~ ERROR GTI-S2017
+  return result;
+}
