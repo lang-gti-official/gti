@@ -1034,8 +1034,12 @@ declarations" in [mir.md](mir.md)). Some MIR rules still verify a call or a
 summary only against a lowered body, so a signature-only analysis can be
 rejected where complete lowering is accepted, never the reverse. The LSP
 therefore publishes a signature-only analysis that MIR accepts, and when MIR
-rejects one it analyses the snapshot again with library-only bodies and
-publishes that result. After a clean confirmation, up to eight subsequent
+rejects one it retains the parsed program and its live semantic environment.
+HIR discovers and lowers the required library bodies in that environment, and
+MIR verifies the resulting program, including borrow, lifetime, cleanup and
+persistent-storage checks. Only the confirmation's diagnostics are published.
+A previously unmet semantic demand still takes the ordinary bounded demand
+path. This reuse is confined to the current source snapshot. After a clean confirmation, up to eight subsequent
 successful edits in the same open document start with complete library bodies.
 An error before HIR preserves this preference. Closing the file, analysing a
 dependency or project change, or exhausting the window restores the ordinary

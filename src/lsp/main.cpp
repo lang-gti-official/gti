@@ -3689,6 +3689,8 @@ private:
       return result;
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
+    frontendOptions.confirmSignatureOnlyMir =
+        !frontendOptions.lowerLibraryOnlyInstanceBodies;
     const auto analyze = [&] {
       ++result.frontendPasses;
       return analyzeSource(*filePath, request, project, frontendOptions);
@@ -3702,20 +3704,6 @@ private:
                      .analyzeParsed(*filePath, std::move(*resume->frontend),
                                     observer)
                : analyze();
-    // MIR still verifies some calls and its interprocedural summaries
-    // (defined-failure effects, persistent-storage access, text relays) only
-    // against lowered callee bodies. Confirm a rejection from scoped MIR
-    // with the full bodies before publishing it.
-    const auto needsCompleteMir = [&](const lang::FrontendResult &candidate) {
-      return !candidate.cancelled && candidate.sourceValid &&
-             candidate.syntaxValid &&
-             (candidate.semanticValid || candidate.mirBorrowRejected) &&
-             candidate.hirValid && candidate.failureMetadataValid &&
-             !candidate.mirValid &&
-             result.workMetrics.hirOmittedInstanceBodies != 0 &&
-             (request.cancellation == nullptr ||
-              !request.cancellation->load(std::memory_order_relaxed));
-    };
     // Remember only a choice of lowering order. Always check the current
     // source. Periodically probe again so a changed program can recover the
     // cheaper path. An early semantic error does not use up a MIR attempt.
@@ -3732,7 +3720,10 @@ private:
         frontendOptions.lowerLibraryOnlyInstanceBodies = false;
         auto completeMetrics = std::move(result.workMetrics);
         auto scoped = analyze();
-        if (needsCompleteMir(scoped)) {
+        if (scoped.needsLibraryBodyConfirmation(
+                result.workMetrics.hirOmittedInstanceBodies) &&
+            !(request.cancellation &&
+              request.cancellation->load(std::memory_order_relaxed))) {
           frontendOptions.lowerLibraryOnlyInstanceBodies = true;
           result.workMetrics = std::move(completeMetrics);
           result.remainingCompleteMirEdits = 0;
@@ -3741,10 +3732,8 @@ private:
           frontend = std::move(scoped);
         }
       }
-    } else if (needsCompleteMir(frontend)) {
+    } else if (frontend.confirmedWithLibraryBodies) {
       result.mirSignatureOnlyFallback = true;
-      frontendOptions.lowerLibraryOnlyInstanceBodies = true;
-      frontend = analyze();
       if (frontend.mirValid && frontend.diagnostics.empty())
         result.remainingCompleteMirEdits = completeMirWindow;
     }
