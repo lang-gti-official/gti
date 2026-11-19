@@ -8,7 +8,7 @@ int wrong_return_context() {
 
 expected<int, bool> wrong_error_type() {
   expected<int, int> result = 1;
-  return ?result;  //~ ERROR GTI-S2086
+  return ?result;  //~ ERROR GTI-S2029
 }
 
 class MoveOnly {
