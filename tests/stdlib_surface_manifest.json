@@ -7631,12 +7631,23 @@
       ]
     },
     {
-      "id": "string-view.sub-views",
+      "id": "string-view.text-operations",
       "source": "stdlib/std/string_view.gti",
       "status": "executable",
       "operations": [
+        "std::string_view::at",
+        "std::string_view::back",
+        "std::string_view::compare",
+        "std::string_view::contains",
+        "std::string_view::ends_with",
+        "std::string_view::find",
+        "std::string_view::front",
+        "std::string_view::npos",
+        "std::string_view::operator ordering",
         "std::string_view::remove_prefix",
         "std::string_view::remove_suffix",
+        "std::string_view::rfind",
+        "std::string_view::starts_with",
         "std::string_view::substr"
       ],
       "case_ids": [
@@ -7646,7 +7657,10 @@
         "literal-backed and owner-backed sources",
         "clamped count, empty result and position equal to size",
         "owner relay through by-value view parameters and view fields",
-        "in-place shrinking of a writable view"
+        "in-place shrinking of a writable view",
+        "counted search including embedded NUL and empty needles",
+        "unsigned-byte comparison and checked character access at runtime and compile time",
+        "argument-free substring with the original owner dependency"
       ],
       "evidence": [
         "tests/fixtures/text_view_subview.gti",
@@ -7810,7 +7824,14 @@
         "std::string::replace",
         "std::string::rfind",
         "std::string::starts_with",
-        "std::string::substr"
+        "std::string::substr",
+        "std::string_view::compare(string&)",
+        "std::string_view::contains(string&)",
+        "std::string_view::ends_with(string&)",
+        "std::string_view::find(string&[,size_t])",
+        "std::string_view::operator comparisons with string",
+        "std::string_view::rfind(string&[,size_t])",
+        "std::string_view::starts_with(string&)"
       ],
       "case_ids": [
         "string-operations",
@@ -7819,13 +7840,15 @@
       ],
       "required_instantiations": [
         "embedded NUL",
-        "nested owner relay"
+        "nested owner relay",
+        "view text operations borrow owning operands for the call"
       ],
       "evidence": [
         "tests/ui/stdlib/string/operations_errors",
         "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
-        "tests/ui/classes/declaration_construction.gti"
+        "tests/ui/classes/declaration_construction.gti",
+        "tests/ui/stdlib/text/view_iterators"
       ]
     },
     {

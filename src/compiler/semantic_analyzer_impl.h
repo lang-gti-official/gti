@@ -4552,6 +4552,8 @@ private:
 
   bool analyzeStringViewAddition(const Binary &expression,
                                  const SemanticType &rightType);
+  bool analyzeStringViewComparison(const Binary &expression,
+                                   const SemanticType &rightType);
   void recordLiteralTextConcatenation(const Binary &expression);
 
   void
@@ -5976,9 +5978,22 @@ private:
   [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
+  struct TextViewOverload {
+    const CallableCandidate *candidate;
+    std::vector<std::size_t> ephemeralBorrowArguments;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
+  };
+
+  [[nodiscard]] std::vector<CallableCandidate>
+  textViewAdapters(std::string_view name, std::string_view libraryUnit) const;
+  [[nodiscard]] std::vector<CallableCandidate>
+  textViewMemberFactories(std::string_view member) const;
   [[nodiscard]] std::optional<CallableCandidate>
-  textViewMemberFactory(std::string_view member,
-                        std::optional<std::size_t> inputs = {}) const;
+  textViewMemberFactory(std::string_view member) const;
+  [[nodiscard]] std::vector<TextViewOverload>
+  matchTextViewOverloads(std::span<const CallableCandidate> candidates,
+                         std::span<const ExprPtr *const> inputs,
+                         std::span<const SemanticType> types);
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 

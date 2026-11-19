@@ -831,6 +831,14 @@ the target-less call then reached the C++ backend as `GTI-B0001`. A rejected
 arrow step has already been diagnosed by the callee's analysis and selects no
 member.
 
+The counted text view forwards source members to trusted declarations in
+`std.string_view` and uses `std.string` adapters for owning operands.
+Overloads prefer exact matches, with the ordinary fallback tier for fitting
+integer literals and call-only read borrows of temporaries. Semantic
+resolution keeps the receiver as the first argument to the selected
+source function. HIR and constant evaluation use that argument order,
+and editor signatures show the written member.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating

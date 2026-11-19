@@ -6654,7 +6654,15 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
     for (const auto &[name, detail] :
          {std::pair{"substr", "(std::size_t position, std::size_t count)"},
           std::pair{"remove_prefix", "(std::size_t count) mut"},
-          std::pair{"remove_suffix", "(std::size_t count) mut"}}) {
+          std::pair{"remove_suffix", "(std::size_t count) mut"},
+          std::pair{"find", "(std::string_view needle, std::size_t position)"},
+          std::pair{"rfind", "(std::string_view needle, std::size_t position)"},
+          std::pair{"contains", "(std::string_view needle)"},
+          std::pair{"starts_with", "(std::string_view prefix)"},
+          std::pair{"ends_with", "(std::string_view suffix)"},
+          std::pair{"compare", "(std::string_view right)"},
+          std::pair{"at", "(int position)"}, std::pair{"front", "()"},
+          std::pair{"back", "()"}}) {
       if (const auto factory = textViewMemberFactory(name)) {
         context.candidates.push_back(
             {.kind = SemanticCompletionCandidateKind::Method,
