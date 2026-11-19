@@ -391,7 +391,7 @@ SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
 
 auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables(
     Symbol &symbol) const -> void {
-  for (auto &candidate : symbol.overloads) {
+  for (auto &candidate : symbol.overloads.edit()) {
     if (candidate.declarationRecord == nullptr)
       continue;
     const auto found =
@@ -401,24 +401,37 @@ auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables(
           "copied callable candidate lacks an owned declaration");
     candidate.declarationRecord = found->second;
   }
+  if (sealed)
+    symbol.overloads.freeze();
+}
+
+template <typename Visit>
+void SemanticVisitor::Impl::SemanticCatalog::forEachSymbol(Visit visit) {
+  namespaceSymbols.forEachValue(visit);
+  for (auto &[_, symbols] : internalNamespaceSymbols)
+    symbols.forEachValue(visit);
+  for (auto &[_, symbols] : visibleNamespaceSymbols)
+    symbols.forEachValue(visit);
+  for (auto &owner : classes)
+    for (auto &[_, member] : owner.members)
+      visit(member.symbol);
+  for (auto &conformance : conformances)
+    for (auto &operation : conformance.operations)
+      visit(operation);
+  for (auto &owner : enums)
+    for (auto &[_, enumerator] : owner.enumerators)
+      visit(enumerator.symbol);
+}
+
+void SemanticVisitor::Impl::SemanticCatalog::seal() {
+  assert(!sealed);
+  forEachSymbol([](Symbol &symbol) { symbol.overloads.freeze(); });
+  sealedShape = shape();
+  sealed = true;
 }
 
 auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables() -> void {
-  const auto rebind = [&](Symbol &symbol) { rebindCallables(symbol); };
-  namespaceSymbols.forEachValue(rebind);
-  for (auto &[_, symbols] : internalNamespaceSymbols)
-    symbols.forEachValue(rebind);
-  for (auto &[_, symbols] : visibleNamespaceSymbols)
-    symbols.forEachValue(rebind);
-  for (auto &owner : classes)
-    for (auto &[_, member] : owner.members)
-      rebind(member.symbol);
-  for (auto &conformance : conformances)
-    for (auto &operation : conformance.operations)
-      rebind(operation);
-  for (auto &owner : enums)
-    for (auto &[_, enumerator] : owner.enumerators)
-      rebind(enumerator.symbol);
+  forEachSymbol([&](Symbol &symbol) { rebindCallables(symbol); });
 }
 
 auto SemanticVisitor::Impl::ValueFlowState::rebindCallables(

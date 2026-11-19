@@ -5752,7 +5752,7 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     return true;
   }
 
-  CallableCandidate candidate = std::move(incoming.overloads.front());
+  CallableCandidate candidate = std::move(incoming.overloads.edit().front());
   const FunctionInfo *candidateInfo =
       candidate.declaration == nullptr
           ? nullptr
@@ -5835,7 +5835,7 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     }
   }
 
-  existing.overloads.emplace_back(std::move(candidate));
+  existing.overloads.edit().emplace_back(std::move(candidate));
   refreshOverloadPrivacy(existing);
   return true;
 }
@@ -5933,7 +5933,7 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
       compilerPrivateDeclaration(symbol.sourceUnit, scope);
   symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
                            semanticModel.isCompilerPrivateType(symbol.type);
-  for (CallableCandidate &overload : symbol.overloads) {
+  for (CallableCandidate &overload : symbol.overloads.edit()) {
     overload.compilerPrivate =
         overload.compilerPrivate || symbol.compilerPrivate ||
         semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -8058,7 +8058,7 @@ auto SemanticVisitor::Impl::resolveExpressionSymbol(
         Symbol symbol = substituteSymbol(member->symbol, memberObjectType);
         if (const auto selected = reflectedMethodTargets.find(get);
             selected != reflectedMethodTargets.end()) {
-          std::erase_if(symbol.overloads,
+          std::erase_if(symbol.overloads.edit(),
                         [&](const CallableCandidate &candidate) {
                           return candidate.declaration != selected->second;
                         });
