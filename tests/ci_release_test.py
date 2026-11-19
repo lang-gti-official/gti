@@ -2057,8 +2057,20 @@ def fast_fanout_contract(root):
         home = pathlib.Path(directory); build = home / "build"; build.mkdir()
         for name in fast.TOOLS:
             (build / name).write_bytes((name + " native fixture").encode())
+        cache = "".join(f"{key}:STRING={value}\n" for key, value in fast.CONFIGURATION.items())
+        (build / "CMakeCache.txt").write_text(cache)
         archive = home / "tools.tar.gz"
         ident = fast.identity("a" * 40, "42", "1", "linux")
+        for key, value in [("CMAKE_BUILD_TYPE", "Debug"), ("GTI_BUNDLE_LLVM", "ON"), ("GTI_ENABLE_CPP_BACKEND", "ON")]:
+            altered = {**fast.CONFIGURATION, key: value}
+            (build / "CMakeCache.txt").write_text("".join(f"{k}:STRING={v}\n" for k, v in altered.items()))
+            try:
+                fast.pack(build, archive, ident)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("accepted wrong native build configuration")
+        (build / "CMakeCache.txt").write_text(cache)
         fast.pack(build, archive, ident)
         output = home / "restored"
         fast.restore(output, archive, ident)
@@ -2074,7 +2086,7 @@ def fast_fanout_contract(root):
         fast.restore(output, archive, {**ident, "attempt": "2"})
         with tarfile.open(archive) as tar:
             original = [(m, tar.extractfile(m).read()) for m in tar.getmembers()]
-        for kind in ("missing", "duplicate", "link", "corrupt", "traversal", "future"):
+        for kind in ("missing", "duplicate", "link", "corrupt", "traversal", "future", "configuration"):
             altered = home / (kind + ".tar.gz")
             with tarfile.open(altered, "w:gz") as tar:
                 for member, data in original:
@@ -2086,6 +2098,9 @@ def fast_fanout_contract(root):
                         if kind == "corrupt": data = b"x" * len(data)
                     if kind == "future" and member.name == "manifest.json":
                         doc = json.loads(data); doc["identity"]["attempt"] = "2"
+                        data = json.dumps(doc).encode(); member.size = len(data)
+                    if kind == "configuration" and member.name == "manifest.json":
+                        doc = json.loads(data); doc["configuration"]["CMAKE_BUILD_TYPE"] = "Debug"
                         data = json.dumps(doc).encode(); member.size = len(data)
                     tar.addfile(member, io.BytesIO(data) if member.isfile() else None)
                     if kind == "duplicate" and member.name == "gti": tar.addfile(member, io.BytesIO(data))

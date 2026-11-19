@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 TOOLS = ("gti", "gti_lsp", "gti-test", "libgti_runtime.a")
 SHARDS = 4
+CONFIGURATION = {"CMAKE_BUILD_TYPE": "Release", "GTI_BUNDLE_LLVM": "OFF", "GTI_ENABLE_CPP_BACKEND": "OFF"}
 MAX_FILE = 2 * 1024**3
 
 
@@ -52,13 +53,17 @@ def save(path, value):
 
 
 def pack(build, archive, expected):
+    cache = dict(re.findall(r"^([^/#\r\n][^:\r\n]*):[^=\r\n]+=([^\r\n]*)$",
+                            (build / "CMakeCache.txt").read_text(), re.M))
+    if any(cache.get(key) != value for key, value in CONFIGURATION.items()):
+        raise ValueError("Fast tools require Release, system LLVM and the C++ backend off")
     files = {}
     for name in TOOLS:
         path = build / name
         if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_FILE:
             raise ValueError(f"Missing or invalid native tool: {name}")
         files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    manifest = dict(identity=expected, files=files)
+    manifest = dict(identity=expected, configuration=CONFIGURATION, files=files)
     archive.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "w:gz") as tar:
         data = json.dumps(manifest).encode()
@@ -82,7 +87,9 @@ def restore(build, archive, expected):
         if manifest_member.size > 16384:
             raise ValueError("Oversized fast-tools manifest")
         manifest = json.load(tar.extractfile(manifest_member))
-        if not matches_attempt(manifest.get("identity", {}), expected) or set(manifest.get("files", {})) != set(TOOLS):
+        if (not matches_attempt(manifest.get("identity", {}), expected) or
+                manifest.get("configuration") != CONFIGURATION or
+                set(manifest.get("files", {})) != set(TOOLS)):
             raise ValueError("Fast tools do not match this source/run/attempt/platform")
         with tempfile.TemporaryDirectory(prefix="gti-fast-tools-") as temporary:
             stage = Path(temporary)

@@ -946,7 +946,8 @@ reports; artifact and report identities bind to the candidate SHA, workflow run,
 platform and producer attempt. GitHub's failed-job retries may reuse successful
 artifacts/reports from earlier attempts of that exact run and SHA; future
 attempts and cross-run evidence are rejected. Archives have a fixed regular-file
-inventory and per-file checksums, with no archive-path extraction. These short-
+inventory and per-file checksums, with no archive-path extraction. Packaging and
+restoration require the recorded Release/system-LLVM/C++-backend-off profile. These short-
 lived CI tools are not production archives or nightly evidence.
 
 Full validation uses 12 Linux and 6 macOS integration shards plus its separate
