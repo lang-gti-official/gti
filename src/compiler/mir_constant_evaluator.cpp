@@ -283,8 +283,8 @@ private:
   }
 
   bool isErasedObject(const SemanticType &type) const {
-    const auto *instance = type.kind == SemanticType::Class ? record(type)
-                                                            : nullptr;
+    const auto *instance =
+        type.kind == SemanticType::Class ? record(type) : nullptr;
     return instance && instance->compilerCapability ==
                            CompilerCapabilityTypeKind::ErasedObject;
   }

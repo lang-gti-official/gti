@@ -1536,7 +1536,7 @@ Invalid indices take the checked bounds failure path.
 
 String uses the same owner with an extra initialized terminator excluded from
 its logical size/capacity. Empty strings use an allocation-free static sentinel.
-Vector and string therefore share the same checked span/iterator owner boundary,
+Vector and string therefore share the same checked prefix-storage owner boundary,
 not separate compiler-recognized storage handles. Allocation, exact layout,
 object lifetime, generated relocation and checked loans remain distinct lower
 boundaries; moving policy into source does not remove those compiler facts.
@@ -1559,7 +1559,8 @@ slice.
 
 `std.span` provides `std::span<T>`, an ordinary source-defined, checked,
 read-only view over one contiguous owner. `std::vector<T>::as_span()` and
-`std::string::as_span()` are its public owner factories; `first`, `last`, and
+`std::array<T, N>::as_span()`, along with `std::string::as_span()`, are its
+public owner factories. `first`, `last`, and
 `subspan` preserve the same owner dependency without exposing a pointer-length
 pair. Local copies, moves, exact factory/relay returns, empty views, checked
 indexing, and iteration retain that dependency. Moving, destroying, or
@@ -1573,8 +1574,8 @@ neither requires copying/moving its elements nor grants independent ownership.
 The same module provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable
 iteration and subviews preserve parent suspension; `as_span()` produces a
-retained shared projection without granting mutation. These views cover
-initialized prefix storage, not arbitrary native pointers or fixed arrays.
+retained shared projection without granting mutation. The exclusive factories
+cover the initialized prefixes of vectors and strings.
 See [ranges](ranges.md) for the exact lifetime and operation contract.
 `std.io` adds `std::byte_buffer` (an initialized `vector<uint8_t>`), generic
 reader/writer contracts, exact transfer/copy/line helpers, memory and native

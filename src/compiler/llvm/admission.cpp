@@ -5480,6 +5480,14 @@ public:
                                    ? std::optional(Shape::NativeCStorage)
                                    : std::nullopt);
     }
+    const auto nativeBorrowOrigin = [&](const MirPlace &place) {
+      // Dereferencing a checked opaque field contributes a retained address
+      // to the loan, never a by-value representation of its erased object.
+      return nativeValue(place.type) ||
+             (place.access == AccessMode::ReadOnly &&
+              opaqueReferent(place.type) && !place.projections.empty() &&
+              place.projections.back().kind == MirProjectionKind::Dereference);
+    };
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
       const auto nativeConditions = [&](const auto &conditions) {
@@ -5490,12 +5498,12 @@ public:
                      nativeValue(condition.enumeration);
             });
       };
-      bool nativeBorrow = origin && nativeValue(origin->type) &&
+      bool nativeBorrow = origin && nativeBorrowOrigin(*origin) &&
                           nativeConditions(loan.conditions);
       for (const auto &dependency : loan.additionalDependencies) {
         const auto *source = mir.findPlace(dependency.source);
         nativeBorrow &= nativeConditions(dependency.conditions) &&
-                        (source ? nativeValue(source->type)
+                        (source ? nativeBorrowOrigin(*source)
                                 : !dependency.source &&
                                       !dependency.designatedFields.empty());
       }

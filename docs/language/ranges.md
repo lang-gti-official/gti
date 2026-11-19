@@ -468,14 +468,15 @@ implicitly suspend an exclusive borrow.
 ## Spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
-source prefix owner. `std::vector<T>::as_span()` and
-`std::string::as_span()` construct a complete span without exposing an address
-or pointer-length pair. A span stores an offset and count alongside its checked
-read-only storage dependency and provides checked indexing, `front()`,
-`back()`, `first()`, `last()`, `subspan()`, and structural iteration. Empty
-spans remain valid. Copy and move construction preserve the same shared owner
-dependency; assignment is unavailable because the current lifetime model does
-not reseat borrowed-state carriers.
+contiguous owner. `std::vector<T>::as_span()`, `std::array<T, N>::as_span()`,
+and `std::string::as_span()` construct a complete span. The span holds a
+checked erased owner borrow alongside its internal base address and bounds.
+It provides checked indexing, `front()`, `back()`, `first()`, `last()`,
+`subspan()`, and structural iteration. An empty span retains its owner even
+when there is no element address. Copy and move construction preserve the
+shared owner dependency. The view remains bound to that owner for its lifetime.
+Vector- and array-backed spans support constant evaluation when their storage
+and operations are eligible for constexpr execution.
 
 `std::string::view()` returns a counted `std::string_view` over the string's
 live character prefix. Literal-backed string views remain independent trivial

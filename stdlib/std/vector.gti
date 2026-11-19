@@ -423,8 +423,9 @@ public:
 
   /// Returns a checked read-only view tied to this vector's storage.
   constexpr span<T> as_span() {
-    return span<T>(this.data, size_t(0),
-                   this.data.length());
+    unsafe {
+      return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+    }
   }
 
   /// Exclusively borrows initialized elements without permitting reallocation.

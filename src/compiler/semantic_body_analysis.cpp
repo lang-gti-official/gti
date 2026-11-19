@@ -14214,8 +14214,8 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       type.arguments.size() == 1) {
     const auto &referent = type.arguments.front();
     if (const auto *owner = classInfo(referent);
-        owner && owner->compilerCapability ==
-                     CompilerCapabilityTypeKind::ErasedObject)
+        owner &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
       return type.referenceAccess == AccessMode::ReadOnly;
     return isSupportedConstexprType(referent, allowDependent, visiting, true);
   }

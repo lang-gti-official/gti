@@ -886,12 +886,12 @@ bool stagedClosureRequiresMir(const MirProgram &program) {
         body.loans.begin(), body.loans.end(),
         [](const auto &loan) { return loan.access == AccessMode::Mutable; });
   };
-  const auto opaque = std::find_if(
-      program.classInstances().begin(), program.classInstances().end(),
-      [](const auto &instance) {
-        return instance.compilerCapability ==
-               CompilerCapabilityTypeKind::ErasedObject;
-      });
+  const auto opaque =
+      std::find_if(program.classInstances().begin(),
+                   program.classInstances().end(), [](const auto &instance) {
+                     return instance.compilerCapability ==
+                            CompilerCapabilityTypeKind::ErasedObject;
+                   });
   const auto resultValues = [&](const MirBody &body) {
     const auto resultType = [&](const auto &self,
                                 const SemanticType &type) -> bool {
