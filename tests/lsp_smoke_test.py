@@ -9851,7 +9851,9 @@ def test_update_debounce_coalesces_edits(executable, root):
         )
         assert not has_error_diagnostics(final["params"]), final
 
-        session.send(full_change(uri, 7, source + "// hovered\n"))
+        edited = "// hovered\n" + source
+        position = lsp_position(edited, edited.index("debounce_value"))
+        session.send(full_change(uri, 7, edited))
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -9859,14 +9861,29 @@ def test_update_debounce_coalesces_edits(executable, root):
                 "method": "textDocument/hover",
                 "params": {
                     "textDocument": {"uri": uri},
-                    "position": lsp_position(source, source.index("debounce_value")),
+                    "position": position,
                 },
             }
         )
         start = time.monotonic()
         hover = session.receive_until(lambda message: message.get("id") == 2)
-        elapsed = time.monotonic() - start
         assert hover.get("result") is not None, hover
+        # Declaration hover can answer before the worker records the analysis.
+        # Full semantic tokens require the current snapshot. Check the moved
+        # declaration before shutdown, which cancels any outstanding work.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        reply = session.receive_until(lambda message: message.get("id") == 3)
+        elapsed = time.monotonic() - start
+        tokens = semantic_tokens_by_position(reply["result"]["data"])
+        name_token = tokens[(position["line"], position["character"])]
+        assert name_token["length"] == len("debounce_value"), name_token
         assert elapsed < 1.5, elapsed
         session.close()
         closed = True
