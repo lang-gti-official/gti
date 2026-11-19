@@ -9,8 +9,8 @@
 //   trusted  The editor's Reachable policy with entry-unit HIR reports
 //            exactly the complete check's application diagnostics and a
 //            subset of its library diagnostics, keeps valid HIR, and a trusted
-//            prefix preamble built once and adopted twice changes neither.
-//            (Was trusted_body_analysis_[0-3].)
+//            prefix preamble built once and reused within each policy changes
+//            neither. (Was trusted_body_analysis_[0-3].)
 //   reuse    In the editor and artifact configurations, an analysis through
 //            an instance cache, first cold then warm, equals a fresh
 //            analysis: diagnostics, HIR instance records and printed MIR.
@@ -183,38 +183,44 @@ Check checkTrusted(const fs::path &root, const fs::path &entry,
     check.difference("reachable library diagnostics (subset)", completeLibrary,
                      reachableLibrary);
 
-  // The editor configuration over a trusted prefix preamble: built on the
-  // first analysis, adopted by the second; the third round is complete
-  // analysis over the preamble. Rounds share a parse cache, as the editor
-  // does, because the preamble is keyed by the prefix's parsed syntax.
-  auto preambles = std::make_shared<lang::SemanticPreambleCache>();
-  auto parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
-      .maximumEntries = 1024, .maximumEstimatedBytes = 512U * 1024U * 1024U});
-  for (int round = 0; round < 3; ++round) {
-    lang::FrontendWorkMetrics work;
-    const bool completeRound = round == 2;
-    const lang::FrontendResult resumed =
-        analyzeHir(root, entry,
-                   completeRound ? lang::TrustedBodyAnalysis::Complete
-                                 : lang::TrustedBodyAnalysis::Reachable,
-                   !completeRound, preambles, &work, parses);
-    const std::string label = "preamble round " + std::to_string(round);
-    check.expect(work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
-                     work.semanticPreambleAdoptions != 0,
-                 label + " does not build the preamble once and adopt it");
-    check.expect(!complete.hirValid || resumed.hirValid,
-                 label + " loses valid HIR");
-    std::vector<std::string> application, library;
-    split(resumed, application, library);
-    if (completeApplication != application)
-      check.difference(label + " application diagnostics", completeApplication,
-                       application);
-    if (completeRound
-            ? completeLibrary != library
-            : !std::includes(completeLibrary.begin(), completeLibrary.end(),
-                             library.begin(), library.end()))
-      check.difference(label + " library diagnostics", completeLibrary,
-                       library);
+  // Entry-unit Reachable analysis may extend its preamble through imported
+  // application modules. Complete analysis uses only the trusted prefix, so
+  // switching policies need not reuse the same preamble. Prove a cold build
+  // and a warm adoption independently for both configurations, retaining the
+  // complete/reachable diagnostic parity checks in every round.
+  for (const bool completeRound : {false, true}) {
+    auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+    auto parses =
+        std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+            .maximumEntries = 1024,
+            .maximumEstimatedBytes = 512U * 1024U * 1024U});
+    for (int round = 0; round < 2; ++round) {
+      lang::FrontendWorkMetrics work;
+      const lang::FrontendResult resumed =
+          analyzeHir(root, entry,
+                     completeRound ? lang::TrustedBodyAnalysis::Complete
+                                   : lang::TrustedBodyAnalysis::Reachable,
+                     !completeRound, preambles, &work, parses);
+      const std::string label =
+          std::string(completeRound ? "complete" : "reachable") +
+          " preamble round " + std::to_string(round);
+      check.expect(work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
+                       work.semanticPreambleAdoptions != 0,
+                   label + " does not build the preamble once and adopt it");
+      check.expect(!complete.hirValid || resumed.hirValid,
+                   label + " loses valid HIR");
+      std::vector<std::string> application, library;
+      split(resumed, application, library);
+      if (completeApplication != application)
+        check.difference(label + " application diagnostics",
+                         completeApplication, application);
+      if (completeRound
+              ? completeLibrary != library
+              : !std::includes(completeLibrary.begin(), completeLibrary.end(),
+                               library.begin(), library.end()))
+        check.difference(label + " library diagnostics", completeLibrary,
+                         library);
+    }
   }
   return check;
 }
