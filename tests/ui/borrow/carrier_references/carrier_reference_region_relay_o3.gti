@@ -1,0 +1,41 @@
+// A T&<o> result relayed through a reference to a borrow carrier keeps its referent at -O3 (#568).
+//@ run-pass
+//@ opt: O3
+//@ reason: the relayed referent address must survive optimized lowering
+//@ stdout: 4 box 3
+//@ stdout: 9
+import std.format;
+struct Box { mut int value = 0; mut std::string_view text = ""; public: Box() = default; };
+class View<lifetime o> {
+  Box&<o> box;
+public:
+  View(Box&<o> b) : box(b) {}
+  int&<o> get() { return this.box.value; }
+  std::string_view&<o> text() { return this.box.text; }
+};
+class Cursor<lifetime o> {
+  mut Box&<o> box;
+public:
+  Cursor(mut Box&<o> b) : box(b) {}
+  mut int&<o> slot() mut { return this.box.value; }
+};
+int&<o> pick<lifetime o>(View<o>& view) { return view.get(); }
+std::string_view&<o> label<lifetime o>(View<o>& view) { return view.text(); }
+mut int&<o> place<lifetime o>(mut Cursor<o>& cursor) { return cursor.slot(); }
+int main() {
+  mut Box b{};
+  b.value = 4;
+  b.text = "box";
+  {
+    View v = View(b);
+    int& value = pick(v);
+    std::string_view& text = label(v);
+    std::println("{} {} {}", value, text, text.size());
+  }
+  {
+    mut Cursor c = Cursor(b);
+    place(c) = 9;
+  }
+  std::println("{}", b.value);
+  return b.value - 9;
+}

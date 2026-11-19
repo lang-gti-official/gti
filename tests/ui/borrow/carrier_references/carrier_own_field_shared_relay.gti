@@ -1,0 +1,28 @@
+// Own-field references stay readable across shared T&<o> reborrows through a mutable stored reference (#569).
+//@ run-pass
+//@ stdout: 3 abc 4 box
+import std.format;
+struct Box { mut int value = 0; mut std::string_view text = ""; public: Box() = default; };
+class Cursor<lifetime o> {
+  mut Box&<o> box;
+  int count = 3;
+  std::string_view name = "abc";
+public:
+  Cursor(mut Box&<o> b) : box(b) {}
+  int&<o> value() { return this.box.value; }
+  std::string_view&<o> text() { return this.box.text; }
+  int& own_count() { return this.count; }
+  std::string_view& own_name() { return this.name; }
+};
+int main() {
+  mut Box b{};
+  b.value = 4;
+  b.text = "box";
+  Cursor c = Cursor(b);
+  int& count = c.own_count();
+  std::string_view& name = c.own_name();
+  int& value = c.value();
+  std::string_view& text = c.text();
+  std::println("{} {} {} {}", count, name, value, text);
+  return count + value - 7;
+}
