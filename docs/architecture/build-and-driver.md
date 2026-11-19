@@ -3131,7 +3131,7 @@ and the [separate-compilation stage plan](../plans/build-system.md#compiled-libr
 `gti/driver/compiled_scalar_library.h` provides an LLVM producer and consumer
 for compiled GTI targets. Its development API names retain “scalar” for source
 compatibility; project commands expose the typed profile through `gti-library`,
-explicit artifact imports and same-manifest `compiled-dependencies` edges.
+explicit artifact imports and `compiled-dependencies` edges to local or dependency-package targets.
 C embedding retains its separate request and ABI. Runnable examples cover
 [primitive APIs](../../examples/compiled-primitive-library/README.md),
 [value types](../../examples/compiled-value-types/README.md),
@@ -3410,13 +3410,33 @@ and atomic-replacement rules: a failure preserves the prior good artifact,
 outputs cannot overwrite any selected bundle/interface, and staged imported
 objects are removed on success or failure.
 
-Source dependencies can instead name library targets in the same manifest:
+A compiled dependency can select a library target in the current manifest:
 
 ```toml
 [[targets.app.compiled-dependencies]]
 target = "numbers"
 interface = "api/numbers.gti"
 ```
+
+To build a library target from another package, set `package` to a direct
+dependency alias from the importing package's manifest. For example:
+
+```toml
+[dependencies]
+math = { path = "../arithmetic" }
+
+[[targets.app.compiled-dependencies]]
+package = "math"
+target = "numbers"
+interface = "api/numbers.gti"
+```
+
+The application imports its generated interface (for example
+`import "api/numbers.gti";` from a root beside the manifest). The resolver uses
+the same locked package graph as a source import. A producer resolves its own
+aliases and source modules. The build writes foreign artifacts under
+`build/gti/packages/<package>/<profile>/<triple>/` in the consumer workspace,
+including when the producer comes from a read-only dependency cache.
 
 Both executables and compiled library targets accept these tables alongside
 explicit artifact selections. The reusable project resolver constructs a bounded,
@@ -3425,8 +3445,7 @@ owners/facades, and returns each dependency once in topological order. Build and
 run commands execute those plans through the ordinary driver before the selected
 target. Shared transitive objects link once; only directly selected interfaces
 enter the source graph. Metadata exposes the declared source edges as
-`compiledDependencies`. Workspace/package-qualified source target edges remain
-future work; existing source package resolution is unchanged.
+`compiledDependencies`. Each edge identifies its target and, when present, its direct dependency alias.
 
 Successful library outputs are reused when their compiler/runtime/configuration,
 complete loaded source graph, export selection and direct dependency digests still

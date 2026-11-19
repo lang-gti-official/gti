@@ -2,7 +2,7 @@
 
 Date: 2026-10-30
 Status: Accepted direction; container/envelope, bounded typed executable interfaces,
-whole-argument borrowed returns and same-manifest dependency builds implemented.
+whole-argument borrowed returns, and builds of local and dependency-package targets implemented.
 General ownership/generic serialization and production promotion remain incomplete.
 
 ## Outcome and boundary

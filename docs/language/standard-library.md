@@ -637,7 +637,8 @@ The current implemented foundation includes:
   the old payload before taking the new one. A consuming `value() &&` moves
   the payload out. Both `optional(T)` and `optional(nullopt_t)` are `implicit`,
   so a declaration or declared value return accepts one exact payload or
-  `std::nullopt`. A named move-only payload needs `std::move`; a string literal
+  `std::nullopt`. The empty marker is a `constexpr nullopt_t` object.
+  A named move-only payload needs `std::move`; a string literal
   cannot chain through `string` into `optional<string>`. The ordinary
   `std::tryable` implementation enables `?` propagation. A moved source cannot
   be used under GTI's ordinary ownership rules. Storage is now an ordinary
