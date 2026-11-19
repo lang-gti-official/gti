@@ -478,6 +478,12 @@ shared owner dependency. The view remains bound to that owner for its lifetime.
 Vector- and array-backed spans support constant evaluation when their storage
 and operations are eligible for constexpr execution.
 
+With `std.span` available, a built-in array `T[N]` offers the same
+`array.as_span()` operation. It borrows the whole array, including when
+`N` is zero. An array in static storage can back a `std::span<T, static>`.
+When that array is `constexpr`, its elements can also be read through the
+span during constant evaluation.
+
 `std::string::view()` returns a counted `std::string_view` over the string's
 live character prefix. Literal-backed string views remain independent trivial
 values. A view produced from dynamic storage is instead tagged at the

@@ -2649,6 +2649,9 @@ public:
   [[nodiscard]] const BindingInfo *
   findBinding(const VariableDecl &declaration) const;
 
+  [[nodiscard]] std::optional<ProgramInitializationStep>
+  findConstantArrayStorage(SymbolId symbol) const;
+
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const;
 

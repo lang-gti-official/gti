@@ -515,8 +515,9 @@ contain a default expression. The placeholder deliberately avoids reprinting
 source expressions while exposing optionality consistently in hover, outline,
 and signature help; the protocol layer does not infer defaults from arity.
 
-Builtin counted-view members implemented by trusted source factories preserve
-one compiler-selected call identity. `ResolvedCallInfo::argumentReceiver`
+Built-in array and counted-view members implemented by trusted source
+factories preserve one compiler-selected call identity.
+`ResolvedCallInfo::argumentReceiver`
 normalizes the written receiver into argument zero for semantic effects and
 HIR's ordinary ordered source call; it does not duplicate the receiver or
 invent a backend member operation. The compiler's shared argument-access

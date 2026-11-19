@@ -4553,6 +4553,8 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren);
 
+  [[nodiscard]] const CallableCandidate *arraySpanFactory() const;
+
   bool analyzeStringViewAddition(const Binary &expression,
                                  const SemanticType &rightType);
   void recordLiteralTextConcatenation(const Binary &expression);

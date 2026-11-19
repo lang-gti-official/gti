@@ -332,6 +332,17 @@ constexpr std::span<T, source> make_span<std::storage_element T, Owner, lifetime
     Owner&<source> owner, const T* address, std::size_t offset, std::size_t count) {
   return std::span<T, source>(std::detail::span_owner<source>(owner), address, offset, count);
 }
+
+/// Views the entire fixed array while retaining its read-only owner borrow.
+constexpr std::span<T, source> array_as_span<std::storage_element T, uint64_t N, lifetime source>(
+    T[N]&<source> values) {
+  if constexpr (N == 0) {
+    const T* address = nullptr;
+    unsafe { return make_span(values, address, std::size_t(0), std::size_t(0)); }
+  } else {
+    unsafe { return make_span(values, &values[0], std::size_t(0), std::size_t(N)); }
+  }
+}
 }
 
 namespace std {

@@ -230,6 +230,25 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
+    auto &storage = output.program.programInitialization;
+    if (!storage.steps.empty()) {
+      std::stable_sort(storage.steps.begin(), storage.steps.end(),
+                       [](const auto &left, const auto &right) {
+                         return left.sourceUnit < right.sourceUnit;
+                       });
+      std::unordered_set<HirBindingId> bindings;
+      for (std::size_t index = 0; index < storage.steps.size(); ++index) {
+        auto &step = storage.steps[index];
+        step.id = index + 1;
+        if (step.sourceUnit != 0 &&
+            (storage.unitOrder.empty() ||
+             storage.unitOrder.back() != step.sourceUnit))
+          storage.unitOrder.push_back(step.sourceUnit);
+        bindings.insert(step.binding);
+      }
+      finalizeLifetimes(output.program.moduleBody, *baseModel, bindings);
+      finishInitializerSourceDebug(output.program.moduleBody);
+    }
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -1458,6 +1477,36 @@ private:
     }
   }
 
+  // A staged constexpr closure needs the actual program storage identity of
+  // borrowed arrays. Publish the already checked constant as a normal data-only
+  // initializer; unrelated program initializers stay outside the closure.
+  void stageConstantArrayStorage(SymbolId symbol) {
+    auto &plan = output.program.programInitialization;
+    if (plan.findStepForSymbol(symbol))
+      return;
+    const auto step = baseModel->findConstantArrayStorage(symbol);
+    if (!step)
+      return;
+    HirClassInstanceId owner = 0;
+    if (step->ownerClass) {
+      owner =
+          enqueueClass(SemanticType::classType(step->ownerClass)).value_or(0);
+      if (!owner)
+        return;
+    }
+    const HirBindingId binding =
+        lowerBinding(*step->declaration, *baseModel, output.program.moduleBody);
+    loweredProgramStorage.insert_or_assign(
+        step->declaration, LoweredProgramStorage{.binding = binding});
+    plan.steps.push_back({.sourceUnit = step->sourceUnit,
+                          .kind = step->kind,
+                          .role = ProgramInitializationStepRole::DataOnly,
+                          .source = step->declaration,
+                          .symbol = symbol,
+                          .ownerClass = owner,
+                          .binding = binding});
+  }
+
   void lowerProgramInitializationPlan() {
     const ProgramInitializationPlan &semanticPlan =
         baseModel->programInitializationPlan();
@@ -2079,8 +2128,16 @@ private:
       info.threadLocal =
           field.declaration != nullptr && field.declaration->isThreadLocal();
       if (field.declaration != nullptr && !info.threadLocal) {
+        const bool stagedClass =
+            constantClosure && declaration->genericParameters.empty();
+        if (stagedClass && type.kind == SemanticType::Array && info.constant)
+          stageConstantArrayStorage(info.symbol);
         const auto found = loweredProgramStorage.find(field.declaration);
         if (found == loweredProgramStorage.end()) {
+          // A staged class retains only its planned readonly program storage.
+          // The body cannot run or borrow unrelated static initializers.
+          if (stagedClass)
+            continue;
           // Generic class statics are intentionally outside the whole-program
           // semantic plan until a concrete qualified-static identity exists.
           // Preserve their previous per-instance body representation.
@@ -2100,12 +2157,7 @@ private:
             appendInitializerSourceDebug(*model, *field.declaration,
                                          staticFieldInitializers,
                                          {*lowered.initializer});
-          // A constant closure has no whole-program storage plan. A read-only
-          // static with a recorded constant needs none: its uses read the
-          // constant, exactly as the whole-program plan would.
-          if (declaration->genericParameters.empty() &&
-              !(constantClosure && info.constant &&
-                info.access == AccessMode::ReadOnly)) {
+          if (declaration->genericParameters.empty()) {
             lifecycleValid = false;
           }
         } else {
@@ -6757,6 +6809,10 @@ private:
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
+      if (constantClosure && value.symbol &&
+          info->category == ValueCategory::Place &&
+          info->type.kind == SemanticType::Array)
+        stageConstantArrayStorage(value.symbol);
     }
     if (const auto *assertion = model.findRawReferenceAssertion(*raw)) {
       const auto *dereference = exprAs<Unary>(raw);

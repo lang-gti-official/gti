@@ -691,7 +691,7 @@ private:
                     .access = place->access};
       }
     } else if (place->root == MirPlaceRootKind::Symbol && place->capture == 0) {
-      const auto located = storageLocation(frame, *place, location);
+      const auto located = storageLocation(*place, location);
       if (located.failure != ConstantEvaluationFailure::None)
         return located;
     } else {
@@ -857,10 +857,10 @@ private:
     return {};
   }
 
-  // Program storage (a namespace variable or class static) read during
-  // constant execution. Its verified initializer body runs once, in a mode
-  // that may write program storage; afterwards it is read-only.
-  ConstantEvaluation storageLocation(Frame &frame, const MirPlace &place,
+  // Program storage lives for the entire request. Staging can observe a
+  // completed constexpr array's data directly. Otherwise a present verified
+  // initializer runs once before the storage becomes read-only.
+  ConstantEvaluation storageLocation(const MirPlace &place,
                                      Location &location) {
     auto found = programStorage.find(place.symbol);
     if (found == programStorage.end() && initializingStorage) {
@@ -871,6 +871,29 @@ private:
                      .units = 0,
                      .programStorage = true}));
       found = programStorage.emplace(place.symbol, heap.size()).first;
+    }
+    if (found == programStorage.end()) {
+      const auto *step =
+          program.programInitializationPlan().findStepForSymbol(place.symbol);
+      const auto *storage =
+          step ? program.module().findPlace(step->storagePlace) : nullptr;
+      if (storage && storage->type.kind == SemanticType::Array &&
+          storage->access == AccessMode::ReadOnly && step->dataConstant) {
+        const auto &type = storage->type;
+        if (!persistentType(type))
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        const auto exact = exactValue(*step->dataConstant, type);
+        if (!exact)
+          return exact;
+        if (!charge(1) || heap.size() >= limits.allocations)
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        heap.push_back(std::make_unique<Allocation>(
+            Allocation{.type = type, .units = 0, .programStorage = true}));
+        const auto stored = storeAllocation(heap.size(), *exact.value);
+        if (!stored)
+          return stored;
+        found = programStorage.emplace(place.symbol, heap.size()).first;
+      }
     }
     if (found == programStorage.end()) {
       const MirBody *owner = nullptr;
@@ -914,8 +937,7 @@ private:
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
     }
     auto &storage = *heap[found->second - 1];
-    location = {.frame = &frame,
-                .epoch = storage.epoch,
+    location = {.epoch = storage.epoch,
                 .type = &storage.type,
                 .access = initializingStorage ? AccessMode::Mutable
                                               : AccessMode::ReadOnly,

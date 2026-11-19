@@ -7540,6 +7540,8 @@
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
         "tests/ui/stdlib/array/span.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr_static.gti",
         "tests/ui/stdlib/paired_span/iterators/subspan_erased_owners.gti",
         "stdlib/std/span.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"

@@ -10631,7 +10631,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
         expr.name().generated &&
         (expr.name().lexeme == "begin" || expr.name().lexeme == "begin_mut" ||
          expr.name().lexeme == "end");
-    if (expr.name().lexeme == "size" || generatedRangeEndpoint) {
+    if (expr.name().lexeme == "size" || expr.name().lexeme == "as_span" ||
+        generatedRangeEndpoint) {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "

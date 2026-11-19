@@ -4137,6 +4137,13 @@ generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the request's
 configured step and call-depth limits (`CompileLimits`).
 
+Staged lowering publishes the already checked data of referenced constexpr
+arrays in the ordinary program initialization plan. The verifier uses those
+declaration symbols and places to prove static borrows. The executor retains
+one read-only storage cell per symbol for the request, so projections and
+reborrows share that storage across calls. Materializing the data uses the
+normal bounded constant-storage budget.
+
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
 may name a polymorphic, inherited or otherwise runtime-only class without
