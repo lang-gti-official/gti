@@ -1163,6 +1163,15 @@ def test_preamble_concept_proofs_across_snapshots(executable, root):
                 timeout=60,
             )
             assert has_error_diagnostics(published["params"]) == broken, published
+            # This test measures reuse by completed semantic snapshots. An
+            # editor can receive its repair before that snapshot is ready.
+            session.send({
+                "jsonrpc": "2.0", "id": version,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            })
+            reply = session.receive_until(lambda message: message.get("id") == version)
+            assert "result" in reply, reply
         session.close()
         closed = True
         records = [
@@ -12416,8 +12425,11 @@ def main():
         for params in publications
         if params["uri"] == stress_uri and params.get("version") == 2
     ]
-    assert len(recovered_publications) == 1
-    recovered_publication = recovered_publications[0]
+    # The parse fix is available before semantic checks finish. Both
+    # publications describe version 2 and retain the same compiler repair.
+    assert len(recovered_publications) == 2, recovered_publications
+    early, recovered_publication = recovered_publications
+    assert {d["code"] for d in early["diagnostics"]} == {"GTI-P0001"}, early
     recovered_codes = {
         diagnostic["code"] for diagnostic in recovered_publication["diagnostics"]
     }
@@ -12428,6 +12440,7 @@ def main():
         if diagnostic["code"] == "GTI-P0001"
     )
     assert recovered_parse["data"]["fixes"][0]["replacement"] == ";"
+    assert recovered_parse in early["diagnostics"], (recovered_parse, early)
 
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0

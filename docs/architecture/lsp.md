@@ -147,6 +147,21 @@ JSON-RPC/LSP
   -> LanguageQueries / SemanticDatabase
 ```
 
+After a document edit, the worker loads and parses the configured source graph
+once. At that boundary the LSP can publish diagnostics for the edited file from
+source loading, lexing and parsing. It uses the compiler's actual imports,
+conditional branches, error limit and source ranges. The worker then transfers
+the same program and source graph to semantic analysis, HIR and MIR. Publication
+runs outside the compiler crash guard and checks both the document generation
+and the inputs read by the parser. A parser quick fix can be applied at this
+stage while its root generation, source text and dependencies are still current.
+Only the completed snapshot serves navigation.
+
+The syntax stage can withdraw an earlier syntax diagnostic when a repair
+parses successfully. If that publication would hide a semantic diagnostic
+from an older version of the file, it waits for the complete result. Other
+roots continue to contribute their own diagnostics.
+
 For a warm edit inside one function, the server can publish body-local type
 errors as soon as the compiler checks that function. The parser records the
 function's braces. The query requires identical source outside those braces,
@@ -155,12 +170,22 @@ in an isolated semantic model. One foreground worker retains the most recent
 clean, verified root. Dependency and project changes invalidate it. Newer
 edits cancel earlier queries, and publication checks the document generation.
 
-A clean local result retracts only errors this query previously published.
+A clean local result retracts errors this query previously published. Restoring
+the exact source bytes of the retained verified root also restores its clean
+ordinary diagnostics when its dependency and project inputs are still current.
+After a parse failure, the server retains the reported diagnostics and the
+failed text for that root. If the user repairs the body with different text,
+the isolated checker can replay the failed body. It can withdraw the recovery
+diagnostics only when it reproduces the complete published set, including the
+source ranges and related information, and can check the new body. An error
+from another declaration or a MIR borrow rejection keeps the full check in
+charge of clearing it.
+
 The complete frontend still checks callers, lifetimes, cleanup and MIR for
 every settled edit. Its diagnostics replace the partial result and its snapshot
 serves navigation and other requests. Edits to declarations, generic or
 compile-time bodies, or functions with inferred reference results use that
-complete analysis directly.
+syntax publication followed by complete analysis.
 
 Missing-definition diagnostics from concrete generic instances retain the
 frontend's outer requesting call as primary, including calls through an included

@@ -1,0 +1,1 @@
+The language server shows syntax errors after parsing an edited file and can clear them as soon as a repair parses. Undoing an edit to a previously verified file can also clear errors immediately. Full type and borrow checking continue in the background.

@@ -231,6 +231,7 @@ struct FrontendResult {
 private:
   friend class Frontend;
   friend class EditorBodyDiagnostics;
+  bool parsingComplete = false;
   std::shared_ptr<const SemanticVisitor> bodyQueryContext;
 };
 
@@ -241,11 +242,22 @@ class EditorBodyDiagnostics {
 public:
   static std::shared_ptr<const EditorBodyDiagnostics>
   takeFrom(const std::shared_ptr<FrontendResult> &snapshot);
+  [[nodiscard]] bool matchesSource(std::string_view source) const;
   std::optional<std::vector<Diagnostic>>
   check(const std::string &source,
         const std::atomic<bool> *cancel = nullptr) const;
 
+  // A completed recovery pass may also diagnose the body it recovered.
+  // Establish local ownership only if the isolated checker reproduces every
+  // diagnostic, including positions, related information and fixes.
+  [[nodiscard]] bool reproducesRecovery(const std::string &source,
+                                        const std::vector<Diagnostic> &observed,
+                                        const std::atomic<bool> *cancel) const;
+
 private:
+  std::optional<std::vector<Diagnostic>>
+  checkEdit(const std::string &source, const std::atomic<bool> *cancel,
+            std::optional<std::size_t> recoveryLimit) const;
   explicit EditorBodyDiagnostics(
       const std::shared_ptr<FrontendResult> &snapshot);
   std::shared_ptr<const FrontendResult> baseline;
@@ -272,10 +284,20 @@ public:
                 std::vector<Diagnostic> sourceDiagnostics = {},
                 bool sourceValid = true) const;
 
+  // Resume a Parsing-phase result with the same inputs and configuration.
+  // Earlier source/parse limits remain terminal. The program and source
+  // graph move into the remaining phases without loading or parsing again.
+  [[nodiscard]] FrontendResult
+  analyzeParsed(const std::filesystem::path &entryPath,
+                FrontendResult parsed) const;
+
 private:
   [[nodiscard]] FrontendResult
   finishAnalysis(const std::filesystem::path &entryPath,
                  FrontendResult result) const;
+  [[nodiscard]] FrontendResult
+  checkParsed(const std::filesystem::path &entryPath,
+              FrontendResult parsed) const;
   static void
   appendParserDiagnostics(std::vector<Diagnostic> &destination,
                           const std::vector<ParseDiagnostic> &diagnostics,
