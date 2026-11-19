@@ -371,17 +371,29 @@ NativeLinkRequest::NativeLinkRequest(
     std::string compiler, std::filesystem::path object,
     std::filesystem::path output, NativeInputs inputs, bool debugInfo,
     std::optional<ForwardedSourcePolicy> forwardedSources)
-    : compilerExecutable(std::move(compiler)), objectPath(std::move(object)),
+    : NativeLinkRequest(std::move(compiler),
+                        std::vector<std::filesystem::path>{std::move(object)},
+                        std::move(output), std::move(inputs), debugInfo,
+                        std::move(forwardedSources)) {}
+
+NativeLinkRequest::NativeLinkRequest(
+    std::string compiler, std::vector<std::filesystem::path> objects,
+    std::filesystem::path output, NativeInputs inputs, bool debugInfo,
+    std::optional<ForwardedSourcePolicy> forwardedSources)
+    : compilerExecutable(std::move(compiler)), objectPaths(std::move(objects)),
       outputPath(std::move(output)), nativeInputs(std::move(inputs)),
       sourceDebugInfo(debugInfo),
-      forwardedSourcePolicy(std::move(forwardedSources)) {}
+      forwardedSourcePolicy(std::move(forwardedSources)) {
+  if (objectPaths.empty())
+    throw std::invalid_argument("native linking requires at least one object");
+}
 
 const std::string &NativeLinkRequest::compiler() const {
   return compilerExecutable;
 }
 
-const std::filesystem::path &NativeLinkRequest::object() const {
-  return objectPath;
+const std::vector<std::filesystem::path> &NativeLinkRequest::objects() const {
+  return objectPaths;
 }
 
 const std::filesystem::path &NativeLinkRequest::output() const {
@@ -620,7 +632,8 @@ NativeToolchain::command(const NativeLinkRequest &request) const {
     command.insert(command.end(), inputs.compilerArguments.begin(),
                    inputs.compilerArguments.end());
   }
-  command.push_back(request.object().string());
+  for (const auto &object : request.objects())
+    command.push_back(object.string());
   appendNativeLinkPlan(command, inputs, request.output());
   if (compilesForwarded) {
     command.emplace_back("-fno-fast-math");

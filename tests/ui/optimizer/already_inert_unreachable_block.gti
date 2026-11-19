@@ -1,0 +1,11 @@
+// The empty join after two returning branches needs no unreachable-block edit.
+//@ snapshot: optimization-report
+//@ opt: O3
+//@ reason: unreachable-block cleanup runs in the optimizing pipeline
+// CHECK: GTI MIR optimization remarks
+// CHECK-NOT: applied [unreachable-block-cleanup
+// CHECK: gti-opt: safety operations
+int choose(bool first) {
+  if (first) { return 1; } else { return 2; }
+}
+int main() { return choose(true) - 1; }

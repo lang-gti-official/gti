@@ -11,6 +11,8 @@ namespace lang {
 
 struct TargetInfo;
 
+inline constexpr unsigned maxLlvmCodegenUnits = 256;
+
 enum class LlvmCodegenOptimization {
   None,
   Less,

@@ -42,6 +42,14 @@ struct BackendArtifact {
   std::string contents;
   std::string extension;
   std::optional<EmbeddingCompanion> embedding;
+  // Native objects in stable link order. Source representations use contents.
+  std::vector<std::string> objects;
+
+  [[nodiscard]] const std::string &singleObject() const {
+    if (kind != BackendArtifactKind::Object || objects.size() != 1)
+      throw std::logic_error("backend artifact does not contain one object");
+    return objects.front();
+  }
 };
 
 // A verified GTI program can reach a backend capability that is deliberately

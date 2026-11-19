@@ -1,0 +1,13 @@
+// Storage inside a by-value carrier's stored referent is not that referent, as for an accessor relay (#568).
+struct Box { mut int value = 0; public: Box() = default; };
+class View<lifetime o> {
+public:
+  Box&<o> box;
+  View(Box&<o> b) : box(b) {}
+};
+int&<o> inner<lifetime o>(View<o> view) { return view.box.value; } //~ ERROR GTI-S2085
+int main() {
+  Box b{};
+  View v = View(b);
+  return inner(v);
+}

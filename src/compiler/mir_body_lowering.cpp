@@ -20610,6 +20610,22 @@ private:
                   mappedEntry = tail->id;
               }
             }
+            // A call result in the external region a reference formal's
+            // carrier stores ends at that formal's abstract Stored entry,
+            // the referent region the signature names, exactly as a
+            // receiver result ends at the receiver's entry.
+            if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+                function->returnBorrowFields.empty() && summarizedEntry != 0 &&
+                transient != 0 && !transientChain.empty()) {
+              const auto *entry = output.findLoan(summarizedEntry);
+              const auto *tail = output.findLoan(transient);
+              if (entry != nullptr && tail != nullptr &&
+                  entry->kind == MirLoanKind::Parameter &&
+                  entry->storedDependency == tail->id && tail->entry &&
+                  tail->kind == MirLoanKind::Stored &&
+                  tail->source == entry->source)
+                mappedEntry = tail->id;
+            }
             // A method result written in a carrier's class region borrows
             // what the carrier stores there (its designated stored referent),
             // never the carrier: a returned call result parented directly to

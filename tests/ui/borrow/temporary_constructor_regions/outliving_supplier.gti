@@ -1,0 +1,13 @@
+// An explicitly outliving secondary supplier may be relayed through a temporary.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> relay<lifetime a, lifetime b>(int&<a> keep, int&<b> other)
+    requires outlives<b, a> {
+  return Two(keep, other).pick(false);
+}
+int main() { return 0; }

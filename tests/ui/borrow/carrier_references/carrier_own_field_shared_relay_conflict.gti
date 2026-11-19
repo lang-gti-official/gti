@@ -1,0 +1,37 @@
+// Operations through a carrier stay suspended while a reborrow of its exclusive stored reference is live (#569).
+struct Box { mut int value = 0; mut std::string_view text = ""; public: Box() = default; };
+class Cursor<lifetime o> {
+  mut Box&<o> box;
+  int count = 3;
+  std::string_view name = "abc";
+public:
+  Cursor(mut Box&<o> b) : box(b) {}
+  int&<o> value() { return this.box.value; }
+  std::string_view&<o> text() { return this.box.text; }
+  mut int&<o> slot() mut { return this.box.value; }
+  int& own_count() { return this.count; }
+  std::string_view& own_name() { return this.name; }
+};
+int shared_then_method(mut Box& b) {
+  Cursor c = Cursor(b);
+  int& value = c.value();
+  int& count = c.own_count(); //~ ERROR GTI-S2017
+  return value + count;
+}
+int text_then_method(mut Box& b) {
+  Cursor c = Cursor(b);
+  std::string_view& text = c.text();
+  std::string_view& name = c.own_name(); //~ ERROR GTI-S2017
+  return int(text.size() + name.size());
+}
+int own_then_exclusive(mut Box& b) {
+  mut Cursor c = Cursor(b);
+  int& count = c.own_count();
+  mut int& value = c.slot(); //~ ERROR GTI-S2017
+  value = 4;
+  return value + count;
+}
+int main() {
+  mut Box b{};
+  return shared_then_method(b) + text_then_method(b) + own_then_exclusive(b);
+}

@@ -40,7 +40,7 @@ int main() { return add(20, 22) - 42; }
     const auto artifact = backend.generate(
         gti_test::lowerProgram(frontend, frontend.mir, frontend.mir));
     expect(artifact.kind == lang::BackendArtifactKind::Object &&
-               !artifact.contents.empty(),
+               !artifact.singleObject().empty(),
            "a verified scalar program produces an independent native object");
   }
 }

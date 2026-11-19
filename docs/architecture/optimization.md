@@ -167,9 +167,14 @@ when every instance has the same value.
 
 `run(OptimizationRequest)` takes ownership of a `MirProgram`, verifies it, and
 returns an `OptimizedProgram` containing both the unchanged canonical
-`sourceMir` snapshot and the possibly transformed `mir`. `-O0` schedules no
-transform and keeps pre/post MIR structurally identical. `-O1` schedules the
-following deterministic local pipeline:
+`sourceMir` snapshot and the possibly transformed `mir`. During intermediate edits
+the verifier can reuse a body-local success from that immutable input when the
+complete body at the same kind and owner compares equal, including source debug
+tables. Other bodies and all cross-body contracts are verified on the candidate.
+Standalone verification and final independent replay keep their full checks.
+
+`-O0` schedules no transform and keeps pre/post MIR structurally identical.
+`-O1` schedules the following deterministic local pipeline:
 
 1. `scalar-promotion`;
 2. `fold-literal-identities`;
@@ -377,6 +382,14 @@ but replaying the dominating true edge restores its proved range before a call
 or checked operation. This envelope is derived only from the existing MIR
 predicate and exact comparison operand; it is not a relational solver or a
 source-name rule.
+
+A single closed-call analysis reuses a body's alias facts, dominance, loops,
+and widening headers across calling contexts and its body-local proof pass.
+Independent replay constructs new inputs from its own program snapshot. The
+body-local pass needs only blocks with local failure origins and transfers
+instructions through the last such site when collecting proofs. Its solver
+still follows predecessor blocks to establish the incoming facts. Contextual
+collection also visits check-free bodies and instructions for call discovery.
 
 Block transfer retains a pre-instruction abstract-state snapshot only for the
 instruction named by an `Invoke` terminator. Its failure edge consumes that
@@ -1631,7 +1644,10 @@ Each edit batch validates every guarded target before mutation, rewrites a
 copy, repairs derived facts, verifies the complete candidate, and commits
 atomically. Destructive instruction removal leaves a canonical inert
 tombstone, so instruction/result identities and proof references remain
-stable. Unaffected identities are never compacted.
+stable. Unaffected identities are never compacted. Unreachable-block cleanup
+queues an edit only when its trial rewrite changes the body, including derived
+facts and source debug metadata. Already-inert blocks produce no removal
+record and, on their own, trigger no edit batch or whole-program verification.
 
 Whole-program verification is a deterministic function of program content,
 so an operation verifies a given program once. The canonical dead-instruction
@@ -2162,7 +2178,9 @@ runtime calls, traps, user-code invocation, moves, drops, loans,
 synchronization, and receiver/argument escape.
 
 `deriveMirProgramEffectSummaries` computes the least summaries justified by
-MIR through a deterministic call-graph fixed point. An exact acyclic static
+MIR through a deterministic call-graph fixed point. Each derivation indexes
+callable bodies by kind and owner once, so looking up an exact callee does
+not scan the program for each call. An exact acyclic static
 target may refine its call instruction through that proved summary. Recursive
 SCCs, virtual dispatch, declarations, native/runtime boundaries, and
 unresolved targets remain maximally conservative unless an existing trusted

@@ -34,7 +34,7 @@ llvmEmits(const lang::FrontendResult &frontend,
   try {
     const lang::BackendArtifact artifact = emitLlvm(frontend, level, target);
     return artifact.kind == lang::BackendArtifactKind::Object &&
-           !artifact.contents.empty();
+           !artifact.singleObject().empty();
   } catch (const std::exception &failure) {
     if (error != nullptr)
       *error = failure.what();

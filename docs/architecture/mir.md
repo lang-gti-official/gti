@@ -39,7 +39,14 @@ does not erase an exclusive field's authority or upgrade the shared child.
 While that shared child retains an exclusive entry, operations through the
 carrier remain suspended, including read-only methods, just as for a named
 borrowed carrier. Direct access to unrelated owned fields and shared reads
-through plain references retain their separate permissions. A shared local
+through plain references retain their separate permissions. A loan whose
+stored dependency such a child suspends is therefore rejected as a parent use
+(`GTI-S2017`) when it is produced or used through the carrier, for example a
+read-only method called while `int&<o> v = c.value()` is live. A read-only
+loan read through, or passed on as a plain scalar or text reference, keeps
+working while every live descendant of the suspended dependency is shared:
+`int& n = c.own_count()` taken before `c.value()` stays readable. A suspended
+dependency is never treated as malformed MIR. A shared local
 reborrow of an exclusive formal carrier, such as a reference binding or the
 range binding of `for (x : formal)`, retains the formal's stored dependency.
 A shared mapped result read through that reborrow selects the dependency as
@@ -1098,6 +1105,14 @@ owes no stored dependency even when its path crosses an abstract entry, as in
 `return this.box.text;` through a stored `Box&<o>`: the storage invariant,
 verified independently for the whole program, already proves the view holds
 ownerless text, and its physical source still names the external record.
+A free function returning `T&<o>` through a reference formal to a borrow
+carrier (`int&<o> pick<lifetime o>(View<o>& view) { return view.get(); }`)
+relays a call result whose parent is that formal's abstract `Stored` entry:
+the external region the signature names, not the formal's own shell. Return
+lowering accepts that entry as the chain's tail, as it accepts the receiver's
+entry for a method. A by-value carrier formal still relays only its exact
+stored referent (`GTI-S2085`), whether the result is written as a projection
+or obtained from an accessor.
 A reference return preserves both its physical source and stored dependency.
 A copied by-value return instead publishes a fresh external-owner loan from
 the exact copied SSA value. Its original entry remains live until physical
@@ -4225,6 +4240,11 @@ both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
 
+Intermediate optimizer verification can reuse structural checks for an unchanged
+body from its verified input. Its carrier loan flow is still checked against the
+current program: an unchanged caller can observe changed callee retention effects.
+Whole-program result caching requires equality of the entire program.
+
 Carrier analysis may reuse converged helper-call summaries within one
 `MirCarrierAnalysis` session over an immutable program. Lowering uses a session
 for the previous immutable program snapshot across its body-construction and
@@ -5527,6 +5547,19 @@ full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
+
+A singleton argument reference-return contract checks every retained owner,
+including secondary owners relayed by a consumed carrier. Immutable non-thread-local
+static storage may additionally supply any region. Field-selected reference returns
+may use a narrower dependency set only when complete-flow reconstruction actually
+observed every normal return and normalized its dependencies against the enclosing
+signature. The program-local proof cache retains these observations separately
+from conservative declaration claims, including for functions without a complete
+claim. Verifier-only flow composition may use an independently observed callee's
+selected fields; public contracts remain unchanged upper bounds. A well-formed
+claim with unknown body flow is not this proof. Unknown and recursive edges fall
+back conservatively and retain owner checks. The cache is rebuilt for each MIR
+verification, so no proof survives a program edit or optimization pass.
 
 A call whose result is written in its receiver's class region
 (`receiverClassRegionRelay`) borrows what the receiver stores, never the

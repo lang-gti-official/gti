@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
@@ -2028,18 +2029,6 @@ struct EffectNode {
   bool unknownBoundary = false;
 };
 
-[[nodiscard]] std::optional<std::size_t>
-findNode(const std::vector<EffectNode> &nodes, MirBodyAddress address) {
-  const auto found =
-      std::find_if(nodes.begin(), nodes.end(), [&](const EffectNode &node) {
-        return node.address == address;
-      });
-  return found == nodes.end()
-             ? std::nullopt
-             : std::optional<std::size_t>{static_cast<std::size_t>(
-                   std::distance(nodes.begin(), found))};
-}
-
 [[nodiscard]] MirEffectSummary conservativeSummary(std::size_t arguments,
                                                    bool hasReceiver) {
   MirEffectSummary result;
@@ -2935,6 +2924,12 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
                      .body = &storage.initializer,
                      .exactDefinition = true});
 
+  std::map<std::pair<MirBodyKind, std::size_t>, std::size_t> nodeIndices;
+  for (std::size_t index = 0; index < nodes.size(); ++index) {
+    const MirBodyAddress address = nodes[index].address;
+    nodeIndices.emplace(std::pair{address.kind, address.owner}, index);
+  }
+
   for (EffectNode &node : nodes) {
     node.local.traits = harmless();
     node.local.argumentsEscape.assign(node.parameterCount, false);
@@ -3055,13 +3050,13 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
           capturingUnknownWrite |= invocationEffects.writesUnknownMemory;
           node.local.traits = merge(node.local.traits, invocationEffects);
           for (const MirBodyAddress target : targets.addresses) {
-            const std::optional<std::size_t> targetNode =
-                findNode(nodes, target);
-            if (!targetNode) {
+            const auto targetNode =
+                nodeIndices.find({target.kind, target.owner});
+            if (targetNode == nodeIndices.end()) {
               node.unknownBoundary = true;
               continue;
             }
-            node.callees.push_back(*targetNode);
+            node.callees.push_back(targetNode->second);
           }
         } else {
           const auto structural =
