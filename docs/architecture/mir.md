@@ -4928,6 +4928,12 @@ endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
 
+Temporary read-only carrier receivers may relay a stored reference nested inside
+another carrier. The program verifier matches the complete source field path
+against the receiver class's stored-reference inventory; a nonempty path alone
+or an owned carrier prefix does not establish an external referent. The result
+keeps that referent's owner loan after the temporary shell is destroyed.
+
 A singleton argument reference-return contract checks every retained owner,
 including secondary owners relayed by a consumed carrier. Immutable non-thread-local
 static storage may additionally supply any region. Field-selected reference returns
@@ -4944,7 +4950,7 @@ verification, so no proof survives a program edit or optimization pass.
 A call whose result is written in its receiver's class region
 (`receiverClassRegionRelay`) borrows what the receiver stores, never the
 receiver. Lowering parents a fresh temporary receiver's call-result loan to
-the ancestry of the stored dependency its single source field designates
+the ancestry of the stored dependency its complete source field path designates
 (the primary path or the matching additional dependency), so the shell may
 end with its full expression while only that region's external owner stays
 borrowed. A returned call result parented to a carrier formal's stored entry

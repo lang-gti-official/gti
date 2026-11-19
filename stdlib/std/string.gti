@@ -334,19 +334,19 @@ namespace std {
       }
     };
 
-    class storage_iterator<std::storage_element T, uint64_t Reverse = 0> {
-      prefix_owner<T>& data;
+    class storage_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+      prefix_owner<T>&<owner> data;
       mut size_t current_position;
       size_t final_position;
 
     public:
-      storage_iterator(prefix_owner<T>& source, size_t position, size_t end)
+      storage_iterator(prefix_owner<T>&<owner> source, size_t position, size_t end)
           : data(source), current_position(position), final_position(end) {
         if (position > end) { gti_internal::index_bounds_check(position, end); }
         if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
       }
 
-      T& operator*() {
+      T&<owner> operator*() {
         mut size_t position = this.current_position;
         if constexpr (Reverse != 0) {
           position = detail::checked_iterator_position(position, size_t(0),
@@ -356,7 +356,7 @@ namespace std {
         unsafe { return this.data.read_unchecked(position); }
       }
 
-      T& operator->() { return *this; }
+      T&<owner> operator->() { return *this; }
 
       void operator++() mut {
         this.current_position = detail::checked_iterator_step<Reverse>(
@@ -378,7 +378,7 @@ namespace std {
             this.current_position, size_t(0), this.final_position, offset, Reverse == 0);
       }
 
-      T& operator[](ptrdiff_t offset) {
+      T&<owner> operator[](ptrdiff_t offset) {
         mut size_t position = detail::checked_iterator_position(
             this.current_position, size_t(0), this.final_position, offset, Reverse != 0);
         if constexpr (Reverse != 0) {

@@ -1,0 +1,53 @@
+// A user-defined cursor whose read-only dereference names the region of the
+// owner it stores yields element references that outlive the cursor, while
+// still satisfying the standard iterator concepts and range-for.
+//@ run-pass
+//@ stdout: 4 1
+//@ stdout: 4
+//@ stdout: 10
+import std.iterator;
+import std.format;
+
+struct Numbers {
+  mut int values[4];
+  Numbers() : values({4, 1, 3, 2}) {}
+};
+
+class sentinel { public: uint64_t at; sentinel(uint64_t at) : at(at) {} };
+
+class cursor<lifetime owner> {
+  Numbers&<owner> data;
+  mut uint64_t position;
+public:
+  cursor(Numbers&<owner> data, uint64_t position) : data(data), position(position) {}
+  cursor(cursor<owner>& other) = default;
+  int&<owner> operator*() { return this.data.values[this.position]; }
+  void operator++() mut { this.position = this.position + uint64_t(1); }
+  bool operator!=(sentinel end) { return this.position != end.at; }
+  bool operator!=(cursor<owner>& other) { return this.position != other.position; }
+};
+
+class Bag {
+public:
+  Numbers numbers;
+  Bag() : numbers(Numbers()) {}
+  cursor<this> begin() { return cursor(this.numbers, uint64_t(0)); }
+  sentinel end() { return sentinel(uint64_t(4)); }
+};
+
+static_assert(std::input_iterator<cursor<static>>);
+static_assert(std::forward_iterator<cursor<static>>);
+
+int main() {
+  Bag bag{};
+  mut auto it = bag.begin();
+  int& first = *it;            // the element borrow outlives the advance
+  ++it;
+  std::println("{} {}", first, *it);
+  int& again = *bag.begin();   // dereference a temporary cursor
+  std::println("{}", again);
+  mut int sum = 0;
+  for (auto& x : bag) { sum += x; }
+  std::println("{}", sum);
+  return 0;
+}

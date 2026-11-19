@@ -23,6 +23,8 @@ class span_owner<lifetime source> {
 public:
   constexpr span_owner<Owner>(Owner&<source> owner)
       : witness(std::erase_ref(owner)) {}
+
+  constexpr std::erased_object&<source> referent() { return this.witness; }
 };
 
 class span_iterator<std::storage_element T, uint64_t Reverse, lifetime source> {
@@ -38,17 +40,17 @@ public:
       : owner(owner), address(address), current_position(position),
         first_position(begin), final_position(end) {}
 
-  constexpr T& operator*() {
+  constexpr T&<source> operator*() {
     mut size_t position = this.current_position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, this.first_position,
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return std::assume_ref(this.address + position, this); }
+    unsafe { return std::assume_ref(this.address + position, this.owner.referent()); }
   }
 
-  constexpr T& operator->() { return *this; }
+  constexpr T&<source> operator->() { return *this; }
 
   constexpr void operator++() mut {
     this.current_position = detail::checked_iterator_step<Reverse>(
@@ -70,7 +72,7 @@ public:
         this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
   }
 
-  constexpr T& operator[](ptrdiff_t offset) {
+  constexpr T&<source> operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -78,7 +80,7 @@ public:
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return std::assume_ref(this.address + position, this); }
+    unsafe { return std::assume_ref(this.address + position, this.owner.referent()); }
   }
 
   constexpr ptrdiff_t operator-(span_sentinel sentinel) {
@@ -252,11 +254,11 @@ public:
     return this.element_count == 0;
   }
 
-  constexpr T& front() {
+  constexpr T&<source> front() {
     return this.at(size_t(0));
   }
 
-  constexpr T& back() {
+  constexpr T&<source> back() {
     mut size_t index = size_t(0);
     if (this.element_count > 0) {
       index = this.element_count - 1;
@@ -264,20 +266,20 @@ public:
     return this.at(index);
   }
 
-  constexpr T& at(size_t index) {
+  constexpr T&<source> at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
 
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe constexpr T& get_unchecked(size_t index) {
+  unsafe constexpr T&<source> get_unchecked(size_t index) {
     unsafe {
       size_t position = gti_internal::integer_wrapping_add(this.first_position, index);
-      return std::assume_ref(this.address + position, this);
+      return std::assume_ref(this.address + position, this.owner.referent());
     }
   }
 
-  constexpr T& operator[](size_t index) {
+  constexpr T&<source> operator[](size_t index) {
     return this.at(index);
   }
 

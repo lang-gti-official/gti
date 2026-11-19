@@ -21,21 +21,21 @@ public:
   map_sentinel() = default;
 };
 
-class map_iterator<K, V, uint64_t Reverse = 0> {
-  vector<unique_ptr<map_node<K, V>>>& nodes;
+class map_iterator<K, V, uint64_t Reverse = 0, lifetime owner> {
+  vector<unique_ptr<map_node<K, V>>>&<owner> nodes;
   size_t root;
   mut size_t position;
 
 public:
-  map_iterator(vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+  map_iterator(vector<unique_ptr<map_node<K, V>>>&<owner> source, size_t index, size_t root)
       : nodes(source), root(root), position(index) {}
 
-  map_entry<K, V>& operator*() {
+  map_entry<K, V>&<owner> operator*() {
     gti_internal::require_container_argument(this.position != 0);
     return this.nodes[this.position - 1]->entry;
   }
 
-  map_entry<K, V>& operator->() { return *this; }
+  map_entry<K, V>&<owner> operator->() { return *this; }
 
   bool operator!=(map_sentinel end) { return this.position != 0; }
   bool operator==(map_sentinel end) { return this.position == 0; }
