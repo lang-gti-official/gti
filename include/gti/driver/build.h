@@ -119,6 +119,8 @@ struct NativeLibraryResolution {
 [[nodiscard]] bool containsTimeSensitivePreprocessorUse(std::string_view text);
 
 struct BuildCacheResult {
+  unsigned codegenUnits = 0;
+  unsigned reusedCodegenUnits = 0;
   BuildCacheStatus status = BuildCacheStatus::NotConfigured;
   std::string key;
   std::filesystem::path entry;

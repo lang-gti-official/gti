@@ -497,12 +497,17 @@ LlvmBackendOptions llvmBackendOptions(const CompilationRequest &request) {
 
 namespace {
 
-std::unique_ptr<Backend> selectedBackend(const CompilationRequest &request) {
+std::unique_ptr<Backend>
+selectedBackend(const CompilationRequest &request,
+                LlvmCodegenUnitCache *unitCache = nullptr) {
   switch (request.backend()) {
   case BackendKind::Cpp:
     return makeCppBackend(request);
-  case BackendKind::Llvm:
-    return std::make_unique<LlvmBackend>(llvmBackendOptions(request));
+  case BackendKind::Llvm: {
+    auto options = llvmBackendOptions(request);
+    options.unitCache = unitCache;
+    return std::make_unique<LlvmBackend>(options);
+  }
   }
   throw std::logic_error("unknown executable backend selection");
 }
@@ -518,8 +523,9 @@ CompilationResult compileToSelectedBackend(const CompilationRequest &request,
 
 CompilationResult compileToSelectedBackend(const CompilationRequest &request,
                                            CompilationInputs inputs,
-                                           ProgressObserver *progress) {
-  std::unique_ptr<Backend> backend = selectedBackend(request);
+                                           ProgressObserver *progress,
+                                           LlvmCodegenUnitCache *unitCache) {
+  std::unique_ptr<Backend> backend = selectedBackend(request, unitCache);
   return compileWithLoadedInputs(request.withDefinitionClosure(),
                                  std::move(inputs), *backend, progress);
 }

@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -1481,7 +1482,8 @@ std::optional<std::string>
 buildCacheKey(const ExecutableBuildRequest &request,
               const CompilationInputs &inputs, const BuildCachePolicy &policy,
               const NativeLinkIdentityPlan &linkPlan, std::string &errorMessage,
-              std::string &policyBypassDetail, bool compilationOnly = false) {
+              std::string &policyBypassDetail, bool compilationOnly,
+              std::string *unitProducer) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
@@ -1653,6 +1655,11 @@ buildCacheKey(const ExecutableBuildRequest &request,
                    layout->preferredAlignmentBytes);
     }
   }
+
+  // The independent machine-code producer shares the ordinary compiler,
+  // target and policy identity. Its per-unit input is finalized LLVM bitcode.
+  if (unitProducer && request.compilation().llvmCodegenUnits().units > 1)
+    *unitProducer = identity.finish();
 
   if (!addSourceIdentity(identity, inputs, policy.sourceRoot, errorMessage)) {
     return std::nullopt;
@@ -2642,6 +2649,60 @@ readCompilationObjects(const std::filesystem::path &entry, std::string_view key,
             entry.string() + "'";
   return std::nullopt;
 }
+
+// The object and its key/checksum move into place together. Cache trouble
+// always falls back to generating the unit from the verified current program.
+class ProjectCodegenUnitCache final : public LlvmCodegenUnitCache {
+public:
+  ProjectCodegenUnitCache(std::filesystem::path root,
+                          const ManagedOutputPolicy &policy,
+                          std::string producer)
+      : root(std::move(root)), policy(policy), producer(std::move(producer)) {}
+
+  std::optional<std::string> lookup(std::string_view bitcode,
+                                    std::string &key) override {
+    IdentityBuilder identity;
+    identity.add("codegen-unit-producer-v1", producer);
+    identity.add("bitcode", bitcode);
+    key = identity.finish();
+    const auto path = root / key;
+    std::lock_guard lock(mutex);
+    ++attempts;
+    if (auto error = managedPathDiagnostic(policy, path, false)) {
+      warning = std::move(error);
+      return std::nullopt;
+    }
+    if (auto row = readCompilationObjects(path, key, 1, warning)) {
+      ++hits;
+      return std::move(row->front());
+    }
+    return std::nullopt;
+  }
+
+  void store(const std::string &key, const std::string &object) override {
+    const auto path = root / key;
+    std::lock_guard lock(mutex);
+    if (auto error = managedPathDiagnostic(policy, path, true)) {
+      warning = std::move(error);
+      return;
+    }
+    auto payload = compilationObjectsPayload({object});
+    std::string error;
+    if (!publishTextAtomically(path, key + digestText(payload) + payload,
+                               error))
+      warning = "gti: could not cache LLVM code generation unit: " + error;
+  }
+
+  unsigned attempts = 0;
+  unsigned hits = 0;
+  std::optional<std::string> warning;
+
+private:
+  std::filesystem::path root;
+  const ManagedOutputPolicy &policy;
+  std::string producer;
+  std::mutex mutex;
+};
 
 std::optional<std::string>
 loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
@@ -4345,6 +4406,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
 
   std::optional<std::filesystem::path> cacheEntry;
   std::optional<std::filesystem::path> objectEntry;
+  std::string unitProducer;
   bool reusedObject = false;
   bool corruptCacheEntry = false;
   NativeLinkIdentityPlan linkIdentityPlan;
@@ -4373,9 +4435,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           !request.compilation().program().testSuite &&
           !request.compilation().optimizationOutputs().requested()) {
         std::string error, policyDetail;
-        if (const auto key =
-                buildCacheKey(request, compilationInputs, *request.cache(),
-                              linkIdentityPlan, error, policyDetail, true)) {
+        if (const auto key = buildCacheKey(
+                request, compilationInputs, *request.cache(), linkIdentityPlan,
+                error, policyDetail, true, &unitProducer)) {
           objectEntry = request.cache()->root / "compile-object-v2" / *key;
           if (const auto diagnostic = managedPathDiagnostic(
                   *request.managedOutput(), *objectEntry, false)) {
@@ -4425,7 +4487,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       std::string cachePolicyBypass;
       const std::optional<std::string> key = buildCacheKey(
           request, compilationInputs, *request.cache(), linkIdentityPlan,
-          cacheIdentityError, cachePolicyBypass);
+          cacheIdentityError, cachePolicyBypass, false, &unitProducer);
       if (!key) {
         result.cache.status = BuildCacheStatus::Bypassed;
         result.cache.detail =
@@ -4615,9 +4677,21 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!compiledLibrary && !compiledImport && !reusedObject)
+  if (!compiledLibrary && !compiledImport && !reusedObject) {
+    std::optional<ProjectCodegenUnitCache> units;
+    if (!unitProducer.empty() && (cacheEntry || objectEntry))
+      units.emplace(request.cache()->root / "codegen-unit-v1",
+                    *request.managedOutput(), std::move(unitProducer));
     result.compilation = compileToSelectedBackend(
-        request.compilation(), std::move(compilationInputs), progress);
+        request.compilation(), std::move(compilationInputs), progress,
+        units ? &*units : nullptr);
+    if (units && units->attempts) {
+      result.cache.codegenUnits = units->attempts;
+      result.cache.reusedCodegenUnits = units->hits;
+      if (units->warning)
+        result.cache.warning = std::move(units->warning);
+    }
+  }
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =

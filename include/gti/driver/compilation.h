@@ -311,7 +311,8 @@ compileToSelectedBackend(const CompilationRequest &request,
 [[nodiscard]] CompilationResult
 compileToSelectedBackend(const CompilationRequest &request,
                          CompilationInputs inputs,
-                         ProgressObserver *progress = nullptr);
+                         ProgressObserver *progress = nullptr,
+                         LlvmCodegenUnitCache *unitCache = nullptr);
 
 [[nodiscard]] CompilationResult
 compileToNativeHeader(const CompilationRequest &request,
