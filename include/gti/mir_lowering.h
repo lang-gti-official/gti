@@ -6,6 +6,9 @@
 #include "gti/mir_verifier.h"
 
 namespace lang {
+namespace mir_detail {
+struct LoweringRounds;
+}
 
 // Transient construction diagnostics, not part of serialized executable MIR.
 struct MirLoweringError {
@@ -56,6 +59,9 @@ struct MirCleanupSharingStatistics {
 
 class MirLowerer {
 public:
+  MirLowerer() = default;
+  explicit MirLowerer(mir_detail::VerificationSession *verification)
+      : verification(verification) {}
   [[nodiscard]] MirLoweringResult
   lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
 
@@ -70,6 +76,7 @@ public:
   static void resetCleanupSharingStatistics();
 
 private:
+  mir_detail::VerificationSession *verification = nullptr;
   // Function and lambda bodies share identical failure-cleanup suffixes
   // unless this is cleared, which lowers one cleanup chain per failure edge.
   static thread_local bool shareFailureCleanup_;
@@ -80,14 +87,16 @@ private:
   lowerVerified(const HirProgram &source,
                 const FailureMetadata &failureMetadata) const;
 
-  [[nodiscard]] static MirLoweringResult
+  [[nodiscard]] MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,
-               bool includeHostedStartup);
+               bool includeHostedStartup,
+               mir_detail::LoweringRounds *rounds) const;
 
-  [[nodiscard]] static MirBody lowerBody(
-      const HirProgram &program, const FailureMetadata &failureMetadata,
-      const HirBody &body, MirBodyKind kind, SemanticType returnType,
+  [[nodiscard]] MirBody lowerBody(
+      mir_detail::LoweringRounds *rounds, const HirProgram &program,
+      const FailureMetadata &failureMetadata, const HirBody &body,
+      MirBodyKind kind, SemanticType returnType,
       const std::vector<HirValueId> &prologueValues,
       const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
       std::vector<MirLoweringError> &errors, std::size_t owner,
@@ -100,7 +109,7 @@ private:
       MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
       bool compilerTrusted = false,
       const MirClassInstance *constructorOwner = nullptr,
-      const HirDestructorInstance *destructor = nullptr);
+      const HirDestructorInstance *destructor = nullptr) const;
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

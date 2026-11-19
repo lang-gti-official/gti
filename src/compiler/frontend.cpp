@@ -11,6 +11,7 @@
 #include "gti/source_owner.h"
 #include "gti/support.h"
 #include "mir_borrow_audit_diagnostics.h"
+#include "mir_verification_session.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -1964,10 +1965,13 @@ void Frontend::verifyLowering(const std::filesystem::path &entryPath,
     return;
   }
 
+  mir_detail::VerificationSession verification(
+      options.mirVerificationCache.get(), options.workMetrics);
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
   ProgressScope mirProgress(options.progress, ProgressPhase::MirLowering);
   MirLoweringResult mir =
-      MirLowerer().lower(result.hir, result.failureMetadata);
+      MirLowerer(verification.enabled() ? &verification : nullptr)
+          .lower(result.hir, result.failureMetadata);
   mirProgress.finish();
   if (rawAudit && !rawAudited)
     for (Diagnostic &diagnostic :

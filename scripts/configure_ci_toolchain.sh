@@ -52,13 +52,26 @@ case "$(uname -s)" in
     # A stalled mirror once held an integration shard in `apt-get update`
     # until the six-hour job limit. Bound each attempt and retry instead.
     apt_get() {
-      local attempt
+      local attempt limit=300
+      # Installing also unpacks/configures LLVM; allow that local work more
+      # time than an index refresh, while retaining bounded network requests.
+      if [[ "$1" == install ]]; then limit=900; fi
       for attempt in 1 2 3 4; do
-        if sudo timeout 300 apt-get -o Acquire::Retries=3 \
+        if sudo timeout --kill-after=30 "${limit}" apt-get -o Acquire::Retries=3 \
              -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"; then
           return 0
         fi
-        echo "apt-get $1: attempt ${attempt} failed or exceeded 300 s" >&2
+        echo "apt-get $1: attempt ${attempt} failed or exceeded ${limit} s" >&2
+        if (( attempt == 4 )); then break; fi
+        if [[ "$1" == install ]]; then
+          # timeout can interrupt dpkg mid-transaction. Repeating apt-get
+          # without recovery then fails immediately on every remaining try.
+          # Missing dependencies can make configuration fail; the next apt
+          # attempt must still succeed before we accept the installation.
+          if ! sudo timeout --kill-after=30 300 dpkg --configure -a; then
+            echo "dpkg recovery incomplete; retrying apt-get install" >&2
+          fi
+        fi
         sleep $((attempt * 15))
       done
       echo "apt-get $1 did not succeed after 4 attempts" >&2
