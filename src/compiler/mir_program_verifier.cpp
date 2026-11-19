@@ -3219,6 +3219,21 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     }
     if (loan != nullptr) {
       const auto *selected = source ? body.findPlace(*source) : nullptr;
+      // A formal's entry loan protects the whole referent, but a reference
+      // argument can select one of its owned fields. The field's exact
+      // address supplies the mapping, as it does for complete-set flow.
+      if (fields &&
+          (operand.kind == MirOperandKind::BorrowRead ||
+           operand.kind == MirOperandKind::BorrowWrite) &&
+          selected && selected->projections.size() > 1 &&
+          !selected->traits.containsBorrowedState &&
+          loan->additionalDependencies.empty() &&
+          mir_detail::referenceParameterContainsPlace(body, *loan,
+                                                      selected->id))
+        return {{.source = selected->id,
+                 .access = operand.kind == MirOperandKind::BorrowWrite
+                               ? AccessMode::Mutable
+                               : AccessMode::ReadOnly}};
       const bool rangeStorage =
           selected != nullptr && selected->root == MirPlaceRootKind::Binding &&
           selected->projections.empty() &&

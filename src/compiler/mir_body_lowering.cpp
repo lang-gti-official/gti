@@ -4772,12 +4772,26 @@ private:
                     found != bindingLoans.end())
                   through = output.findLoan(found->second);
             }
+        // A constructor or call that stores the whole reference a call
+        // returned borrows through that exact live result. The unpacked
+        // address still comes from the operand, while its retained owners
+        // and permissions come from the accessor loan.
+        const bool exactCallResult = [&] {
+          if (!input || input->info.category != ValueCategory::Place ||
+              !through || through->kind != MirLoanKind::CallResult ||
+              !mapping.sourceFields.empty())
+            return false;
+          const auto *place = output.findPlace(placeForValue(*argument));
+          return place && place->root == MirPlaceRootKind::Loan &&
+                 place->loan == through->id && place->projections.empty();
+        }();
         if (input != nullptr && input->info.category == ValueCategory::Place &&
             through != nullptr &&
             (through->referenceSelection ||
              (through->designatedFields.empty() &&
               through->conditions.empty() &&
-              (referenceBinding || through->kind == MirLoanKind::Local ||
+              (referenceBinding || exactCallResult ||
+               through->kind == MirLoanKind::Local ||
                through->kind == MirLoanKind::Parameter)))) {
           sources.push_back({.source = through->source,
                              .parent = through->id,
