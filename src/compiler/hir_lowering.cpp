@@ -42,7 +42,7 @@ public:
     }
     editedDeclaration = function->bodyDeclaration();
     replacementBody = &changed;
-    ensurePlaceDomain(output.program.moduleBody);
+    prepareModuleStorage(false);
     processPendingInstances();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
@@ -170,19 +170,7 @@ public:
     } else {
       seedDeclarations(source.declarations(), std::nullopt);
     }
-    output.program.foreignStorage_ = baseModel->foreignStorageDeclarations();
-    for (const auto &storage : output.program.foreignStorage_)
-      seedConcreteDeclarationType(storage.type);
-    lowerEmbeddingPlan();
-    lowerProgramInitializationPlan();
-    lowerThreadLocalInitializationPlan();
-    lowerHostedProgramEntryPlan();
-    std::unordered_set<HirBindingId> programStorageBindings;
-    for (const auto &step : output.program.programInitialization.steps)
-      programStorageBindings.insert(step.binding);
-    finalizeLifetimes(output.program.moduleBody, *baseModel,
-                      programStorageBindings);
-    ensurePlaceDomain(output.program.moduleBody);
+    prepareModuleStorage(true);
     processPendingInstances();
     const InstanceCounts reachable = instanceCounts();
     // Every other declaration in scope is still lowered: concrete semantic
@@ -263,6 +251,25 @@ private:
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid && output.program.lambdas.empty();
     return std::move(output);
+  }
+
+  // A function closure can reach globals and class statics through callees.
+  // Keep their exact bindings, initializer effects and cleanup plans together.
+  void prepareModuleStorage(bool includeHostedEntry) {
+    output.program.foreignStorage_ = baseModel->foreignStorageDeclarations();
+    for (const auto &storage : output.program.foreignStorage_)
+      seedConcreteDeclarationType(storage.type);
+    lowerEmbeddingPlan();
+    lowerProgramInitializationPlan();
+    lowerThreadLocalInitializationPlan();
+    if (includeHostedEntry)
+      lowerHostedProgramEntryPlan();
+    std::unordered_set<HirBindingId> programStorageBindings;
+    for (const auto &step : output.program.programInitialization.steps)
+      programStorageBindings.insert(step.binding);
+    finalizeLifetimes(output.program.moduleBody, *baseModel,
+                      programStorageBindings);
+    ensurePlaceDomain(output.program.moduleBody);
   }
 
   void initialize(const SemanticModel &semantics,
