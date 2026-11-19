@@ -1150,36 +1150,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   StmtList declarations;
   bool syntaxValid = true;
   const std::string syntaxContext = syntaxCacheContext(options);
-  // Compile limits decide which constant, macro and expansion requests
-  // succeed, so every semantic reuse (preamble, instance analysis) keys on
-  // them; lexing and parsing do not depend on them.
-  std::string frontendCacheContext =
-      semanticCacheContext(options) +
-      "\nlimits:" + compileLimitsIdentity(options.limits) +
-      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
-      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
-      "\nsource-owners:" +
-      (result.sourceGraph.sourceOwners()
-           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
-           : std::string{});
-  // Logical maps are relocatable, but a loaded file's containment, module
-  // membership and compiler trust also affect semantic meaning. Never reuse
-  // a preamble merely because its source bytes and public map are unchanged.
-  const auto appendIdentity = [&](std::string_view value) {
-    frontendCacheContext += std::to_string(value.size()) + ":";
-    frontendCacheContext += value;
-  };
-  for (const auto &unit : result.sourceGraph.sourceUnits()) {
-    appendIdentity(unit.path.generic_string());
-    const auto owners = result.sourceGraph.sourceOwners();
-    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
-    appendIdentity(owner ? owner->identity : std::string{});
-    const auto *module = result.sourceGraph.findModule(unit.moduleId);
-    appendIdentity(module ? module->ownerIdentity : std::string{});
-    appendIdentity(module ? module->name : std::string{});
-    appendIdentity(std::to_string(static_cast<int>(unit.role)));
-    appendIdentity(unit.prelude ? "prelude" : "source");
-  }
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
   const auto parseStart = std::chrono::steady_clock::now();
@@ -1297,12 +1267,61 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
   if (options.stopAfter == FrontendPhase::Parsing) {
+    result.parsingComplete = true;
     return result;
   }
-  if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
-    return result;
-  }
+  return checkParsed(entryPath, std::move(result));
+}
 
+FrontendResult Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                                       FrontendResult result) const {
+  if (!result.parsingComplete)
+    return result;
+  result.parsingComplete = false;
+  result = checkParsed(entryPath, std::move(result));
+  applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+  return result;
+}
+
+FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
+                                     FrontendResult result) const {
+  if (!result.syntaxValid && !options.analyzeRecoveredProgram)
+    return result;
+  if (options.cancellation &&
+      options.cancellation->load(std::memory_order_relaxed)) {
+    result.cancelled = true;
+    return result;
+  }
+  // Compile limits decide which constant, macro and expansion requests
+  // succeed, so every semantic reuse (preamble, instance analysis) keys on
+  // them; lexing and parsing do not depend on them.
+  std::string frontendCacheContext =
+      semanticCacheContext(options) +
+      "\nlimits:" + compileLimitsIdentity(options.limits) +
+      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
+      "\nsource-owners:" +
+      (result.sourceGraph.sourceOwners()
+           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
+           : std::string{});
+  // Logical maps are relocatable, but a loaded file's containment, module
+  // membership and compiler trust also affect semantic meaning. Never reuse
+  // a preamble merely because its source bytes and public map are unchanged.
+  const auto appendIdentity = [&](std::string_view value) {
+    frontendCacheContext += std::to_string(value.size()) + ":";
+    frontendCacheContext += value;
+  };
+  for (const auto &unit : result.sourceGraph.sourceUnits()) {
+    appendIdentity(unit.path.generic_string());
+    const auto owners = result.sourceGraph.sourceOwners();
+    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
+    appendIdentity(owner ? owner->identity : std::string{});
+    const auto *module = result.sourceGraph.findModule(unit.moduleId);
+    appendIdentity(module ? module->ownerIdentity : std::string{});
+    appendIdentity(module ? module->name : std::string{});
+    appendIdentity(std::to_string(static_cast<int>(unit.role)));
+    appendIdentity(unit.prelude ? "prelude" : "source");
+  }
   // Concrete generic discovery can select bodies which were not visible to
   // declaration-time analysis. With bounded trusted-body analysis the
   // semantic visitor completes such a body while HIR runs (late demand): it
@@ -2086,6 +2105,14 @@ const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
   return nullptr;
 }
 } // namespace
+
+bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
+  const auto *unit =
+      baseline->sourceGraph.findUnit(baseline->sourceGraph.entryUnit());
+  const auto *text =
+      unit ? baseline->sources.find(unit->path.string()) : nullptr;
+  return text && *text == source;
+}
 
 std::optional<std::vector<Diagnostic>>
 EditorBodyDiagnostics::check(const std::string &source,
