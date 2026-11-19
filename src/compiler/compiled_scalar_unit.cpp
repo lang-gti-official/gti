@@ -464,6 +464,13 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
       errors.push_back("unsupported compiled function signature");
       continue;
     }
+    if (binding.optimizationBody &&
+        (!binding.imported ||
+         binding.codegenAttributes.inlining == FunctionInlining::Never ||
+         binding.codegenAttributes.cold ||
+         !verifyCompiledMir(*binding.optimizationBody, f->parameterTypes,
+                            f->returnType)))
+      errors.push_back("invalid reusable MIR for compiled import");
     if ((!binding.imported && !program.compiledScalarProducer()) ||
         f->definitionKind != (binding.imported ? MirDefinitionKind::Declaration
                                                : MirDefinitionKind::Source) ||
@@ -570,8 +577,8 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
     program.compiledScalarBindings_.push_back(
         {selected->id, signature.key, compiledScalarSymbol(signature), imported,
          result, input.sourceUnit, signature.typeMetadata,
-         signature.resultRecipe, signature.borrow,
-         signature.codegenAttributes});
+         signature.resultRecipe, signature.borrow, signature.codegenAttributes,
+         input.optimizationBody});
   };
   for (const auto &input : exports)
     bindOne(input, false);

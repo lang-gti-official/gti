@@ -3080,20 +3080,21 @@ There is no new CLI flag or manifest mode. Ordinary source stays `.gti`;
 metadata artifact exists yet. The existing engine embedding library mode is a
 different C ABI contract and retains its current behavior.
 
-### Provisional wire format version 2
+### Provisional wire format versions 2 and 3
 
 All integers are unsigned 32-bit little endian. A blob is its byte length followed
 by exactly those bytes; there is no padding, compression, timestamp, platform
 permission, host-width integer or native structure dump. The complete layout is:
 
-1. Eight bytes `GTILIB\r\n`, container version `2`, envelope schema `1`.
+1. Eight bytes `GTILIB\r\n`, container version `2` (native only) or `3` (native plus optimization MIR), envelope schema `1`.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
 3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
 4. Dependency count, then pairs of logical library SHA-256 and complete dependency
    bundle SHA-256, sorted strictly by logical library identity.
 5. Object count, then name/data blob pairs sorted strictly by name.
-6. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
+6. Version 3 adds a nonempty, length-prefixed optimization MIR section, limited to 8 MiB.
+7. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
 
 Hash fields are exactly 64 lowercase hexadecimal bytes. The target is a
 caller-normalized ASCII triple (at most 255 bytes); the codec checks its bounded
@@ -3337,6 +3338,24 @@ calls with an equivalent external ABI baseline and record runtime, child peak
 RSS, build latency and object/bundle/executable size. The latter includes a
 by-value Point record. These allocation-free operations do not claim parity with
 whole-program inlining or complete F5 performance acceptance.
+
+### Cross-library optimization MIR
+
+Compiled libraries keep the native definition of every exported overload.
+The producer can also save the executable operations of a small concrete MIR
+body under that overload's full ABI symbol. The optional section uses dense
+body-local value slots and parameter ordinals. Consumers validate types, operand
+order, result and policy against the imported interface, including unused rows.
+The native-only encoding remains byte-for-byte compatible.
+
+Optimized LLVM builds can specialize and inline these bodies at direct calls
+without access to the producer's sources. Debug builds, instrumented builds,
+cold and noinline functions, and calls through function pointers use native
+code. The initial profile covers straight-line scalar computations and local
+bindings. A failed checked operation transfers to the original native function
+with its original arguments so that it reports the producer's failure. This is
+valid for bodies whose computations have no externally observable effects
+before that transfer. Unsupported bodies retain their native definition.
 
 ### Precompiled standard library
 

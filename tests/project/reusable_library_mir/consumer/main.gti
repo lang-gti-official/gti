@@ -1,0 +1,7 @@
+import "api.gti";
+
+int main() {
+  int x = opaque(42);
+  return mix(uint64_t(x), uint64_t(5)) == uint64_t(47) &&
+         checked_sum(40, 2) == 42 ? 0 : 1;
+}

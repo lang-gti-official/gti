@@ -1,0 +1,13 @@
+// A source-absent optimized library exposes MIR for eligible calls, preserves noinline and reports native checked failures.
+$ cd producer
+$ gti build --release
+$ sh -c "cp build/gti/release/*/kernels.gtilib ../consumer/"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti run --release
+$ python3 ../check_imports.py
+$ cp overflow.gti main.gti
+$ gti run --release
+? 70
+stderr: integer_overflow

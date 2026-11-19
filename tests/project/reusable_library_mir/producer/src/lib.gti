@@ -1,0 +1,13 @@
+export module kernels;
+
+export uint64_t mix(uint64_t x, uint64_t mask) {
+  return x ^ mask;
+}
+
+export int checked_sum(int a, int b) {
+  return a + b;
+}
+
+export [[noinline]] int opaque(int x) {
+  return x;
+}

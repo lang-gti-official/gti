@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "consumer"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "kernels"
+target = "kernels"
+path = "kernels.gtilib"
+interface = "api.gti"

@@ -383,6 +383,7 @@ public:
         selection(std::move(selection)) {}
   ScalarBackend(std::vector<CompiledScalarImport> imports, Backend &backend)
       : imports(std::move(imports)), backend(backend) {}
+  CompiledMirBodies optimizationBodies;
   bool interfaceNeedsSource() const { return needsSource; }
   const std::vector<CompiledScalarSignature> &selectedSignatures() const {
     return signatures;
@@ -426,6 +427,14 @@ public:
         (void)libraryIdentity(signatures);
         bound = CompiledScalarUnitBuilder().bindScoped(std::move(program),
                                                        exports, imports);
+        for (const auto &binding : bound->compiledScalarBindings()) {
+          if (!binding.imported) {
+            const auto *function =
+                bound->mir().findFunctionInstance(binding.function);
+            if (auto body = projectCompiledMir(*function))
+              optimizationBodies.emplace(binding.symbol, std::move(body));
+          }
+        }
       } else {
         bound = CompiledScalarUnitBuilder().bindImports(std::move(program),
                                                         imports);
@@ -616,7 +625,8 @@ CompiledScalarLibraryResult buildScalarLibrary(
         {id,
          std::move(prepared.dependencies),
          {{"unit.o", result.compilation.artifact->singleObject()}},
-         metadata});
+         metadata,
+         encodeCompiledMir(backend.optimizationBodies)});
   }
   return result;
 }
@@ -676,6 +686,30 @@ std::string quotedInterfacePath(const std::filesystem::path &path) {
   }
   return result + "\"";
 }
+CompiledMirBodies checkedOptimizationBodies(
+    const LibraryBundle &bundle,
+    const std::vector<CompiledScalarSignature> &signatures) {
+  auto bodies = decodeCompiledMir(bundle.optimizationBodies);
+  if (bodies.empty())
+    return bodies;
+  std::size_t matched = 0;
+  for (const auto &signature : signatures) {
+    auto found = bodies.find(compiledScalarSymbol(signature));
+    if (found == bodies.end())
+      continue;
+    if (signature.codegenAttributes.inlining == FunctionInlining::Never ||
+        signature.codegenAttributes.cold ||
+        !verifyCompiledMir(*found->second, decodedKey(signature).parameters,
+                           signature.result))
+      throw std::invalid_argument(
+          "invalid compiled optimization MIR for exported signature");
+    ++matched;
+  }
+  if (matched != bodies.size())
+    throw std::invalid_argument(
+        "compiled optimization MIR has an unknown callable");
+  return bodies;
+}
 struct LibraryFacade {
   std::string path;
   std::string source;
@@ -688,6 +722,8 @@ struct AdmittedLibraries {
   std::vector<LibraryBundleDependency> dependencies;
   std::vector<std::string> symbols;
 
+  CompiledMirBodies optimizationBodies;
+
   CompiledLibraryInputs bind(CompilationInputs inputs) && {
     std::vector<CompiledScalarImport> imports;
     for (auto &facade : facades) {
@@ -695,8 +731,12 @@ struct AdmittedLibraries {
       if (!unit)
         continue;
       inputs.sourceGraph.markCompiledScalarInterface(unit);
-      for (auto &signature : facade.signatures)
-        imports.push_back({std::move(signature), unit});
+      for (auto &signature : facade.signatures) {
+        auto found = optimizationBodies.find(compiledScalarSymbol(signature));
+        imports.push_back(
+            {std::move(signature), unit,
+             found == optimizationBodies.end() ? nullptr : found->second});
+      }
     }
     return {std::move(inputs), std::move(imports), std::move(objects),
             std::move(dependencies), std::move(symbols)};
@@ -721,12 +761,15 @@ admitScalarLibraries(const CompilationRequest &request,
   std::vector<Admission> admitted;
   std::map<std::string, std::size_t> libraries;
   std::size_t declarationCount = 0;
+  CompiledMirBodies optimizationBodies;
   for (auto &input : bundles) {
     auto signatures = readInterface(input.bundle.interfaceMetadata);
     declarationCount += signatures.size();
     if (declarationCount > 256)
       throw std::invalid_argument(
           "combined compiled interface exceeds 256 declarations");
+    auto bodies = checkedOptimizationBodies(input.bundle, signatures);
+    optimizationBodies.merge(bodies);
     auto identity = libraryIdentity(signatures);
     if (!libraries.emplace(identity, admitted.size()).second)
       throw std::invalid_argument("duplicate compiled library package/target");
@@ -947,8 +990,9 @@ admitScalarLibraries(const CompilationRequest &request,
                          "export module " + rootNames[index] + ";\n" + forwards,
                          {}});
   }
-  return {std::move(sources), std::move(facades), std::move(objects),
-          std::move(direct), std::move(directSymbols)};
+  return {std::move(sources),       std::move(facades),
+          std::move(objects),       std::move(direct),
+          std::move(directSymbols), std::move(optimizationBodies)};
 }
 CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &request, std::vector<ScalarBundleInput> bundles,
@@ -1220,6 +1264,7 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
         std::make_shared<const std::string>(readCompiledLibraryFile(artifact));
     auto bundle = decodeLibraryBundle(*bytes);
     auto signatures = readInterface(bundle.interfaceMetadata);
+    (void)checkedOptimizationBodies(bundle, signatures);
     const auto owner = decodedKey(signatures.front()).owner;
     if (owner.package != target.package || owner.target != target.target)
       return {};

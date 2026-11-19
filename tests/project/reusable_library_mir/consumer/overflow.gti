@@ -1,0 +1,5 @@
+import "api.gti";
+
+int main() {
+  return checked_sum(2147483647, 1);
+}
