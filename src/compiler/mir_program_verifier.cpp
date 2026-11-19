@@ -23557,6 +23557,10 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
           owner->kind == ClassKind::Interface ||
           !owner->structuralBases.empty())
         return false;
+      // A borrowed aggregate must have a concrete stored reference path.
+      if (owner->traits.containsBorrowedState &&
+          findStoredCarrierReferences(program, type).empty())
+        return false;
       return std::all_of(
           owner->declaredFields.begin(), owner->declaredFields.end(),
           [&](const auto &field) { return self(self, field.type); });
