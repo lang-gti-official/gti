@@ -1,0 +1,6 @@
+// A constexpr root consumes a temporary checked view without publishing the borrow.
+import std.span;
+
+constexpr uint8_t data[2] = {0x16, 0xda};
+static_assert(data.as_span().size() == 2);
+static_assert(data.as_span()[1] == 0xda);

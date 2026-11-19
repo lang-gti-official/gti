@@ -2761,12 +2761,15 @@ bool SemanticModel::appendFullExpression(
 
 void SemanticModel::recordFullExpression(const Stmt &statement,
                                          const ExprPtr &root) {
-  if (root == nullptr) {
-    return;
-  }
+  if (root)
+    recordFullExpression(statement, *root);
+}
+
+void SemanticModel::recordFullExpression(const Stmt &statement,
+                                         const Expr &root) {
   SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
                                     .statement = &statement,
-                                    .roots = {root.get()}};
+                                    .roots = {&root}};
   if (appendFullExpression(statementFullExpressions[&statement], expression)) {
     fullExpressionOrder.push_back(std::move(expression));
   }

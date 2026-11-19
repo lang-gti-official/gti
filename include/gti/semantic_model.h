@@ -3072,6 +3072,7 @@ private:
                        const SemanticFullExpression &expression);
 
   void recordFullExpression(const Stmt &statement, const ExprPtr &root);
+  void recordFullExpression(const Stmt &statement, const Expr &root);
 
   void recordFullExpression(const ConstructorInitializer &initializer);
 

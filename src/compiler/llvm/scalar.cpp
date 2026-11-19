@@ -221,7 +221,11 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
       aggregate && aggregate->value &&
       aggregate->value->kind == ConstantAggregateKind::Array &&
       type.kind == SemanticType::Array &&
-      aggregate->value->elements.size() == type.arrayLength) {
+      aggregate->value->elementCount() == type.arrayLength) {
+    if (aggregate->value->packedBytes)
+      return llvm::ConstantDataArray::getString(session.context(),
+                                                *aggregate->value->packedBytes,
+                                                /*AddNull=*/false);
     std::vector<llvm::Constant *> elements;
     for (const auto &element : aggregate->value->elements)
       elements.push_back(constant(element, type.arguments.at(0)));

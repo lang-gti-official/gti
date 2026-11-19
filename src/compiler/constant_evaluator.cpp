@@ -23,6 +23,12 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
         *aggregate->value->exactType != target) {
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     }
+    if (aggregate->value->packedBytes) {
+      return aggregate->value->packedBytesMatch(target)
+                 ? ConstantEvaluation{.value = value}
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::UnsupportedType};
+    }
     if (target.kind == SemanticType::Enum && target.enumId != 0 &&
         aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
         aggregate->value->identity == target.enumId &&
@@ -104,6 +110,23 @@ ConstantEvaluation evaluateConstantTextIndex(const ConstantValue &text,
               static_cast<unsigned char>((*bytes)[*offset]))}};
 }
 
+ConstantValue ConstantAggregate::elementAt(std::size_t index) const {
+  if (!packedBytes)
+    return elements[index];
+  return makeConstantInteger(
+      {.magnitude = static_cast<unsigned char>((*packedBytes)[index])},
+      {.width = 8, .signedValue = false});
+}
+
+bool ConstantAggregate::packedBytesMatch(const SemanticType &type) const {
+  return packedBytes && kind == ConstantAggregateKind::Array && identity == 0 &&
+         variant == 0 && elements.empty() && fields.empty() &&
+         type.kind == SemanticType::Array && type.arrayLengthParameterId == 0 &&
+         type.arguments.size() == 1 &&
+         type.arguments.front() == SemanticType::UInt8 &&
+         type.arrayLength == packedBytes->size();
+}
+
 bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
   const bool sameType =
       left.exactType == right.exactType ||
@@ -111,7 +134,10 @@ bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
        *left.exactType == *right.exactType);
   return sameType && left.kind == right.kind &&
          left.identity == right.identity && left.elements == right.elements &&
-         left.fields == right.fields && left.variant == right.variant;
+         left.fields == right.fields && left.variant == right.variant &&
+         (left.packedBytes == right.packedBytes ||
+          (left.packedBytes && right.packedBytes &&
+           *left.packedBytes == *right.packedBytes));
 }
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,

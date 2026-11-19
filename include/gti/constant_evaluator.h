@@ -96,6 +96,15 @@ struct ConstantAggregate {
   std::vector<ConstantAggregateField> fields;
   // Exact active alternative for a payload enum; never an underlying integer.
   std::size_t variant = 0;
+  // Compact backing for immutable, compiler-owned uint8_t arrays. A
+  // packed constant has no elements or fields and an exact array type.
+  std::shared_ptr<const std::string> packedBytes;
+
+  [[nodiscard]] std::size_t elementCount() const {
+    return packedBytes ? packedBytes->size() : elements.size();
+  }
+  [[nodiscard]] ConstantValue elementAt(std::size_t index) const;
+  [[nodiscard]] bool packedBytesMatch(const SemanticType &type) const;
 
   friend bool operator==(const ConstantAggregate &, const ConstantAggregate &);
 };

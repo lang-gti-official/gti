@@ -1158,6 +1158,11 @@ private:
             } else {
               output << "type:null";
             }
+            if (constantValue.value->packedBytes) {
+              output << ":packed-bytes="
+                     << constantValue.value->packedBytes->size();
+              return;
+            }
             output << ":[";
             for (std::size_t index = 0;
                  index < constantValue.value->elements.size(); ++index) {

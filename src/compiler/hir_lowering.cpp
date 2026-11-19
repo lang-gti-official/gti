@@ -23,13 +23,17 @@ public:
         trustedSources(scope.trustedSources.begin(),
                        scope.trustedSources.end()) {}
 
-  [[nodiscard]] HirLoweringResult lowerConstantFunction(
-      const SemanticModel &semantics, SemanticInstanceProvider &provider,
-      FunctionId root, const std::vector<FunctionId> &completedFunctions,
-      const GenericSubstitution &substitution,
-      const std::vector<ConstructorId> &completedConstructors) {
+  [[nodiscard]] HirLoweringResult
+  lowerConstantFunction(const SemanticModel &semantics,
+                        SemanticInstanceProvider &provider, FunctionId root,
+                        const std::vector<FunctionId> &completedFunctions,
+                        const GenericSubstitution &substitution,
+                        const std::vector<ConstructorId> &completedConstructors,
+                        const Expr *expressionRoot) {
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
+    constantExpression = expressionRoot;
+    constantExpressionFunction = root;
     const FunctionInfo *function = semantics.findFunction(root);
     // Only callees stage lazily: the requested root must itself be a
     // completed constexpr definition.
@@ -267,6 +271,8 @@ private:
     output.program.programKind_ = baseModel->programKind();
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
     constantClosure = false;
+    constantExpression = nullptr;
+    constantExpressionFunction = 0;
     constantFunctions.clear();
     constantConstructors.clear();
     constantUnavailableFunctions.clear();
@@ -2626,7 +2632,20 @@ private:
     for (const Parameter &parameter : bodyDeclaration->parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, *model, body));
     }
-    if (bodyDeclaration->body()) {
+    if (constantExpression &&
+        snapshot.declaration == constantExpressionFunction) {
+      // The compiler-owned staged entry has one return. The expression has
+      // already been analyzed at its original source site.
+      const auto result =
+          lowerExpression(*constantExpression, *model, {}, {}, body);
+      if (!result)
+        lifecycleValid = false;
+      body.roots.push_back(appendStatement(
+          {.kind = HirStatementKind::Return,
+           .source = bodyDeclaration->body()->statements().front().get(),
+           .value = result},
+          body));
+    } else if (bodyDeclaration->body()) {
       body.roots =
           lowerStatements(bodyDeclaration->body()->statements(), *model,
                           classArguments, classValueArguments, body);
@@ -7971,6 +7990,8 @@ private:
   std::vector<InstanceDiscovery> functionDiscoveryDepths;
   std::vector<InstanceDiscovery> constructorDiscoveryDepths;
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
+  const Expr *constantExpression = nullptr;
+  FunctionId constantExpressionFunction = 0;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
   // Signature-only instances of callees outside the completed constant
@@ -8021,10 +8042,11 @@ HirLoweringResult HirLowerer::lowerConstantFunction(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     FunctionId root, const std::vector<FunctionId> &completedFunctions,
     const GenericSubstitution &substitution,
-    const std::vector<ConstructorId> &completedConstructors) {
+    const std::vector<ConstructorId> &completedConstructors,
+    const Expr *expressionRoot) {
   return impl->lowerConstantFunction(semantics, instanceProvider, root,
                                      completedFunctions, substitution,
-                                     completedConstructors);
+                                     completedConstructors, expressionRoot);
 }
 
 HirLoweringResult HirLowerer::lowerConstantConstructor(

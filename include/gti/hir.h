@@ -1205,7 +1205,8 @@ public:
       SemanticInstanceProvider &instanceProvider, FunctionId root,
       const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution = {},
-      const std::vector<ConstructorId> &completedConstructors = {});
+      const std::vector<ConstructorId> &completedConstructors = {},
+      const Expr *expressionRoot = nullptr);
 
   [[nodiscard]] HirLoweringResult lowerConstantConstructor(
       const SemanticModel &semantics,

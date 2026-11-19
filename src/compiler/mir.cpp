@@ -1127,6 +1127,8 @@ programConstantMatchesType(const ConstantValue &constant,
         *aggregate->value->exactType != type) {
       return false;
     }
+    if (aggregate->value->packedBytes)
+      return aggregate->value->packedBytesMatch(type);
     if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
         type.arrayLengthParameterId == 0 &&
         aggregate->value->kind == ConstantAggregateKind::Array &&

@@ -27,6 +27,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -791,6 +793,7 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
                             const std::filesystem::path &sourceRoot,
                             std::string &errorMessage) {
   BuildSourceMaterialProjection projection;
+  std::unordered_map<const std::string *, std::string> embeddedDigests;
   projection.units.reserve(inputs.sourceGraph.sourceUnits().size());
   projection.logicalNamesById.resize(inputs.sourceGraph.sourceUnits().size() +
                                      1);
@@ -826,7 +829,26 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
                                 .prelude = unit.prelude,
                                 .bytes = source->size(),
                                 .sha256 = digestText(*source)});
+    for (const auto &file : unit.embeddedFiles) {
+      std::optional<std::string> sha256;
+      if (file.bytes) {
+        const auto [entry, inserted] =
+            embeddedDigests.try_emplace(file.bytes.get());
+        if (inserted)
+          entry->second = digestText(*file.bytes);
+        sha256 = entry->second;
+      }
+      projection.embeddedFiles.push_back({.source = *name,
+                                          .offset = file.keyword.position,
+                                          .storageOffset = file.storageOffset,
+                                          .sha256 = std::move(sha256)});
+    }
   }
+  std::sort(projection.embeddedFiles.begin(), projection.embeddedFiles.end(),
+            [](const auto &left, const auto &right) {
+              return std::tie(left.source, left.offset) <
+                     std::tie(right.source, right.offset);
+            });
   std::sort(projection.units.begin(), projection.units.end(),
             [](const BuildSourceMaterialRecord &left,
                const BuildSourceMaterialRecord &right) {
@@ -892,6 +914,12 @@ void appendBuildSourceMaterialsIdentity(
     identity.add("source.prelude", static_cast<std::uint64_t>(record.prelude));
     identity.add("source.size", static_cast<std::uint64_t>(record.bytes));
     identity.add("source.sha256", record.sha256);
+  }
+  for (const auto &file : projection.embeddedFiles) {
+    identity.add("source.embed.unit", file.source);
+    identity.add("source.embed.offset", file.offset);
+    identity.add("source.embed.storage-offset", file.storageOffset);
+    identity.add("source.embed.sha256", file.sha256.value_or(""));
   }
   identity.add("source.prelude-roots",
                static_cast<std::uint64_t>(projection.preludeRoots.size()));

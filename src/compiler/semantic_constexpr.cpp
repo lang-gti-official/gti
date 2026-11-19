@@ -75,6 +75,8 @@ struct StagedHash {
       add(static_cast<std::size_t>(aggregate->value->kind));
       add(aggregate->value->identity);
       add(aggregate->value->variant);
+      if (aggregate->value->packedBytes)
+        add(std::hash<std::string>{}(*aggregate->value->packedBytes));
       for (const auto &element : aggregate->value->elements)
         constant(element);
       for (const auto &field : aggregate->value->fields) {
@@ -1004,7 +1006,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const std::vector<ConstantValue> &arguments,
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
-    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+    ConstexprInterpreter &context, const Expr *expressionRoot)
+    -> std::optional<ConstexprEvaluation> {
   // The evaluation charges its interpreter's budget, which is not always the
   // request's (see AttemptCheckpoint): a repeat starts from what the first
   // attempt found.
@@ -1023,7 +1026,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       }
     }
     return executeStagedConstexprOnce(selected, arguments, substitution,
-                                      receiver, callSite, context);
+                                      receiver, callSite, context,
+                                      expressionRoot);
   });
 }
 
@@ -1033,7 +1037,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const std::vector<ConstantValue> &arguments,
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
-    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+    ConstexprInterpreter &context, const Expr *expressionRoot)
+    -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
     return std::nullopt;
   }
@@ -1041,15 +1046,54 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // caller's partially analyzed instance delta, whatever kind of instance is
   // being reanalysed. Each worker still owns its scopes and semantic delta;
   // only the bounded work account is shared.
-  const SemanticModel &stagingModel = constexprStagingModel();
+  const SemanticModel &canonicalModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   if (function && *function)
     (void)requireBody(*function);
-  const auto *info =
-      function && *function ? stagingModel.findFunction(**function) : nullptr;
   noteConstexprAvailabilityObserved();
-  if ((function &&
+
+  std::optional<FunctionDecl> expressionEntry;
+  std::optional<SemanticModel> expressionModel;
+  if (expressionRoot) {
+    // Keep the already checked expression at its original lexical and
+    // ownership context. Only the private staged entry and its outer
+    // full-expression boundary are new.
+    auto name = callSite;
+    name.kind = TokenKind::IDENTIFIER;
+    name.lexeme = "$constexpr-expression";
+    name.generated = true;
+    auto keyword = callSite;
+    keyword.kind = TokenKind::CONSTEXPR;
+    auto statement = std::make_shared<ReturnStmt>(callSite, nullptr);
+    expressionEntry.emplace(
+        TypeRef(name), name, std::vector<GenericParameter>{},
+        std::vector<Parameter>{},
+        std::make_unique<BlockStmt>(StmtList{statement}), std::nullopt,
+        ReceiverMutability::ReadOnly, Mutability::Immutable, std::nullopt,
+        std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+        LanguageLinkage::Gti, keyword);
+    expressionModel.emplace(semanticModel);
+    expressionModel->setFunctionDemandSink(nullptr);
+    expressionModel->setCallJournal(nullptr);
+    expressionModel->record(
+        *expressionEntry, {.id = nextFunctionId,
+                           .sourceUnit = currentSourceUnit,
+                           .declaration = &*expressionEntry,
+                           .qualifiedName = name.lexeme,
+                           .returnType = constexprType(
+                               semanticModel.typeOf(*expressionRoot), context),
+                           .constexprFunction = true});
+    expressionModel->recordAnalyzedFunctionBody(*expressionEntry);
+    expressionModel->recordFullExpression(*statement, *expressionRoot);
+  }
+  const SemanticModel &stagingModel =
+      expressionModel ? *expressionModel : canonicalModel;
+  const auto *info =
+      expressionEntry         ? stagingModel.findFunction(*expressionEntry)
+      : function && *function ? stagingModel.findFunction(**function)
+                              : nullptr;
+  if ((function && !expressionRoot &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||
       (construction && !construction->generatedDefault &&
@@ -1059,8 +1103,9 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
   const void *const stagedTarget =
-      function ? static_cast<const void *>(*function)
-               : static_cast<const void *>(construction->declaration);
+      expressionRoot ? static_cast<const void *>(expressionRoot)
+      : function     ? static_cast<const void *>(*function)
+                     : static_cast<const void *>(construction->declaration);
   if (context.work->stagingChain.size() >= stagedNestingLimit) {
     // A fixed implementation limit, not a CompileLimits entry: no limit to
     // attribute and no configuration hint (see stagedNestingLimit).
@@ -1118,6 +1163,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
         completed.push_back(candidate->id);
       }
     }
+    if (expressionRoot)
+      completed.push_back(info->id);
     keyCompleted = completed;
     for (const FunctionDecl *declaration : pendingConstexprDefinitions())
       if (const auto *candidate = stagingModel.findFunction(*declaration))
@@ -1133,7 +1180,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   const auto stagedConstants = requestSession.stagedConstants;
   const auto &concreteEffects = requestSession.programConcreteEffects;
   const auto reuseKey =
-      !concreteEffects || concreteEffects->invalidInstances.empty()
+      !expressionRoot &&
+              (!concreteEffects || concreteEffects->invalidInstances.empty())
           ? stagedConstantKey(selected, info, arguments, substitution, receiver,
                               keyCompleted, constructors)
           : std::nullopt;
@@ -1194,7 +1242,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     StagedInstanceProvider provider(
         *this,
         [&]() -> SemanticInstanceProvider & {
-          return stagedWorkerFor(stagingModel, context.work);
+          return stagedWorkerFor(canonicalModel, context.work);
         },
         [&](const StagedInstanceKeyView &request,
             SemanticInstanceAnalysis &analysis) {
@@ -1227,9 +1275,9 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
                  ? lowerer.lowerConstantConstructor(stagingModel, provider,
                                                     *construction, completed,
                                                     constructors)
-                 : lowerer.lowerConstantFunction(stagingModel, provider,
-                                                 info->id, completed,
-                                                 substitution, constructors);
+                 : lowerer.lowerConstantFunction(
+                       stagingModel, provider, info->id, completed,
+                       substitution, constructors, expressionRoot);
     }();
     // The closure lowers a callee whose constexpr body is still pending as a
     // declaration only (it is outside `completed`). When the closure cannot
@@ -1392,7 +1440,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     }
     recordLimitExhaustion(context, result.exhaustedLimit, executing);
   }
-  const bool requiresMir = context.requireMir || closure->requiresMir;
+  const bool requiresMir =
+      expressionRoot || context.requireMir || closure->requiresMir;
   // Until the ordinary MIR profile covers aggregates/references and every
   // existing statement, retain the legacy driver's admitted subset. Work
   // already executed still consumes the shared budget; arithmetic and resource

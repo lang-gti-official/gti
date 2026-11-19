@@ -9958,6 +9958,11 @@ follow-ups:
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
+- **Embedded bytes:** Literal-path `embed_bytes` resolves a source-owned file
+  input during compilation. The published static byte span uses the ordinary
+  verified-MIR constexpr array read path. The [span contract](../language/ranges.md#embedding-files-as-bytes)
+  records the supported path and input limits.
+
 - **Deferred constexpr library bodies (#398, draft):** unused trusted
   constexpr definitions are deferred like other trusted bodies and demanded
   by the compile-time path that reaches them through one body-readiness

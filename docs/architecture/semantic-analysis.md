@@ -4335,6 +4335,23 @@ profile; it is not admitted by the integral-enum catalog.
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
 
+### Embedded byte storage
+
+The frontend creates an immutable, source-local `constexpr uint8_t[N]`
+declaration for each distinct embedded input in a unit. The declaration's
+packed constant retains the exact array type and byte extent with no
+per-element syntax or constant nodes. Semantics rewrites the public
+expression into the normal checked array-to-span call. The program
+initialization plan records the backing array as data-only. Staged MIR
+materializes that verified static origin and can project individual bytes
+with the same checked array rules. LLVM emits the packed array as constant
+data. Both paths use the ordinary source-defined span code.
+
+When an otherwise publishable constant expression consumes a borrowed
+intermediate, staging keeps the producer and consumer in one verified MIR
+body. Its temporary loans live until the full expression completes, and only
+the final persistent value returns to semantic analysis.
+
 ## Staged Constant Limits And Reuse
 
 Every constant request owns one `ConstexprWorkBudget`: the step count, the

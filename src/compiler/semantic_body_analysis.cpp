@@ -7836,6 +7836,10 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 
   const SemanticType arrayType = *contextualInitializerType;
   const SemanticType elementType = arrayType.arguments[0];
+  if (expr.packedBytes()) {
+    currentType = arrayType;
+    return;
+  }
   if (arrayType.arrayLengthParameterId == 0 && !expr.elements().empty() &&
       expr.elements().size() != arrayType.arrayLength) {
     report(expr.brace(),
@@ -8110,7 +8114,85 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   }
 }
 
+auto SemanticVisitor::Impl::analyzeEmbedBytes(const Call &call,
+                                              const Token &keyword) -> void {
+  currentType = SemanticType::Unknown;
+  const auto *argument = call.arguments().size() == 1
+                             ? exprAs<LiteralExpr>(call.arguments()[0].get())
+                             : nullptr;
+  const auto *spelling =
+      argument ? std::get_if<std::string>(&argument->value()) : nullptr;
+  if (!spelling || !call.typeArguments().empty() ||
+      !call.lifetimeArguments().empty() || call.capturedArguments()) {
+    report(keyword, "embed_bytes requires exactly one string literal path.",
+           "GTI-S2129");
+    return;
+  }
+
+  // The source graph confers the file-input authority. A fabricated macro
+  // token or a different path at the same origin cannot read the host.
+  const auto *unit = sourceGraph
+                         ? sourceGraph->findUnit(
+                               sourceGraph->sourceUnitForPath(keyword.source))
+                         : nullptr;
+  const EmbeddedFile *file = nullptr;
+  if (unit) {
+    const auto found = std::lower_bound(
+        unit->embeddedFiles.begin(), unit->embeddedFiles.end(),
+        keyword.position, [](const EmbeddedFile &input, std::size_t position) {
+          return input.keyword.position < position;
+        });
+    if (found != unit->embeddedFiles.end() &&
+        found->keyword.position == keyword.position &&
+        found->spelling == *spelling)
+      file = &*found;
+  }
+  if (!file || !file->bytes) {
+    report(argument->token(),
+           file ? file->error
+                : "embed_bytes requires a path written directly at this source "
+                  "site.",
+           "GTI-S2129");
+    return;
+  }
+  if (!arraySpanFactory()) {
+    report(keyword, "Import std.span to use embed_bytes.", "GTI-S2129");
+    return;
+  }
+
+  // Reuse the ordinary checked array-to-span call, including the borrow
+  // from immutable static storage and the constexpr evaluation path.
+  auto member = keyword;
+  member.kind = TokenKind::IDENTIFIER;
+  member.sourceLength = static_cast<std::uint32_t>(keyword.lexeme.size());
+  member.lexeme = "as_span";
+  member.generated = true;
+  auto dot = member;
+  dot.kind = TokenKind::DOT;
+  dot.lexeme = ".";
+  auto callee =
+      std::make_unique<Get>(std::make_unique<Variable>(file->storageName()),
+                            std::move(dot), std::move(member));
+  auto alias = std::make_shared<Call>(std::move(callee), std::vector<TypeRef>{},
+                                      call.paren(), ExprList{});
+  const Expr &target = semanticModel.recordExpressionAlias(call, alias);
+  currentType = analyze(target);
+  if (currentType != SemanticType::Unknown)
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(keyword),
+                                    .kind = SemanticOccurrenceKind::Expression,
+                                    .roles = OccurrenceRole::Call,
+                                    .name = keyword.lexeme,
+                                    .type = currentType,
+                                    .traits = typeTraits(currentType)});
+}
+
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  if (const auto *callee = exprAs<Variable>(expr.callee().get());
+      callee && callee->name().kind == TokenKind::EMBED_BYTES) {
+    analyzeEmbedBytes(expr, callee->name());
+    return;
+  }
   if (expr.capturedArguments() && analyzeCapturedCall(expr))
     return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
@@ -13601,6 +13683,12 @@ auto SemanticVisitor::Impl::reportTypeUsedAsValue(const Expr &expression,
 }
 
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
+  if (expr.name().kind == TokenKind::EMBED_BYTES) {
+    report(expr.name(), "Call embed_bytes with a string literal path.",
+           "GTI-S2129");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (expr.isReferencePattern()) {
     report(expr.name(),
            "A borrowed payload binding is only valid directly in a "
@@ -15004,7 +15092,24 @@ auto SemanticVisitor::Impl::describeLimitExhaustion(
 
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
     const Expr &source, ConstexprInterpreter &context) -> ConstexprEvaluation {
+  const bool outermost = context.expressionRoot == nullptr;
+  if (outermost)
+    context.expressionRoot = &source;
   ConstexprEvaluation result = evaluateConstexprNode(source, context);
+  if (outermost) {
+    context.expressionRoot = nullptr;
+    if (std::exchange(context.expressionNeedsMir, false) && !result) {
+      // Intermediate borrowed carriers may exist only within one verified
+      // execution. Staging the consumer together with its producer keeps
+      // their loans and backing locations in the same evaluator.
+      if (auto staged = executeStagedConstexpr(
+              static_cast<const FunctionDecl *>(nullptr), {}, {}, {},
+              expressionToken(source), context, &source))
+        result = *staged ? constexprSuccess(source, std::move(*staged->value),
+                                            context)
+                         : std::move(*staged);
+    }
+  }
   if (result.failure == ConstantEvaluationFailure::ResourceLimit)
     describeLimitExhaustion(result, context);
   return result;
@@ -15276,15 +15381,15 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
           "Constexpr indexing requires a fixed array and a non-negative "
           "integer index.");
     }
-    if (*offset >= aggregate->value->elements.size()) {
+    if (*offset >= aggregate->value->elementCount()) {
       return constexprFailure(
           indexExpression->bracket(),
           ConstantEvaluationFailure::InvalidOperands,
           "Constexpr fixed-array index " + std::to_string(*offset) +
               " is outside the bound " +
-              std::to_string(aggregate->value->elements.size()) + ".");
+              std::to_string(aggregate->value->elementCount()) + ".");
     }
-    return constexprSuccess(source, aggregate->value->elements[*offset],
+    return constexprSuccess(source, aggregate->value->elementAt(*offset),
                             context);
   }
   if (const auto *assignment = exprAs<Assign>(&source)) {
@@ -15431,7 +15536,16 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     }
     ConstantAggregate aggregate{
         .kind = ConstantAggregateKind::Array,
-        .exactType = std::make_shared<const SemanticType>(sourceType)};
+        .exactType = std::make_shared<const SemanticType>(sourceType),
+        .packedBytes = array->packedBytes()};
+    if (aggregate.packedBytes) {
+      if (!aggregate.packedBytesMatch(sourceType))
+        return constexprFailure(array->brace(),
+                                ConstantEvaluationFailure::InvalidOperands);
+      return constexprSuccess(
+          source, ConstantValue{makeConstantAggregate(std::move(aggregate))},
+          context);
+    }
     aggregate.elements.reserve(sourceType.arrayLength);
     if (array->elements().empty()) {
       for (std::uint64_t index = 0; index < sourceType.arrayLength; ++index) {
@@ -15723,6 +15837,19 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The constexpr call lost its canonical function identity.");
+  }
+
+  const SemanticType result = constexprType(resolved->returnType, context);
+  if (context.expressionRoot && &source != context.expressionRoot &&
+      !context.executingFunction && !context.executingConstructor &&
+      result.kind == SemanticType::Class &&
+      typeTraits(result).containsBorrowedState &&
+      isSupportedConstexprType(constexprType(
+          semanticModel.typeOf(*context.expressionRoot), context))) {
+    context.expressionNeedsMir = true;
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedType,
+        "A borrowed intermediate needs one verified constexpr execution.");
   }
 
   GenericSubstitution substitution;

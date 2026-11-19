@@ -3661,6 +3661,14 @@ private:
             fileUriFromPath(std::filesystem::path(loadedSource)),
             unit.sourceDigest);
       }
+      for (const auto &file : unit.embeddedFiles) {
+        if (!file.path.empty())
+          result.dependencies.try_emplace(fileUriFromPath(file.path),
+                                          file.digest);
+        if (!file.lookupPath.empty())
+          result.dependencies.try_emplace(
+              authoredFileUriFromPath(file.lookupPath), 0);
+      }
     }
     for (const auto &import : analysis.sourceGraph.imports()) {
       if (import.lookupPath && import.lookupPath->string() != rootPath)

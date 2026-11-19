@@ -1618,8 +1618,13 @@ private:
     if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
         projection.selection != aggregate->value->variant)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
-    if (!index || *index >= aggregate->value->elements.size())
+    if (!index || *index >= aggregate->value->elementCount())
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (aggregate->value->packedBytes) {
+      if (replacement || offset + 1 != path.size())
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = aggregate->value->elementAt(*index)};
+    }
     auto result = project(aggregate->value->elements[*index], path, type,
                           offset + 1, replacement);
     if (!result || !replacement)
@@ -2371,7 +2376,7 @@ private:
             base.location = std::move(container);
             base.location.type = element;
             base.arrayElement = true;
-            base.arrayLength = aggregate->value->elements.size();
+            base.arrayLength = aggregate->value->elementCount();
           }
         }
         pointerBases.push_back(std::move(base));

@@ -208,6 +208,10 @@
 (call_expression
   function: (primary_expression
     (identifier) @function.call))
+((call_expression
+  function: (primary_expression
+    (identifier) @function.builtin))
+  (#eq? @function.builtin "embed_bytes"))
 (call_expression
   function: (primary_expression
     (scoped_identifier

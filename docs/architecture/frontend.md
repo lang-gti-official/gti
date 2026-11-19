@@ -89,6 +89,15 @@ unit. Source-written dependency edges retain their exact spelling and lexical
 occurrence for deterministic, host-path-free failure metadata; these facts do
 not provide an alternative resolution mechanism.
 
+`embed_bytes` adds a binary input at an authored literal call site. The
+source loader authorizes the source-relative path using the source owner, then
+reads a bounded snapshot of a regular file. Binary inputs are separate from
+GTI source units, so they share neither the UTF-8 source contract nor module
+visibility. The graph retains the literal's origin, canonical bytes, and any
+resolution failure. Source analysis reports a failure when it checks the
+expression. The source graph is also the authority for macro-expanded copies
+of the expression. Generated syntax alone cannot request another file.
+
 Ordinary `Frontend::analyze()` in `src/compiler/frontend.cpp` performs this load
 itself. The compiled driver also exposes `loadCompilationInputs` for
 project-cache orchestration. It still

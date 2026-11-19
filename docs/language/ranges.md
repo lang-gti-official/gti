@@ -484,6 +484,36 @@ With `std.span` available, a built-in array `T[N]` offers the same
 When that array is `constexpr`, its elements can also be read through the
 span during constant evaluation.
 
+### Embedding files as bytes
+
+With `import std.span;`, `embed_bytes("relative/path")` produces a read-only
+`std::span<uint8_t, static>`. Its single argument is a string literal giving a
+path relative to the GTI file that contains the call. Project paths must stay
+within the source file's owning package, including after resolving symlinks.
+Direct compilation confines the path to the containing source directory.
+GTI diagnoses missing or unreadable files, non-regular files, and paths that
+cross those boundaries. The limits are 16 MiB per file and 64 MiB across
+canonical inputs per compilation.
+
+The span contains every byte verbatim, including zero bytes and bytes above
+127, without a terminator. An empty input produces an empty span. The compiler
+reads the file while loading build inputs and publishes the bytes in immutable
+static storage. A running executable can use the view without the original
+file. Compile-time code can inspect the view or obtain it from a constexpr
+function.
+
+```gti
+import std.span;
+
+constexpr std::span<uint8_t, static> logo() {
+  return embed_bytes("assets/logo.bin");
+}
+
+static_assert(logo().size() > 0);
+```
+
+### String views
+
 `std::string::view()` returns a counted `std::string_view` over the string's
 live character prefix. Literal-backed string views remain independent trivial
 values. A view produced from dynamic storage is instead tagged at the
