@@ -4,6 +4,7 @@
 
 #include "build_source_identity.h"
 #include "compiled_scalar_support.h"
+#include "file_digest.h"
 #include "gti/build_identity_config.h"
 #include "gti/llvm_backend.h"
 #include "sha256.h"
@@ -292,44 +293,6 @@ std::string cacheObjectFile(std::size_t index) {
 }
 
 using detail::IdentityBuilder;
-
-struct FileDigest {
-  std::string hash;
-  std::uintmax_t size = 0;
-
-  bool operator==(const FileDigest &) const = default;
-};
-
-std::optional<FileDigest> digestFile(const std::filesystem::path &path,
-                                     std::string &errorMessage) {
-  std::error_code error;
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    errorMessage = "cannot inspect '" + path.string() + "': " + error.message();
-    return std::nullopt;
-  }
-
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    errorMessage = "cannot read '" + path.string() + "'";
-    return std::nullopt;
-  }
-  Sha256 hash;
-  std::array<char, 64 * 1024> buffer{};
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const std::streamsize count = input.gcount();
-    if (count > 0) {
-      hash.update(
-          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-    }
-  }
-  if (!input.eof()) {
-    errorMessage = "cannot finish reading '" + path.string() + "'";
-    return std::nullopt;
-  }
-  return FileDigest{.hash = hash.finishHex(), .size = size};
-}
 
 std::string digestText(std::string_view text) {
   Sha256 hash;

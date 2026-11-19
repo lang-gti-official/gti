@@ -949,6 +949,7 @@ add_library(
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"
+  "src/driver/file_digest.cpp"
   "src/driver/build_report.cpp"
   "src/driver/borrow_dependencies.cpp"
   "src/driver/compilation.cpp"

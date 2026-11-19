@@ -1253,6 +1253,8 @@ area = "driver-native-build"
 paths = [
   "src/driver/native_toolchain.cpp",
   "src/driver/build.cpp",
+  "src/driver/file_digest.cpp",
+  "src/driver/file_digest.h",
   "src/driver/build_script.cpp",
   "src/driver/compilation.cpp",
   "src/driver/artifact.cpp",

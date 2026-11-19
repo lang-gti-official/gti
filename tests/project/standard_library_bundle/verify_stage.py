@@ -1,8 +1,10 @@
 """Exercise the shipped math library in a private copy of its resource tree."""
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -16,6 +18,18 @@ def verify(stage):
         shutil.copytree(stage / "share/gti/stdlib", stdlib)
         bundles = root / "precompiled-stdlib"
         shutil.copytree(stage / "share/gti/precompiled-stdlib", bundles)
+        # The v2 envelope begins with the SHA-256 of the exact compiler
+        # executable. Check the installed bytes against an independent hash.
+        with (stage / "bin/gti").open("rb") as stream:
+            compiler_digest = hashlib.file_digest(stream, "sha256").hexdigest().encode()
+        for profile in ("dev", "release"):
+            bundle, = bundles.glob(f"*/{profile}/cmath.gtilib")
+            with bundle.open("rb") as stream:
+                header = stream.read(20)
+                if header != b"GTILIB\r\n" + struct.pack("<III", 2, 1, len(compiler_digest)):
+                    raise RuntimeError(f"invalid compiled standard library envelope in {bundle}")
+                if stream.read(len(compiler_digest)) != compiler_digest:
+                    raise RuntimeError(f"compiler SHA-256 in {bundle} differs from the staged executable")
         (stdlib / "std/cmath.gti").unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),

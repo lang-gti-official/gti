@@ -3343,7 +3343,9 @@ Staging builds these objects using its final compiler and runtime, then checks
 and runs an independent project with the implementation source removed. A
 source-only toolchain repack rebuilds the objects from the replacement library.
 Bundle compatibility and object admission apply before executable cache reuse;
-the bundle digest participates in the cache key. Unsupported configurations
+the bundle digest participates in the cache key. Both paths hash the full
+compiler and runtime files with the same SHA-256 routine used by the build
+cache. Unsupported configurations
 use source. Serialized generic bodies and MIR are outside this first module.
 
 ### Compiled-library project requests

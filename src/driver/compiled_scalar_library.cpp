@@ -1,5 +1,6 @@
 #include "gti/driver/compiled_scalar_library.h"
 #include "compiled_scalar_support.h"
+#include "file_digest.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
 #include "gti/driver/project.h"
@@ -116,16 +117,11 @@ std::string hash(std::string_view bytes) {
   return h.finishHex();
 }
 std::string hashFile(const std::filesystem::path &path) {
-  std::ifstream file(path, std::ios::binary);
-  if (!file)
-    throw std::invalid_argument("cannot read compatibility input");
-  Sha256 h;
-  char bytes[65536];
-  while (file.read(bytes, sizeof(bytes)) || file.gcount())
-    h.update(std::string_view(bytes, file.gcount()));
-  if (!file.eof())
-    throw std::invalid_argument("cannot hash compatibility input");
-  return h.finishHex();
+  std::string error;
+  auto digest = digestFile(path, error);
+  if (!digest)
+    throw std::invalid_argument("cannot hash compatibility input: " + error);
+  return digest->hash;
 }
 std::vector<std::string> runtimeImports(const std::filesystem::path &path,
                                         const TargetInfo &target,
