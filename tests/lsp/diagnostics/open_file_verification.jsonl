@@ -8,6 +8,14 @@
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": {"$contains": [{"code": "GTI-S2017", "range": {"start": {"line": 2, "character": 32}}}]}}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "void keep(int& value) {}\nint main() { mut int owner = 1; mut int& parent = owner;\n  mut int& child = parent; keep(child); keep(parent); return 0; }"}]}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 3, "text": "void keep(int& value) {}\nint main() { mut int owner = 1; mut int& parent = owner;\n  mut int& child = parent; keep(parent); keep(child); return 0; }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [], "gtiDiagnosticStage": "typeChecking"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 4}, "contentChanges": [{"text": "void keep(int& value) {}\nint main() { mut int owner = 1; mut int& parent = owner;\n  mut int& child = parent; keep(child); keep(parent); return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 4, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 7, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 7, "result": {}}}
 {"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 2}}
 {"expect": {"id": 2, "result": null}}
 {"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
