@@ -295,6 +295,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
+  if (registrationObserver && !hadError())
+    (*registrationObserver)();
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
   recordLifetimeNames(program);

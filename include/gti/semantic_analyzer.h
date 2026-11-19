@@ -109,7 +109,8 @@ public:
   bool check(const Program &program);
   using EntryDiagnosticObserver =
       std::function<void(std::span<const Diagnostic>)>;
-  bool check(const Program &program, const EntryDiagnosticObserver &observer);
+  bool check(const Program &program, const EntryDiagnosticObserver &observer,
+             const std::function<void()> &onRegistered = {});
   // Stops check(program) at its next safe point once `cancellation` is set;
   // check then returns false and cancelled() reports why.
   void setCancellation(const std::atomic<bool> *cancellation);

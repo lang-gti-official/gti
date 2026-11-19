@@ -1489,9 +1489,14 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
       if (observer && attempt == 0 && result.sourceValid &&
           result.syntaxValid) {
         result.semanticValid = semantic.check(
-            result.program, [&](std::span<const Diagnostic> diagnostics) {
+            result.program,
+            [&](std::span<const Diagnostic> diagnostics) {
               observer(DiagnosticStage::Declaration, result, semantic.model(),
                        diagnostics);
+            },
+            [&] {
+              observer(DiagnosticStage::Registered, result, semantic.model(),
+                       {});
             });
       } else {
         result.semanticValid = semantic.check(result.program);

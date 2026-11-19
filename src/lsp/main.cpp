@@ -4666,14 +4666,20 @@ private:
       publishSyntax(request, *syntax.analysis);
 
     // The compiler keeps running on its stack-sized worker. Only a finished,
-    // independently owned diagnostic packet crosses its crash boundary.
-    // The publisher is bounded by the number of active open-file analyses.
+    // independently owned hover or diagnostic packet crosses its crash
+    // boundary. The publisher is bounded by the number of active open-file
+    // analyses.
+    std::atomic<bool> registrationReady{false};
+    std::unique_ptr<DocumentAnalysis> registered;
     std::atomic<bool> ready{false};
     std::unique_ptr<DocumentAnalysis> checkpoint;
     std::string_view stageName;
     std::future<void> publisher;
     try {
       publisher = std::async(std::launch::async, [&] {
+        registrationReady.wait(false, std::memory_order_acquire);
+        if (registered)
+          publishOpenFile(request, *registered, std::nullopt);
         ready.wait(false, std::memory_order_acquire);
         if (checkpoint)
           publishOpenFile(request, *checkpoint, stageName);
@@ -4682,7 +4688,12 @@ private:
       return isolatedStep(
           [&] { return analyzeDocument(request, project, &parsed); });
     }
+    const auto signalRegistration = [&] {
+      registrationReady.store(true, std::memory_order_release);
+      registrationReady.notify_one();
+    };
     const auto signal = [&] {
+      signalRegistration();
       ready.store(true, std::memory_order_release);
       ready.notify_one();
     };
@@ -4694,6 +4705,21 @@ private:
               const lang::FrontendResult &checked,
               const lang::SemanticModel &model,
               std::span<const lang::Diagnostic> diagnostics) {
+            if (stage == lang::Frontend::DiagnosticStage::Registered) {
+              if (opening &&
+                  !registrationReady.load(std::memory_order_acquire)) {
+                auto packet = std::make_unique<DocumentAnalysis>();
+                packet->declarationHovers =
+                    lang::LanguageQueries().registeredDeclarationHovers(checked,
+                                                                        model);
+                if (!packet->declarationHovers.empty()) {
+                  packet->dependencies = syntax.analysis->dependencies;
+                  registered = std::move(packet);
+                }
+              }
+              signalRegistration();
+              return;
+            }
             if (checkpoint ||
                 (stage == lang::Frontend::DiagnosticStage::Declaration &&
                  (!opening || !progressiveOpenDiagnostics)))
@@ -4903,7 +4929,8 @@ private:
   }
 
   void publishOpenFile(const AnalysisRequest &request,
-                       DocumentAnalysis &checked, std::string_view stage) {
+                       DocumentAnalysis &checked,
+                       std::optional<std::string_view> diagnosticStage) {
     const std::lock_guard publicationLock(analysisPublicationMutex);
     std::vector<DiagnosticPublication> publications;
     std::vector<std::pair<JsonValue, lang::HoverInfo>> replies;
@@ -4935,7 +4962,7 @@ private:
           ++it;
         }
       }
-      if (request.trigger == AnalysisTrigger::Opened &&
+      if (diagnosticStage && request.trigger == AnalysisTrigger::Opened &&
           progressiveOpenDiagnostics &&
           !analysisSnapshots.contains(request.uri)) {
         auto &previous = diagnosticsByRoot[request.uri];
@@ -4947,7 +4974,8 @@ private:
         }
       }
     }
-    publish(std::move(publications), stage);
+    if (diagnosticStage)
+      publish(std::move(publications), *diagnosticStage);
     for (const auto &[id, hover] : replies)
       sendHover(&id, request.source, hover);
   }

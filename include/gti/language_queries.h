@@ -248,6 +248,9 @@ public:
   [[nodiscard]] std::vector<HoverInfo>
   declarationHovers(const FrontendResult &parsed,
                     const SemanticModel &model) const;
+  [[nodiscard]] std::vector<HoverInfo>
+  registeredDeclarationHovers(const FrontendResult &parsed,
+                              const SemanticModel &model) const;
 
   [[nodiscard]] std::optional<HoverInfo> hover(const FrontendResult &snapshot,
                                                SourceUnitId sourceUnit,

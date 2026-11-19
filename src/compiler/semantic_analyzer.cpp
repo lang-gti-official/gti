@@ -40,12 +40,18 @@ void SemanticVisitor::Impl::finishLimitedAnalysis() {
 }
 
 bool SemanticVisitor::check(const Program &program,
-                            const EntryDiagnosticObserver &observer) {
+                            const EntryDiagnosticObserver &observer,
+                            const std::function<void()> &onRegistered) {
   // A rejected preamble can restart the lexical walk. Only stream from a
   // fresh registration, and never retain a listener in a query snapshot.
   if (!impl->adoptedPreamble && observer)
     impl->entryDiagnosticObserver = &observer;
-  llvm::scope_exit clear([this] { impl->entryDiagnosticObserver = nullptr; });
+  if (onRegistered)
+    impl->registrationObserver = &onRegistered;
+  llvm::scope_exit clear([this] {
+    impl->entryDiagnosticObserver = nullptr;
+    impl->registrationObserver = nullptr;
+  });
   return check(program);
 }
 

@@ -171,11 +171,17 @@ verification can still report errors for the same version.
 
 The worker performs the ordinary configured analysis and its verification
 fallbacks. It hands an owned diagnostic list to a publisher outside crash
-recovery and continues checking. At a successful primary type check, it also
-copies declaration hovers for the open document, including their ranges, types
-and documentation. A hover over a checked declaration can then complete while
-MIR verification runs. Hover over a use and other semantic queries wait for
-the completed snapshot. Edits and dependency changes invalidate these results.
+recovery and continues checking. On open, once the compiler registers the
+project's declarations, it can answer hovers over ordinary function and method
+names, enum names and type aliases in the open file. These replies use the
+resolved signature, declaration documentation and exact name range. They can
+arrive before the first type-check diagnostics. A generic callable can acquire
+contracts from its body, and separate declarations and definitions can share
+documentation. Those hovers wait for the existing semantic checkpoints.
+
+At a successful primary type check the worker publishes the full set of
+declaration hovers while MIR verification continues. A hover over a use and
+other semantic queries wait for the completed snapshot. Edits and dependency changes invalidate these results.
 Each partial publication checks the root generation and the sources
 actually read, preserves other roots’ diagnostics, and finishes before the
 completed publication. Clients that omit the option receive the completed

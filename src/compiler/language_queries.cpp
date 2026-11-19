@@ -3070,6 +3070,59 @@ std::optional<HoverInfo> LanguageQueries::hover(const FrontendResult &snapshot,
 }
 
 std::vector<HoverInfo>
+LanguageQueries::registeredDeclarationHovers(const FrontendResult &parsed,
+                                             const SemanticModel &model) const {
+  const auto unit = parsed.sourceGraph.entryUnit();
+  const auto *entry = parsed.sourceGraph.findUnit(unit);
+  std::vector<HoverInfo> result;
+  if (!entry)
+    return result;
+  const std::string path = entry->path.string();
+  const bool trusted = parsed.sourceGraph.isCompilerTrusted(unit);
+  const SignaturePrinter signatures(model);
+  const auto records = model.registeredSignatures(unit);
+  const auto add = [&](const auto &info, const SemanticType &type,
+                       auto render) {
+    const Token &name = info.declaration->name();
+    if (name.generated || name.expansion || name.completion ||
+        name.source != path || type == SemanticType::Unknown ||
+        (!trusted &&
+         (info.compilerPrivate || model.isCompilerPrivateType(type))))
+      return;
+    result.push_back(
+        {.range = tokenSpan(name),
+         .signature = render(info),
+         .documentationMarkdown = info.declaration->documentationMarkdown()});
+  };
+  for (const auto *function : records.functions) {
+    // Generic callable contracts need bodies. A paired declaration can obtain
+    // documentation at its definition, and operators have distinct name tokens.
+    if ((function->definition &&
+         function->definition != function->declaration) ||
+        !function->genericParameters.empty() ||
+        !function->callableParameters.empty() || function->macroExpansion ||
+        function->declaration->operatorName())
+      continue;
+    if (function->ownerClass) {
+      const auto *owner = model.findClassType(function->ownerClass);
+      if (!owner || !owner->genericParameters.empty())
+        continue;
+    }
+    add(*function, function->returnType,
+        [&](const auto &info) { return signatures.function(info); });
+  }
+  for (const auto *alias : records.aliases)
+    add(*alias, alias->type,
+        [&](const auto &info) { return signatures.typeAlias(info); });
+  for (const auto *type : records.enums)
+    add(*type, SemanticType::enumType(type->id),
+        [&](const auto &info) { return signatures.enumType(info); });
+  std::ranges::sort(result, {},
+                    [](const auto &hover) { return hover.range.start; });
+  return result;
+}
+
+std::vector<HoverInfo>
 LanguageQueries::declarationHovers(const FrontendResult &parsed,
                                    const SemanticModel &model) const {
   const auto unit = parsed.sourceGraph.entryUnit();

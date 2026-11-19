@@ -1,15 +1,15 @@
-// A queued declaration hover is answered before the completed diagnostics and keeps its normal range.
+// A registered declaration returns its final signature, documentation and range before type-check diagnostics.
 {"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
 {"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
 {"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
 {"file": {"name": "main.gti", "text": "/// Returns its argument.\nint identity(int value) { return value; }\nint main() { return identity(1); }"}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "/// Returns its argument.\nint identity(int value) { return value; }\nint main() { return identity(1); }"}}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 6}}, "id": 5}}
+{"expect": {"id": 5, "result": {"contents": {"kind": "plaintext", "value": "int32_t identity(int32_t value)\n\nReturns its argument."}, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 12}}}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [], "gtiDiagnosticStage": "typeChecking"}}}
-{"expect": {"id": 5, "result": {"contents": {"kind": "plaintext"}, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 12}}}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 6}}, "id": 6}}
-{"expect": {"id": 6, "result": {"contents": {"kind": "plaintext"}, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 12}}}}}
+{"expect": {"id": 6, "result": {"contents": {"kind": "plaintext", "value": "int32_t identity(int32_t value)\n\nReturns its argument."}, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 12}}}}}
 {"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
 {"expect": {"id": 90, "result": null}}
 {"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}

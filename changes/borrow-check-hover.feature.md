@@ -1,1 +1,1 @@
-The language server reports borrow errors in eligible edited functions and answers declaration hovers while whole-project verification continues.
+The language server reports borrow errors in eligible edited functions and answers declaration hovers while whole-project verification continues. On cold open, function, method, enum and alias declarations with complete signatures can answer hover before function bodies are checked.

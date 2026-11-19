@@ -294,10 +294,11 @@ public:
   analyzeParsed(const std::filesystem::path &entryPath,
                 FrontendResult parsed) const;
 
-  // Observe entry declarations that produced diagnostics and the primary
-  // type-check result. Generic discovery and MIR may add further diagnostics.
-  // The observer is invocation-local and cannot escape through frontend caches.
-  enum class DiagnosticStage { Declaration, TypeChecking };
+  // Observe registered signatures, entry declarations that produced
+  // diagnostics, and the primary type-check result. Generic discovery and MIR
+  // may add further diagnostics. The observer is invocation-local and cannot
+  // escape through frontend caches.
+  enum class DiagnosticStage { Registered, Declaration, TypeChecking };
   using DiagnosticCheckpoint =
       std::function<void(DiagnosticStage, const FrontendResult &,
                          const SemanticModel &, std::span<const Diagnostic>)>;
