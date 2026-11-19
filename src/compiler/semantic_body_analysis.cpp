@@ -14210,15 +14210,6 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
   if (allowDependent && type.kind == SemanticType::TypeParameter) {
     return true;
   }
-  if (transient && type.kind == SemanticType::Reference &&
-      type.arguments.size() == 1) {
-    const auto &referent = type.arguments.front();
-    if (const auto *owner = classInfo(referent);
-        owner &&
-        owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
-      return type.referenceAccess == AccessMode::ReadOnly;
-    return isSupportedConstexprType(referent, allowDependent, visiting, true);
-  }
   // An execution-local owner is not a persistable constant. Signature checks
   // admit it; the verified executor must destroy every allocation before
   // publishing the outer request's passive result.
@@ -14316,6 +14307,18 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
   return true;
 }
 
+auto SemanticVisitor::Impl::isSupportedConstexprSignatureType(
+    const SemanticType &type) const -> bool {
+  if (type.kind != SemanticType::Reference || type.arguments.size() != 1)
+    return isSupportedConstexprType(type, true, nullptr, true);
+  const auto &referent = type.arguments.front();
+  if (const auto *owner = classInfo(referent);
+      owner &&
+      owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
+    return type.referenceAccess == AccessMode::ReadOnly;
+  return isSupportedConstexprType(referent, true, nullptr, true);
+}
+
 auto SemanticVisitor::Impl::validateConstexprFunction(
     const FunctionDecl &function, bool methodDeclaration,
     bool intrinsicDeclaration, const SemanticType &returnType, bool entryPoint)
@@ -14382,7 +14385,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
        returnType.kind != SemanticType::Reference) ||
       (!instanceAnalysisActive && returnType != SemanticType::Unknown &&
        returnType != SemanticType::Void &&
-       !isSupportedConstexprType(returnType, true, nullptr, true))) {
+       !isSupportedConstexprSignatureType(returnType))) {
     reject(function.returnType().name.last(),
            "A constexpr function must return void or a supported value: a "
            "fixed-width integer, float, double, bool, char, string_view, "
@@ -14394,7 +14397,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   for (const Parameter &parameter : function.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
     if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-        !isSupportedConstexprType(parameterType, true, nullptr, true)) {
+        !isSupportedConstexprSignatureType(parameterType)) {
       reject(parameter.sourceAnchor(),
              "Constexpr function parameters must be supported "
              "values or checked references to supported values.");
@@ -14430,7 +14433,7 @@ auto SemanticVisitor::Impl::validateConstexprConstructor(
   for (const Parameter &parameter : constructor.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
     if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-        !isSupportedConstexprType(parameterType, true, nullptr, true)) {
+        !isSupportedConstexprSignatureType(parameterType)) {
       reject(parameter.name.lexeme.empty() ? parameter.type.name.last()
                                            : parameter.name,
              "Constexpr constructor parameters must be supported "

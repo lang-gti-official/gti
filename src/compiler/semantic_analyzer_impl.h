@@ -2249,6 +2249,9 @@ private:
                            std::vector<SemanticType> *visiting = nullptr,
                            bool transient = false) const;
 
+  [[nodiscard]] bool
+  isSupportedConstexprSignatureType(const SemanticType &type) const;
+
   bool insideImmediateFunction() const;
   bool immediateConstructionDependent(
       const ResolvedConstructionInfo &construction) const;
