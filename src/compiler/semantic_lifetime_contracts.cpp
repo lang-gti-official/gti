@@ -1470,6 +1470,22 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const Expr *returned = value.get();
   while (const auto *group = exprAs<Grouping>(returned))
     returned = group->expression().get();
+  // A local reference binding is never rebound: a returned one supplies
+  // exactly what its initializer supplies, a call's every supplier included.
+  for (std::unordered_set<const Expr *> followed;;) {
+    const auto *variable = exprAs<Variable>(returned);
+    const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
+    if (symbol == nullptr ||
+        symbol->bindingKind != SemanticBindingKind::LocalVariable ||
+        symbol->type.kind != SemanticType::Reference ||
+        symbol->variableDeclaration == nullptr ||
+        !symbol->variableDeclaration->initializer() ||
+        !followed.insert(returned).second)
+      break;
+    returned = symbol->variableDeclaration->initializer().get();
+    while (const auto *group = exprAs<Grouping>(returned))
+      returned = group->expression().get();
+  }
   const auto relations = declaredOutlives(syntax);
   // A disjunctive requires clause proves the relation only when every
   // alternative does (each one, plus the conjunctive relations).
@@ -2331,7 +2347,10 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       if (!method)
         return std::nullopt;
       receiverSupplies = true;
-      parametersSupply = false;
+      // A stored class region is also supplied by the parameter lanes
+      // written in it (RFC 0004): the contract is their union.
+      parametersSupply = !function.returnBorrowParameters.empty();
+      namedParameters = function.returnBorrowParameters;
       break;
     case BorrowOriginKind::Argument:
       receiverSupplies = false;

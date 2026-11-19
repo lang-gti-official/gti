@@ -1,0 +1,23 @@
+// A fix with different source text clears an error in one verified frontend pass after a confirmed MIR fallback.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "import std.format; import std.string; int main() { auto message = std::runtime_format(\"a={}\", uint64_t(1)); std::println(message); return 0; }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.format; import std.string; int main() { auto message = std::runtime_format(\"a={}\", uint64_t(1)); std::println(message); return 0; }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"analysisTrace": {"generation": 1, "mirSignatureOnlyFallback": true}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "import std.format; import std.string; int main() { auto message = std::runtime_format(\"a={}\", uint64_t(1)); std::println(message); return missing; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001"}]}}}
+// A body-local error can arrive before the full frontend. Semantic tokens require the current snapshot.
+{"send": {"jsonrpc": "2.0", "id": 20, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 20, "result": {"data": {"$contains": []}}}}
+{"analysisTrace": {"generation": 2, "mirSignatureOnlyFallback": false}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "import std.format; import std.string; int main() { auto message = std::runtime_format(\"a={}\", uint64_t(2)); std::println(message); return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 30, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 30, "result": {"data": {"$contains": []}}}}
+{"analysisTrace": {"generation": 3, "mirSignatureOnlyFallback": false, "frontendPasses": 1}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

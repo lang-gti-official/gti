@@ -1,0 +1,56 @@
+// A local reference bound to a multi-supplier call stays usable locally, and may be returned when every supplier outlives the result.
+//@ run-pass
+//@ exit-code: 0
+
+// `kept` may be either argument at run time. Reading it inside the body is
+// always fine; returning it is fine when each supplier is in the result's
+// region or is declared to outlive it.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Reader<lifetime owner> {
+  Box&<owner> direct;
+public:
+  Reader(Box&<owner> direct) : direct(direct) {}
+  int&<owner> pick(bool stored, int&<owner> fallback) && {
+    if (stored) { return this.direct.value; }
+    return fallback;
+  }
+};
+int&<r> either<lifetime r>(int&<r> first, int&<r> second) { return second; }
+
+int local_use(int& keep) {
+  int local = 42;
+  int& kept = either(keep, local);
+  int& again = kept;
+  if (int& inner = either(keep, local); inner > 0) {
+    return again + inner;
+  }
+  return 0;
+}
+int&<a> same_region<lifetime a>(int&<a> keep, int&<a> other) {
+  int& kept = either(keep, other);
+  int& again = kept;
+  return again;
+}
+int&<a> outlived<lifetime a, lifetime b>(int&<a> keep, int&<b> other)
+  requires outlives<b, a> {
+  int& kept = either(keep, other);
+  return kept;
+}
+int&<a> through_temporary<lifetime a>(Box&<a> mine, int&<a> other) {
+  int& kept = Reader(mine).pick(false, other);
+  return kept;
+}
+
+int main() {
+  int first = 3;
+  int second = 4;
+  Box box{5};
+  if (local_use(first) != 84) { return 1; }
+  if (same_region(first, second) != 4) { return 2; }
+  if (outlived(first, second) != 4) { return 3; }
+  if (through_temporary(box, second) != 4) { return 4; }
+  return 0;
+}

@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "system-library-object-cache"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[package.native]
+c-sources = ["answer.c"]
+libraries = ["m"]

@@ -1,0 +1,18 @@
+// A same-spelled function in another namespace cannot replace the requirement's overload.
+struct Error { Error() = default; };
+namespace first {
+  int describe(Error& error) { return 12; }
+  concept Described<E> = requires(E& error) {
+    { describe(error) } -> int;
+  };
+}
+namespace second {
+  int describe(Error& error) { return 25; }
+  int checked<E>(E& error) requires first::Described<E> {
+    return describe(error);  //~ ERROR GTI-S2029 not visible
+  }
+}
+int main() {
+  Error error{};
+  return second::checked(error);
+}

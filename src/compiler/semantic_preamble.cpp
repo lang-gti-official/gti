@@ -53,6 +53,10 @@ std::uint64_t semanticPreambleIdentity(const SemanticPreamble &preamble) {
   return preamble.identity();
 }
 
+std::size_t semanticPreambleDeclarationCount(const SemanticPreamble &preamble) {
+  return preamble.declarationCount();
+}
+
 bool semanticPreambleSupportsSourceDebug(const SemanticPreamble &preamble,
                                          SourceDebugProfile profile) {
   return isValidSourceDebugProfile(profile) && preamble.state &&

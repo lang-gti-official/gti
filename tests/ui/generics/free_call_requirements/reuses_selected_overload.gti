@@ -1,0 +1,22 @@
+// A requires call selects the same overload when the generic invokes it through a lambda.
+//@ run-pass
+struct FileError { FileError() = default; };
+struct LockError { LockError() = default; };
+int describe(FileError& error) { return 12; }
+int describe(LockError& error) { return 25; }
+
+concept Described<E> = requires(E& error) {
+  { describe(error) } -> int;
+};
+
+int checked<E>(E& error) requires Described<E> {
+  auto format = [](E& input) -> int { return describe(input); };
+  return format(error);
+}
+
+int main() {
+  FileError file{};
+  LockError lock{};
+  if (checked(file) != 12 || checked(lock) != 25) { return 1; }
+  return 0;
+}

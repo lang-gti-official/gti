@@ -39,6 +39,13 @@ Only analysis-owned canonical sets use this path. External evidence and loan
 source lists do not acquire a new canonicality assumption. Public proof
 records retain their existing vectors, ordering and complete identities.
 
+During safety analysis, facts carry shared evidence. Forking a control-flow
+path shares the sorted IDs. Adding a new witness detaches the evidence for
+that path, and joining paths unions their IDs. A normal return from a checked
+instruction carries its refined facts, while the failure edge receives the
+state captured before the instruction. Independent replay builds its own
+facts and evidence from the input MIR.
+
 SCCP joins detect changes per fact instead of copying the entire destination
 state for a final comparison. Equality includes type, lattice
 value and all evidence; equal constants with different provenance still merge

@@ -24,6 +24,8 @@ class SemanticPreamble;
 // Distinct for every preamble built in this process; reusable records that
 // refer to a preamble's synthesized syntax are keyed by it.
 [[nodiscard]] std::uint64_t semanticPreambleIdentity(const SemanticPreamble &);
+[[nodiscard]] std::size_t
+semanticPreambleDeclarationCount(const SemanticPreamble &);
 [[nodiscard]] bool semanticPreambleSupportsSourceDebug(const SemanticPreamble &,
                                                        SourceDebugProfile);
 
@@ -38,7 +40,9 @@ struct SemanticPreambleKey {
     std::string path;
     std::uint64_t sourceDigest = 0;
     std::uint64_t syntaxDigest = 0;
-    std::vector<const Stmt *> declarations;
+    // Keep the exact candidate syntax alive even if only its trusted prefix
+    // could be cached after an error in a dependency.
+    StmtList declarations;
 
     friend bool operator==(const Unit &, const Unit &) = default;
   };
