@@ -1,4 +1,5 @@
 // A missing semicolon in a hosted main (argv as std::vector<std::string>)
+//@ slow
 // is the one parse error, and the repair is clean.
 // (diagnostic_recovery_lsp_test.py; slow tier: std.string and std.vector.)
 import std.string;

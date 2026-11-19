@@ -1,4 +1,5 @@
 // Library-typed escapes in user terms: a view of a temporary string
+//@ slow
 // (S2045), a function_ref to a closure over a local (S2127, cannot extend
 // local storage), and a std::function capturing a local by reference
 // (S2018); each repair is clean. (lifetime_parameters_lsp_test.py, third
