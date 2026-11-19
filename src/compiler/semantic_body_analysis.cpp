@@ -14315,7 +14315,8 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     if (hasAddress)
       *hasAddress = true;
     return type.arguments.size() == 1 &&
-           (transient || isReadOnlyConstantAddressType(type));
+           (transient ? type.kind == SemanticType::RawPointer
+                      : isReadOnlyConstantAddressType(type));
   }
   if (transient && type.kind == SemanticType::TypePack)
     return (!type.concretePack && allowDependent) ||
@@ -14383,6 +14384,10 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     const auto member = owner->members.find(field.declaration->name().lexeme);
+    if (member != owner->members.end() && transient &&
+        member->second.symbol.type.kind == SemanticType::Reference &&
+        member->second.symbol.type.arguments.size() == 1)
+      continue;
     if (member == owner->members.end() ||
         !isSupportedConstexprType(
             substituteType(member->second.symbol.type, substitution),
