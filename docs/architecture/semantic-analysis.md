@@ -949,6 +949,11 @@ on declaration-wide registration. It currently:
 9. finalizes callable forwarding and argument contracts; and
 10. finalizes the program-initialization plan and semantic occurrences.
 
+Sealing also freezes each nonempty overload set. Copies of those sets in
+value-flow snapshots share read-only candidates. Registration, concrete type
+substitution, and rebinding to a copied catalog edit a private list. Candidate
+declaration pointers in a copied catalog still refer to its own records.
+
 After an otherwise valid program check, `Frontend` applies the immutable
 artifact `ProgramRequest`. Executable requests admit no exports. A dormant
 library request rejects `main` and process-lifetime callback adapters, resolves
