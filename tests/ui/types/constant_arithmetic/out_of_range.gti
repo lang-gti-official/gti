@@ -1,0 +1,3 @@
+// The final arithmetic value must fit the selected integer parameter.
+uint8_t take(uint8_t value) { return value; }
+int main() { auto value = take(16 * 16); return 0; } //~ ERROR GTI-S2003

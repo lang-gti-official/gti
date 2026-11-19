@@ -108,6 +108,18 @@ through the existing contextual-literal path, including signed minima. It is
 not a runtime cast and does not introduce eager argument evaluation. A failed
 signature probe leaves an unknown result type, preventing secondary unused-result
 errors from an unrelated preceding expression.
+Literal-only integer arithmetic uses the same fallback after ordinary operand
+checking. Semantics admits a structural tree of unsuffixed integer literals and
+built-in integer operators, queries the existing constant evaluator with normal
+typed intermediate operations and limits, and caches only successful values in
+the semantic snapshot. Candidate probes do not publish a destination conversion.
+After unique selection, the existing required constant scalar publication record
+carries the checked target type and value to HIR and verified MIR. Initializers,
+assignments and returns use that boundary too. Typed macro cloning retains the
+selected target on the expression root and checks the original arithmetic before
+materializing it; the target is not pushed into the arithmetic leaves. No runtime
+state, allocation, backend-specific evaluator or new syntax is introduced.
+
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. Signature probing runs inside the owning request's body-demand

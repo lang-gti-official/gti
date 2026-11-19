@@ -1217,7 +1217,8 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                               index < selection->parameterTypes.size();
        ++index) {
     const auto &argument = call->arguments()[index];
-    if (isContextualIntegerLiteral(argument.get()) &&
+    if ((isContextualIntegerLiteral(argument.get()) ||
+         isContextualIntegerArithmetic(argument.get())) &&
         isInteger(selection->parameterTypes[index]))
       literalArgumentTypes.emplace(argument.get(),
                                    selection->parameterTypes[index]);
@@ -1226,8 +1227,10 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
        index < parameters.size() && index < selection->parameterTypes.size();
        ++index) {
     if (parameters[index].defaultArgument &&
-        isContextualIntegerLiteral(
-            parameters[index].defaultArgument->expression.get()) &&
+        (isContextualIntegerLiteral(
+             parameters[index].defaultArgument->expression.get()) ||
+         isContextualIntegerArithmetic(
+             parameters[index].defaultArgument->expression.get())) &&
         isInteger(selection->parameterTypes[index]))
       literalArgumentTypes.emplace(
           parameters[index].defaultArgument->expression.get(),
