@@ -1879,6 +1879,14 @@ struct DocumentAnalysis {
       sourceIdentities;
 };
 
+// Request-local state transferred between two crash-isolated compiler stages.
+// No editor query can observe or mutate this program.
+struct ParsedDocument {
+  std::unique_ptr<lang::FrontendResult> frontend;
+  lang::FrontendWorkMetrics metrics;
+  std::uint64_t elapsed = 0;
+};
+
 struct AnalysisSnapshot {
   std::uint64_t generation = 0;
   std::string rootPath;
@@ -3339,21 +3347,38 @@ private:
       const auto document = documents.find(uri);
       const auto generation = analysisGenerations.find(uri);
       const auto snapshot = analysisSnapshots.find(uri);
-      const bool current = document != documents.end() &&
-                           generation != analysisGenerations.end() &&
-                           snapshot != analysisSnapshots.end() &&
-                           snapshot->second.generation == generation->second &&
-                           snapshot->second.frontend != nullptr;
-      if (current) {
+      const bool fullCurrent =
+          generation != analysisGenerations.end() &&
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.generation == generation->second &&
+          snapshot->second.frontend != nullptr;
+      const auto syntax = syntaxRepairInputs.find(uri);
+      const bool syntaxCurrent =
+          syntax != syntaxRepairInputs.end() &&
+          sourceInputsCurrentLocked(syntax->second.dependencies,
+                                    syntax->second.documentGenerations,
+                                    syntax->second.sources);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          (fullCurrent || syntaxCurrent)) {
         std::unordered_set<std::string> seen;
         for (const auto &[root, diagnostics] : diagnosticsByRoot) {
           const auto owner = analysisSnapshots.find(root);
           const auto ownerGeneration = analysisGenerations.find(root);
-          if (owner == analysisSnapshots.end() || !owner->second.frontend ||
-              ownerGeneration == analysisGenerations.end() ||
-              owner->second.generation != ownerGeneration->second)
+          const bool fullOwner =
+              fullCurrent && owner != analysisSnapshots.end() &&
+              owner->second.frontend &&
+              ownerGeneration != analysisGenerations.end() &&
+              owner->second.generation == ownerGeneration->second;
+          if (!fullOwner && !(syntaxCurrent && root == uri))
             continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
+            // Only the parse fixes published for this exact root generation
+            // are actionable before its complete snapshot is available.
+            if (!fullOwner &&
+                diagnostic.repairSnapshot !=
+                    root + ":" + std::to_string(generation->second))
+              continue;
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
@@ -3464,33 +3489,15 @@ private:
     sendJson(response(id, JsonValue(std::move(edits))));
   }
 
-  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
-                                   const ProjectAnalysisInputs &project) const {
-    const std::string &uri = request.uri;
-    const std::string &source = request.source;
-    DocumentAnalysis result;
-    const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
-    if (!filePath) {
-      lang::SourceManager sources;
-      sources.set("", source);
-      const lang::Diagnostic diagnostic = lang::makeDiagnostic(
-          "GTI-D0001", lang::DiagnosticPhase::Driver,
-          lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
-          "GTI source dependencies require a file URI.");
-      result.diagnostics.push_back(
-          convertDiagnostic(diagnostic, sources, "", uri, source));
-      return result;
-    }
-
-    const std::string rootPath = canonicalPath(*filePath).string();
-    result.rootPath = rootPath;
+  static lang::FrontendOptions
+  documentOptions(const AnalysisRequest &request,
+                  const ProjectAnalysisInputs &project,
+                  lang::FrontendWorkMetrics &metrics) {
     lang::FrontendOptions frontendOptions;
     // The raw-pointer audit multiplies analysis time by well over an order of
     // magnitude (41 s against 0.6 s for an eight-include file), so the
     // edit-path analysis never runs it. A separate background audit of the
     // published generation carries the profile's mode; see `runAuditWorker`.
-    result.auditAvailable =
-        project.rawPointerAudit != lang::RawPointerAuditMode::Off;
     frontendOptions.rawPointerAudit = request.audit
                                           ? project.rawPointerAudit
                                           : lang::RawPointerAuditMode::Off;
@@ -3527,7 +3534,7 @@ private:
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
     frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
-    frontendOptions.workMetrics = &result.workMetrics;
+    frontendOptions.workMetrics = &metrics;
     frontendOptions.cache = request.frontendSources.cache;
     // Library-only concrete instance analyses are reused across snapshots;
     // see InstanceAnalysisCache.
@@ -3550,6 +3557,63 @@ private:
     frontendOptions.includeDiscoveryCache =
         request.frontendSources.includeDiscoveryCache;
     frontendOptions.limits = project.compileLimits;
+    return frontendOptions;
+  }
+
+  lang::FrontendResult
+  analyzeSource(const std::filesystem::path &path,
+                const AnalysisRequest &request,
+                const ProjectAnalysisInputs &project,
+                const lang::FrontendOptions &options) const {
+    return lang::Frontend(options).analyze(
+        path, request.source, {standardLibrary.prelude},
+        request.sourceOverrides, {standardLibrary.root},
+        project.packageSourceRoots);
+  }
+
+  DocumentAnalysis parseDocument(const std::filesystem::path &path,
+                                 const AnalysisRequest &request,
+                                 const ProjectAnalysisInputs &project,
+                                 ParsedDocument &parsed) const {
+    DocumentAnalysis syntax;
+    syntax.rootPath = canonicalPath(path).string();
+    auto options = documentOptions(request, project, parsed.metrics);
+    options.stopAfter = lang::FrontendPhase::Parsing;
+    auto start = SteadyClock::now();
+    parsed.frontend = std::make_unique<lang::FrontendResult>(
+        analyzeSource(path, request, project, options));
+    parsed.elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                         SteadyClock::now() - start)
+                         .count();
+    collectDocumentDiagnostics(syntax, *parsed.frontend, project, request);
+    return syntax;
+  }
+
+  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
+                                   const ProjectAnalysisInputs &project,
+                                   ParsedDocument *resume) const {
+    const std::string &uri = request.uri;
+    const std::string &source = request.source;
+    DocumentAnalysis result;
+    const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
+    if (!filePath) {
+      lang::SourceManager sources;
+      sources.set("", source);
+      const lang::Diagnostic diagnostic = lang::makeDiagnostic(
+          "GTI-D0001", lang::DiagnosticPhase::Driver,
+          lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
+          "GTI source dependencies require a file URI.");
+      result.diagnostics.push_back(
+          convertDiagnostic(diagnostic, sources, "", uri, source));
+      return result;
+    }
+
+    const std::string rootPath = canonicalPath(*filePath).string();
+    result.rootPath = rootPath;
+    result.auditAvailable =
+        project.rawPointerAudit != lang::RawPointerAuditMode::Off;
+    auto frontendOptions =
+        documentOptions(request, project, result.workMetrics);
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
@@ -3564,12 +3628,16 @@ private:
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     const auto analyze = [&] {
       ++result.frontendPasses;
-      return lang::Frontend(frontendOptions)
-          .analyze(*filePath, source, {standardLibrary.prelude},
-                   request.sourceOverrides, {standardLibrary.root},
-                   project.packageSourceRoots);
+      return analyzeSource(*filePath, request, project, frontendOptions);
     };
-    lang::FrontendResult frontend = analyze();
+    if (resume) {
+      result.workMetrics = std::move(resume->metrics);
+      ++result.frontendPasses;
+    }
+    lang::FrontendResult frontend =
+        resume ? lang::Frontend(frontendOptions)
+                     .analyzeParsed(*filePath, std::move(*resume->frontend))
+               : analyze();
     // MIR still verifies some calls and its interprocedural summaries
     // (defined-failure effects, persistent-storage access, text relays) only
     // against lowered callee bodies. Confirm a rejection from scoped MIR
@@ -3620,6 +3688,8 @@ private:
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
+    if (resume)
+      result.frontendElapsedMicroseconds += resume->elapsed;
     if (frontend.deferredPreambleBuild)
       schedulePreambleBuild(std::move(frontend.deferredPreambleBuild), uri,
                             request.generation);
@@ -3642,7 +3712,15 @@ private:
     result.frontend = std::move(snapshot);
     if (result.frontend->cancelled)
       return result;
-    const lang::FrontendResult &analysis = *result.frontend;
+    collectDocumentDiagnostics(result, *result.frontend, project, request);
+    return result;
+  }
+
+  static void collectDocumentDiagnostics(DocumentAnalysis &result,
+                                         const lang::FrontendResult &analysis,
+                                         const ProjectAnalysisInputs &project,
+                                         const AnalysisRequest &request) {
+    const auto &rootPath = result.rootPath;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
       const auto generation =
@@ -3685,9 +3763,8 @@ private:
         continue;
       }
       result.diagnostics.push_back(convertDiagnostic(
-          diagnostic, analysis.sources, rootPath, uri, source));
+          diagnostic, analysis.sources, rootPath, request.uri, request.source));
     }
-    return result;
   }
 
   AnalysisRequest makeAnalysisRequestLocked(const std::string &uri,
@@ -4140,6 +4217,7 @@ private:
     if (bodyBaseline)
       retireSnapshotLocked(std::move(bodyBaseline));
     cancelBodyQueryLocked();
+    bodyRecovery.reset();
     lastBodyDiagnostics.clear();
   }
 
@@ -4147,6 +4225,7 @@ private:
     while (true) {
       BodyEdit request;
       std::shared_ptr<const BodyBaseline> baseline;
+      std::shared_ptr<const BodyRecovery> recovery;
       {
         std::unique_lock lock(stateMutex);
         bodyCondition.wait(
@@ -4156,6 +4235,7 @@ private:
         request = std::move(*pendingBodyQuery);
         pendingBodyQuery.reset();
         baseline = bodyBaseline;
+        recovery = bodyRecovery;
         if (!baseline || !sourceInputsCurrentLocked(
                              baseline->dependencies,
                              baseline->documentGenerations, baseline->inputs))
@@ -4164,9 +4244,18 @@ private:
       // The full frontend is scheduled independently, even if the foreground
       // query cannot answer, is superseded, or reaches a compiler limit.
       std::optional<std::vector<lang::Diagnostic>> answer;
+      const bool verified = baseline->context->matchesSource(request.source);
+      bool reproduced = false;
       try {
         answer = baseline->context->check(request.source,
                                           request.cancellation.get());
+        // A recovery pass may diagnose both a missing expression and the
+        // resulting incomplete function. Only retire its published set if
+        // the same isolated checker can account for every diagnostic.
+        if (answer && recovery && !verified)
+          reproduced = baseline->context->reproducesRecovery(
+              recovery->source, recovery->diagnostics,
+              request.cancellation.get());
       } catch (const std::exception &error) {
         std::cerr << "Body diagnostic query failed: " << error.what() << '\n';
       } catch (...) {
@@ -4191,12 +4280,22 @@ private:
         // Include advice or a full pass may have supplied other diagnostics in
         // the meantime. Never replace another provider's result.
         const auto previous = diagnosticsByRoot.find(request.uri);
-        if (previous == diagnosticsByRoot.end() ||
+        if (previous == diagnosticsByRoot.end())
+          continue;
+        const bool ownsRecovery =
+            reproduced && recovery == bodyRecovery &&
+            std::ranges::all_of(previous->second,
+                                [&](const LspDiagnostic &d) {
+                                  return d.source == recovery->source;
+                                }) &&
+            std::ranges::equal(previous->second, recovery->diagnostics, {},
+                               &LspDiagnostic::diagnostic);
+        if (!verified && !ownsRecovery &&
             !std::ranges::equal(previous->second, lastBodyDiagnostics, {},
                                 &LspDiagnostic::diagnostic))
           continue;
         // An empty partial result can retract only this provider's own error.
-        if (answer->empty() && lastBodyDiagnostics.empty())
+        if (answer->empty() && previous->second.empty())
           continue;
         std::vector<LspDiagnostic> current;
         lang::SourceManager source;
@@ -4204,9 +4303,13 @@ private:
         for (const auto &d : *answer)
           current.push_back(convertDiagnostic(d, source, baseline->path,
                                               request.uri, request.source));
+        std::unordered_set<std::string> affected{request.uri};
+        for (const auto &d : previous->second)
+          affected.insert(d.uri);
+        bodyRecovery.reset();
         lastBodyDiagnostics = std::move(*answer);
         diagnosticsByRoot[request.uri] = std::move(current);
-        publications = publicationsForLocked({request.uri});
+        publications = publicationsForLocked(affected);
       }
       publish(std::move(publications));
     }
@@ -4480,20 +4583,31 @@ private:
     std::string failure;
   };
 
-  // Runs only the compiler work under the crash guard. This is the narrow
-  // boundary docs/architecture/lsp.md requires: the callback touches no
-  // shared LSP state and holds no lock, so a signal-recovery stack restore
-  // cannot leave `stateMutex` owned, and it catches its own exceptions so
-  // none crosses LLVM's no-exception frame. Publication happens afterwards
-  // on the normal path, where unwinding and locking behave normally.
-  [[nodiscard]] GuardedAnalysis
-  runIsolatedAnalysis(const AnalysisRequest &request,
-                      const ProjectAnalysisInputs &project) const {
+  GuardedAnalysis runIsolatedAnalysis(const AnalysisRequest &request,
+                                      const ProjectAnalysisInputs &project) {
+    const auto path = filePathFromUri(request.uri);
+    if (request.audit || request.trigger != AnalysisTrigger::DocumentChanged ||
+        !path || !project.configurationValid)
+      return isolatedStep(
+          [&] { return analyzeDocument(request, project, nullptr); });
+
+    ParsedDocument parsed;
+    auto syntax = isolatedStep(
+        [&] { return parseDocument(*path, request, project, parsed); });
+    if (syntax.status != GuardedAnalysisStatus::Completed)
+      return syntax;
+    publishSyntax(request, *syntax.analysis);
+    return isolatedStep(
+        [&] { return analyzeDocument(request, project, &parsed); });
+  }
+
+  // A recovered signal abandons the compiler frame. Publication and server
+  // locks belong between these steps, outside that frame.
+  template <class Work> static GuardedAnalysis isolatedStep(Work work) {
     GuardedAnalysis result;
     const bool completed = lang::runGuarded([&] {
       try {
-        result.analysis = std::make_unique<DocumentAnalysis>(
-            analyzeDocument(request, project));
+        result.analysis = std::make_unique<DocumentAnalysis>(work());
         result.status = GuardedAnalysisStatus::Completed;
       } catch (const std::exception &error) {
         result.status = GuardedAnalysisStatus::Failed;
@@ -4598,6 +4712,62 @@ private:
     publish(std::move(publications));
   }
 
+  // LSP diagnostics replace the whole list for a URI. Only withdraw
+  // diagnostics this compiler stage can recompute. A later stage might
+  // still have a borrow error, and its old range cannot be sent for new text.
+  void publishSyntax(const AnalysisRequest &request,
+                     const DocumentAnalysis &syntax) {
+    const std::lock_guard publicationLock(analysisPublicationMutex);
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto generation = analysisGenerations.find(request.uri);
+      if (generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri) ||
+          !sourceInputsCurrentLocked(syntax.dependencies,
+                                     request.documentGenerations,
+                                     request.frontendSources))
+        return;
+      auto &previous = diagnosticsByRoot[request.uri];
+      const auto syntaxOwned = [](const LspDiagnostic &d) {
+        auto phase = d.diagnostic.phase;
+        return phase == lang::DiagnosticPhase::Lexing ||
+               phase == lang::DiagnosticPhase::Parsing ||
+               phase == lang::DiagnosticPhase::SourceLoading;
+      };
+      const auto localSyntax = [&](const LspDiagnostic &d) {
+        return d.uri == request.uri && syntaxOwned(d);
+      };
+      if ((!std::ranges::any_of(previous, localSyntax) &&
+           !std::ranges::any_of(syntax.diagnostics, localSyntax)) ||
+          std::ranges::any_of(previous, [&](const LspDiagnostic &d) {
+            return d.uri == request.uri && !syntaxOwned(d) &&
+                   d.source != request.source;
+          }))
+        return;
+      std::erase_if(previous, localSyntax);
+      bool hasRepairs = false;
+      for (const auto &diagnostic : syntax.diagnostics) {
+        if (!localSyntax(diagnostic))
+          continue;
+        auto &published = previous.emplace_back(diagnostic);
+        if (!published.fixes.empty()) {
+          hasRepairs = true;
+          published.repairSnapshot =
+              request.uri + ":" + std::to_string(request.generation);
+        }
+      }
+      if (hasRepairs)
+        syntaxRepairInputs.insert_or_assign(
+            request.uri,
+            SyntaxRepairInputs{syntax.dependencies, request.documentGenerations,
+                               request.frontendSources});
+      publications = publicationsForLocked({request.uri});
+    }
+    publish(std::move(publications));
+  }
+
   void publishAnalysis(const AnalysisRequest &request,
                        DocumentAnalysis analysis) {
     std::vector<DiagnosticPublication> publications;
@@ -4656,12 +4826,32 @@ private:
               request.uri, analysis.rootPath, std::move(analysis.bodyContext),
               analysis.dependencies, request.documentGenerations,
               request.frontendSources});
-        } else if (bodyBaseline && bodyBaseline->uri == request.uri &&
-                   !std::ranges::equal(analysis.diagnostics,
-                                       lastBodyDiagnostics, {},
-                                       &LspDiagnostic::diagnostic)) {
-          forgetBodyBaselineLocked();
+        } else if (bodyBaseline && bodyBaseline->uri == request.uri) {
+          bodyRecovery.reset();
+          if (!std::ranges::equal(analysis.diagnostics, lastBodyDiagnostics, {},
+                                  &LspDiagnostic::diagnostic)) {
+            lastBodyDiagnostics.clear();
+            if (analysis.frontend && analysis.frontend->sourceValid &&
+                !analysis.frontend->syntaxValid &&
+                !analysis.frontend->mirValid &&
+                !analysis.frontend->mirBorrowRejected &&
+                std::ranges::any_of(analysis.diagnostics,
+                                    [](const auto &d) {
+                                      return d.diagnostic.phase ==
+                                             lang::DiagnosticPhase::Parsing;
+                                    }) &&
+                std::ranges::all_of(analysis.diagnostics, [&](const auto &d) {
+                  return d.uri == request.uri;
+                })) {
+              BodyRecovery recovery{request.source, {}};
+              for (const auto &diagnostic : analysis.diagnostics)
+                recovery.diagnostics.push_back(diagnostic.diagnostic);
+              bodyRecovery =
+                  std::make_shared<const BodyRecovery>(std::move(recovery));
+            }
+          }
         }
+        syntaxRepairInputs.erase(request.uri);
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
         // Recovery keeps one last-valid graph for unchanged root text, never
@@ -4964,6 +5154,7 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    syntaxRepairInputs.erase(uri);
     for (const auto &[id, active] : activeCompletionRequests) {
       if (active.uri == uri)
         active.cancellation->store(true, std::memory_order_relaxed);
@@ -5531,6 +5722,13 @@ private:
     lang::lsp::FrontendSourceSnapshot inputs;
   };
   std::shared_ptr<const BodyBaseline> bodyBaseline;
+  // At most one failed source and its published diagnostics. No second
+  // semantic snapshot is retained for checking ownership on a later edit.
+  struct BodyRecovery {
+    std::string source;
+    std::vector<lang::Diagnostic> diagnostics;
+  };
+  std::shared_ptr<const BodyRecovery> bodyRecovery;
   std::vector<lang::Diagnostic> lastBodyDiagnostics;
   struct BodyEdit {
     std::string uri;
@@ -5553,6 +5751,14 @@ private:
   std::unordered_map<std::string, std::optional<std::uint64_t>>
       savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
+  struct SyntaxRepairInputs {
+    std::unordered_map<std::string, std::uint64_t> dependencies;
+    std::unordered_map<std::string, std::uint64_t> documentGenerations;
+    lang::lsp::FrontendSourceSnapshot sources;
+  };
+  // Exists only from publication of a parse fix until this parse is superseded
+  // or the full analysis publishes. It never authorizes semantic requests.
+  std::unordered_map<std::string, SyntaxRepairInputs> syntaxRepairInputs;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,
                      std::unordered_map<std::string, std::uint64_t>>
