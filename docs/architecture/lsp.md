@@ -153,7 +153,9 @@ source loading, lexing and parsing. It uses the compiler's actual imports,
 conditional branches, error limit and source ranges. The worker then transfers
 the same program and source graph to semantic analysis, HIR and MIR. Publication
 runs outside the compiler crash guard and checks both the document generation
-and the inputs read by the parser. Only the completed snapshot serves navigation.
+and the inputs read by the parser. A parser quick fix can be applied at this
+stage while its root generation, source text and dependencies are still current.
+Only the completed snapshot serves navigation.
 
 The syntax stage can withdraw an earlier syntax diagnostic when a repair
 parses successfully. If that publication would hide a semantic diagnostic

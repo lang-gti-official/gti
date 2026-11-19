@@ -3347,21 +3347,38 @@ private:
       const auto document = documents.find(uri);
       const auto generation = analysisGenerations.find(uri);
       const auto snapshot = analysisSnapshots.find(uri);
-      const bool current = document != documents.end() &&
-                           generation != analysisGenerations.end() &&
-                           snapshot != analysisSnapshots.end() &&
-                           snapshot->second.generation == generation->second &&
-                           snapshot->second.frontend != nullptr;
-      if (current) {
+      const bool fullCurrent =
+          generation != analysisGenerations.end() &&
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.generation == generation->second &&
+          snapshot->second.frontend != nullptr;
+      const auto syntax = syntaxRepairInputs.find(uri);
+      const bool syntaxCurrent =
+          syntax != syntaxRepairInputs.end() &&
+          sourceInputsCurrentLocked(syntax->second.dependencies,
+                                    syntax->second.documentGenerations,
+                                    syntax->second.sources);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          (fullCurrent || syntaxCurrent)) {
         std::unordered_set<std::string> seen;
         for (const auto &[root, diagnostics] : diagnosticsByRoot) {
           const auto owner = analysisSnapshots.find(root);
           const auto ownerGeneration = analysisGenerations.find(root);
-          if (owner == analysisSnapshots.end() || !owner->second.frontend ||
-              ownerGeneration == analysisGenerations.end() ||
-              owner->second.generation != ownerGeneration->second)
+          const bool fullOwner =
+              fullCurrent && owner != analysisSnapshots.end() &&
+              owner->second.frontend &&
+              ownerGeneration != analysisGenerations.end() &&
+              owner->second.generation == ownerGeneration->second;
+          if (!fullOwner && !(syntaxCurrent && root == uri))
             continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
+            // Only the parse fixes published for this exact root generation
+            // are actionable before its complete snapshot is available.
+            if (!fullOwner &&
+                diagnostic.repairSnapshot !=
+                    root + ":" + std::to_string(generation->second))
+              continue;
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
@@ -4722,14 +4739,22 @@ private:
           }))
         return;
       std::erase_if(previous, localSyntax);
+      bool hasRepairs = false;
       for (const auto &diagnostic : syntax.diagnostics) {
         if (!localSyntax(diagnostic))
           continue;
         auto &published = previous.emplace_back(diagnostic);
-        if (!published.fixes.empty())
+        if (!published.fixes.empty()) {
+          hasRepairs = true;
           published.repairSnapshot =
               request.uri + ":" + std::to_string(request.generation);
+        }
       }
+      if (hasRepairs)
+        syntaxRepairInputs.insert_or_assign(
+            request.uri,
+            SyntaxRepairInputs{syntax.dependencies, request.documentGenerations,
+                               request.frontendSources});
       publications = publicationsForLocked({request.uri});
     }
     publish(std::move(publications));
@@ -4818,6 +4843,7 @@ private:
             }
           }
         }
+        syntaxRepairInputs.erase(request.uri);
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
         // Recovery keeps one last-valid graph for unchanged root text, never
@@ -5120,6 +5146,7 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    syntaxRepairInputs.erase(uri);
     for (const auto &[id, active] : activeCompletionRequests) {
       if (active.uri == uri)
         active.cancellation->store(true, std::memory_order_relaxed);
@@ -5716,6 +5743,14 @@ private:
   std::unordered_map<std::string, std::optional<std::uint64_t>>
       savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
+  struct SyntaxRepairInputs {
+    std::unordered_map<std::string, std::uint64_t> dependencies;
+    std::unordered_map<std::string, std::uint64_t> documentGenerations;
+    lang::lsp::FrontendSourceSnapshot sources;
+  };
+  // Exists only from publication of a parse fix until this parse is superseded
+  // or the full analysis publishes. It never authorizes semantic requests.
+  std::unordered_map<std::string, SyntaxRepairInputs> syntaxRepairInputs;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,
                      std::unordered_map<std::string, std::uint64_t>>
