@@ -1,0 +1,5 @@
+// A qualified protocol operation can share the enclosing concept's name.
+//@ run-pass
+concept read<T> { int read(T value); };
+for concept read<int> { int read(int value) { return value; } };
+int main() { return read<int>::read(42) - 42; }

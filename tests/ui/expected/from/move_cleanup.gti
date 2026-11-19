@@ -1,0 +1,37 @@
+// Move-only error payloads survive conversion and are destroyed exactly once.
+//@ run-pass
+//@ stdout: convert
+//@ stdout: scope
+//@ stdout: returned
+//@ stdout: payload
+class Owned {
+public:
+  Owned() = default;
+  Owned(Owned& other) = delete;
+  ~Owned() { std::println("payload"); }
+};
+enum Source { failed(Owned payload) };
+enum Target { failed(Owned payload) };
+struct Guard {
+  Guard() = default;
+  ~Guard() { std::println("scope"); }
+};
+for concept std::from<Target, Source> {
+  Target from(Source error) {
+    std::println("convert");
+    switch (std::move(error)) {
+      case Source::failed(payload): return Target::failed(std::move(payload));
+    }
+  }
+};
+expected<int, Source> source() { return unexpected(Source::failed(Owned())); }
+expected<void, Target> target() {
+  Guard guard{};
+  int value = ?source();
+  return;
+}
+int main() {
+  auto result = target();
+  std::println("returned");
+  return result.has_value() ? 1 : 0;
+}

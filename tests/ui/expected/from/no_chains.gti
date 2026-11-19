@@ -1,0 +1,10 @@
+// Propagation does not search a chain of registered conversions.
+enum A { failed };
+enum B { failed };
+enum C { failed };
+for concept std::from<B, A> { B from(A value) { return B::failed; } };
+for concept std::from<C, B> { C from(B value) { return C::failed; } };
+expected<int, A> source() { return unexpected(A::failed); }
+expected<int, C> target() {
+  return ?source();  //~ ERROR GTI-S2029
+}

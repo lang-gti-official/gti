@@ -4,8 +4,8 @@
 // `std::tryable`, which the prelude declares; the compiler binds `?`
 // to that concept by trusted declaration identity and knows nothing about the
 // types that conform to it. The selected conformance block's functions run as
-// ordinary calls, and the residual initializes the enclosing return type as
-// `R result = residual;` would.
+// ordinary calls. A residual initializes the enclosing return type directly,
+// through its exact implicit constructor, or through std::from<Return, Residual>.
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
@@ -61,12 +61,24 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   auto origin = functionReturnBorrowSummary(
       call.returnType, call.parameterTypes, 0, false, IntrinsicKind::None);
   if (candidate.declaration != nullptr &&
-      hasExplicitBorrowContract(*candidate.declaration)) {
+      (hasExplicitBorrowContract(*candidate.declaration) ||
+       patternResultContract(*candidate.declaration, call.returnType))) {
     const auto contract = genericReturnBorrowContract(
         *candidate.declaration, call.returnType, call.parameterTypes, 0, false);
     origin = {.origin = contract.origin,
               .parameter = contract.parameter,
               .access = contract.access};
+  }
+  // Use the same elision as ordinary calls and concrete function analysis.
+  // A reference-bearing result with no supplying input has static origins;
+  // its complete contract can further prove an empty error alternative.
+  if (origin.origin == BorrowOriginKind::None &&
+      (candidate.declaration == nullptr ||
+       !hasExplicitBorrowContract(*candidate.declaration)) &&
+      implicitStaticCarrierResult(call.returnType, call.parameterTypes, 0,
+                                  false, IntrinsicKind::None)) {
+    origin.origin = BorrowOriginKind::Global;
+    origin.access = AccessMode::ReadOnly;
   }
   call.borrowOrigin = origin.origin;
   call.borrowArgument = origin.parameter;
@@ -80,13 +92,16 @@ auto SemanticVisitor::Impl::protocolOperationCall(
 
 // The residual initializes the enclosing return type as `R result =
 // residual;` would: it is R itself, or R has exactly one implicit constructor
-// whose sole parameter is the residual's exact type. Returns false after
-// reporting when neither holds.
+// whose sole parameter is the residual's exact type. Otherwise std::from
+// selects one explicitly registered conversion.
 auto SemanticVisitor::Impl::selectResidualReturn(
     const Unary &expr, const SemanticType &returnType,
     const SemanticType &residualType,
-    std::optional<ResolvedConstructionInfo> &construction) -> bool {
+    std::optional<ResolvedConstructionInfo> &construction,
+    std::optional<ResolvedCallInfo> &conversion,
+    std::optional<SemanticBorrowDependencySet> &conversionBorrow) -> bool {
   construction.reset();
+  conversion.reset();
   const Token &site = expr.oper();
   const SemanticType target = selectExactClassSpecialization(returnType);
   if (target == canonicalExactSpecializationType(residualType)) {
@@ -108,9 +123,58 @@ auto SemanticVisitor::Impl::selectResidualReturn(
   const std::string returned = "Error propagation returns the residual '" +
                                typeSpelling(residualType) + "' as '" +
                                typeSpelling(target) + "'";
+  // Preserve direct residual construction. Otherwise an explicit protocol
+  // conformance supplies exactly one conversion, with no conversion search.
+  const auto convertResidual = [&]() -> std::optional<bool> {
+    for (std::size_t index = 0; index < concepts.size(); ++index) {
+      const auto &protocol = concepts[index];
+      if (!protocol.protocol || protocol.qualifiedName != "std::from" ||
+          !isPreludeUnit(protocol.sourceUnit))
+        continue;
+      const ConceptId id = index + 1;
+      const std::vector<SemanticType> arguments{target, residualType};
+      const auto match = matchConformance(id, arguments);
+      if (!match)
+        return std::nullopt;
+      if (const auto failure = protocolConformanceFailure(
+              {.conceptId = id, .arguments = arguments})) {
+        reportConstraintFailure(site, *failure);
+        return false;
+      }
+      const auto &block = conformances[match->conformance - 1];
+      if (protocol.operations.size() != 1 ||
+          protocol.operations.front().name != "from" ||
+          block.operations.size() != 1 ||
+          block.operations.front().overloads.size() != 1)
+        return reject("The prelude's 'std::from' protocol is incomplete.",
+                      "Declare one consuming 'To from(From value)' operation.");
+      const auto &candidate = block.operations.front().overloads.front();
+      (void)requireBody(candidate.bodyDeclaration());
+      requireFunctionDefinition(candidate, site);
+      conversion = protocolOperationCall(block, match->binding, 0);
+      if (!conversion || conversion->returnType != target ||
+          conversion->parameterTypes != std::vector<SemanticType>{residualType})
+        return false;
+      auto concrete = candidate;
+      concrete.returnType = conversion->returnType;
+      concrete.parameterTypes = conversion->parameterTypes;
+      if (const auto complete = completeFunctionReturnBorrow(
+              concrete, conversion->typeArguments, conversion->valueArguments,
+              tokenSpan(site))) {
+        const std::array<const ExprPtr *, 1> residualInput{nullptr};
+        conversionBorrow = instantiateCompleteBorrowArguments(
+            *conversion, *complete, residualInput);
+      }
+      return true;
+    }
+    return std::nullopt;
+  };
   if (owner == nullptr) {
+    if (const auto converted = convertResidual())
+      return *converted;
     return reject(returned + ", which cannot be initialized from it.",
-                  "Return a type that accepts the residual, or handle the "
+                  "Declare a 'std::from' conformance for the return type and "
+                  "residual, return a type that accepts it, or handle the "
                   "failure explicitly instead of applying '?'.");
   }
   const GenericSubstitution substitution = classSubstitution(target);
@@ -128,6 +192,9 @@ auto SemanticVisitor::Impl::selectResidualReturn(
       matches.push_back(&constructor);
     }
   }
+  if (matches.empty())
+    if (const auto converted = convertResidual())
+      return *converted;
   if (matches.size() != 1) {
     // A trusted library type cannot gain a constructor from this program;
     // the failure itself must change before it can propagate here.
@@ -368,7 +435,10 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     return resultType;
   }
   std::optional<ResolvedConstructionInfo> construction;
-  if (!selectResidualReturn(expr, returnType, residualType, construction)) {
+  std::optional<ResolvedCallInfo> conversion;
+  std::optional<SemanticBorrowDependencySet> residualReturn;
+  if (!selectResidualReturn(expr, returnType, residualType, construction,
+                            conversion, residualReturn)) {
     return SemanticType::Unknown;
   }
   // This path returns from the enclosing callable even though its source is
@@ -376,7 +446,6 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   // stored borrow (checked above), so a selected residual construction
   // publishes exactly the alternatives of its complete contract for a
   // dependency-free input. Without that contract the return is unknown.
-  std::optional<SemanticBorrowDependencySet> residualReturn;
   if (construction)
     if (const auto summary =
             completeConstructorBorrow(*construction, tokenSpan(site))) {
@@ -402,7 +471,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
              .test = std::move(*test),
              .output = std::move(*output),
              .residual = std::move(*residual),
-             .returnConstruction = std::move(construction)});
+             .returnConstruction = std::move(construction),
+             .returnConversion = std::move(conversion)});
   return resultType;
 }
 

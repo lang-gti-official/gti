@@ -1572,7 +1572,8 @@ struct RawReferenceAssertionInfo {
 // transported like a by-value argument; `test`, `output` and `residual` are
 // ordinary calls of the selected conformance block's has_value, take_value
 // and take_residual functions. The residual initializes the enclosing
-// callable's return type through `returnConstruction`, or is that type itself.
+// callable's return type through `returnConstruction` or `returnConversion`,
+// or is that type itself.
 struct ResolvedTryablePropagationInfo {
   SemanticType operandType = SemanticType::Unknown;
   SemanticType resultType = SemanticType::Unknown;
@@ -1585,6 +1586,7 @@ struct ResolvedTryablePropagationInfo {
   ResolvedCallInfo output;
   ResolvedCallInfo residual;
   std::optional<ResolvedConstructionInfo> returnConstruction;
+  std::optional<ResolvedCallInfo> returnConversion;
 };
 
 // A concept with a body, as an associated type projection of it prints:

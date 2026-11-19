@@ -255,6 +255,13 @@ namespace std {
     residual_type take_residual(T value);
   };
 
+  /// An explicitly registered, consuming conversion. It returns the target
+  /// directly; fallible conversions must be handled explicitly. Prefix `?`
+  /// may use this protocol on its failure path, never on its success path.
+  concept from<To, From> {
+    To from(From value);
+  };
+
   /// Writes `value` to standard output without adding a newline.
   [[track_caller]]
   void print(string_view value) {
@@ -701,5 +708,14 @@ for <T, E> concept std::tryable<expected<T, E>> {
   }
   constexpr residual_type take_residual(expected<T, E> value) {
     return unexpected(std::move(value).error());
+  }
+};
+
+// Convert the error payload in source. The compiler's propagation rule only
+// sees a residual and a destination type, not expected or its alternatives.
+for <T, E, F> concept std::from<expected<T, F>, std::unexpected_value<E>>
+    requires std::from<F, E> {
+  constexpr expected<T, F> from(std::unexpected_value<E> failure) {
+    return unexpected(std::from<F, E>::from(std::move(failure).error()));
   }
 };
