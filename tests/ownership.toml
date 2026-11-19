@@ -1117,6 +1117,7 @@ paths = [
   "stdlib/std/environment.gti",
   "stdlib/std/chrono.gti",
   "stdlib/std/random.gti",
+  "stdlib/std/detail/random_engine.gti",
   "stdlib/std/cmath.gti",
   "stdlib/std/http.gti",
   "stdlib/std/tcp.gti",

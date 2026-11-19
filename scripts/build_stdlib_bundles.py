@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 
 
 def build(stage, source):
@@ -21,24 +22,28 @@ def build(stage, source):
         env = dict(os.environ, GTI_STDLIB_PATH=str(package / "stdlib"),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
+        with (package / "gti.toml").open("rb") as manifest:
+            targets = tomllib.load(manifest)["targets"]
         outputs = []
         for profile in ("dev", "release"):
-            command = [str(stage / "bin/gti"), "build", "cmath", "--offline"]
-            if profile == "release":
-                command.append("--release")
-            subprocess.run(command, cwd=package, env=env, check=True)
-            bundle, = (package / "build/gti" / profile).glob("*/cmath.gtilib")
-            relative = Path("precompiled-stdlib") / bundle.parent.name / profile / bundle.name
-            candidate = package / relative
-            candidate.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(bundle, candidate)
-            outputs.append((candidate, data / relative))
+            for name in targets:
+                command = [str(stage / "bin/gti"), "build", name, "--offline"]
+                if profile == "release":
+                    command.append("--release")
+                subprocess.run(command, cwd=package, env=env, check=True)
+                bundle, = (package / "build/gti" / profile).glob(f"*/{name}.gtilib")
+                relative = Path("precompiled-stdlib") / bundle.parent.name / profile / bundle.name
+                candidate = package / relative
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(bundle, candidate)
+                outputs.append((candidate, data / relative))
 
         # Exercise normal named import and re-export from a separate package.
         # Only the scratch copy of the implementation is removed. The source
         # companion still provides constexpr and the ordinary toolchain
         # retains sources for editors and unsupported configurations.
-        (package / "stdlib/std/cmath.gti").unlink()
+        for target in targets.values():
+            (package / target["root"]).unlink()
         consumer = package / "consumer"
         shutil.copytree(source / "tests/project/standard_library_bundle", consumer)
         compiler = str(stage / "bin/gti")

@@ -1,3 +1,3 @@
-// A public re-export of the installed math API preserves constexpr and native calls.
+// The math re-export and random engine link together and preserve independent state and constexpr calls.
 $ gti check --offline
 $ gti run --release --offline
