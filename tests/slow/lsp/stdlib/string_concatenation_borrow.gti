@@ -1,5 +1,6 @@
 // Editor diagnostics: appending to a string while a view of it is live is a
 // borrow conflict.
+//@ slow
 import std.string;
 int main() {
   mut std::string text = "hello";
