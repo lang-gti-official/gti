@@ -336,6 +336,7 @@ jobs:
           ctest --test-dir "${RUNNER_TEMP}/gti-system-library-smoke" -C Release \
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
           python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
+          python3 tests/project/standard_library_bundle/verify_stage.py "${RUNNER_TEMP}/gti-system-stage"
       - name: Upload gti-test reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
