@@ -3,6 +3,9 @@ $ cd app
 $ gti check
 $ gti run
 $ sh -c "test -f build/gti/packages/math/dev/*/common.gtilib"
+$ sh -c "sed 's/return 40/return 0/' ../math/src/details.gti > edit && mv edit ../math/src/details.gti"
+$ gti run
+? 1
 $ sh -c "cat ../alternate.toml >> gti.toml"
 $ cp ../alternate.gti src/main.gti
 $ gti check

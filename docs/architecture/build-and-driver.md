@@ -1819,8 +1819,9 @@ math = { path = "../math" }
 members = ["packages/game", "packages/math"]
 ```
 
-`[targets]` is optional so a source-only dependency package does not need a
-dummy executable or test. Selecting such a package for `build`, `check`,
+`[targets]` is optional. A package with neither declared targets nor a
+discoverable program or library root can still supply source modules.
+Selecting such a package for `build`, `check`,
 `run`, or `test` produces a focused no-target diagnostic; it remains valid as
 a dependency.
 
@@ -3141,8 +3142,9 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
-The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
-root-module function names, including all exported overloads. Names may be
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
+explicitly selected root-module functions or the public declarations of the
+root and its re-exported modules, including their exported overloads. Names may be
 namespace-qualified; explicit exports and exports inherited from enclosing
 namespace declarations are preserved. Reopening a namespace does not export its
 private siblings. Functions must be nongeneric, without default arguments. Parameters and
@@ -3150,8 +3152,8 @@ results admit bool, char, fixed integers, float/double, concrete value records,
 integral enums and checked references to those values; void results remain valid.
 Constexpr functions, entry functions and unsafe/private capabilities reject.
 A target may contain multiple source modules. Its exposed nominal closure can
-belong to the root module or to verified compiled dependencies; ordinary non-root
-source modules still require a logical ownership mapping. There are at most 256
+belong to its root, public re-exported modules, or verified compiled
+dependencies. Each public module retains its logical owner. There are at most 256
 exported overloads and 64 nominal declarations per interface.
 
 Qualified declaration names retain their complete namespace path, with at most
@@ -3352,7 +3354,10 @@ selections remain available.
 
 Automatic compilation requires the bundle format to represent the complete
 public surface. A dependency with unsupported public declarations or native
-inputs can still be consumed from source. An explicit request to build that
+inputs can still be consumed from source. If the consumer directly imports a
+private implementation file that also contributed to the library object, the
+driver uses source for that library so both paths share its storage.
+An explicit request to build that
 library reports the unsupported interface. Read-only source checks can resolve
 ordinary imports before any library has been built.
 

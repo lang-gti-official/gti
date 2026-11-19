@@ -380,6 +380,8 @@ struct ExecutableBuildResult {
   // targets without reopening an artifact another build may replace.
   CompiledLibrarySnapshot compiledLibrarySnapshot = {};
   bool libraryInterfaceNeedsSource = false;
+  std::vector<std::filesystem::path> compiledSourceFiles;
+  std::filesystem::path sourceFallbackManifest;
 
   [[nodiscard]] bool succeeded() const {
     return status == ExecutableBuildStatus::Success;

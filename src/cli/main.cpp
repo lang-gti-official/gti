@@ -3050,12 +3050,12 @@ int buildProjectPlan(
     DiagnosticSummary *capturedDiagnostics = nullptr,
     std::vector<std::string> *capturedTestCases = nullptr,
     lang::driver::CompiledLibrarySnapshots *selectedLibraries = nullptr,
-    lang::driver::CompiledLibrarySnapshot *capturedLibrary = nullptr,
+    lang::driver::ProjectLibrarySnapshot *capturedLibrary = nullptr,
     std::filesystem::path *unsupportedLibrary = nullptr) {
   lang::driver::CompiledLibrarySnapshots localLibraries;
   auto &libraries = selectedLibraries ? *selectedLibraries : localLibraries;
   for (const auto &dependency : plan.compiledBuildDependencies()) {
-    lang::driver::CompiledLibrarySnapshot artifact;
+    lang::driver::ProjectLibrarySnapshot artifact;
     const bool optional = std::any_of(
         plan.compiledImports().begin(), plan.compiledImports().end(),
         [&](const auto &edge) {
@@ -3068,7 +3068,8 @@ int buildProjectPlan(
     if (status != exitCode(ExitStatus::Success))
       return status;
     try {
-      libraries.retain(dependency.output(), std::move(artifact));
+      libraries.retain(dependency.output(), std::move(artifact.bytes),
+                       std::move(artifact.sourceFiles));
     } catch (const std::exception &error) {
       std::cerr << "gti: compiled library: " << error.what() << '\n';
       return exitCode(ExitStatus::Compilation);
@@ -3225,6 +3226,10 @@ int buildProjectPlan(
               plan.compiledLibrary(), std::nullopt, std::move(imports)),
           progress.observer());
   progress.suspend();
+  if (unsupportedLibrary && !result.sourceFallbackManifest.empty()) {
+    *unsupportedLibrary = result.sourceFallbackManifest;
+    return exitCode(ExitStatus::Compilation);
+  }
   if (unsupportedLibrary && capturedLibrary &&
       result.libraryInterfaceNeedsSource) {
     *unsupportedLibrary = plan.manifestPath();
@@ -3242,7 +3247,8 @@ int buildProjectPlan(
     *capturedTestCases = result.compilation.testCases;
   }
   if (capturedLibrary != nullptr && result.succeeded())
-    *capturedLibrary = result.compiledLibrarySnapshot;
+    *capturedLibrary = {result.compiledLibrarySnapshot,
+                        result.compiledSourceFiles};
   progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }

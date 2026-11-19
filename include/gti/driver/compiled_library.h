@@ -12,6 +12,12 @@
 
 namespace lang::driver {
 using CompiledLibrarySnapshot = std::shared_ptr<const std::string>;
+// Local provenance from a source build or a validated reuse receipt. A
+// distributed artifact has no local source files.
+struct ProjectLibrarySnapshot {
+  CompiledLibrarySnapshot bytes;
+  std::vector<std::filesystem::path> sourceFiles;
+};
 // Resolved project policy. The compiler owns export selection and callable
 // validation; these values never grant source visibility or native ABI trust.
 struct CompiledLibraryTarget {
@@ -33,18 +39,20 @@ struct CompiledLibraryImport {
   // Public module registered for a package-selected virtual interface.
   std::string moduleName;
   bool automatic = false;
+  std::vector<std::filesystem::path> sourceFiles;
 };
 
 // One project build's bounded artifact selection. Paths identify selections;
 // once selected, replacement/deletion on disk cannot change their bytes.
 class CompiledLibrarySnapshots {
 public:
-  void retain(const std::filesystem::path &, CompiledLibrarySnapshot);
+  void retain(const std::filesystem::path &, CompiledLibrarySnapshot,
+              std::vector<std::filesystem::path> sourceFiles = {});
   [[nodiscard]] std::vector<CompiledLibraryImport>
       select(std::span<const CompiledLibraryImport>);
 
 private:
-  std::map<std::filesystem::path, CompiledLibrarySnapshot> artifacts;
+  std::map<std::filesystem::path, ProjectLibrarySnapshot> artifacts;
   std::size_t bytes = 0;
 };
 // Preserve the original single-import API while keeping one canonical list.

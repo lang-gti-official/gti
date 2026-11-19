@@ -37,15 +37,18 @@ std::string readCompiledLibraryFileBounded(const std::filesystem::path &path,
 std::string readCompiledLibraryFile(const std::filesystem::path &path) {
   return readCompiledLibraryFileBounded(path, libraryBundleByteLimit);
 }
-void CompiledLibrarySnapshots::retain(const std::filesystem::path &path,
-                                      CompiledLibrarySnapshot snapshot) {
+void CompiledLibrarySnapshots::retain(
+    const std::filesystem::path &path, CompiledLibrarySnapshot snapshot,
+    std::vector<std::filesystem::path> sourceFiles) {
   if (path.empty() || !snapshot || snapshot->size() > libraryBundleByteLimit)
     throw std::invalid_argument("invalid compiled library snapshot");
   const auto key = std::filesystem::absolute(path).lexically_normal();
   if (const auto found = artifacts.find(key); found != artifacts.end()) {
-    if (found->second != snapshot && *found->second != *snapshot)
+    if (found->second.bytes != snapshot && *found->second.bytes != *snapshot)
       throw std::invalid_argument(
           "compiled library selection changed within one build");
+    if (!sourceFiles.empty())
+      found->second.sourceFiles = std::move(sourceFiles);
     return;
   }
   if (artifacts.size() >= 64 ||
@@ -53,7 +56,8 @@ void CompiledLibrarySnapshots::retain(const std::filesystem::path &path,
     throw std::invalid_argument(
         "compiled library snapshots exceed build limits");
   bytes += snapshot->size();
-  artifacts.emplace(key, std::move(snapshot));
+  artifacts.emplace(
+      key, ProjectLibrarySnapshot{std::move(snapshot), std::move(sourceFiles)});
 }
 std::vector<CompiledLibraryImport> CompiledLibrarySnapshots::select(
     std::span<const CompiledLibraryImport> inputs) {
@@ -68,7 +72,7 @@ std::vector<CompiledLibraryImport> CompiledLibrarySnapshots::select(
     const auto key =
         std::filesystem::absolute(input.artifact).lexically_normal();
     if (input.snapshot) {
-      retain(key, input.snapshot);
+      retain(key, input.snapshot, input.sourceFiles);
     } else if (!artifacts.contains(key)) {
       if (artifacts.size() >= 64)
         throw std::invalid_argument(
@@ -85,7 +89,8 @@ std::vector<CompiledLibraryImport> CompiledLibrarySnapshots::select(
              std::make_shared<const std::string>(readCompiledLibraryFileBounded(
                  input.artifact, libraryBundleByteLimit - bytes)));
     }
-    input.snapshot = artifacts.at(key);
+    input.snapshot = artifacts.at(key).bytes;
+    input.sourceFiles = artifacts.at(key).sourceFiles;
   }
   return selected;
 }
@@ -467,6 +472,15 @@ struct ScalarConsumerInputs {
 ScalarConsumerInputs prepareScalarConsumer(
     const CompilationRequest &, std::span<const CompiledLibraryImport>,
     const std::filesystem::path &, ProgressObserver *progress = nullptr);
+std::vector<std::filesystem::path>
+producerImplementations(const SourceGraph &graph) {
+  std::vector<std::filesystem::path> result;
+  for (const auto &unit : graph.sourceUnits())
+    if (unit.role == SourceUnitRole::Application &&
+        !unit.compiledScalarInterface)
+      result.push_back(unit.path);
+  return result;
+}
 std::string producerSources(const CompilationInputs &inputs,
                             const CompiledLibraryTarget *target) {
   std::string sources = "gti.compiled-source-graph.2";
@@ -532,6 +546,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
                         native, std::move(selection),
                         std::move(prepared.imports));
   CompiledScalarLibraryResult result;
+  result.sourceFiles = producerImplementations(frontend.sourceGraph);
   result.compilation = detail::generateArtifact(
       producerRequest, std::move(frontend), backend, nullptr);
   result.interfaceNeedsSource = backend.interfaceNeedsSource();
@@ -892,6 +907,25 @@ prepareScalarConsumer(const CompilationRequest &request,
       for (auto &signature : group.signatures)
         imports.push_back({std::move(signature), unit});
     }
+  // A private module may also be imported directly by the consumer. One
+  // live definition must own its storage in both the cold and warm build.
+  const auto &consumerGraph = inputs.sourceGraph;
+  for (const auto &bundle : bundles) {
+    if (!bundle.selected)
+      continue;
+    const auto &selection = *bundle.selected;
+    for (const auto &source : selection.sourceFiles) {
+      const auto *unit = consumerGraph.findUnit(
+          consumerGraph.sourceUnitForPath(source.string()));
+      if (unit && !unit->compiledScalarInterface) {
+        const auto *owner = owners.ownerForPath(selection.interfacePath);
+        throw CompiledLibrarySourceConflict(
+            source, owner && selection.automatic
+                        ? owner->packageRoot / "gti.toml"
+                        : std::filesystem::path{});
+      }
+    }
+  }
   return {std::move(inputs), std::move(imports), std::move(objects),
           std::move(direct), std::move(directSymbols)};
 }
@@ -1005,8 +1039,8 @@ compileCompiledScalarConsumer(const CompilationRequest &request,
 CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
     const CompilationRequest &request, const CompiledLibraryTarget &target,
     std::span<const CompiledLibraryImport> imports,
-    const std::filesystem::path &runtime,
-    const std::filesystem::path &artifact) {
+    const std::filesystem::path &runtime, const std::filesystem::path &artifact,
+    std::vector<std::filesystem::path> *sourceFiles) {
   try {
     auto bytes =
         std::make_shared<const std::string>(readCompiledLibraryFile(artifact));
@@ -1035,6 +1069,8 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
       symbols.push_back(compiledScalarSymbol(signature));
     verifyCompiledScalarObject(bundle.objects.front().bytes, request.target(),
                                symbols, allowedImports);
+    if (sourceFiles)
+      *sourceFiles = producerImplementations(prepared.compilation.sourceGraph);
     return bytes;
   } catch (const std::exception &) {
     return {};

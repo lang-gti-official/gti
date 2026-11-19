@@ -872,8 +872,14 @@ ProjectBuildPlan makeBuildPlan(
     if (compiled)
       std::erase_if(owner->moduleImplementations, matches);
     owner->modules.emplace_back(library.moduleName, library.interfacePath);
-    if (library.directDependency)
-      owner->defaultModule = library.moduleName;
+    if (library.directDependency &&
+        owner->defaultModule != library.moduleName) {
+      for (auto &consumer : packageSourceRoots)
+        if (consumer.packageRoot == manifest.packageRoot())
+          for (auto &edge : consumer.dependencies)
+            if (edge.targetIdentity == owner->identity)
+              edge.defaultModule = library.moduleName;
+    }
   };
   for (const auto &library : compiledImports)
     selectModule(library, true);

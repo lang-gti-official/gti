@@ -8,3 +8,8 @@ $ cd ../dependency
 $ gti build
 ? 65
 stderr: public declaration requires source interface metadata
+$ cp ../source-only.toml gti.toml
+$ cp ../main-interface.gti src/main.gti
+$ cd ../app
+$ gti run
+$ sh -c "test -z \"$(find build -name '*.gtilib' -print)\""

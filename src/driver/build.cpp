@@ -4203,7 +4203,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                 ? reusableCompiledScalarLibrarySnapshot(
                       request.compilation(), *request.compiledLibrary(),
                       request.compiledImports(),
-                      request.toolchain().runtimeLibrary, request.output())
+                      request.toolchain().runtimeLibrary, request.output(),
+                      &result.compiledSourceFiles)
                 : CompiledLibrarySnapshot{};
         if (reused) {
           result.status = ExecutableBuildStatus::Success;
@@ -4220,6 +4221,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
             request.compilation(), *request.compiledLibrary(),
             request.toolchain().runtimeLibrary, request.compiledImports());
         result.libraryInterfaceNeedsSource = built.interfaceNeedsSource;
+        result.compiledSourceFiles = std::move(built.sourceFiles);
         result.compilation = std::move(built.compilation);
         compiledBundle = std::move(built.bundle);
       } else {
@@ -4229,6 +4231,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.compilation = std::move(imported.compilation);
         importedObjects = std::move(imported.objects);
       }
+    } catch (const CompiledLibrarySourceConflict &conflict) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.sourceFallbackManifest = conflict.sourceManifest;
+      result.driverDiagnostic = conflict.what();
+      return result;
     } catch (const std::exception &error) {
       result.status = ExecutableBuildStatus::CompilationFailure;
       result.driverDiagnostic =
