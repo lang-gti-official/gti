@@ -14,3 +14,8 @@ functions = [
   "std::acos", "std::atan", "std::atan2", "std::isfinite", "std::isinf",
   "std::isnan",
 ]
+
+[targets.random]
+kind = "gti-library"
+root = "stdlib/std/detail/random_engine.gti"
+functions = ["std::detail::seed_random_engine"]
