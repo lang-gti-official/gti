@@ -23464,7 +23464,8 @@ verifyMirProgramContracts(const MirProgram &program) {
 }
 
 MirVerificationResult verifyMirProgram(const MirProgram &program,
-                                       MirVerificationComponents components) {
+                                       MirVerificationComponents components,
+                                       mir_detail::VerificationSession *reuse) {
   MirVerificationResult result;
   if (components != requiredMirVerificationComponents) {
     result.errors.push_back(
@@ -23829,7 +23830,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
            .message = "MIR body inventory contains an unresolved address"});
       continue;
     }
-    appendVerification(result, verifyMirBody(*body, address.owner));
+    appendVerification(result, verifyMirBody(*body, address.owner, reuse));
     std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
     for (const auto &entry : body->programConstantSubstitutions)
       publishedConstants.emplace(entry.hirValue, &entry.constant);

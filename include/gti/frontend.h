@@ -10,6 +10,7 @@
 #include "gti/include_suggestions.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/mir.h"
+#include "gti/mir_verification_cache.h"
 #include "gti/parser.h"
 #include "gti/program_request.h"
 #include "gti/progress.h"
@@ -81,6 +82,7 @@ struct FrontendOptions {
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;
+  std::shared_ptr<MirVerificationCache> mirVerificationCache;
   std::shared_ptr<FrontendCache> cache;
   std::unordered_map<std::string, std::uint64_t> sourceGenerations;
   // Exact digests learned from a completed snapshot for the corresponding
