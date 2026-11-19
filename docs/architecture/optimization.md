@@ -2161,6 +2161,11 @@ instance. Summaries cover place and unknown-memory reads/writes, allocation,
 runtime calls, traps, user-code invocation, moves, drops, loans,
 synchronization, and receiver/argument escape.
 
+Field-path safety, structural value operations, and cleanup lookup compare the
+class declaration ID before comparing the full concrete type. Specializations
+of the same declaration still require exact type equality. Cleanup derivation
+reuses the matching class within each recursive step.
+
 `deriveMirProgramEffectSummaries` computes the least summaries justified by
 MIR through a deterministic call-graph fixed point. An exact acyclic static
 target may refine its call instruction through that proved summary. Recursive
