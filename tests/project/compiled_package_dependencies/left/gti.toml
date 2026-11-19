@@ -1,0 +1,18 @@
+manifest-version = 1
+[package]
+name = "left-package"
+version = "1.0.0"
+[modules]
+api = "src/api.gti"
+[targets.api]
+kind = "gti-library"
+root = "src/api.gti"
+functions = ["left_value"]
+
+[dependencies]
+shared = { path = "../right" }
+
+[[targets.api.compiled-dependencies]]
+package = "shared"
+target = "api"
+interface = "api/shared.gti"

@@ -207,6 +207,13 @@ serves navigation and other requests. Edits to declarations, generic or
 compile-time bodies, or functions with inferred reference results use that
 syntax publication followed by complete analysis.
 
+Full verification shares compiler-owned dominance and cleanup-path proofs across
+revisions. Within one revision each failure-effect round reuses bodies whose
+callee effects still agree. The frontend trace reports fresh and reused body
+lowerings, structural proof hits and whether the finished snapshot passed MIR.
+These counters describe the complete check separately from early diagnostics.
+See [MIR lowering and verification](mir.md#lowering-and-verification).
+
 Missing-definition diagnostics from concrete generic instances retain the
 frontend's outer requesting call as primary, including calls through an included
 library or a constructor. Related locations still identify the selected internal

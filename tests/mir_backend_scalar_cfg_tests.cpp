@@ -166,7 +166,7 @@ void expectEmissionRejected(const lang::FrontendResult &frontend,
 void expectSelectedDefinitions(const lang::FrontendResult &frontend,
                                const lang::MirProgram &mir,
                                const lang::BackendArtifact &artifact) {
-  expect(!artifact.contents.empty(),
+  expect(!artifact.singleObject().empty(),
          "the shipped backend should accept the scalar CFG program");
   constexpr std::string_view selected[] = {
       "cfg_not",
@@ -463,7 +463,8 @@ int main() {
   }
   expect(!emit(frontend, optimized.mir, compatibility,
                optimized.report.transformations)
-              .contents.empty(),
+              .singleObject()
+              .empty(),
          "concrete-class members should be accepted from verified MIR");
   for (const std::string_view name : {"mask", "same", "reads_this", "store",
                                       "same_as", "twins_with", "bump"}) {
@@ -517,7 +518,8 @@ int main() {
   }
   expect(!emit(frontend, optimized.mir, compatibility,
                optimized.report.transformations)
-              .contents.empty(),
+              .singleObject()
+              .empty(),
          "a field read on a by-value parameter object should be accepted from "
          "verified MIR");
   const lang::MirFunctionInstance *read =
@@ -571,7 +573,8 @@ int main() {
   }
   expect(!emit(frontend, optimized.mir, compatibility,
                optimized.report.transformations)
-              .contents.empty(),
+              .singleObject()
+              .empty(),
          "per-body call admission should be accepted from verified MIR");
   const auto mayRaise = [&](std::string_view name) {
     const lang::MirFunctionInstance *function =
@@ -623,7 +626,8 @@ int main() {
   }
   expect(!emit(frontend, optimized.mir, compatibility,
                optimized.report.transformations)
-              .contents.empty(),
+              .singleObject()
+              .empty(),
          "the generic owner's admitted member instance should be accepted from "
          "verified MIR");
   const lang::MirFunctionInstance *matches =

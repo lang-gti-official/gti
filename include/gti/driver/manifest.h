@@ -211,6 +211,7 @@ struct ProjectExport {
 };
 
 struct CompiledSourceDependency {
+  std::optional<std::string> packageAlias;
   std::string target;
   std::filesystem::path interfacePath;
   SourceSpan declaration;

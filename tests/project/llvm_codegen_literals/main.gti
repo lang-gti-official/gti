@@ -1,0 +1,17 @@
+extern "C" {
+  c_int record_address(c_string value);
+  c_int compare_address(c_string value);
+}
+
+[[noinline]] c_int record_literal() {
+  return record_address("one native literal address");
+}
+
+[[noinline]] c_int compare_literal() {
+  return compare_address("one native literal address");
+}
+
+int main() {
+  if (record_literal() != 0) return 1;
+  return int(compare_literal());
+}

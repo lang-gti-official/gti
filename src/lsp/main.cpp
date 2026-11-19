@@ -3545,6 +3545,8 @@ private:
     // Library-only concrete instance analyses are reused across snapshots;
     // see InstanceAnalysisCache.
     frontendOptions.instanceCache = request.frontendSources.instanceCache;
+    frontendOptions.mirVerificationCache =
+        request.frontendSources.mirVerificationCache;
     // The standard-library prefix is analysed once per include graph and
     // adopted by every later snapshot; see SemanticPreambleCache.
     frontendOptions.preambleCache = request.frontendSources.preambleCache;
@@ -4486,7 +4488,8 @@ private:
               guarded.analysis->frontend != nullptr &&
                   guarded.analysis->frontend->includeSuggestionsRequested,
               {}, guarded.analysis->mirSignatureOnlyFallback,
-              guarded.analysis->frontendPasses);
+              guarded.analysis->frontendPasses,
+              guarded.analysis->frontend.get());
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -5575,8 +5578,8 @@ private:
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
       bool includeSuggestionsRequested = false, std::string_view requestId = {},
-      bool mirSignatureOnlyFallback = false,
-      unsigned frontendPasses = 0) const {
+      bool mirSignatureOnlyFallback = false, unsigned frontendPasses = 0,
+      const lang::FrontendResult *frontend = nullptr) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5633,6 +5636,16 @@ private:
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
         {"mirMicroseconds", static_cast<std::int64_t>(metrics.mirMicroseconds)},
+        {"mirRoundBodyLowerings",
+         static_cast<std::int64_t>(metrics.mirRoundBodyLowerings)},
+        {"mirRoundBodyReuses",
+         static_cast<std::int64_t>(metrics.mirRoundBodyReuses)},
+        {"mirDominanceReuses",
+         static_cast<std::int64_t>(metrics.mirDominanceReuses)},
+        {"mirBoundaryQueries",
+         static_cast<std::int64_t>(metrics.mirBoundaryQueries)},
+        {"mirBoundaryReuses",
+         static_cast<std::int64_t>(metrics.mirBoundaryReuses)},
         {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},
@@ -5712,6 +5725,11 @@ private:
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(
              instanceStats.limits.maximumEstimatedBytes)}};
+    if (frontend) {
+      record["mirVerified"] = frontend->mirValid;
+      record["frontendDiagnosticCount"] =
+          static_cast<std::int64_t>(frontend->diagnostics.size());
+    }
     if (retainedFrontends) {
       record["retainedFrontends"] =
           static_cast<std::int64_t>(*retainedFrontends);

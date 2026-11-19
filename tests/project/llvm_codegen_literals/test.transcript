@@ -1,0 +1,3 @@
+// Splitting an LLVM module preserves the single native address of a shared string literal.
+$ gti main.gti --codegen-units 8 --codegen-threads 4 --progress=never -o program -- native.cpp
+$ ./program

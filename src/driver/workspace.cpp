@@ -124,6 +124,27 @@ ProjectWorkspace::findPackage(std::string_view identity) const {
   return found == resolvedPackages.end() ? nullptr : &*found;
 }
 
+ProjectWorkspace
+ProjectWorkspace::buildViewFor(const ResolvedProjectPackage &selected) const {
+  std::set<std::string> reachable;
+  std::vector<const ResolvedProjectPackage *> pending{&selected};
+  while (!pending.empty()) {
+    const auto *package = pending.back();
+    pending.pop_back();
+    if (!reachable.insert(package->identity()).second)
+      continue;
+    for (const auto &edge : package->dependencies)
+      if (const auto *child = findPackage(edge.targetIdentity))
+        pending.push_back(child);
+  }
+  std::vector<ResolvedProjectPackage> packages;
+  for (const auto &package : resolvedPackages)
+    if (reachable.contains(package.identity()))
+      packages.push_back(package);
+  return ProjectWorkspace(workspaceRoot, std::move(packages),
+                          selected.identity(), explicitWorkspace);
+}
+
 std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   std::vector<PackageSourceRoot> roots;
   roots.reserve(resolvedPackages.size());

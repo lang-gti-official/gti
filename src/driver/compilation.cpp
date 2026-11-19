@@ -491,7 +491,8 @@ llvmCodegenOptimization(OptimizationLevel optimization) {
 LlvmBackendOptions llvmBackendOptions(const CompilationRequest &request) {
   return {.optimization = llvmCodegenOptimization(request.optimization()),
           .debugInfo = request.debugInfo(),
-          .instrumentation = request.llvmInstrumentation()};
+          .instrumentation = request.llvmInstrumentation(),
+          .codegen = request.llvmCodegenUnits()};
 }
 
 namespace {

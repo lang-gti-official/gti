@@ -1,0 +1,11 @@
+// An element reference tied to a local container cannot be returned: the
+// container dies with the function.
+import std.vector;
+
+int& escape_local() {  //~ ERROR GTI-S2017
+  mut std::vector<int> values{};
+  values.push_back(1);
+  return *values.begin();
+}
+
+int main() { return 0; }

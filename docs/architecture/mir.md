@@ -3230,6 +3230,24 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Editor verification derives failure effects from conservative inputs on every
+revision. Within that fixed point, body lowering records the function,
+constructor and destructor effects it reads, including targets still lacking a
+summary. A later round can move a previously lowered body into the new program
+when all those answers agree. A changed answer rebuilds its caller, and further
+changes propagate through following rounds. The module rebuilds its initialization
+plan on each round. Reuse ends with the current HIR and cleanup-sharing attempt.
+The assembled program goes through ordinary interprocedural verification.
+
+Across revisions the editor's bounded MIR cache retains two structural facts.
+Dominance depends on the entry and successor lists of a validated CFG.
+Mutual exclusion of full-expression cleanup markers also depends on the
+markers' blocks, the blocks that start another evaluation, and whether a marker
+precedes that restart. With fresh inputs, each marker walks the graph once to
+test the others. Cache hits require exact equality and only reuse that proof.
+Current loan origins, callee contracts, drop coverage and cleanup ordering
+still pass through their owning verifiers. A rejected proof is never cached.
+
 Scalar-initialization dataflow checks a local checked `Borrow` at reference
 formation, as well as staged and direct call inputs. Its referent must be
 definitely initialized on every reachable predecessor. Later reads through a
@@ -3768,6 +3786,9 @@ the path that reaches it:
   drop proved to retire a moved-from shell has no destructor on that path,
   but the proof walks back to its producer, so the drop stays in its edge's
   private prefix.
+- A fallible call ends its temporary argument loans in reverse order in its
+  own failure successor, after any provisional result loan. This prefix stays
+  private so the following cleanup can join a shared continuation.
 - A prepared call argument's drop stays private, because verification counts
   it along its producer's own cleanup chain.
 - A lifecycle-bound loan's end stays private, because verification justifies
@@ -4925,6 +4946,12 @@ endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
 
+Temporary read-only carrier receivers may relay a stored reference nested inside
+another carrier. The program verifier matches the complete source field path
+against the receiver class's stored-reference inventory; a nonempty path alone
+or an owned carrier prefix does not establish an external referent. The result
+keeps that referent's owner loan after the temporary shell is destroyed.
+
 A singleton argument reference-return contract checks every retained owner,
 including secondary owners relayed by a consumed carrier. Immutable non-thread-local
 static storage may additionally supply any region. Field-selected reference returns
@@ -4941,7 +4968,7 @@ verification, so no proof survives a program edit or optimization pass.
 A call whose result is written in its receiver's class region
 (`receiverClassRegionRelay`) borrows what the receiver stores, never the
 receiver. Lowering parents a fresh temporary receiver's call-result loan to
-the ancestry of the stored dependency its single source field designates
+the ancestry of the stored dependency its complete source field path designates
 (the primary path or the matching additional dependency), so the shell may
 end with its full expression while only that region's external owner stays
 borrowed. A returned call result parented to a carrier formal's stored entry

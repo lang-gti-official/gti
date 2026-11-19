@@ -22,22 +22,22 @@ public:
   size_t position() { return this.limit; }
 };
 
-class simd_iterator<std::floating_point T, uint64_t N, uint64_t Reverse = 0> {
-  simd<T, N>& owner;
+class simd_iterator<std::floating_point T, uint64_t N, uint64_t Reverse = 0, lifetime owner> {
+  simd<T, N>&<owner> owner;
   mut size_t position;
 public:
-  simd_iterator(simd<T, N>& owner, size_t position) : owner(owner), position(position) {
+  simd_iterator(simd<T, N>&<owner> owner, size_t position) : owner(owner), position(position) {
     gti_internal::require_container_argument(position <= N);
   }
-  T& operator*() {
+  T&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
       return this.owner.at(selected);
     }
     return this.owner.at(this.position);
   }
-  T& operator->() { return *this; }
-  T& operator[](ptrdiff_t offset) {
+  T&<owner> operator->() { return *this; }
+  T&<owner> operator[](ptrdiff_t offset) {
     mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
     if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
     return this.owner.at(selected);
@@ -115,22 +115,22 @@ public:
   bool operator==(lane_sentinel end) { return this.position == end.position(); }
 };
 
-class simd_mask_iterator<uint64_t N, uint64_t Reverse = 0> {
-  simd_mask<N>& owner;
+class simd_mask_iterator<uint64_t N, uint64_t Reverse = 0, lifetime owner> {
+  simd_mask<N>&<owner> owner;
   mut size_t position;
 public:
-  simd_mask_iterator(simd_mask<N>& owner, size_t position) : owner(owner), position(position) {
+  simd_mask_iterator(simd_mask<N>&<owner> owner, size_t position) : owner(owner), position(position) {
     gti_internal::require_container_argument(position <= N);
   }
-  bool& operator*() {
+  bool&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t selected = checked_iterator_position(this.position, size_t(0), N, ptrdiff_t(-1));
       return this.owner.at(selected);
     }
     return this.owner.at(this.position);
   }
-  bool& operator->() { return *this; }
-  bool& operator[](ptrdiff_t offset) {
+  bool&<owner> operator->() { return *this; }
+  bool&<owner> operator[](ptrdiff_t offset) {
     mut size_t selected = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0);
     if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), N, ptrdiff_t(-1)); }
     return this.owner.at(selected);
