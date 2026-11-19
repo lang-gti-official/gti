@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include <llvm/ADT/ScopeExit.h>
 
 namespace lang {
 
@@ -36,6 +37,16 @@ void SemanticVisitor::Impl::finishLimitedAnalysis() {
                        std::make_move_iterator(held.end()));
   heldDiagnostics.clear();
   enforceErrorLimit = false;
+}
+
+bool SemanticVisitor::check(const Program &program,
+                            const EntryDiagnosticObserver &observer) {
+  // A rejected preamble can restart the lexical walk. Only stream from a
+  // fresh registration, and never retain a listener in a query snapshot.
+  if (!impl->adoptedPreamble && observer)
+    impl->entryDiagnosticObserver = &observer;
+  llvm::scope_exit clear([this] { impl->entryDiagnosticObserver = nullptr; });
+  return check(program);
 }
 
 bool SemanticVisitor::check(const Program &program) {

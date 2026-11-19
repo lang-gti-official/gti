@@ -284,6 +284,8 @@ public:
   void finishLimitedAnalysis();
   bool enforceErrorLimit = false;
   const std::atomic<bool> *cancellation = nullptr;
+  const SemanticVisitor::EntryDiagnosticObserver *entryDiagnosticObserver =
+      nullptr;
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
