@@ -158,6 +158,18 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
                                package.manifest.package().moduleImplementations,
                            .moduleLookupPaths =
                                package.manifest.package().moduleLookupPaths};
+    if (const auto &name = package.manifest.package().defaultLibrary) {
+      const auto *library = package.manifest.findTarget(*name);
+      if (!library->libraryModule.empty()) {
+        root.defaultModule = library->libraryModule;
+        const auto registered = std::find_if(
+            root.modules.begin(), root.modules.end(), [&](const auto &module) {
+              return module.first == root.defaultModule;
+            });
+        if (registered == root.modules.end())
+          root.modules.emplace_back(root.defaultModule, library->root);
+      }
+    }
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(
@@ -240,6 +252,9 @@ std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {
     identity += "\npackage:" + package.identity();
+    if (package.manifest.package().defaultLibrary)
+      identity +=
+          "\ndefault-library:" + *package.manifest.package().defaultLibrary;
     for (const auto &[name, path] : package.manifest.package().modules) {
       identity += "\nmodule:" + package.identity() + ":" + name + "=" +
                   path.lexically_relative(package.manifest.packageRoot())

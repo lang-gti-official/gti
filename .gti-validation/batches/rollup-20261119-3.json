@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "base": "f17d45592c11e5e03e0c2a68edfb250d1cdc7aad",
+  "members": [
+    {
+      "pr": 624,
+      "head": "680a185a89d113d8b840a38b49204404e4b6fb2b",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #624: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "gti_test_ui",
+          "gti_unit_tests"
+        ],
+        "owning": [
+          "compiled_interface_types",
+          "compiled_scalar_library",
+          "compiled_library_project",
+          "compiled_libraries_project",
+          "lowered_program_contract",
+          "project_cli_workflow",
+          "lsp_project_facts"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #624; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiled_interface_types",
+          "compiled_scalar_library",
+          "compiled_library_project",
+          "compiled_libraries_project",
+          "lowered_program_contract",
+          "project_cli_workflow",
+          "lsp_project_facts"
+        ]
+      }
+    },
+    {
+      "pr": 620,
+      "head": "efe319288b36f89e65de2bd5485d9a0c34e55898",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #620: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "frontend_cache_invalidation",
+          "mir_verifier_hardening",
+          "mir_loan_normalization",
+          "mir_program_initialization",
+          "mir_thread_local",
+          "foreign_variable_borrow",
+          "editor_mir_diagnostics_lsp",
+          "borrowing_composition_lsp",
+          "module_navigation_lsp",
+          "module_queries",
+          "module_preamble_identity",
+          "lsp_scalability_benchmark_smoke",
+          "lsp_protocol"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #620; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "frontend_cache_invalidation",
+          "mir_verifier_hardening",
+          "mir_loan_normalization",
+          "mir_program_initialization",
+          "mir_thread_local",
+          "foreign_variable_borrow",
+          "editor_mir_diagnostics_lsp",
+          "borrowing_composition_lsp",
+          "module_navigation_lsp",
+          "module_queries",
+          "module_preamble_identity",
+          "lsp_scalability_benchmark_smoke",
+          "lsp_protocol"
+        ]
+      }
+    }
+  ]
+}

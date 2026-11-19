@@ -245,6 +245,13 @@ struct CompletionInput {
 
 class LanguageQueries {
 public:
+  [[nodiscard]] std::vector<HoverInfo>
+  declarationHovers(const FrontendResult &parsed,
+                    const SemanticModel &model) const;
+  [[nodiscard]] std::vector<HoverInfo>
+  registeredDeclarationHovers(const FrontendResult &parsed,
+                              const SemanticModel &model) const;
+
   [[nodiscard]] std::optional<HoverInfo> hover(const FrontendResult &snapshot,
                                                SourceUnitId sourceUnit,
                                                std::size_t byteOffset) const;

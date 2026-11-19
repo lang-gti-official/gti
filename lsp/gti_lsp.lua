@@ -26,6 +26,7 @@ return {
       detached = config.detached,
     })
   end,
+  init_options = { openFileDiagnostics = true },
   filetypes = { "gti" },
   -- Toolchain selection is inherited; it must not replace a nearer project
   -- manifest with an ancestor workspace root. Preserve existing marker priority.

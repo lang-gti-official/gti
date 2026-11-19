@@ -1407,6 +1407,20 @@ SemanticModel::findFunction(const FunctionDecl &declaration) const {
   return base == nullptr ? nullptr : base->findFunction(canonical);
 }
 
+SemanticModel::RegisteredSignatures
+SemanticModel::registeredSignatures(SourceUnitId unit) const {
+  RegisteredSignatures result;
+  const auto collect = [unit](const auto &declarations, auto &rows) {
+    for (const auto &[_, info] : declarations)
+      if (info.sourceUnit == unit && info.declaration)
+        rows.push_back(&info);
+  };
+  collect(functions, result.functions);
+  collect(typeAliases, result.aliases);
+  collect(enumTypes, result.enums);
+  return result;
+}
+
 [[nodiscard]] const FunctionInfo *
 SemanticModel::findFunction(FunctionId id) const {
   const auto found = functionsById.find(id);

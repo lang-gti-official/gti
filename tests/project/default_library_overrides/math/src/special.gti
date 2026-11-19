@@ -1,0 +1,2 @@
+export module special;
+export int alternate() { return 7; }

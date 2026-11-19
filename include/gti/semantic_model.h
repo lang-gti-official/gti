@@ -2726,6 +2726,15 @@ public:
   findFunction(const FunctionDecl &declaration) const;
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
+  // Declaration records owned by this analysis layer. Inherited preamble
+  // records belong to other source files and require no traversal here.
+  struct RegisteredSignatures {
+    std::vector<const FunctionInfo *> functions;
+    std::vector<const TypeAliasInfo *> aliases;
+    std::vector<const EnumTypeInfo *> enums;
+  };
+  [[nodiscard]] RegisteredSignatures
+  registeredSignatures(SourceUnitId unit) const;
 
   [[nodiscard]] std::vector<const FunctionInfo *> testFunctions() const {
     std::vector<const FunctionInfo *> result =

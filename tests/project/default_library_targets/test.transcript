@@ -1,0 +1,9 @@
+// A normal dependency and a same-package library build once and survive an application-only edit.
+$ cd app
+$ gti run
+$ sh -c "test -f build/gti/dev/*/client-lib.gtilib && test -f build/gti/packages/arithmetic/dev/*/arithmetic.gtilib"
+$ sh -c "touch built.marker"
+$ sh -c "sed 's/answer() == 42/answer() > 41/' src/main.gti > edit && mv edit src/main.gti"
+$ gti run --verbose
+stderr: gti: cache hit (compiled library source/configuration/dependency fingerprints match)
+$ sh -c "test -z \"$(find build -name '*.gtilib' -newer built.marker -print)\""
