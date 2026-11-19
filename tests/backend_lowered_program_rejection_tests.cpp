@@ -79,7 +79,7 @@ int main() { return 0; }
   lang::LlvmBackend llvm;
   lang::MirBackend mir;
   lang::NativeHeaderBackend nativeHeader;
-  expect(!llvm.generate(original).contents.empty() &&
+  expect(!llvm.generate(original).singleObject().empty() &&
              !mir.generate(original).contents.empty() &&
              !nativeHeader.generate(original).contents.empty(),
          "all executable backend implementations should accept the same "

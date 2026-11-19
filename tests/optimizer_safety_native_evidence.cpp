@@ -188,12 +188,12 @@ EmittedProgram emitProgram(const lang::FrontendResult &frontend,
     expect(false, "LLVM backend threw for " + std::string(label) + ": " +
                       error.what());
   }
-  expect(!generated.contents.empty(),
+  expect(!generated.singleObject().empty(),
          "LLVM backend should accept verified safety proofs for " +
              std::string(label));
   const std::filesystem::path artifact =
       directory / (std::string(label) + ".o");
-  std::ofstream(artifact, std::ios::binary) << generated.contents;
+  std::ofstream(artifact, std::ios::binary) << generated.singleObject();
   return {.optimized = std::move(optimized), .artifact = artifact};
 }
 
