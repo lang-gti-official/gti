@@ -3230,6 +3230,24 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Editor verification derives failure effects from conservative inputs on every
+revision. Within that fixed point, body lowering records the function,
+constructor and destructor effects it reads, including targets still lacking a
+summary. A later round can move a previously lowered body into the new program
+when all those answers agree. A changed answer rebuilds its caller, and further
+changes propagate through following rounds. The module rebuilds its initialization
+plan on each round. Reuse ends with the current HIR and cleanup-sharing attempt.
+The assembled program goes through ordinary interprocedural verification.
+
+Across revisions the editor's bounded MIR cache retains two structural facts.
+Dominance depends on the entry and successor lists of a validated CFG.
+Mutual exclusion of full-expression cleanup markers also depends on the
+markers' blocks, the blocks that start another evaluation, and whether a marker
+precedes that restart. With fresh inputs, each marker walks the graph once to
+test the others. Cache hits require exact equality and only reuse that proof.
+Current loan origins, callee contracts, drop coverage and cleanup ordering
+still pass through their owning verifiers. A rejected proof is never cached.
+
 Scalar-initialization dataflow checks a local checked `Borrow` at reference
 formation, as well as staged and direct call inputs. Its referent must be
 definitely initialized on every reachable predecessor. Later reads through a

@@ -1,5 +1,6 @@
 #include "gti/mir_dominance.h"
 #include "gti/optimization/coverage.h"
+#include "mir_verification_session.h"
 
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/SmallVector.h"
@@ -282,7 +283,9 @@ successorsForDominance(const MirBody &body, const MirTerminator &terminator) {
 
 } // namespace
 
-std::optional<MirDominanceInfo> computeMirDominance(const MirBody &body) {
+std::optional<MirDominanceInfo>
+computeMirDominance(const MirBody &body,
+                    mir_detail::VerificationSession *reuse) {
   if (!verifyMirOptimizationVocabulary(body).valid()) {
     return std::nullopt;
   }
@@ -291,6 +294,17 @@ std::optional<MirDominanceInfo> computeMirDominance(const MirBody &body) {
     return std::nullopt;
   }
 
+  std::vector<std::size_t> key;
+  if (reuse) {
+    key.push_back(snapshot->entry);
+    for (const CfgNode &node : snapshot->nodes) {
+      key.push_back(node.successors.size());
+      for (const auto *successor : node.successors)
+        key.push_back(successor->id);
+    }
+    if (auto facts = reuse->dominance(key))
+      return facts;
+  }
   // Moving a snapshot would invalidate every private node's parent pointer.
   // Rebind it once after optional construction; edges remain valid because the
   // nodes vector transfers its allocation when the snapshot moves.
@@ -326,6 +340,8 @@ std::optional<MirDominanceInfo> computeMirDominance(const MirBody &body) {
     facts.entry = ++preorder;
     stack.push_back({child, child->begin()});
   }
+  if (reuse)
+    reuse->rememberDominance(std::move(key), result);
   return result;
 }
 
