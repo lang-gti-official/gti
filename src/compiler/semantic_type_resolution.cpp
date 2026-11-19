@@ -1674,8 +1674,9 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
               ? "Pass 'value.view()' to obtain the exact parameter type; keep "
                 "the "
                 "source value alive while the view is used."
-              : "Calls require exact argument types; pass the required type "
-                "or use a supported explicit conversion when intentional.");
+              : "Pass the required type or provide one eligible implicit "
+                "constructor; argument construction does not chain "
+                "conversions.");
     }
   }
   diagnostics.emplace_back(std::move(diagnostic));
@@ -2132,8 +2133,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
     if (checkedArgument &&
-        (!constructor.implicitConstruction || !constructor.declaration ||
-         !constructor.declaration->isConsteval()))
+        (!constructor.implicitConstruction || !constructor.declaration))
       continue;
     // A declaration constructs only through a constructor declared implicit.
     if (contextualConstruction && !constructor.implicitConstruction) {
@@ -2301,7 +2301,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       const AnalyzedCallArgument &argument = arguments[index];
       bool matches =
-          checkedArgument && parameterType.kind == SemanticType::Reference &&
+          checkedArgument && constructor.declaration &&
+                  constructor.declaration->isConsteval() &&
+                  parameterType.kind == SemanticType::Reference &&
                   parameterType.referenceAccess == AccessMode::ReadOnly &&
                   parameterType.arguments.size() == 1 &&
                   parameterType.arguments.front() == argument.type
@@ -3160,6 +3162,50 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "An empty return cannot retain dependencies from constructor "
                "default arguments.",
                "GTI-S2045");
+    }
+  }
+  if (contextualConstruction && !conditionalFields && !storedPaths.empty() &&
+      !containsOpenTypeParameter(constructedType) && selected.constructor) {
+    FunctionBorrowDependencySummary summary;
+    for (const auto &binding : storedCarrierConstructorBindings(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes))
+      summary.dependencies.push_back(
+          {.resultFields =
+               storedFieldSymbols(constructedType, binding.destination.fields),
+           .origin = BorrowOriginKind::Argument,
+           .parameter = binding.parameter,
+           .sourceFields =
+               storedFieldSymbols(selected.parameterTypes[binding.parameter],
+                                  binding.sourceFields),
+           .access = binding.destination.reference.referenceAccess});
+    const bool complete = std::all_of(
+        storedPaths.begin(), storedPaths.end(), [&](const auto &path) {
+          const auto fields = storedFieldSymbols(constructedType, path.fields);
+          return fields.size() == path.fields.size() &&
+                 std::any_of(summary.dependencies.begin(),
+                             summary.dependencies.end(),
+                             [&](const auto &dependency) {
+                               return dependency.resultFields == fields;
+                             });
+        });
+    ResolvedCallInfo publication;
+    publication.returnType = constructedType;
+    publication.parameterTypes = selected.parameterTypes;
+    std::vector<const ExprPtr *> inputs;
+    for (const auto &argument : arguments)
+      inputs.push_back(argument.expression);
+    const auto dependencies =
+        complete
+            ? instantiateCompleteBorrowArguments(publication, summary, inputs)
+            : std::nullopt;
+    if (!dependencies) {
+      report(paren,
+             "Implicit construction requires a complete checked dependency "
+             "contract for every borrowed field.",
+             "GTI-S2045");
+    } else {
+      resolved.contextualBorrowDependencies = *dependencies;
     }
   }
   // RFC 0004: a carrier's constructor signature names the suppliers of its

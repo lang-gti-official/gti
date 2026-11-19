@@ -1,0 +1,11 @@
+// Moving a source explicitly permits an owning implicit argument construction.
+//@ run-pass
+struct Source {
+  int value;
+  Source(int n) : value(n) {}
+  Source(Source& other) = delete;
+  Source(Source&& other) = default;
+};
+struct Box { Source value; implicit Box(Source source) : value(std::move(source)) {} };
+int take(Box box) { return box.value.value; }
+int main() { Source source{42}; return take(std::move(source)) - 42; }
