@@ -4,6 +4,7 @@ class Base { public: uint64_t value; Base(uint64_t x) : value(x) {} };
 class Derived : public Base { public: Derived() : Base(32 * 32) {} };
 class Field { public: uint64_t value; Field() : value(16 * 16) {} };
 struct Callable {
+  Callable() = default;
   uint64_t method(uint64_t x) { return x; }
   uint64_t operator()(uint64_t x) { return x; }
 };

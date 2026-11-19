@@ -1665,8 +1665,31 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
           std::string(literal->negative ? "-" : "") +
           std::to_string(literal->magnitude) +
           "' does not fit the parameter type '" + typeSpelling(parameter) +
-          "'; a literal adopts an integer parameter type only when its value "
-          "is representable.");
+          (isContextualIntegerLiteral(expression.get())
+               ? "'; a literal adopts an integer parameter type only when its "
+                 "value is representable."
+               : "'; a constant arithmetic result converts only when its value "
+                 "is representable."));
+    } else if (isInteger(parameter) &&
+               isContextualIntegerArithmetic(expression.get())) {
+      auto context = makeConstexprInterpreter();
+      context.requireMir = true;
+      context.recordValues = false;
+      const auto evaluated = evaluateConstexprExpression(expression, context);
+      diagnostic.hints.emplace_back(
+          "Constant arithmetic must evaluate successfully in its original "
+          "operand types before its result can convert.");
+      if (evaluated.failure == ConstantEvaluationFailure::IntegerOverflow)
+        diagnostic.hints.emplace_back(
+            "An intermediate integer operation overflows.");
+      else if (evaluated.failure == ConstantEvaluationFailure::DivisionByZero ||
+               evaluated.failure == ConstantEvaluationFailure::ModuloByZero)
+        diagnostic.hints.emplace_back(
+            "Constant arithmetic encountered a zero divisor.");
+      if (!evaluated.detail.empty())
+        diagnostic.hints.push_back(evaluated.detail);
+      if (!evaluated.limitHint.empty())
+        diagnostic.hints.push_back(evaluated.limitHint);
     } else {
       diagnostic.hints.emplace_back(
           hasView

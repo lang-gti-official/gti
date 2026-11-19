@@ -2,7 +2,7 @@
 //@ run-pass
 constexpr uint8_t constant = (200 + 100) - 200;
 uint64_t result() { return 32 * 32; }
-struct Record { uint64_t value = 16 * 16; };
+struct Record { Record() = default; uint64_t value = 16 * 16; };
 int main() {
   mut uint8_t value = 8 * 8;
   value = 15 * 15;
