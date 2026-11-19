@@ -288,13 +288,13 @@ libraryIdentity(const std::vector<CompiledScalarSignature> &signatures) {
   field(identity, owner.target);
   return hash(identity);
 }
-enum class LibraryFlags { Exact, Independent };
-LibraryFlags producerFlags(const SourceGraph &graph,
-                           const CompiledLibraryTarget *target) {
+enum class LibraryProfile { Project, InstalledStdlib };
+LibraryProfile producerProfile(const SourceGraph &graph,
+                               const CompiledLibraryTarget *target) {
   const auto *root = graph.findUnit(graph.entryUnit());
   if (!target || target->package != "gti-std" || !root ||
       root->role != SourceUnitRole::StandardLibrary)
-    return LibraryFlags::Exact;
+    return LibraryProfile::Project;
   // Installed modules can be shared across unrelated application defines only
   // when the entire producer closure neither reads nor writes such flags.
   for (const auto &unit : graph.sourceUnits()) {
@@ -306,11 +306,18 @@ LibraryFlags producerFlags(const SourceGraph &graph,
           "an installed standard library must have a toolchain-owned, "
           "flag-independent source closure");
   }
-  return LibraryFlags::Independent;
+  return LibraryProfile::InstalledStdlib;
 }
-LibraryBundleIdentity environment(const CompilationRequest &request,
-                                  const std::filesystem::path &runtime,
-                                  LibraryFlags flags = LibraryFlags::Exact) {
+LlvmBackendOptions libraryBackendOptions(const CompilationRequest &request,
+                                         LibraryProfile profile) {
+  auto options = llvmBackendOptions(request);
+  options.distributedLibrary = profile == LibraryProfile::InstalledStdlib;
+  return options;
+}
+LibraryBundleIdentity
+environment(const CompilationRequest &request,
+            const std::filesystem::path &runtime,
+            LibraryProfile profile = LibraryProfile::Project) {
   if (request.backend() != BackendKind::Llvm || request.debugInfo() ||
       request.llvmInstrumentation() != LlvmInstrumentationMode::None ||
       request.program().kind != ProgramKind::Executable ||
@@ -318,8 +325,8 @@ LibraryBundleIdentity environment(const CompilationRequest &request,
     throw std::invalid_argument(
         "unsupported compiled scalar build configuration");
   std::string error;
-  auto backend = queryLlvmBackendIdentity(request.target(),
-                                          llvmBackendOptions(request), error);
+  auto backend = queryLlvmBackendIdentity(
+      request.target(), libraryBackendOptions(request, profile), error);
   if (!backend)
     throw std::invalid_argument(error);
   LibraryBundleIdentity id;
@@ -336,7 +343,7 @@ LibraryBundleIdentity environment(const CompilationRequest &request,
     field(config, std::to_string(value));
   field(config, std::to_string(
                     static_cast<unsigned>(request.target().executionProfile)));
-  if (flags == LibraryFlags::Independent) {
+  if (profile == LibraryProfile::InstalledStdlib) {
     field(config, "gti.flag-independent-stdlib.1");
   } else {
     field(config, std::to_string(request.configurationFlags().size()));
@@ -477,11 +484,11 @@ CompiledScalarLibraryResult buildScalarLibrary(
                       : prepareScalarConsumer(request, imports, runtime);
   auto &inputs = prepared.compilation;
   auto selection = producerSelection(inputs, target);
-  auto id =
-      environment(request, runtime, producerFlags(inputs.sourceGraph, target));
+  const auto profile = producerProfile(inputs.sourceGraph, target);
+  auto id = environment(request, runtime, profile);
   auto allowedImports = runtimeImports(runtime, request.target(), id.runtime);
   id.sources = producerSources(inputs, target);
-  LlvmBackend native(llvmBackendOptions(request));
+  LlvmBackend native(libraryBackendOptions(request, profile));
   ScalarBackend backend(std::move(signatures), inputs.sourceGraph.entryUnit(),
                         native, std::move(selection),
                         std::move(prepared.imports));
@@ -610,10 +617,10 @@ AdmittedLibraries
 admitScalarLibraries(const CompilationRequest &request,
                      std::vector<ScalarBundleInput> bundles,
                      const std::filesystem::path &runtime,
-                     LibraryFlags flags = LibraryFlags::Exact) {
+                     LibraryProfile profile = LibraryProfile::Project) {
   if (bundles.empty() || bundles.size() > 64)
     throw std::invalid_argument("compiled consumer requires 1 to 64 libraries");
-  const auto environmentIdentity = environment(request, runtime, flags);
+  const auto environmentIdentity = environment(request, runtime, profile);
   const auto runtimeSymbols =
       runtimeImports(runtime, request.target(), environmentIdentity.runtime);
   struct Admission {
@@ -870,7 +877,7 @@ loadStandardLibraryInputs(const CompilationRequest &request,
     bundles.push_back(
         {decodeLibraryBundle(bytes), virtualInterface, selection, digest});
     admitted = admitScalarLibraries(request, std::move(bundles), runtime,
-                                    LibraryFlags::Independent);
+                                    LibraryProfile::InstalledStdlib);
     return std::move(admitted->facades.front().source);
   });
   auto inputs = loadCompilationInputs(request, loader, progress, overlays);
@@ -978,7 +985,7 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
       return {};
     auto expected =
         environment(request, runtime,
-                    producerFlags(prepared.compilation.sourceGraph, &target));
+                    producerProfile(prepared.compilation.sourceGraph, &target));
     auto allowedImports =
         runtimeImports(runtime, request.target(), expected.runtime);
     allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),

@@ -30,6 +30,10 @@ def verify(stage):
                     raise RuntimeError(f"invalid compiled standard library envelope in {bundle}")
                 if stream.read(len(compiler_digest)) != compiler_digest:
                     raise RuntimeError(f"compiler SHA-256 in {bundle} differs from the staged executable")
+                if bundle.parents[1].name == "arm64-apple-macos":
+                    target = b"arm64-apple-macosx11.0.0"
+                    if stream.read(4 + len(target)) != struct.pack("<I", len(target)) + target:
+                        raise RuntimeError(f"{bundle} must target the macOS arm64 baseline across OS updates")
         (stdlib / "std/cmath.gti").unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
