@@ -6,10 +6,15 @@ Implementation of [RFC 0007](https://github.com/lang-gti-official/rfcs/pull/8)
 starts from `1302b77e5d3056fe59b7e892ddb64232cc8daa26`. Its acceptance contract
 is unchanged admission and output, at least 2x faster admission on examples
 091, 093, 141 and 194 (regular expressions), and no more than 5% higher peak
-RSS. No speedup is claimed yet. Non-throwing outcomes, plan-local type indexes,
+RSS. The original repeated measurements meet both targets at O0/O2: admission is
+5.50–8.33x faster, with median peak RSS at most 3.24% higher and the largest
+measured peak at most 2.80% higher. Non-throwing outcomes, plan-local type indexes,
 whole-query memoization/replay, and stable coverage-identity hash keys are
-implemented in separate RFC branches; final equivalence, performance and
-integration evidence remain required before this campaign is complete.
+implemented through separate RFC PRs. Equivalence, performance and final focused
+verification are complete for the recorded implementation heads. Required CI
+still owns validation of the integrated candidate and its full suite.
+The fresh common-main comparison below also meets both targets: 6.07–8.31x
+faster admission, with median peak RSS at most 1.52% higher.
 
 The first slice adds admission time-trace regions, validation-only counters,
 and test-only lossless plan/IR/object capture. `scripts/llvm_admission_evidence.py
@@ -29,22 +34,289 @@ rejects incomplete captures, changed input inventories and tampered artifacts.
 Use identical input/stdlib paths for each compiler, retaining the baseline
 source checkout throughout the campaign; no identity normalization is allowed.
 
-The retained baseline covers all 207 single-file root examples (414 O0/O2
-captures) and 463 materialized coverage-provider inputs (926 captures).
-The non-throwing outcome slice matches all 1,340 retained plans, outcomes, IR
-and objects byte-for-byte. Later slices additionally capture the 23 positive
-admission fixtures; the six frontend rejection fixtures have no admission plan
-and are verified with the ordinary test runner. Full comparisons for the index,
-memo/replay and coverage-key slices are still in progress. Focused memo tests
-inject a wrong answer and a reordered trace; coverage-index tests compare all
-context distinctions and detect a forged index. These checks supplement the
-whole-corpus comparisons; they do not replace them.
+### Equivalence evidence
 
-Executable equivalence, complete owning-gate evidence, and the O0/O2
-wall/CPU/RSS/admission/backend measurements remain acceptance work. The capture
-tool intentionally repeats
-backend planning to collect independent IR and object artifacts: performance
-measurements must use ordinary compiler invocations and time traces instead.
+The retained inventories are 207 single-file root examples (414 O0/O2
+captures), 463 materialized coverage-provider inputs (926 captures), and 23
+positive admission UI fixtures (46 captures). The six frontend rejection
+fixtures have no admission plan and pass with the ordinary test runner. A
+separate inventory audit found 65 admission fixtures under
+`tests/slow/llvm/admission`. Their additional 130 O0/O2 captures are complete
+for the baseline, every optimization slice and the reconciled index parent;
+all 130 are admitted by each compiler. Every before/after comparison of these
+supplemental plans, outcomes, IR and objects is byte-identical. The full
+equivalence inventory therefore contains 1,516 captures per compiler.
+
+Each completed comparison checks actual retained bytes for the full ordered
+plan, outcome, LLVM IR and object, with `GTI_COMPILER_VALIDATION=1`. Linked
+executable comparisons relink both retained objects using the recorded
+production direct-link command, a fixed native compiler and runtime archive,
+and the same temporary input/output paths. The resulting binaries are compared
+byte-for-byte and retained. These comparisons do not execute the programs.
+
+| Slice | PR | Candidate | Completed plan/IR/object comparisons | Linked example binaries |
+| --- | --- | --- | --- | --- |
+| Telemetry and evidence | [567](https://github.com/lang-gti-official/gti/pull/567) | `7c1c162204e68cbd689856195914b76075528b49` | Baseline retained | Baseline retained |
+| Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | All 1,516 identical to baseline | All 414 identical |
+| Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,516 identical to reconciled parent | All 414 identical |
+| Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,516 identical to index parent | All 414 identical |
+| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,516 identical to memo parent | All 414 identical |
+
+The final candidate also matches the original baseline on all 1,516 example,
+registered-coverage and admission captures. The first example baseline was recorded at
+`b330a043a03086fc4f736322e6f9c32c2b3d394a`; the subsequent telemetry checkpoint
+extends the harness to preserve library exports and provider setup. All slices
+use the same frozen input and standard-library paths. The index slice's exact
+parent is `f82859a95e263821ac6d6a300ec7e2be7a807260`, following an upstream
+reconciliation; it is not compared only against an older, different parent.
+
+Focused memo tests inject a wrong answer and a reordered trace; coverage-index
+tests compare all context distinctions and detect a forged index. These checks
+supplement the corpus comparisons. All five implementation heads in the table
+passed their final owning checks: the unit suite, UI runner checks, coverage evidence/exhaustiveness,
+CLI workflow, 29 admission UI fixtures and scalar/owner native smoke at O0.
+Each has its own exact-head verification record. Full integration validation is
+CI's responsibility and has not been claimed by these local results.
+
+### Integration reconciliation
+
+After those measurements and checks completed, main incorporated RFC 0006's
+backend telemetry and additional MIR/runtime changes. Reconciling with
+`c7985d61f17192c783c361983539d8e761ea68df` required resolving one overlapping
+local variable name in `planLlvmAdmission`; the result retains exactly one
+`llvm-admission` timing scope. None of the four optimization mechanisms was
+changed by that resolution.
+
+Review of the automatic merge also found a nested second
+`llvm-admission-inventory` event. The new exact-count regression fails on
+`2ea995fd4871b7c4a3c3a5f16dd10706bda1d728` with two inventory events. Removing
+the redundant inner scope restores the original admission implementation;
+the trace regression now requires exactly one event for each of the four
+admission phases. The correction is published in all six slices. The seven
+admission mechanism source files are byte-identical to their respective
+pre-reconciliation versions; fresh focused verification passed against
+the rebuilt, reconciled heads.
+
+The measurements and full equivalence inventory above remain evidence for
+their explicitly named pre-reconciliation heads. Their source archive,
+compiler/runner/runtime snapshots and raw artifacts are retained; they are not
+relabelled as results from the new heads.
+
+### Fresh common-main verification
+
+All five rebuilt implementation heads passed the structural snapshot and
+exact-count trace regression, the five owning CTest gates, all 29 admission
+UI fixtures, and scalar/owner native execution at O0 with validation enabled.
+The CTest gates were `gti_test_ui`, `gti_unit_tests`,
+`llvm_coverage_evidence`, `llvm_coverage_exhaustiveness` and `cli_workflow`.
+Each workflow verification record is bound to its own published head.
+
+| Slice | Reconciled head | Fresh focused checks |
+| --- | --- | --- |
+| Telemetry/evidence | `a30be18e31fed250d995151dd1f7348f8feff83e` | Passed |
+| Non-throwing outcomes | `a071b24990883ec9d7d159d172dc01420c636364` | Passed |
+| Exact-type index | `2d7b69ba2fe21956ec61c84713feddb9aef675bb` | Passed |
+| Whole-query memo/replay | `4225189e6b3c6e77e4c7e146cc1fe73640d1983e` | Passed |
+| Coverage identity keys | `41e8f854a15012e66717fba24684e066537a1412` | Passed |
+
+For the common-main follow-up, all five compilers capture the four named
+benchmark programs at O0/O2 with `GTI_COMPILER_VALIDATION=1`: eight captures
+per compiler, 40 in total. Every adjacent slice and the baseline/final pair
+have byte-identical full plans, first outcomes, LLVM IR and objects. The
+same source and standard-library paths are used throughout. This focused
+integration comparison supplements the historical 1,516-case per-compiler
+inventory; it does not relabel or replace that full inventory.
+
+The common-main baseline is `a30be18e31fed250d995151dd1f7348f8feff83e`; the final
+candidate is `41e8f854a15012e66717fba24684e066537a1412`. Both include main
+`c7985d61f17192c783c361983539d8e761ea68df`, removing the earlier upstream
+concept-fix difference from this comparison. Five interleaved measured pairs
+after one warm-up pair retain the original four workloads and O0/O2 levels.
+Validation is disabled for measurement; fixed inputs are checked at completion
+and executable bytes match for every pair. This is still a shared development
+machine measurement, not an isolated-host claim.
+
+Admission is 6.07–8.31x faster. The maximum median peak-RSS change
+is +1.52%; the maximum largest-observed-peak change is +0.43%.
+Every workload/level meets both the 2x admission and 5% peak-RSS criteria.
+
+Each target value is the median of five measured compiles after one warm-up. RSS is the per-compile peak resident set, reported in MiB. Both variants use identical source, standard library, runtime, and native linker inputs. Validation cross-checks are disabled for timings. Generated executable bytes match.
+
+| Example | Opt | Admission ms (before / after) | Speedup | Backend ms (before / after) | Wall s (before / after) | CPU s (before / after) | Peak RSS MiB (before / after) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 091-json-documents | O0 | 429.48 / 51.71 | 8.31× | 861.14 / 483.68 | 3.59 / 3.22 | 3.62 / 3.25 | 907.70 / 908.06 |
+| 091-json-documents | O2 | 430.33 / 52.67 | 8.17× | 2722.07 / 2340.44 | 6.81 / 6.40 | 6.81 / 6.43 | 1008.69 / 1010.75 |
+| 093-http-json-client | O0 | 584.96 / 82.79 | 7.07× | 1243.34 / 741.40 | 4.96 / 4.46 | 4.99 / 4.49 | 1333.16 / 1333.94 |
+| 093-http-json-client | O2 | 587.99 / 82.91 | 7.09× | 3605.62 / 3092.03 | 11.26 / 10.76 | 11.27 / 10.79 | 1484.75 / 1476.64 |
+| 141-reflected-json | O0 | 515.09 / 62.54 | 8.24× | 1018.24 / 564.80 | 4.11 / 3.65 | 4.14 / 3.67 | 970.27 / 985.00 |
+| 141-reflected-json | O2 | 517.80 / 62.37 | 8.30× | 3082.85 / 2635.63 | 8.07 / 7.62 | 8.10 / 7.64 | 1133.73 / 1125.94 |
+| 194-regular-expressions | O0 | 472.58 / 77.84 | 6.07× | 970.77 / 576.61 | 3.46 / 3.07 | 3.49 / 3.10 | 1007.58 / 1016.36 |
+| 194-regular-expressions | O2 | 472.35 / 77.86 | 6.07× | 2595.43 / 2202.60 | 9.66 / 9.27 | 9.69 / 9.29 | 1182.98 / 1150.48 |
+
+Raw common-main evidence is retained alongside the original campaign under
+`/var/folders/w8/xxc4n9jn0cd8s63ylv8gw0xm0000gn/T/gti-rfc0007-czs38umo`:
+
+- `reconciled-four-equivalence.json`: SHA-256 `365ca6c7aca96536c992ae242ebd9c125b1bb8312f055d0f71b3118d521bfeac`.
+- `reconciled-verification-results.json`: SHA-256 `a523a9ca1830a3c6a061154d1393cc37714a8533bb234a92bd8f4604ad6850f4`.
+- `measure-reconciled-four/report.json`: SHA-256 `00b5586235dc3e0d6a5a4dde07ffc8a8c504690e596f89afe3c8c2e385fd537f`.
+- Baseline compiler SHA-256: `692183157e86c5e78fcef7a2b9d30b4083f91817cf8cc56fce798fdb03b36c00`.
+- Candidate compiler SHA-256: `3634111323e919a375d45b4f46d105c68044ac7569b2a37caa5cf6f5d555834f`.
+
+Full integration and platform coverage remain CI’s responsibility; these
+focused checks and measurements do not claim a completed full CI suite.
+
+### Measurement protocol
+
+The capture tool intentionally repeats backend planning to collect independent
+IR and object artifacts. Its duration is not a compile-time benchmark.
+Measurements instead use ordinary executable compilation with validation
+cross-checks disabled and exactly one `llvm-admission` and `gti-backend`
+time-trace region. They record wall time, child CPU time and peak resident set,
+and compare the actual resulting executable bytes.
+
+The completed target run uses five interleaved measured baseline/candidate pairs
+after one warm-up pair for each of 091, 093, 141 and 194 at O0/O2. Pair order
+uses seed 7007. Child CPU and peak RSS come from `wait4`; wall time uses a
+monotonic clock. The completed
+corpus run measured all 207 examples at both levels in one paired pass. It is
+descriptive corpus data, not a repeated-sample estimate.
+Sources, example helpers, execution profiles, standard library, runtime archive
+and native compiler are fixed and checked again at completion. Compiler binary
+hashes and clean source revisions are retained with the raw samples.
+
+The timing baseline is `7c1c162204e68cbd689856195914b76075528b49`, and the
+candidate is `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb`. Between those revisions,
+the index branch also incorporated the structural concept-fact fix in
+[552](https://github.com/lang-gti-official/gti/pull/552). That upstream change
+does not alter backend/admission source, but total wall/CPU/RSS differences
+must not be attributed exclusively to admission without accounting for it.
+The exact admission plans and generated artifacts above remain equal.
+
+### Repeated four-program measurements
+
+Each target value is the median of five measured compiles after one warm-up. RSS is the per-compile peak resident set, reported in MiB. Both variants use identical source, standard library, runtime, and native linker inputs. Validation cross-checks are disabled for timings. Generated executable bytes match.
+
+| Example | Opt | Admission ms (before / after) | Speedup | Backend ms (before / after) | Wall s (before / after) | CPU s (before / after) | Peak RSS MiB (before / after) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 091-json-documents | O0 | 558.32 / 72.53 | 7.70× | 1113.73 / 624.06 | 4.69 / 4.21 | 4.74 / 4.26 | 903.53 / 914.97 |
+| 091-json-documents | O2 | 552.92 / 69.32 | 7.98× | 3420.31 / 2885.30 | 8.67 / 8.21 | 8.73 / 8.27 | 963.50 / 976.02 |
+| 093-http-json-client | O0 | 745.73 / 112.69 | 6.62× | 1586.63 / 954.99 | 6.46 / 5.84 | 6.49 / 5.89 | 1333.17 / 1357.61 |
+| 093-http-json-client | O2 | 746.70 / 105.72 | 7.06× | 4577.94 / 4013.31 | 14.72 / 14.38 | 14.75 / 14.41 | 1394.56 / 1402.97 |
+| 141-reflected-json | O0 | 657.85 / 78.95 | 8.33× | 1293.49 / 718.79 | 5.22 / 4.63 | 5.23 / 4.65 | 971.36 / 975.16 |
+| 141-reflected-json | O2 | 656.49 / 83.15 | 7.90× | 3784.45 / 3200.70 | 10.24 / 9.70 | 10.29 / 9.76 | 1039.44 / 1051.06 |
+| 194-regular-expressions | O0 | 603.97 / 109.89 | 5.50× | 1251.61 / 750.67 | 4.59 / 4.09 | 4.64 / 4.13 | 997.52 / 1004.28 |
+| 194-regular-expressions | O2 | 602.23 / 106.36 | 5.66× | 3143.03 / 2654.94 | 12.79 / 12.15 | 12.81 / 12.19 | 1078.06 / 1113.02 |
+
+Acceptance also compares the largest per-compile peak from the five measured
+samples of each variant. Every row passes both the median and largest-peak
+comparison, as well as the admission speed target.
+
+| Example | Opt | Largest peak RSS MiB (before / after) | Change |
+| --- | --- | ---: | ---: |
+| 091-json-documents | O0 | 906.45 / 918.09 | +1.28% |
+| 091-json-documents | O2 | 980.19 / 1006.59 | +2.69% |
+| 093-http-json-client | O0 | 1347.91 / 1385.53 | +2.79% |
+| 093-http-json-client | O2 | 1407.97 / 1428.95 | +1.49% |
+| 141-reflected-json | O0 | 975.95 / 980.41 | +0.46% |
+| 141-reflected-json | O2 | 1045.06 / 1064.97 | +1.90% |
+| 194-regular-expressions | O0 | 1001.88 / 1012.48 | +1.06% |
+| 194-regular-expressions | O2 | 1086.91 / 1117.12 | +2.78% |
+
+Both the target and corpus passes ran on a shared development host. The suite
+reservation prevents overlapping suites, but does not exclude other agents’
+builds; these are not isolated-machine wall-time measurements. All measured
+outputs match and the fixed-input checks passed at completion.
+
+Retained measurement reports (SHA-256):
+
+- `measure-four/report.json`: `71089bf6ffcbb1fd48d03142420bd2bb6c1073d0e8618aafb465e70eb40251ab`.
+- `measure-corpus/report.json`: `e370ad2f216fccb33e9c62970b521d518433a0f2805d4880fef47d5d8f5d7ce7`.
+- `measure-rss-followup/report.json`: `44e29d3f0025441613adb841e6c1ab3e99924e6a09ab31cae4e714d41a6f9019`.
+
+The baseline compiler binary is
+`ef3abbbe3369ce0e583896e531580ec70813c7b43763341d8c0927ec99b0ccfe`;
+the candidate is
+`5d93a70d1b931e076d4daa20957aa281ef0e901437344d76d4fa9bf651008cea`.
+The fixed native compiler is Apple clang 21.0.0 (`clang-2100.4.1.1`).
+Raw reports retain command arguments, interleaving, every sample, trace and
+executable hashes, source/profile identities and the compiler/runtime inputs.
+
+### Corpus measurements (single paired pass)
+
+The corpus run completed all 414 workload rows on macOS 27.0.1 arm64 with 12
+logical CPUs. Each row contains one ordinary baseline compile and one candidate
+compile, in seeded interleaved order, without a separate warm-up. All 414
+resulting executables are byte-identical. Source, helper, standard-library,
+runtime and native-compiler identity checks passed at completion.
+
+Time columns below sum the 207 per-example measurements at each level. RSS is
+the largest per-compile peak in that level, not a sum or a bound on every
+individual example's relative change. Values are baseline / candidate.
+
+| Opt | Admission s | Backend s | Wall s | CPU s | Largest peak RSS MiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| O0 | 10.61 / 1.87 | 25.16 / 16.41 | 158.53 / 149.81 | 164.39 / 155.80 | 1355.61 / 1377.41 |
+| O2 | 10.68 / 1.88 | 59.03 / 50.04 | 261.21 / 252.19 | 267.06 / 258.28 | 1536.14 / 1539.06 |
+
+Aggregate admission time is 5.68x lower at both levels. The largest peak-RSS
+reading rises 1.61% at O0 and 0.19% at O2. Seven individual single-pair readings
+nevertheless exceed a 5% RSS increase (5.33% to 8.40%); the largest is
+`namespace_regex.gti` at O0. A completed exploratory follow-up repeated all
+seven sources at both levels, with five measured pairs after one warm-up.
+None reproduced a greater-than-5% increase: median per-compile peak-RSS changes
+ranged from -1.53% to +1.24%; comparing the largest measured peak of each
+variant gave -0.28% to +1.38%. All resulting executables were byte-identical,
+and the fixed-input checks passed. These repeats do not establish that every
+future measurement will stay below 5%; they show no persistent increase of
+that size in this follow-up. The original readings remain in the corpus data,
+and these post-hoc repeats do not replace the four-program acceptance workload.
+
+| Follow-up source | O0 median peak RSS change | O2 median peak RSS change |
+| --- | ---: | ---: |
+| 041-owner-dependencies | -0.08% | +0.25% |
+| 103-resource-exchange | +0.56% | +0.50% |
+| 143-checked-container-iteration | +0.67% | +0.32% |
+| 144-checked-view-iteration | +0.67% | +0.01% |
+| 158-multi-parameter-concepts | +1.22% | +1.24% |
+| 180-compact-source-owners | +0.74% | +1.18% |
+| namespace_regex | -1.53% | -0.01% |
+
+These measurements came from a shared development machine. Two short coverage
+probe rebuilds overlapped part of the corpus run; their before/after hashes
+prove that neither measured compiler nor the runtime archive changed. Together
+with the upstream frontend change noted above, this limits attribution of the
+single-pass total wall/CPU differences. The separate repeated target run was
+still queued during those rebuilds.
+
+The at-least-2x admission target and at-most-5% peak-RSS bound are met on all
+four named programs at both levels. These are measured results for the retained
+compiler pair, not a guarantee for every workload or host. All five implementation
+heads also passed the focused checks above. The complete suite remains a CI
+integration responsibility and is not claimed by these local measurements.
+
+### Follow-up decisions
+
+- Keep the type index local to a sealed admission plan. Moving it onto mutable
+  MIR would require an explicit sealing/invalidation contract and measurements
+  of consumers outside admission. The current index shares one exact lookup
+  policy within the plan without extending its lifetime or phase authority.
+- Keep the complete inventory, including unreachable bodies. Skipping those
+  bodies would change ordered coverage evidence and is outside this RFC's
+  equivalence contract. Such a change needs a separate decision defining what
+  dormant-body evidence means before implementation or performance acceptance.
+- Keep the inspection API in `gti-test`, with the source/provenance-aware
+  capture script as its corpus client. No public compiler switch or new
+  standalone test registration is required.
+- Keep the original acceptance target: at least 2x admission speedup and at
+  most 5% higher peak RSS on each of the four named programs at both levels.
+  Aggregate corpus speedup does not substitute for those individual results.
+- Do not add another `representationShape` or `classShape` answer cache in
+  this implementation. Whole-walk replay already avoids repeated shape work
+  in matching contexts, and the index removes the class scan. A further cache
+  remains a profiling-led follow-up: establish material residual cost, prove
+  all target/program/context dependencies in its key, then repeat the same
+  validation-mode and full-plan equivalence checks. The measurements here do
+  not claim a function-level attribution of the remaining admission cost.
 
 ## Current Status and Evidence Policy (2026-10-28)
 
