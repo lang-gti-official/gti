@@ -154,8 +154,8 @@ int replay(int argc, char **argv) {
   session.verify();
   const auto artifact = session.emitObject();
   std::ofstream object(output, std::ios::binary);
-  object.write(artifact.contents.data(), artifact.contents.size());
-  if (!object || artifact.contents.empty())
+  object.write(artifact.singleObject().data(), artifact.singleObject().size());
+  if (!object || artifact.singleObject().empty())
     throw std::runtime_error("packet object publication failed");
   std::error_code error;
   llvm::raw_fd_ostream ir(output.string() + ".ll", error,

@@ -450,7 +450,7 @@ int main() {
     emitArrayRangeProbe(session);
     const auto object = session.emitObject();
     const auto path = root / "probe.o";
-    if (driver::writeArtifact(path, object.contents) !=
+    if (driver::writeArtifact(path, object.singleObject()) !=
         driver::ArtifactWriteStatus::Success)
       return 3;
     driver::NativeInputs inputs;

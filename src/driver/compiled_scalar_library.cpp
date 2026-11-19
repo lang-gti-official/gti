@@ -480,7 +480,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
       symbols.push_back(compiledScalarSymbol(key));
     allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
                           prepared.symbols.end());
-    verifyCompiledScalarObject(result.compilation.artifact->contents,
+    verifyCompiledScalarObject(result.compilation.artifact->singleObject(),
                                request.target(), symbols, allowedImports);
     if (hashFile(runtime) != id.runtime)
       throw std::invalid_argument(
@@ -504,7 +504,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
     result.bundle = encodeLibraryBundle(
         {id,
          std::move(prepared.dependencies),
-         {{"unit.o", result.compilation.artifact->contents}},
+         {{"unit.o", result.compilation.artifact->singleObject()}},
          metadata});
   }
   return result;

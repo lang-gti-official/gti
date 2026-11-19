@@ -216,8 +216,13 @@ public:
       std::filesystem::path output, NativeInputs inputs, bool debugInfo = false,
       std::optional<ForwardedSourcePolicy> forwardedSources = std::nullopt);
 
+  NativeLinkRequest(
+      std::string compiler, std::vector<std::filesystem::path> objects,
+      std::filesystem::path output, NativeInputs inputs, bool debugInfo = false,
+      std::optional<ForwardedSourcePolicy> forwardedSources = std::nullopt);
+
   [[nodiscard]] const std::string &compiler() const;
-  [[nodiscard]] const std::filesystem::path &object() const;
+  [[nodiscard]] const std::vector<std::filesystem::path> &objects() const;
   [[nodiscard]] const std::filesystem::path &output() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] const NativeInputs &inputs() const;
@@ -226,7 +231,7 @@ public:
 
 private:
   std::string compilerExecutable;
-  std::filesystem::path objectPath;
+  std::vector<std::filesystem::path> objectPaths;
   std::filesystem::path outputPath;
   NativeInputs nativeInputs;
   bool sourceDebugInfo = false;

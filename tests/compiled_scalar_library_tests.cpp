@@ -105,7 +105,7 @@ void linkAndRun(const std::filesystem::path &root,
   for (const auto &name : client.compilation.sources.names())
     expect(name.find("/producer/") == std::string::npos,
            "consumer loaded implementation");
-  write(root / "consumer.o", client.compilation.artifact->contents);
+  write(root / "consumer.o", client.compilation.artifact->singleObject());
   write(root / "library.o", client.objects.front().bytes);
   std::vector<std::string> args{"c++", (root / "consumer.o").string(),
                                 (root / "library.o").string(), runtime.string(),
@@ -125,7 +125,9 @@ public:
   std::string_view name() const override { return "capture-scalar-unit"; }
   BackendArtifact generate(LoweredProgram p) override {
     program = std::move(p);
-    return {BackendArtifactKind::Object, "captured", ".o", {}};
+    return {.kind = BackendArtifactKind::Object,
+            .extension = ".o",
+            .objects = {"captured"}};
   }
 };
 void passiveStorageTests(const std::filesystem::path &root,

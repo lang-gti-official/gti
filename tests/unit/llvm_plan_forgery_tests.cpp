@@ -1507,7 +1507,7 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
             const auto artifact =
                 lang::LlvmBackend().generate(verified->program());
             std::ofstream published(output, std::ios::binary);
-            published << artifact.contents;
+            published << artifact.singleObject();
             generated = true;
           } catch (const lang::BackendUnsupportedError &) {
           }

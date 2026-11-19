@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
       throw std::runtime_error(published.error + "\n" +
                                published.process.output);
     std::ofstream object(std::string(argv[2]) + ".o", std::ios::binary);
-    object << artifacts.object.contents;
+    object << artifacts.object.singleObject();
     std::ofstream generated(std::string(argv[2]) + ".h");
     generated << artifacts.header.contents;
     if (!object || !generated)

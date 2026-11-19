@@ -189,10 +189,10 @@ public:
     session.verify();
     const auto artifact = session.emitObject();
     if (artifact.kind != BackendArtifactKind::Object ||
-        artifact.contents.empty())
+        artifact.singleObject().empty())
       throw std::runtime_error("cleanup component emitted no object");
     const auto object = scratch / (std::string(graph) + ".o");
-    if (driver::writeArtifact(object, artifact.contents) !=
+    if (driver::writeArtifact(object, artifact.singleObject()) !=
         driver::ArtifactWriteStatus::Success)
       throw std::runtime_error("failed to write cleanup component object");
     driver::NativeInputs inputs;
@@ -384,11 +384,11 @@ public:
     session.verify();
     const auto artifact = session.emitObject();
     if (artifact.kind != BackendArtifactKind::Object ||
-        artifact.contents.empty())
+        artifact.singleObject().empty())
       throw std::runtime_error("cleanup tracked component emitted no object");
     const std::string mode = failRoot ? "first-failure" : "success";
     const auto object = scratch / (std::string(graph) + "-" + mode + ".o");
-    if (driver::writeArtifact(object, artifact.contents) !=
+    if (driver::writeArtifact(object, artifact.singleObject()) !=
         driver::ArtifactWriteStatus::Success)
       throw std::runtime_error("failed to write cleanup tracked object");
     driver::NativeInputs inputs;

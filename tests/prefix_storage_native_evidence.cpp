@@ -322,7 +322,7 @@ int main(int argc, char **argv) {
       return {};
     }
     const std::filesystem::path path = directory / (name + ".o");
-    std::ofstream(path, std::ios::binary) << artifact.contents;
+    std::ofstream(path, std::ios::binary) << artifact.singleObject();
     return path;
   };
   const auto codegen = [](lang::LlvmCodegenOptimization optimization) {
