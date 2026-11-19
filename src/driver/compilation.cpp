@@ -381,6 +381,13 @@ CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress,
     const std::unordered_map<std::string, std::string> &overrides) {
   SourceLoader sourceLoader;
+  return loadCompilationInputs(request, sourceLoader, progress, overrides);
+}
+
+CompilationInputs loadCompilationInputs(
+    const CompilationRequest &request, SourceLoader &sourceLoader,
+    ProgressObserver *progress,
+    const std::unordered_map<std::string, std::string> &overrides) {
   sourceLoader.setErrorLimit(request.compileLimits().errorLimit);
   CompilationInputs inputs;
   std::vector<std::filesystem::path> preludes{

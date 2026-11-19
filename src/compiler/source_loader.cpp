@@ -701,6 +701,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   std::shared_ptr<const std::vector<Token>> lexedTokens;
   std::optional<LoadedLexicalUnit> lexical;
   if (!processed) {
+    std::string deferredText;
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
     if (isEntry && entrySource && !entrySourceConsumed) {
@@ -710,6 +711,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     } else if (const auto override = sourceOverrides->find(key);
                override != sourceOverrides->end()) {
       exactSource = override->second;
+    } else if (const auto found = deferredSources.find(key);
+               found != deferredSources.end()) {
+      deferredText = found->second();
+      exactSource = deferredText;
     }
     std::uint64_t generation = 0;
     if (sourceGenerations != nullptr) {
@@ -1352,7 +1357,8 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   sourceImport.lookupPath = path;
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error) &&
-      !sourceOverrides->contains(path.string())) {
+      !sourceOverrides->contains(path.string()) &&
+      !deferredSources.contains(path.string())) {
     const auto *targetOwner = packageForPath(path);
     if (targetOwner && targetOwner->kind == SourceOwnerKind::Generated)
       return reject(

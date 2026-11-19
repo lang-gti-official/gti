@@ -25,6 +25,7 @@
 #include <vector>
 
 namespace lang {
+class SourceLoader;
 class FrontendCache;
 class SemanticPreambleCache;
 } // namespace lang
@@ -280,6 +281,10 @@ checkCompilation(const CompilationRequest &request,
 [[nodiscard]] CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress = nullptr,
     const std::unordered_map<std::string, std::string> &overrides = {});
+
+[[nodiscard]] CompilationInputs loadCompilationInputs(
+    const CompilationRequest &, SourceLoader &, ProgressObserver *,
+    const std::unordered_map<std::string, std::string> &overrides);
 
 // Run the canonical whole-program pipeline with a caller-provided backend.
 // Backend exceptions are translated into structured compilation failures at

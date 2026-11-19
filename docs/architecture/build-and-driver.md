@@ -3325,14 +3325,16 @@ RSS, build latency and object/bundle/executable size. The latter includes a
 by-value Point record. These allocation-free operations do not claim parity with
 whole-program inlining or complete F5 performance acceptance.
 
-
 ### Precompiled standard library
 
 The native Linux x64 and macOS arm64 toolchains ship the 21 runtime functions
 of `std.cmath` as `share/gti/precompiled-stdlib/<target>/<profile>/cmath.gtilib`.
 Ordinary single-threaded, hosted LLVM project checks and builds select the
-matching default dev or release profile when an import or re-export reaches
-the module. The compiler reads the checked callable signatures and links the
+development or release object when an import or re-export reaches the
+module. A producer can use the installed-module configuration identity only
+when every unit belongs to the toolchain and its configuration directives
+neither read nor modify named flags. Application and dependency defines then
+still participate in the consumer build's cache key. The compiler reads the checked callable signatures and links the
 target object. The shared source companion supplies `constexpr std::abs` and
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.

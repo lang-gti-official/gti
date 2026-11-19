@@ -296,6 +296,12 @@ class SourceStdlibCI(unittest.TestCase):
             stage = root / 'stage'
             with patch.object(lsp_compatibility, 'identity', return_value='e' * 64), patch.object(source, 'ensure_checkout'), patch.object(source, 'git', return_value=plan['head']):
                 source.seal(plan, stage, 'darwin-arm64', root)
+                bundle = source.compiled_payload(stage) / 'arm64-apple-macos/dev/cmath.gtilib'
+                self.assertEqual(bundle.read_bytes(), b'new source')
+                bundle.write_bytes(b'changed compiled library')
+                with self.assertRaisesRegex(ValueError, 'compiled standard library changed'):
+                    source.seal(plan, stage, 'darwin-arm64', root)
+                bundle.write_bytes(b'new source')
                 (stage / 'bin/gti').write_bytes(b'changed native binary')
                 with self.assertRaisesRegex(ValueError, 'native payload changed'):
                     source.seal(plan, stage, 'darwin-arm64', root)

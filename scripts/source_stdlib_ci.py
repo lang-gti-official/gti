@@ -244,8 +244,10 @@ def seal(plan_doc, stage, platform, root=ROOT):
     if git("rev-parse", "HEAD", root=root) != plan_doc["head"]:
         raise ValueError("candidate moved after testing")
     proof = json.loads((stage.parent / f"source-native-{platform}.json").read_text())
+    if proof.pop("compiled_stdlib", None) != source_digest(compiled_payload(stage)):
+        raise ValueError("compiled standard library changed during testing")
     if proof != {"sha": plan_doc["head"], "compiler_origin": plan_doc["compiler_origin"],
-                 "native_payload": native_payload(stage), "compiled_stdlib": source_digest(compiled_payload(stage)), "platform": platform}:
+                 "native_payload": native_payload(stage), "platform": platform}:
         raise ValueError("native payload changed during testing")
     if source_digest(stage / "share/gti/stdlib") != source_digest(root / "stdlib"):
         raise ValueError("packaged library differs from tested source")

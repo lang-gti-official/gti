@@ -41,9 +41,10 @@ def build(stage, source):
         (package / "stdlib/std/cmath.gti").unlink()
         consumer = package / "consumer"
         shutil.copytree(source / "tests/project/standard_library_bundle", consumer)
+        compiler = str(stage / "bin/gti")
         for profile in ([], ["--release"]):
             for command in ("check", "run"):
-                subprocess.run([str(stage / "bin/gti"), command, "--offline", *profile],
+                subprocess.run([compiler, command, "--offline", *profile],
                                cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
