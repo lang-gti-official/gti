@@ -21,9 +21,11 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -291,13 +293,23 @@ public:
   analyzeParsed(const std::filesystem::path &entryPath,
                 FrontendResult parsed) const;
 
+  // Observe entry declarations that produced diagnostics and the primary
+  // type-check result. Generic discovery and MIR may add further diagnostics.
+  // The observer is invocation-local and cannot escape through frontend caches.
+  enum class DiagnosticStage { Declaration, TypeChecking };
+  using DiagnosticCheckpoint = std::function<void(
+      DiagnosticStage, const FrontendResult &, std::span<const Diagnostic>)>;
+  [[nodiscard]] FrontendResult
+  analyzeParsed(const std::filesystem::path &entryPath, FrontendResult parsed,
+                const DiagnosticCheckpoint &observer) const;
+
 private:
   [[nodiscard]] FrontendResult
   finishAnalysis(const std::filesystem::path &entryPath,
                  FrontendResult result) const;
   [[nodiscard]] FrontendResult
-  checkParsed(const std::filesystem::path &entryPath,
-              FrontendResult parsed) const;
+  checkParsed(const std::filesystem::path &entryPath, FrontendResult parsed,
+              const DiagnosticCheckpoint &observer = {}) const;
   static void
   appendParserDiagnostics(std::vector<Diagnostic> &destination,
                           const std::vector<ParseDiagnostic> &diagnostics,

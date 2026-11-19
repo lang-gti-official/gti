@@ -1275,16 +1275,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::analyzeParsed(const std::filesystem::path &entryPath,
                                        FrontendResult result) const {
+  return analyzeParsed(entryPath, std::move(result), {});
+}
+
+FrontendResult
+Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                        FrontendResult result,
+                        const DiagnosticCheckpoint &observer) const {
   if (!result.parsingComplete)
     return result;
   result.parsingComplete = false;
-  result = checkParsed(entryPath, std::move(result));
+  result = checkParsed(entryPath, std::move(result), observer);
   applyErrorLimit(result.diagnostics, options.limits.errorLimit);
   return result;
 }
 
-FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
-                                     FrontendResult result) const {
+FrontendResult
+Frontend::checkParsed(const std::filesystem::path &entryPath,
+                      FrontendResult result,
+                      const DiagnosticCheckpoint &observer) const {
   if (!result.syntaxValid && !options.analyzeRecoveredProgram)
     return result;
   if (options.cancellation &&
@@ -1423,6 +1432,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
       }
     }
   }
+  bool reportedTypeChecking = false;
   std::unordered_set<const FunctionDecl *> requiredBodies;
   bool testDiscoveryComplete = false;
   std::unique_ptr<SemanticVisitor> semanticOwner;
@@ -1476,7 +1486,15 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     {
       const PhaseTimeScope timeScope("gti-semantics");
       const ProgressScope progress(options.progress, ProgressPhase::Checking);
-      result.semanticValid = semantic.check(result.program);
+      if (observer && attempt == 0 && result.sourceValid &&
+          result.syntaxValid) {
+        result.semanticValid = semantic.check(
+            result.program, [&](std::span<const Diagnostic> diagnostics) {
+              observer(DiagnosticStage::Declaration, result, diagnostics);
+            });
+      } else {
+        result.semanticValid = semantic.check(result.program);
+      }
       if (semantic.cancelled()) {
         // A superseded editor snapshot: no later phase runs and no instance
         // analysis is published.
@@ -1644,6 +1662,11 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
         }
         continue;
       }
+    }
+    if (observer && !reportedTypeChecking && result.sourceValid &&
+        result.syntaxValid && !options.completionOffset) {
+      observer(DiagnosticStage::TypeChecking, result, result.diagnostics);
+      reportedTypeChecking = true;
     }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||

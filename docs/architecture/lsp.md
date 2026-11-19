@@ -157,6 +157,26 @@ and the inputs read by the parser. A parser quick fix can be applied at this
 stage while its root generation, source text and dependencies are still current.
 Only the completed snapshot serves navigation.
 
+On open, clients can request progressive diagnostics with the boolean
+`initializationOptions.openFileDiagnostics`. The bundled Neovim configuration
+enables it. Standard `textDocument/publishDiagnostics` notifications for the
+open URI carry the document version and an extra `gtiDiagnosticStage` field
+while verification is pending. A `syntax` notification reports parser or
+loader findings. A `declaration` notification reports errors from the first
+completed entry-file declaration with reportable errors. If that stage has no
+findings, `typeChecking` reports the primary semantic result. An empty list at
+this point means primary type checking found no issue in the open file.
+Generic instantiation, cross-function effects and MIR borrow and lifetime
+verification can still report errors for the same version.
+
+The worker performs the ordinary configured analysis and its verification
+fallbacks. It hands an owned diagnostic list to a publisher outside crash
+recovery and continues checking. Only the completed snapshot answers semantic
+queries. Each partial publication checks the root generation and the sources
+actually read, preserves other roots’ diagnostics, and finishes before the
+completed publication. Clients that omit the option receive the completed
+open-file result as before.
+
 The syntax stage can withdraw an earlier syntax diagnostic when a repair
 parses successfully. If that publication would hide a semantic diagnostic
 from an older version of the file, it waits for the complete result. Other

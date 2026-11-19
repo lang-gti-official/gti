@@ -12,6 +12,7 @@
 
 #include "frontend_snapshot_state.h"
 
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/Support/JSON.h>
 #include <llvm/Support/thread.h>
 
@@ -28,6 +29,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -2221,6 +2223,8 @@ private:
 
   JsonValue initializeResult(const JsonValue *params) {
     if (const JsonValue *options = member(params, "initializationOptions")) {
+      progressiveOpenDiagnostics =
+          boolMember(options, "openFileDiagnostics", false);
       updateProjectProfile(member(options, "profile"));
     }
     markdownHover = supportsHoverFormat(params, "markdown");
@@ -2439,6 +2443,7 @@ private:
   }
 
   void didClose(const JsonValue *params) {
+    std::unique_lock publicationLock(analysisPublicationMutex);
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     if (clientUri.empty()) {
@@ -2506,6 +2511,7 @@ private:
     rejectPendingSemanticRequests(uri, -32801, "Content modified");
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
     publish(std::move(publications));
+    publicationLock.unlock();
     scheduleAnalyses(std::move(requests));
     analysisCondition.notify_all();
   }
@@ -3585,13 +3591,15 @@ private:
     parsed.elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                          SteadyClock::now() - start)
                          .count();
-    collectDocumentDiagnostics(syntax, *parsed.frontend, project, request);
+    collectDocumentDiagnostics(syntax, *parsed.frontend, project, request,
+                               parsed.frontend->diagnostics);
     return syntax;
   }
 
-  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
-                                   const ProjectAnalysisInputs &project,
-                                   ParsedDocument *resume) const {
+  DocumentAnalysis analyzeDocument(
+      const AnalysisRequest &request, const ProjectAnalysisInputs &project,
+      ParsedDocument *resume,
+      const lang::Frontend::DiagnosticCheckpoint &observer = {}) const {
     const std::string &uri = request.uri;
     const std::string &source = request.source;
     DocumentAnalysis result;
@@ -3636,7 +3644,8 @@ private:
     }
     lang::FrontendResult frontend =
         resume ? lang::Frontend(frontendOptions)
-                     .analyzeParsed(*filePath, std::move(*resume->frontend))
+                     .analyzeParsed(*filePath, std::move(*resume->frontend),
+                                    observer)
                : analyze();
     // MIR still verifies some calls and its interprocedural summaries
     // (defined-failure effects, persistent-storage access, text relays) only
@@ -3712,14 +3721,15 @@ private:
     result.frontend = std::move(snapshot);
     if (result.frontend->cancelled)
       return result;
-    collectDocumentDiagnostics(result, *result.frontend, project, request);
+    collectDocumentDiagnostics(result, *result.frontend, project, request,
+                               result.frontend->diagnostics);
     return result;
   }
 
-  static void collectDocumentDiagnostics(DocumentAnalysis &result,
-                                         const lang::FrontendResult &analysis,
-                                         const ProjectAnalysisInputs &project,
-                                         const AnalysisRequest &request) {
+  static void collectDocumentDiagnostics(
+      DocumentAnalysis &result, const lang::FrontendResult &analysis,
+      const ProjectAnalysisInputs &project, const AnalysisRequest &request,
+      std::span<const lang::Diagnostic> diagnostics) {
     const auto &rootPath = result.rootPath;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
@@ -3748,7 +3758,7 @@ private:
         result.dependencies.try_emplace(
             authoredFileUriFromPath(*import.authoredLookupPath), 0);
     }
-    for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+    for (const lang::Diagnostic &diagnostic : diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic,
                                              analysis.sourceGraph)) {
@@ -4578,7 +4588,10 @@ private:
   GuardedAnalysis runIsolatedAnalysis(const AnalysisRequest &request,
                                       const ProjectAnalysisInputs &project) {
     const auto path = filePathFromUri(request.uri);
-    if (request.audit || request.trigger != AnalysisTrigger::DocumentChanged ||
+    const bool opening = progressiveOpenDiagnostics &&
+                         request.trigger == AnalysisTrigger::Opened;
+    if (request.audit ||
+        (!opening && request.trigger != AnalysisTrigger::DocumentChanged) ||
         !path || !project.configurationValid)
       return isolatedStep(
           [&] { return analyzeDocument(request, project, nullptr); });
@@ -4589,8 +4602,70 @@ private:
     if (syntax.status != GuardedAnalysisStatus::Completed)
       return syntax;
     publishSyntax(request, *syntax.analysis);
-    return isolatedStep(
-        [&] { return analyzeDocument(request, project, &parsed); });
+    if (!opening)
+      return isolatedStep(
+          [&] { return analyzeDocument(request, project, &parsed); });
+
+    // The compiler keeps running on its stack-sized worker. Only a finished,
+    // independently owned diagnostic packet crosses its crash boundary.
+    // The publisher is bounded by the number of active open-file analyses.
+    std::atomic<bool> ready{false};
+    std::unique_ptr<DocumentAnalysis> checkpoint;
+    std::string_view stageName;
+    std::future<void> publisher;
+    try {
+      publisher = std::async(std::launch::async, [&] {
+        ready.wait(false, std::memory_order_acquire);
+        if (checkpoint)
+          publishOpenFile(request, *checkpoint, stageName);
+      });
+    } catch (const std::system_error &) {
+      return isolatedStep(
+          [&] { return analyzeDocument(request, project, &parsed); });
+    }
+    const auto signal = [&] {
+      ready.store(true, std::memory_order_release);
+      ready.notify_one();
+    };
+    llvm::scope_exit wakeOnFailure(signal);
+    auto full = isolatedStep([&] {
+      return analyzeDocument(
+          request, project, &parsed,
+          [&](lang::Frontend::DiagnosticStage stage,
+              const lang::FrontendResult &checked,
+              std::span<const lang::Diagnostic> diagnostics) {
+            if (checkpoint)
+              return;
+            auto packet = std::make_unique<DocumentAnalysis>();
+            packet->rootPath = syntax.analysis->rootPath;
+            collectDocumentDiagnostics(*packet, checked, project, request,
+                                       diagnostics);
+            const bool declaration =
+                stage == lang::Frontend::DiagnosticStage::Declaration;
+            if (declaration &&
+                !std::ranges::any_of(
+                    packet->diagnostics, [&](const LspDiagnostic &d) {
+                      return d.uri == request.uri &&
+                             d.diagnostic.severity ==
+                                 lang::DiagnosticSeverity::Error;
+                    }))
+              return;
+            stageName = declaration ? "declaration" : "typeChecking";
+            checkpoint = std::move(packet);
+            signal();
+          });
+    });
+    // Terminal parse/semantic limits, cancellation and crash recovery can
+    // bypass the checkpoint. Join before the final publication or any retry.
+    signal();
+    wakeOnFailure.release();
+    try {
+      publisher.get();
+    } catch (const std::exception &error) {
+      std::cerr << "Open-file diagnostic publication failed: " << error.what()
+                << '\n';
+    }
+    return full;
   }
 
   // A recovered signal abandons the compiler frame. Publication and server
@@ -4757,7 +4832,37 @@ private:
                                request.frontendSources});
       publications = publicationsForLocked({request.uri});
     }
-    publish(std::move(publications));
+    publish(std::move(publications),
+            request.trigger == AnalysisTrigger::Opened ? "syntax" : "");
+  }
+
+  void publishOpenFile(const AnalysisRequest &request,
+                       const DocumentAnalysis &checked,
+                       std::string_view stage) {
+    const std::lock_guard publicationLock(analysisPublicationMutex);
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto generation = analysisGenerations.find(request.uri);
+      if (stoppingAnalysis || generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri) ||
+          analysisSnapshots.contains(request.uri) ||
+          !sourceInputsCurrentLocked(checked.dependencies,
+                                     request.documentGenerations,
+                                     request.frontendSources))
+        return;
+      auto &previous = diagnosticsByRoot[request.uri];
+      // A partial result is additive. An earlier analysis or another root
+      // may already have reported an ownership error at this location.
+      if (!previous.empty())
+        return;
+      for (const auto &diagnostic : checked.diagnostics)
+        if (diagnostic.uri == request.uri)
+          previous.push_back(diagnostic);
+      publications = publicationsForLocked({request.uri});
+    }
+    publish(std::move(publications), stage);
   }
 
   void publishAnalysis(const AnalysisRequest &request,
@@ -5391,7 +5496,8 @@ private:
     return publications;
   }
 
-  void publish(std::vector<DiagnosticPublication> publications) const {
+  void publish(std::vector<DiagnosticPublication> publications,
+               std::string_view stage = {}) const {
     for (const DiagnosticPublication &publication : publications) {
       JsonArray diagnostics;
       diagnostics.reserve(publication.diagnostics.size());
@@ -5403,7 +5509,7 @@ private:
         appendMacroBodyCompanions(diagnostics, publication.uri, diagnostic);
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
-                         publication.version);
+                         publication.version, stage);
     }
   }
 
@@ -5448,8 +5554,11 @@ private:
 
   static void
   publishDiagnostics(const std::string &uri, JsonArray diagnostics,
-                     std::optional<std::int64_t> version = std::nullopt) {
+                     std::optional<std::int64_t> version = std::nullopt,
+                     std::string_view stage = {}) {
     JsonObject params{{"uri", uri}, {"diagnostics", std::move(diagnostics)}};
+    if (!stage.empty())
+      params["gtiDiagnosticStage"] = std::string(stage);
     if (version) {
       params["version"] = *version;
     }
@@ -5830,6 +5939,7 @@ private:
   bool semanticTokenRefreshSupport = false;
   bool workspaceDocumentChanges = false;
   bool watchedFilesDynamicRegistration = false;
+  bool progressiveOpenDiagnostics = false;
   bool diagnosticRelatedInformation = false;
   bool diagnosticData = false;
   bool diagnosticUnnecessaryTag = false;

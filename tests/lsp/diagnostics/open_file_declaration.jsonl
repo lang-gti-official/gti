@@ -1,0 +1,12 @@
+// Publish the first checked declaration while later declarations can still add errors at the same version.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int first() { return missing; } int second() { return absent; }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int first() { return missing; } int second() { return absent; }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2001", "message": {"$contains": "missing"}}], "gtiDiagnosticStage": "declaration"}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": {"$contains": [{"code": "GTI-S2001", "message": {"$contains": "missing"}}, {"code": "GTI-S2001", "message": {"$contains": "absent"}}]}}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": {}}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}
