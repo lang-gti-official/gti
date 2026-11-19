@@ -2,5 +2,4 @@
 //@ snapshot: mir
 // CHECK: operation=mul
 // CHECK: operation=sub
-int64_t widen() { return 32 * 32; }
-int main() { auto value = widen(); return 3 - 3; }
+int main() { int64_t value = 32 * 32; return 3 - 3; }
