@@ -426,8 +426,15 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
 
 CheckResult checkCompilation(const CompilationRequest &request,
                              ProgressObserver *progress) {
-  FrontendResult frontend = analyze(
-      request, loadCompilationInputs(request, progress), progress, false);
+  return checkCompilation(request, loadCompilationInputs(request, progress),
+                          progress);
+}
+
+CheckResult checkCompilation(const CompilationRequest &request,
+                             CompilationInputs inputs,
+                             ProgressObserver *progress) {
+  FrontendResult frontend =
+      analyze(request, std::move(inputs), progress, false);
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);

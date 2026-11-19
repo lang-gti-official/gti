@@ -1851,6 +1851,11 @@ def archive_contract(root, cmake):
     with tempfile.TemporaryDirectory(prefix="gti-shared-release-archive-") as temporary:
         work = pathlib.Path(temporary)
         stage = work / "stage"
+        for triple in ("x86_64-unknown-linux", "arm64-apple-macos"):
+            for profile in ("dev", "release"):
+                bundle = stage / "share/gti/precompiled-stdlib" / triple / profile / "cmath.gtilib"
+                bundle.parent.mkdir(parents=True)
+                bundle.write_bytes(b"compiled math fixture")
         for relative in required_files:
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)

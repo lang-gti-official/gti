@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "gti-std"
+version = "0.1.0"
+
+[targets.cmath]
+kind = "gti-library"
+root = "stdlib/std/cmath.gti"
+functions = [
+  "std::floor", "std::ceil", "std::round", "std::trunc", "std::sqrt",
+  "std::cbrt", "std::pow", "std::fmod", "std::exp", "std::log",
+  "std::log10", "std::sin", "std::cos", "std::tan", "std::asin",
+  "std::acos", "std::atan", "std::atan2", "std::isfinite", "std::isinf",
+  "std::isnan",
+]

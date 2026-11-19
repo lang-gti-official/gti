@@ -398,14 +398,7 @@ producerSelection(const CompilationInputs &inputs,
   return selection;
 }
 
-struct ScalarConsumerInputs {
-  CompilationInputs compilation;
-  std::vector<CompiledScalarImport> imports;
-  std::vector<LibraryBundleMember> objects;
-  std::vector<LibraryBundleDependency> dependencies;
-  std::vector<std::string> symbols;
-};
-ScalarConsumerInputs prepareScalarConsumer(
+CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &, std::span<const CompiledLibraryImport>,
     const std::filesystem::path &, ProgressObserver *progress = nullptr);
 std::string producerSources(const CompilationInputs &inputs,
@@ -460,7 +453,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
   auto id = environment(request, runtime);
   auto allowedImports = runtimeImports(runtime, request.target(), id.runtime);
   auto prepared = imports.empty()
-                      ? ScalarConsumerInputs{loadCompilationInputs(request)}
+                      ? CompiledLibraryInputs{loadCompilationInputs(request)}
                       : prepareScalarConsumer(request, imports, runtime);
   auto &inputs = prepared.compilation;
   auto selection = producerSelection(inputs, target);
@@ -487,7 +480,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
           "compiled library runtime changed during compilation");
     // Publication must still describe the input snapshot that produced code.
     auto current = imports.empty()
-                       ? ScalarConsumerInputs{loadCompilationInputs(request)}
+                       ? CompiledLibraryInputs{loadCompilationInputs(request)}
                        : prepareScalarConsumer(request, imports, runtime);
     auto sortedDependencies = [](auto dependencies) {
       std::sort(
@@ -565,17 +558,15 @@ std::string quotedInterfacePath(const std::filesystem::path &path) {
   }
   return result + "\"";
 }
-ScalarConsumerInputs
-prepareScalarConsumer(const CompilationRequest &request,
-                      std::vector<ScalarBundleInput> bundles,
-                      const std::filesystem::path &runtime,
-                      ProgressObserver *progress = nullptr) {
+CompiledLibraryInputs prepareScalarConsumer(
+    const CompilationRequest &request, std::vector<ScalarBundleInput> bundles,
+    const std::filesystem::path &runtime, ProgressObserver *progress = nullptr,
+    std::unordered_map<std::string, std::string> overlays = {}) {
   if (bundles.empty() || bundles.size() > 64)
     throw std::invalid_argument("compiled consumer requires 1 to 64 libraries");
   const auto environmentIdentity = environment(request, runtime);
   const auto runtimeSymbols =
       runtimeImports(runtime, request.target(), environmentIdentity.runtime);
-  std::unordered_map<std::string, std::string> overlays;
   struct Admission {
     std::vector<CompiledScalarSignature> signatures;
     std::vector<std::string> symbols;
@@ -726,7 +717,7 @@ prepareScalarConsumer(const CompilationRequest &request,
   return {std::move(inputs), std::move(imports), std::move(objects),
           std::move(direct), std::move(directSymbols)};
 }
-ScalarConsumerInputs
+CompiledLibraryInputs
 prepareScalarConsumer(const CompilationRequest &request,
                       std::span<const CompiledLibraryImport> imports,
                       const std::filesystem::path &runtime,
@@ -779,6 +770,78 @@ public:
 
 } // namespace
 
+CompiledLibraryInputs
+loadStandardLibraryInputs(const CompilationRequest &request,
+                          const std::filesystem::path &runtime,
+                          ProgressObserver *progress) {
+  const auto source = [&] {
+    return CompiledLibraryInputs{loadCompilationInputs(request, progress)};
+  };
+  const auto &flags = request.configurationFlags();
+  const auto &target = request.target();
+  if (request.backend() != BackendKind::Llvm || request.debugInfo() ||
+      request.llvmInstrumentation() != LlvmInstrumentationMode::None ||
+      request.program().kind != ProgramKind::Executable ||
+      request.program().testSuite ||
+      request.rawPointerAudit() != RawPointerAuditMode::Off ||
+      request.optimizationOutputs().requested() ||
+      request.declaredConfigurationFlags() != ConfigurationFlags{"NDEBUG"} ||
+      target.executionProfile != ExecutionProfile::SingleThreaded ||
+      !target.runtimeCapabilities.threads)
+    return source();
+  const char *profile;
+  if (request.optimization() == OptimizationLevel::O0 && flags.empty())
+    profile = "dev";
+  else if (request.optimization() == OptimizationLevel::O3 &&
+           flags == ConfigurationFlags{"NDEBUG"})
+    profile = "release";
+  else
+    return source();
+
+  const auto root =
+      std::filesystem::weakly_canonical(request.standardLibrary().root);
+  const auto directory = root.parent_path() / "precompiled-stdlib" /
+                         targetTriple(target) / profile;
+  if (!std::filesystem::is_directory(directory))
+    return source();
+
+  const auto entry = root / "std/cmath.gti";
+  const auto virtualInterface = root / ".gti-compiled-cmath.gti";
+  // Source loading only needs the module header to discover whether an
+  // import (including a transitive or public re-export) reaches this unit.
+  // Defer all bundle I/O and compatibility checks for unrelated programs.
+  std::unordered_map<std::string, std::string> overlays{
+      {entry.string(), "export module cmath;\n"}};
+  auto inputs = loadCompilationInputs(request, progress, overlays);
+  if (!inputs.sourceGraph.sourceUnitForPath(entry.string()))
+    return {std::move(inputs)};
+
+  overlays.at(entry.string()) +=
+      "export import \"detail/cmath_declarations.gti\";\n"
+      "export import \"../.gti-compiled-cmath.gti\";\n";
+  const CompiledLibraryImport selection{
+      "gti-std", "cmath", directory / "cmath.gtilib", virtualInterface};
+  auto bytes = readCompiledLibraryFileBounded(selection.artifact,
+                                              libraryBundleByteLimit);
+  auto digest = hash(bytes);
+  std::vector<ScalarBundleInput> bundles;
+  bundles.push_back(
+      {decodeLibraryBundle(bytes), virtualInterface, selection, digest});
+  auto prepared = prepareScalarConsumer(request, std::move(bundles), runtime,
+                                        progress, std::move(overlays));
+  prepared.compilation.standardLibraryBundleDigest = std::move(digest);
+  return prepared;
+}
+
+CompilationResult compileWithLibraryImports(
+    const CompilationRequest &request, CompilationInputs inputs,
+    std::vector<CompiledScalarImport> imports, ProgressObserver *progress) {
+  LlvmBackend native(llvmBackendOptions(request));
+  ScalarBackend backend(std::move(imports), native);
+  return compileWithBackend(request.withDefinitionClosure(), std::move(inputs),
+                            backend, progress);
+}
+
 CheckResult compiledScalarCheckResult(CompilationResult result) {
   CheckResult check;
   check.status = result.succeeded() ? CheckStatus::Success
@@ -797,6 +860,27 @@ CheckResult compiledScalarCheckResult(CompilationResult result) {
     check.driverDiagnostic =
         "gti: compiled library check: " + *result.backendFailureDetails;
   return check;
+}
+
+CheckResult checkWithStandardLibraries(const CompilationRequest &request,
+                                       const std::filesystem::path &runtime,
+                                       ProgressObserver *progress) {
+  try {
+    auto inputs = loadStandardLibraryInputs(request, runtime, progress);
+    if (inputs.imports.empty())
+      return checkCompilation(request, std::move(inputs.compilation), progress);
+    ScalarCheckBackend sink;
+    ScalarBackend backend(std::move(inputs.imports), sink);
+    return compiledScalarCheckResult(
+        compileWithBackend(request.forExecutable(),
+                           std::move(inputs.compilation), backend, progress));
+  } catch (const std::exception &error) {
+    CheckResult result;
+    result.status = CheckStatus::ArtifactFailure;
+    result.driverDiagnostic =
+        "gti: compiled standard library: " + std::string(error.what());
+    return result;
+  }
 }
 
 CompiledScalarConsumerResult compileCompiledScalarConsumer(
@@ -847,7 +931,7 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
     if (owner.package != target.package || owner.target != target.target)
       return {};
     auto prepared = imports.empty()
-                        ? ScalarConsumerInputs{loadCompilationInputs(request)}
+                        ? CompiledLibraryInputs{loadCompilationInputs(request)}
                         : prepareScalarConsumer(request, imports, runtime);
     if (!prepared.compilation.succeeded())
       return {};
@@ -919,7 +1003,7 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
       (void)environment(request, toolchain.runtimeLibrary);
       auto prepared =
           consumers.empty()
-              ? ScalarConsumerInputs{loadCompilationInputs(request, progress)}
+              ? CompiledLibraryInputs{loadCompilationInputs(request, progress)}
               : prepareScalarConsumer(request, consumers,
                                       toolchain.runtimeLibrary, progress);
       auto &inputs = prepared.compilation;

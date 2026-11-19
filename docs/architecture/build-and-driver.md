@@ -3326,6 +3326,24 @@ by-value Point record. These allocation-free operations do not claim parity with
 whole-program inlining or complete F5 performance acceptance.
 
 
+### Precompiled standard library
+
+The native Linux x64 and macOS arm64 toolchains ship the 21 runtime functions
+of `std.cmath` as `share/gti/precompiled-stdlib/<target>/<profile>/cmath.gtilib`.
+Ordinary single-threaded, hosted LLVM project checks and builds select the
+matching default dev or release profile when an import or re-export reaches
+the module. The compiler reads the checked callable signatures and links the
+target object. The shared source companion supplies `constexpr std::abs` and
+the runtime declarations in both modes. Toolchains retain the implementation
+source for other profiles and source-based tooling.
+
+Staging builds these objects using its final compiler and runtime, then checks
+and runs an independent project with the implementation source removed. A
+source-only toolchain repack rebuilds the objects from the replacement library.
+Bundle compatibility and object admission apply before executable cache reuse;
+the bundle digest participates in the cache key. Unsupported configurations
+use source. Serialized generic bodies and MIR are outside this first module.
+
 ### Compiled-library project requests
 
 A producer declares a reusable target and explicitly selects its public API:

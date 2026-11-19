@@ -1484,6 +1484,8 @@ buildCacheKey(const ExecutableBuildRequest &request,
               std::string &policyBypassDetail, bool compilationOnly = false) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
+  if (!inputs.standardLibraryBundleDigest.empty())
+    identity.add("stdlib.bundle", inputs.standardLibraryBundleDigest);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   if (embeddingBuild(request)) {
@@ -4195,6 +4197,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
+  std::vector<CompiledScalarImport> standardImports;
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
@@ -4244,7 +4247,18 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     compilationInputs.sources = result.compilation.sources;
     compilationInputs.sourceValid = true;
   } else {
-    compilationInputs = loadCompilationInputs(request.compilation(), progress);
+    try {
+      auto prepared = loadStandardLibraryInputs(
+          request.compilation(), request.toolchain().runtimeLibrary, progress);
+      compilationInputs = std::move(prepared.compilation);
+      standardImports = std::move(prepared.imports);
+      importedObjects = std::move(prepared.objects);
+    } catch (const std::exception &error) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.driverDiagnostic =
+          "gti: compiled standard library: " + std::string(error.what());
+      return result;
+    }
   }
   if (!compilationInputs.succeeded()) {
     result.compilation = compileToSelectedBackend(
@@ -4615,9 +4629,15 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!compiledLibrary && !compiledImport && !reusedObject)
-    result.compilation = compileToSelectedBackend(
-        request.compilation(), std::move(compilationInputs), progress);
+  if (!compiledLibrary && !compiledImport && !reusedObject) {
+    if (standardImports.empty())
+      result.compilation = compileToSelectedBackend(
+          request.compilation(), std::move(compilationInputs), progress);
+    else
+      result.compilation = compileWithLibraryImports(
+          request.compilation(), std::move(compilationInputs),
+          std::move(standardImports), progress);
+  }
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =

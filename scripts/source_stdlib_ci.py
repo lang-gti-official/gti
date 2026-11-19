@@ -205,11 +205,15 @@ def unpack(archive, stage):
         stream.extractall(stage, filter="data")
 
 
+def compiled_payload(stage):
+    return stage / "share/gti/precompiled-stdlib"
+
+
 def native_payload(stage):
     rows = []
     for path in sorted(stage.rglob("*")):
         name = path.relative_to(stage).as_posix()
-        if name.startswith("share/gti/stdlib/") or name in {"share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json", "share/gti/LSP_COMPATIBILITY.json"}:
+        if name.startswith(("share/gti/stdlib/", "share/gti/precompiled-stdlib/")) or name in {"share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json", "share/gti/LSP_COMPATIBILITY.json"}:
             continue
         if path.is_symlink():
             rows.append((name, "link", os.readlink(path)))
@@ -241,7 +245,7 @@ def seal(plan_doc, stage, platform, root=ROOT):
         raise ValueError("candidate moved after testing")
     proof = json.loads((stage.parent / f"source-native-{platform}.json").read_text())
     if proof != {"sha": plan_doc["head"], "compiler_origin": plan_doc["compiler_origin"],
-                 "native_payload": native_payload(stage), "platform": platform}:
+                 "native_payload": native_payload(stage), "compiled_stdlib": source_digest(compiled_payload(stage)), "platform": platform}:
         raise ValueError("native payload changed during testing")
     if source_digest(stage / "share/gti/stdlib") != source_digest(root / "stdlib"):
         raise ValueError("packaged library differs from tested source")
@@ -278,6 +282,12 @@ def prepare(plan_doc, platform, directory, stage, root=ROOT):
         if path.is_symlink():
             raise ValueError("source stdlib cannot contain symlinks")
     shutil.copytree(root / "stdlib", metadata / "stdlib")
+    # Rebuild the distributed GTI objects from the replacement sources using
+    # the exact proven compiler. The compiler and runtime still compare byte-for-byte.
+    import build_stdlib_bundles
+    if compiled_payload(stage).exists():
+        shutil.rmtree(compiled_payload(stage))
+    build_stdlib_bundles.build(stage, root)
     # A library change changes the compatible LSP resource set even when the
     # native compiler is reused. Never retain the old component identity.
     import lsp_compatibility
@@ -287,7 +297,7 @@ def prepare(plan_doc, platform, directory, stage, root=ROOT):
     if native_payload(stage) != original_payload:
         raise ValueError("source replacement altered the native payload")
     (stage.parent / f"source-native-{platform}.json").write_text(json.dumps({"sha": head,
-        "compiler_origin": origin, "native_payload": original_payload, "platform": platform}, sort_keys=True) + "\n")
+        "compiler_origin": origin, "native_payload": original_payload, "compiled_stdlib": source_digest(compiled_payload(stage)), "platform": platform}, sort_keys=True) + "\n")
 
 
 def selected_tests(entries, inventory, paths, root=ROOT):

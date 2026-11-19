@@ -226,6 +226,7 @@ struct CompilationInputs {
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
   bool sourceValid = false;
+  std::string standardLibraryBundleDigest;
 
   [[nodiscard]] bool succeeded() const { return sourceValid; }
 };
@@ -271,6 +272,10 @@ struct CheckResult {
 [[nodiscard]] CheckResult
 checkCompilation(const CompilationRequest &request,
                  ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request,
+                                           CompilationInputs inputs,
+                                           ProgressObserver *progress);
 
 [[nodiscard]] CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress = nullptr,

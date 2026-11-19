@@ -1751,6 +1751,13 @@ unknown versions, forged but well-checksummed invalid metadata, unsupported targ
 and duplicate/conflicting dependency cases. Check native execution and cleanup,
 not only successful linking. C embedding keeps its own existing ABI tests.
 
+The first standard-library distribution slice uses the ordinary typed bundle
+for the runtime portion of `std.cmath` on hosted Darwin arm64 and Linux x64.
+Its installed acceptance checks both default profiles from an independent
+project with the implementation removed. The public constexpr companion still
+uses source. The remaining F1–F5 obligations, including general generic and MIR
+distribution, remain open.
+
 F0 intentionally has no runnable GTI example: it changes no language/build surface.
 F2/F4 must ship a runnable multi-module library/consumer example and inventory
 updates with the first user-visible compiled-library mode. `.gtimeta` remains

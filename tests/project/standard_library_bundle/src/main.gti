@@ -1,0 +1,10 @@
+// The same public import supplies early constants and separately linked calls.
+import "math.gti";
+
+static_assert(std::abs(-3.5) == 3.5);
+
+int main() {
+  if (std::sqrt(9.0) != 3.0 || std::floor(-1.5) != -2.0) { return 1; }
+  if (!std::isnan(std::sqrt(-1.0))) { return 2; }
+  return 0;
+}
