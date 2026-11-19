@@ -1,0 +1,5 @@
+// Exact default-expression types remain preferred over fitting constant conversions.
+//@ run-pass
+int pick(int value) { return 1; }
+int pick(uint64_t value) { return 2; }
+int main() { return pick(32 * 32) == 1 ? 0 : 1; }

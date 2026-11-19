@@ -16,6 +16,7 @@
 #include "semantic_body_context.h"
 #include "semantic_declaration_index.h"
 #include "semantic_diagnostics.h"
+#include "semantic_overload_set.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
 
@@ -1506,7 +1507,7 @@ private:
     SemanticMoveOrigins moveOrigins;
     std::vector<RawPointerOrigin> rawPointerOrigins;
     std::vector<ProjectedRawPointerOrigins> rawPointerFields;
-    std::vector<CallableCandidate> overloads;
+    SemanticOverloadSet<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
@@ -4458,7 +4459,7 @@ private:
   [[nodiscard]] bool
   contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
                                        const SemanticType &argument,
-                                       const ExprPtr &expression) const;
+                                       const ExprPtr &expression);
 
   SemanticType
   adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
@@ -7035,6 +7036,12 @@ private:
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
 
+  [[nodiscard]] static bool
+  isContextualIntegerArithmetic(const Expr *expression);
+  SemanticType
+  materializeContextualIntegerArithmetic(const Expr &expression,
+                                         const SemanticType &target);
+
   // A written integer literal with a numeric suffix (`10u8`), optionally
   // parenthesized and optionally carrying one sign. Its type is the suffix
   // type; it never adopts a contextual type.
@@ -7099,6 +7106,9 @@ private:
     bool negative = false;
     std::uint64_t magnitude = 0;
   };
+
+  [[nodiscard]] std::optional<IntegerConstant>
+  contextualIntegerConstant(const Expr *expression);
 
   [[nodiscard]] static bool integerFits(SemanticType type,
                                         IntegerConstant value);
@@ -7257,15 +7267,12 @@ private:
     SemanticCatalog(const SemanticCatalog &other);
     SemanticCatalog &operator=(const SemanticCatalog &other);
     void rebindCallables(Symbol &symbol) const;
+    template <typename Visit> void forEachSymbol(Visit visit);
     void rebindCallables();
 
     void clear() { *this = SemanticCatalog{}; }
     [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
-    void seal() {
-      assert(!sealed);
-      sealedShape = shape();
-      sealed = true;
-    }
+    void seal();
 
     void assertUnchangedSinceSeal() const {
       assert(sealed);

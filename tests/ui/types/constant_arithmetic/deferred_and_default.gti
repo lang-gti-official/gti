@@ -1,0 +1,9 @@
+// Deferred brace arguments and default parameters share checked constant arithmetic.
+//@ run-pass
+uint64_t take(int values[2], uint64_t count) { return count; }
+uint64_t defaulted(uint64_t value = 32 * 32) { return value; }
+uint64_t direct(uint64_t value) { return value; }
+int main() {
+  auto item = direct;
+  return take({1, 2}, 32 * 32) == 1024 && defaulted() == 1024 && item(16 * 16) == 256 ? 0 : 1;
+}

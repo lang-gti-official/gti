@@ -1,0 +1,6 @@
+// Converting a constant argument preserves evaluation of subsequent effectful arguments.
+//@ run-pass
+mut int calls = 0;
+int next() { calls += 1; return calls; }
+int use(uint64_t count, int value) { return count == 1024 ? value : 99; }
+int main() { int value = use(32 * 32, next()); return value == 1 && calls == 1 ? 0 : 1; }

@@ -637,6 +637,26 @@ ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and
 `Counter{3}` therefore resolve against `uint64_t` parameters, while
 `narrow(300)` against `uint8_t` and `twice(-1)` against `uint64_t` remain
 errors that name the literal's value.
+Checked constant arithmetic also participates in this fallback and in integer
+initialization, assignment, and return. An eligible expression is built entirely
+from unsuffixed integer literals, parentheses, unary `+`, `-`, or `~`, and the
+built-in `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, or `>>` operators. Its
+ordinary typed arithmetic must evaluate successfully under the constant-evaluation
+limits, and its final value must fit the destination. `take_u64(32 * 32)` and
+`uint8_t small = (200 + 100) - 200;` therefore work without casts. The destination
+does not change intermediate widths or signedness: a wider parameter cannot
+rescue `(2147483647 + 1) - 1` from checked `int32_t` overflow. Negative results
+cannot convert to unsigned types. Exact overloads still win; multiple fitting
+fallbacks are still ambiguous and generic inference is unchanged.
+
+This extension does not retype named constants/values, suffixed literals,
+explicit casts, calls, or expressions containing them. Their written types retain
+the existing conversion rules. It is a semantic constant query, independent of
+optimization level; the checked result is materialized through the ordinary
+constant scalar boundary. Already permitted value-assignment conversions retain
+their existing runtime semantics; this is not an implicit `constexpr` declaration. Existing integer-literal operand contextualization
+below remains a separate rule.
+
 See [example 186](../../examples/186-literal-call-arguments.gti) for a
 source-defined window API and exact-overload preference. Adding an exact
 overload later can redirect a literal call; callers needing a fixed signature
