@@ -1,0 +1,26 @@
+// A constrained conversion accepts unrelated error types without overloads.
+//@ run-pass
+struct First { int code; First(int code) : code(code) {} };
+struct Second { int code; Second(int code) : code(code) {} };
+enum Error { detail(int code) };
+int error_code(First& error) { return error.code; }
+int error_code(Second& error) { return error.code; }
+concept coded<E> = requires(E& error) { { error_code(error) } -> int; };
+for <E> concept std::from<Error, E> requires coded<E> {
+  Error from(E error) { return Error::detail(error_code(error)); }
+};
+expected<void, Error> convert<E>(E error) requires coded<E> {
+  expected<int, E> result = unexpected(std::move(error));
+  int ignored = ?std::move(result);
+  return;
+}
+int code(Error error) {
+  switch (error) { case Error::detail(value): return value; }
+}
+int main() {
+  auto first = convert(First(17));
+  auto second = convert(Second(25));
+  auto explicit_value = std::from<Error, First>::from(First(42));
+  return !first.has_value() && !second.has_value() &&
+    code(first.error()) + code(second.error()) == code(explicit_value) ? 0 : 1;
+}

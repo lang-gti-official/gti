@@ -6862,6 +6862,7 @@
       "source": "stdlib/prelude.gti",
       "status": "executable",
       "operations": [
+        "std::from",
         "std::tryable"
       ],
       "case_ids": [
@@ -6875,14 +6876,16 @@
         "residual as the return type",
         "temporary, moved and named copyable operands",
         "shared and exclusive borrowed success results",
-        "borrowed-result contract inactive for owned concrete payloads"
+        "borrowed-result contract inactive for owned concrete payloads",
+        "registered residual and error payload conversions, including constrained generic policies"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
         "tests/ui/expected/tryable_propagation.gti",
         "tests/ui/expected/tryable_propagation",
         "tests/ui/generics/protocol_concepts",
-        "examples/165-borrowed-payload-results.gti"
+        "examples/165-borrowed-payload-results.gti",
+        "tests/ui/expected/from"
       ]
     },
     {

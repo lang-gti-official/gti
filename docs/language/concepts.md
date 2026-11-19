@@ -1278,14 +1278,14 @@ are explicit consumer contracts; they are not declared implicitly on a family.
 ### Conformance blocks
 
 The block applies the concept to one pattern per concept parameter. Each
-pattern is either a concrete type, or one class or enum template, pointer or
+pattern is a concrete type, a block type parameter, or one class or enum template, pointer or
 fixed-length array type applied to block type parameters, in any order, such
 as `Box<T>`, `Pair<K, V>`, an enum `result<T, E>`, `expected<T, E>`, `T*` or
 `T[3]`. A pointer pattern keeps its access and an
 array pattern its length, so `T*`, `const T*`, `T[3]` and `T[4]` are four
 different patterns; an array length cannot be a block parameter. A bare
-parameter, such as `T` on its own, and a nested pattern, such as
-`Box<Box<T>>` or `T**`, are not patterns. Every block parameter appears in
+parameter such as `T` matches one whole type. Nested patterns such as
+`Box<Box<T>>` or `T**` are not patterns. Every block parameter appears in
 some pattern. A parameter may appear more than once, within one pattern or
 across several, and then every occurrence must bind the same type:
 `Tally<T>, Tally<T>` matches two tallies of the same kind only.
@@ -1293,7 +1293,8 @@ across several, and then every occurrence must bind the same type:
 The block defines every associated type with one `using`, and every
 operation with one function. Each function has exactly the concept's
 signature after substituting the patterns for the parameters and the block's
-types for the associated types. A block defines nothing else.
+types for the associated types. A block defines nothing else. An operation may share its enclosing concept's
+name (`C<T>::C`); associated types and parameter names remain distinct.
 
 A block may have a trailing requirement, using the same conjunction and
 disjunction syntax as a function:
@@ -1355,9 +1356,12 @@ at least one pattern, as for
 [exact class specializations](../decisions/020-exact-qualified-class-specializations.md).
 No package owns a pointer, an array or another built-in type, so a block
 whose patterns are all built-in types belongs in the concept's package.
-Because no pattern is a bare parameter, overlapping blocks in two different
-packages would require each package to depend on the other, which package
-dependencies rule out.
+For a foreign concept, no bare parameter may precede the first locally owned
+nominal argument. A parameter inside a nominal pattern is covered by that
+pattern; a bare parameter does not establish ownership. Overlap checking unifies
+whole heads with repeated bindings and rejects any common finite instance,
+regardless of requirements. An occurs check distinguishes genuinely disjoint
+recursive equations; budget exhaustion conservatively rejects potential overlap.
 All blocks register before bodies are analyzed, so the block that applies
 does not depend on include order.
 

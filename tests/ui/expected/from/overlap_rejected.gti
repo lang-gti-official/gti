@@ -1,0 +1,10 @@
+// Overlapping conversion registrations are rejected rather than ranked.
+enum Source { failed };
+enum Target { failed };
+for <E> concept std::from<Target, E> {
+  Target from(E error) { return Target::failed; }
+};
+for concept std::from<Target, Source> {  //~ ERROR GTI-S2123 overlaps another
+  Target from(Source error) { return Target::failed; }
+};
+int main() { return 0; }

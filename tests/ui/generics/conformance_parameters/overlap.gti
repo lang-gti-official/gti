@@ -1,0 +1,8 @@
+// A bare-parameter family cannot overlap a concrete conformance.
+concept reading<A, B> { int read(A a, B b); };
+struct Local { Local() = default; };
+for <T> concept reading<Local, T> { int read(Local a, T b) { return 1; } };
+for concept reading<Local, int> {  //~ ERROR GTI-S2123 overlaps another
+  int read(Local a, int b) { return 2; }
+};
+int main() { return 0; }

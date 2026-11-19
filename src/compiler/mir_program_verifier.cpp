@@ -17033,6 +17033,21 @@ public:
                 "evidence for every reachable normal return"));
       }
     }
+    if (function && !function->completeReturnBorrow &&
+        function->returnBorrowOrigin == BorrowOriginKind::Global &&
+        !function->returnBorrowPlace &&
+        (function->returnType.kind == SemanticType::Class ||
+         function->returnType.kind == SemanticType::Enum)) {
+      // A static carrier has no input dependency contract. Its body can
+      // nevertheless prove that every normal return selects an alternative
+      // without references (for example, a source-defined error adapter).
+      // Propagate only that independently reconstructed empty set, never an
+      // absent contract, an unknown body, or a vacuous non-returning proof.
+      auto observed = reconstruct(*function);
+      if (observed && observed->dependencies.empty() &&
+          wellFormed(*function, *observed))
+        summaries[id - 1] = std::move(*observed);
+    }
     states[id - 1] = State::Complete;
     return summaries[id - 1] ? &*summaries[id - 1] : nullptr;
   }

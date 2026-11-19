@@ -5678,6 +5678,45 @@ private:
       residualReturnId = residualReturn.id;
       body.values.push_back(std::move(residualReturn));
     }
+    if (plan.returnConversion) {
+      const auto &call = *plan.returnConversion;
+      const FunctionInfo *target = baseModel->findFunction(call.function);
+      if (target == nullptr || plan.returnConstruction) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      const auto instance = enqueueFunction(
+          *target, {}, {}, call.typeArguments, call.valueArguments,
+          call.returnType, call.parameterTypes, site);
+      const auto arguments =
+          orderedArguments({*residual}, call.parameterTypes, body);
+      if (instance == 0 || !arguments) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      (void)enqueueClass(call.returnType);
+      HirValue residualReturn{
+          .id = nextValueId++,
+          .kind = HirValueKind::Call,
+          .info = {.type = call.returnType,
+                   .category = ValueCategory::Value,
+                   .access = AccessMode::ReadOnly,
+                   .traits = instanceProvider->traitsFor(call.returnType)},
+          .operands = {*residual},
+          .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
+          .borrowOrigin = call.borrowOrigin,
+          .borrowArgument = call.borrowArgument,
+          .borrowAccess = call.borrowAccess,
+          .borrowArguments = call.borrowArguments,
+          .borrowFields = call.borrowFields,
+          .dispatch = CallDispatch::Static,
+          .callPlan =
+              HirCallPlan{.receiver = std::nullopt, .arguments = *arguments},
+          .functionTarget = instance,
+      };
+      residualReturnId = residualReturn.id;
+      body.values.push_back(std::move(residualReturn));
+    }
 
     std::vector<HirValueId> operands{*operand, *test, *success, *residual};
     if (residualReturnId != 0) {

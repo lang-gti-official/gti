@@ -1220,9 +1220,9 @@ reuse ordinary instance analysis in isolated workers keyed by declaration and
 exact owner/type/value arguments. Recursive or unavailable evidence stays
 unknown; a callable with no normal return does not obtain a vacuous empty
 contract. The synthetic residual return of a prefix `?` contributes its
-selected conversion's complete set, with no dependency and the constructor's
-alternatives as guards; only a conversion without a complete construction
-contract leaves `bodyFlow.unknownImplicitResultReturn` set. Explicit
+selected constructor or `std::from` call's complete set, with no input
+dependency and its result alternatives as guards; only a conversion without
+a complete return contract leaves `bodyFlow.unknownImplicitResultReturn` set. Explicit
 unknown entries shadow base-model facts during concrete reanalysis. These
 contracts carry typed alternative inventories and declaration-relative mappings,
 never callee-local loan/place IDs. Guarded nonempty mappings remain a separate

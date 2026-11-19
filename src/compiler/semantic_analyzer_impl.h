@@ -5302,10 +5302,12 @@ private:
   protocolOperationCall(const RegisteredConformance &conformance,
                         const std::vector<SemanticType> &binding,
                         std::size_t operation) const;
-  [[nodiscard]] bool
-  selectResidualReturn(const Unary &expr, const SemanticType &returnType,
-                       const SemanticType &residualType,
-                       std::optional<ResolvedConstructionInfo> &construction);
+  [[nodiscard]] bool selectResidualReturn(
+      const Unary &expr, const SemanticType &returnType,
+      const SemanticType &residualType,
+      std::optional<ResolvedConstructionInfo> &construction,
+      std::optional<ResolvedCallInfo> &conversion,
+      std::optional<SemanticBorrowDependencySet> &conversionBorrow);
   [[nodiscard]] SemanticType
   analyzeTryablePropagation(const Unary &expr, const SemanticType &operandType);
   void reportConformanceError(const Token &site, std::string message,
