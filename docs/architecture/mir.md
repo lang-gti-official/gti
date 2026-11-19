@@ -3509,13 +3509,16 @@ construction whose callee summary it instantiates over its inputs' sets
 verifier's call reconstruction): each supplier is available, impossible
 under the input's alternatives, or unknown, and the restricted result domain
 gives the owners and alternatives. A place passed to a reference formal stays
-below the borrow its call-input stage took; a reference result read from a
-carrier binding reborrows the binding's Stored group; a constructed carrier's
-owners hang below its published group. These sets publish call-result loans,
-decide known dependency-free alternatives, and annotate payload constructions,
-call results and local reads and moves as evidence the program verifier checks
-against its own reconstruction; MIR no longer reads semantic per-value
-dependency sets. A local's set after an `if` joins both branches' owners and
+below the borrow its call-input stage took. When the input is an unprojected
+reference returned by a call, the producer retains the accessor's exact loan
+and all of its owners. The staged input supplies the actual returned address.
+A direct owned field projected from a reference formal instead supplies the
+exact field place, even when the entry loan protects the entire formal.
+A reference result read from a carrier binding reborrows the binding's Stored
+group. A constructed carrier's owners hang below its published group.
+These sets publish call-result loans, decide known dependency-free alternatives,
+and annotate payload constructions, call results and local reads and moves.
+The program verifier checks each annotation against its own reconstruction. A local's set after an `if` joins both branches' owners and
 alternatives; a loop forgets every local set, a `switch` keeps only sets no arm
 changed, and lending a local mutably forgets its set.
 
