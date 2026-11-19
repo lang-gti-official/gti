@@ -194,6 +194,8 @@ SemanticVisitor::Impl::diagnoseEditedBody(
         !diagnostic.related.empty() || !diagnostic.fixes.empty())
       return std::nullopt;
   }
+  if (input.verify && worker->diagnostics.empty())
+    return input.verify(worker->model(), *worker, function->id);
   return worker->diagnostics;
 }
 

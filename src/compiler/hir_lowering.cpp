@@ -23,6 +23,34 @@ public:
         trustedSources(scope.trustedSources.begin(),
                        scope.trustedSources.end()) {}
 
+  HirLoweringResult lowerEditedFunction(const SemanticModel &model,
+                                        SemanticInstanceProvider &provider,
+                                        FunctionId root,
+                                        const BlockStmt &changed) {
+    initialize(model, provider);
+    // This closure has no claim to the complete program's statement inventory.
+    output.program.semanticAnalysisSeal = {
+        .programSnapshot = model.analysisSeal().programSnapshot,
+        .target = target,
+        .sourceGraph = model.analysisSeal().sourceGraph};
+    const auto *function = model.findFunction(root);
+    if (!function || !function->bodyDeclaration() ||
+        !enqueueFunction(*function, {}, {}, {}, {}, function->returnType,
+                         function->parameterTypes)) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
+    editedDeclaration = function->bodyDeclaration();
+    replacementBody = &changed;
+    ensurePlaceDomain(output.program.moduleBody);
+    processPendingInstances();
+    finishSourceDebugInventory();
+    output.program.valid_ = output.requiredSemanticBodies.empty() &&
+                            !hasErrorDiagnostics(output.diagnostics) &&
+                            lifecycleValid;
+    return std::move(output);
+  }
+
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       FunctionId root, const std::vector<FunctionId> &completedFunctions,
@@ -241,6 +269,8 @@ private:
                   SemanticInstanceProvider &provider) {
     instanceProvider = &provider;
     baseModel = &semantics;
+    editedDeclaration = nullptr;
+    replacementBody = nullptr;
     output = {};
     output.program.nativeObjectLayout_ = semantics.requiresNativeObjectLayout();
     output.program.executionProfile_ = target.executionProfile;
@@ -2571,10 +2601,12 @@ private:
     for (const Parameter &parameter : bodyDeclaration->parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, *model, body));
     }
-    if (bodyDeclaration->body()) {
-      body.roots =
-          lowerStatements(bodyDeclaration->body()->statements(), *model,
-                          classArguments, classValueArguments, body);
+    const BlockStmt *block = editedDeclaration == bodyDeclaration
+                                 ? replacementBody
+                                 : bodyDeclaration->body().get();
+    if (block) {
+      body.roots = lowerStatements(block->statements(), *model, classArguments,
+                                   classValueArguments, body);
     }
     finalizeLifetimes(body, *model);
     ensurePlaceDomain(body);
@@ -7900,6 +7932,8 @@ private:
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;
+  const FunctionDecl *editedDeclaration = nullptr;
+  const BlockStmt *replacementBody = nullptr;
   bool constantClosure = false;
   std::size_t discoveryDepth = 0;
   std::optional<SourceSpan> discoverySite;
@@ -7956,6 +7990,13 @@ HirLoweringResult
 HirLowerer::lower(const Program &source, const SemanticModel &semantics,
                   SemanticInstanceProvider &instanceProvider) {
   return impl->lower(source, semantics, instanceProvider);
+}
+
+HirLoweringResult
+HirLowerer::lowerEditedFunction(const SemanticModel &model,
+                                SemanticInstanceProvider &provider,
+                                FunctionId root, const BlockStmt &changed) {
+  return impl->lowerEditedFunction(model, provider, root, changed);
 }
 
 HirLoweringResult HirLowerer::lowerConstantFunction(

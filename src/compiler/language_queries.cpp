@@ -1457,12 +1457,18 @@ public:
     if (occurrence == nullptr) {
       return std::nullopt;
     }
-    if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
-                                       snapshot.sourceGraph)) {
+    return renderHover(snapshot.program, snapshot.semantics,
+                       snapshot.sourceGraph, sourceUnit, occurrence);
+  }
+
+  std::optional<HoverInfo>
+  renderHover(const Program &program, const SemanticModel &semantics,
+              const SourceGraph &graph, SourceUnitId sourceUnit,
+              const SemanticOccurrence *occurrence) const {
+    if (!semantics.canPresent(sourceUnit, *occurrence, graph)) {
       return std::nullopt;
     }
 
-    const SemanticModel &semantics = snapshot.semantics;
     const SignaturePrinter signatures(semantics);
     const SemanticTypePrinter types(semantics);
     HoverInfo result{.range = occurrence->span};
@@ -1576,7 +1582,7 @@ public:
     }
     case SemanticOccurrenceKind::Symbol: {
       const SymbolRecord *symbol =
-          snapshot.semantics.database().findSymbol(occurrence->symbol);
+          semantics.database().findSymbol(occurrence->symbol);
       if (symbol == nullptr) {
         break;
       }
@@ -1589,8 +1595,8 @@ public:
         break;
       case SymbolKind::Concept:
         result.signature = signatures.conceptSignature(
-            *symbol, findConceptDeclaration(snapshot.program.declarations(),
-                                            symbol->nameSpan));
+            *symbol,
+            findConceptDeclaration(program.declarations(), symbol->nameSpan));
         break;
       case SymbolKind::Class:
       case SymbolKind::Struct:
@@ -1708,7 +1714,7 @@ public:
     if (occurrence->kind == SemanticOccurrenceKind::ClassType &&
         occurrence->classType != nullptr) {
       const ClassTypeInfo *type =
-          snapshot.semantics.findClassType(*occurrence->classType);
+          semantics.findClassType(*occurrence->classType);
       const auto capabilityNote = [](std::string_view name, bool capable,
                                      ConcurrencyCapabilityPolicy policy) {
         std::string note = capable ? std::string(name) + "-capable"
@@ -3061,6 +3067,27 @@ std::optional<HoverInfo> LanguageQueries::hover(const FrontendResult &snapshot,
                                   ";"};
   }
   return LanguageQueriesImpl().hover(snapshot, sourceUnit, byteOffset);
+}
+
+std::vector<HoverInfo>
+LanguageQueries::declarationHovers(const FrontendResult &parsed,
+                                   const SemanticModel &model) const {
+  const auto unit = parsed.sourceGraph.entryUnit();
+  std::vector<HoverInfo> result;
+  for (const auto &site : model.database().occurrences(unit)) {
+    if (!hasRole(site.roles, OccurrenceRole::Declaration) &&
+        !hasRole(site.roles, OccurrenceRole::Definition))
+      continue;
+    // Use the same winning occurrence as a hover on the completed snapshot.
+    if (site.span.start >= site.span.end ||
+        model.database().findOccurrence(unit, site.span.start) != &site ||
+        model.database().findOccurrence(unit, site.span.end - 1) != &site)
+      continue;
+    if (auto hover = LanguageQueriesImpl().renderHover(
+            parsed.program, model, parsed.sourceGraph, unit, &site))
+      result.push_back(std::move(*hover));
+  }
+  return result;
 }
 
 std::optional<MacroExpansionInfo>

@@ -155,7 +155,7 @@ the same program and source graph to semantic analysis, HIR and MIR. Publication
 runs outside the compiler crash guard and checks both the document generation
 and the inputs read by the parser. A parser quick fix can be applied at this
 stage while its root generation, source text and dependencies are still current.
-Only the completed snapshot serves navigation.
+Definition and reference lookups use the completed snapshot.
 
 On open, clients can request progressive diagnostics with the boolean
 `initializationOptions.openFileDiagnostics`. The bundled Neovim configuration
@@ -171,8 +171,12 @@ verification can still report errors for the same version.
 
 The worker performs the ordinary configured analysis and its verification
 fallbacks. It hands an owned diagnostic list to a publisher outside crash
-recovery and continues checking. Only the completed snapshot answers semantic
-queries. Each partial publication checks the root generation and the sources
+recovery and continues checking. At a successful primary type check, it also
+copies declaration hovers for the open document, including their ranges, types
+and documentation. A hover over a checked declaration can then complete while
+MIR verification runs. Hover over a use and other semantic queries wait for
+the completed snapshot. Edits and dependency changes invalidate these results.
+Each partial publication checks the root generation and the sources
 actually read, preserves other roots’ diagnostics, and finishes before the
 completed publication. Clients that omit the option receive the completed
 open-file result as before.
@@ -198,8 +202,16 @@ failed text for that root. If the user repairs the body with different text,
 the isolated checker can replay the failed body. It can withdraw the recovery
 diagnostics only when it reproduces the complete published set, including the
 source ranges and related information, and can check the new body. An error
-from another declaration or a MIR borrow rejection keeps the full check in
-charge of clearing it.
+from another declaration remains the responsibility of the full check.
+
+For an eligible body edit with valid types, the worker lowers that function
+and its concrete callees against the retained semantic facts. It runs the
+compiler’s MIR borrow and cleanup checks. A rejection owned by the edited
+function can publish immediately, together with its local loan locations.
+A subsequent repair can withdraw that rejection after the same checks pass.
+Clients that enable staged diagnostics see `borrowChecking` on these updates.
+Incomplete lowering, nonlocal findings or a changed dependency defer the
+answer to project verification.
 
 The complete frontend still checks callers, lifetimes, cleanup and MIR for
 every settled edit. Its diagnostics replace the partial result and its snapshot

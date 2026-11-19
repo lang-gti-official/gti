@@ -13,6 +13,8 @@ namespace lang {
 class InstanceAnalysisCache;
 class SemanticPreamble;
 class SourceManager;
+class SemanticInstanceProvider;
+
 struct EditedFunctionBody {
   const Program &program;
   const SemanticModel &model;
@@ -20,6 +22,9 @@ struct EditedFunctionBody {
   const SourceManager &sources;
   const FunctionDecl &declaration;
   const BlockStmt &body;
+  std::function<std::optional<std::vector<Diagnostic>>(
+      const SemanticModel &, SemanticInstanceProvider &, FunctionId)>
+      verify;
 };
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.

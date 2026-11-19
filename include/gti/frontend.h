@@ -246,8 +246,8 @@ public:
   takeFrom(const std::shared_ptr<FrontendResult> &snapshot);
   [[nodiscard]] bool matchesSource(std::string_view source) const;
   std::optional<std::vector<Diagnostic>>
-  check(const std::string &source,
-        const std::atomic<bool> *cancel = nullptr) const;
+  check(const std::string &source, const std::atomic<bool> *cancel = nullptr,
+        bool *borrowProof = nullptr) const;
 
   // A completed recovery pass may also diagnose the body it recovered.
   // Establish local ownership only if the isolated checker reproduces every
@@ -259,7 +259,8 @@ public:
 private:
   std::optional<std::vector<Diagnostic>>
   checkEdit(const std::string &source, const std::atomic<bool> *cancel,
-            std::optional<std::size_t> recoveryLimit) const;
+            std::optional<std::size_t> recoveryLimit,
+            bool *borrowProof = nullptr) const;
   explicit EditorBodyDiagnostics(
       const std::shared_ptr<FrontendResult> &snapshot);
   std::shared_ptr<const FrontendResult> baseline;
@@ -297,8 +298,9 @@ public:
   // type-check result. Generic discovery and MIR may add further diagnostics.
   // The observer is invocation-local and cannot escape through frontend caches.
   enum class DiagnosticStage { Declaration, TypeChecking };
-  using DiagnosticCheckpoint = std::function<void(
-      DiagnosticStage, const FrontendResult &, std::span<const Diagnostic>)>;
+  using DiagnosticCheckpoint =
+      std::function<void(DiagnosticStage, const FrontendResult &,
+                         const SemanticModel &, std::span<const Diagnostic>)>;
   [[nodiscard]] FrontendResult
   analyzeParsed(const std::filesystem::path &entryPath, FrontendResult parsed,
                 const DiagnosticCheckpoint &observer) const;

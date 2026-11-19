@@ -1859,7 +1859,15 @@ struct PendingSemanticRequest {
   SemanticRequestKind kind = SemanticRequestKind::Hover;
 };
 
+struct CheckedDeclarations {
+  std::vector<lang::HoverInfo> hovers;
+  std::unordered_map<std::string, std::uint64_t> dependencies;
+  std::unordered_map<std::string, std::uint64_t> documentGenerations;
+  lang::lsp::FrontendSourceSnapshot inputs;
+};
+
 struct DocumentAnalysis {
+  std::vector<lang::HoverInfo> declarationHovers;
   std::shared_ptr<const lang::EditorBodyDiagnostics> bodyContext;
   std::vector<LspDiagnostic> diagnostics;
   // Every loaded dependency's URI and the digest of the exact text read.
@@ -2752,12 +2760,17 @@ private:
       return;
     }
 
-    std::string value = markdownHover ? "```gti\n" + info->signature + "\n```"
-                                      : info->signature;
-    if (info->documentationMarkdown) {
-      value += "\n\n" + *info->documentationMarkdown;
+    sendHover(id, source, *info);
+  }
+
+  void sendHover(const JsonValue *id, const std::string &source,
+                 const lang::HoverInfo &hover) {
+    std::string value = markdownHover ? "```gti\n" + hover.signature + "\n```"
+                                      : hover.signature;
+    if (hover.documentationMarkdown) {
+      value += "\n\n" + *hover.documentationMarkdown;
     }
-    for (const std::string &note : info->notes) {
+    for (const std::string &note : hover.notes) {
       value += markdownHover ? "\n\n*" + note + "*" : "\n\n" + note;
     }
 
@@ -2766,14 +2779,43 @@ private:
                 {"contents",
                  JsonObject{{"kind", markdownHover ? "markdown" : "plaintext"},
                             {"value", value}}},
-                {"range", rangeJson(source, info->range.start,
-                                    info->range.end - info->range.start)}}));
+                {"range", rangeJson(source, hover.range.start,
+                                    hover.range.end - hover.range.start)}}));
   }
 
   // Shared snapshot acquisition for semantic requests: answer from the
   // current-generation snapshot, or queue the request until analysis
   // publishes one for the document's current generation.
+  std::optional<lang::HoverInfo>
+  checkedHoverLocked(const std::string &uri, const JsonValue *params,
+                     const std::string &source) const {
+    const auto found = checkedDeclarations.find(uri);
+    if (found == checkedDeclarations.end())
+      return std::nullopt;
+    const auto position = positionMember(member(params, "position"));
+    if (!position)
+      return std::nullopt;
+    const auto offset = SourcePositionIndex(source).byteOffset(*position);
+    if (!offset)
+      return std::nullopt;
+    const auto &checked = found->second;
+    const auto after =
+        std::upper_bound(checked.hovers.begin(), checked.hovers.end(), *offset,
+                         [](std::size_t at, const lang::HoverInfo &hover) {
+                           return at < hover.range.start;
+                         });
+    if (after == checked.hovers.begin())
+      return std::nullopt;
+    const auto &hover = *std::prev(after);
+    if (*offset >= hover.range.end ||
+        !sourceInputsCurrentLocked(checked.dependencies,
+                                   checked.documentGenerations, checked.inputs))
+      return std::nullopt;
+    return hover;
+  }
+
   struct SnapshotAccess {
+    std::optional<lang::HoverInfo> earlyHover;
     std::string source;
     AnalysisSnapshot snapshot;
     bool current = false;
@@ -2800,6 +2842,13 @@ private:
         access.current = true;
       } else if (id != nullptr && document != documents.end() &&
                  generation != analysisGenerations.end()) {
+        if (kind == SemanticRequestKind::Hover) {
+          access.earlyHover = checkedHoverLocked(uri, params, document->second);
+          if (access.earlyHover) {
+            access.source = document->second;
+            return access;
+          }
+        }
         pendingSemanticRequests.push_back({.id = *id,
                                            .params = params != nullptr
                                                          ? JsonValue(*params)
@@ -2829,6 +2878,10 @@ private:
     }
     const SnapshotAccess access =
         acquireSnapshotOrQueue(id, params, uri, SemanticRequestKind::Hover);
+    if (access.earlyHover) {
+      sendHover(id, access.source, *access.earlyHover);
+      return;
+    }
     if (!access.current) {
       if (!access.queued) {
         sendJson(response(id, nullptr));
@@ -4221,6 +4274,7 @@ private:
     cancelBodyQueryLocked();
     bodyRecovery.reset();
     lastBodyDiagnostics.clear();
+    lastBodyBorrowProof = false;
   }
 
   void runBodyWorker() {
@@ -4228,6 +4282,7 @@ private:
       BodyEdit request;
       std::shared_ptr<const BodyBaseline> baseline;
       std::shared_ptr<const BodyRecovery> recovery;
+      bool checkBorrows = false;
       {
         std::unique_lock lock(stateMutex);
         bodyCondition.wait(
@@ -4238,6 +4293,8 @@ private:
         pendingBodyQuery.reset();
         baseline = bodyBaseline;
         recovery = bodyRecovery;
+        checkBorrows =
+            !recovery && (lastBodyDiagnostics.empty() || lastBodyBorrowProof);
         if (!baseline || !sourceInputsCurrentLocked(
                              baseline->dependencies,
                              baseline->documentGenerations, baseline->inputs))
@@ -4248,9 +4305,11 @@ private:
       std::optional<std::vector<lang::Diagnostic>> answer;
       const bool verified = baseline->context->matchesSource(request.source);
       bool reproduced = false;
+      bool borrowProof = false;
       try {
-        answer = baseline->context->check(request.source,
-                                          request.cancellation.get());
+        answer =
+            baseline->context->check(request.source, request.cancellation.get(),
+                                     checkBorrows ? &borrowProof : nullptr);
         // A recovery pass may diagnose both a missing expression and the
         // resulting incomplete function. Only retire its published set if
         // the same isolated checker can account for every diagnostic.
@@ -4309,11 +4368,14 @@ private:
         for (const auto &d : previous->second)
           affected.insert(d.uri);
         bodyRecovery.reset();
+        lastBodyBorrowProof = borrowProof;
         lastBodyDiagnostics = std::move(*answer);
         diagnosticsByRoot[request.uri] = std::move(current);
         publications = publicationsForLocked(affected);
       }
-      publish(std::move(publications));
+      publish(std::move(publications), borrowProof && progressiveOpenDiagnostics
+                                           ? "borrowChecking"
+                                           : "");
     }
   }
 
@@ -4588,8 +4650,7 @@ private:
   GuardedAnalysis runIsolatedAnalysis(const AnalysisRequest &request,
                                       const ProjectAnalysisInputs &project) {
     const auto path = filePathFromUri(request.uri);
-    const bool opening = progressiveOpenDiagnostics &&
-                         request.trigger == AnalysisTrigger::Opened;
+    const bool opening = request.trigger == AnalysisTrigger::Opened;
     if (request.audit ||
         (!opening && request.trigger != AnalysisTrigger::DocumentChanged) ||
         !path || !project.configurationValid)
@@ -4601,10 +4662,8 @@ private:
         [&] { return parseDocument(*path, request, project, parsed); });
     if (syntax.status != GuardedAnalysisStatus::Completed)
       return syntax;
-    publishSyntax(request, *syntax.analysis);
-    if (!opening)
-      return isolatedStep(
-          [&] { return analyzeDocument(request, project, &parsed); });
+    if (!opening || progressiveOpenDiagnostics)
+      publishSyntax(request, *syntax.analysis);
 
     // The compiler keeps running on its stack-sized worker. Only a finished,
     // independently owned diagnostic packet crosses its crash boundary.
@@ -4633,8 +4692,11 @@ private:
           request, project, &parsed,
           [&](lang::Frontend::DiagnosticStage stage,
               const lang::FrontendResult &checked,
+              const lang::SemanticModel &model,
               std::span<const lang::Diagnostic> diagnostics) {
-            if (checkpoint)
+            if (checkpoint ||
+                (stage == lang::Frontend::DiagnosticStage::Declaration &&
+                 (!opening || !progressiveOpenDiagnostics)))
               return;
             auto packet = std::make_unique<DocumentAnalysis>();
             packet->rootPath = syntax.analysis->rootPath;
@@ -4650,6 +4712,10 @@ private:
                                  lang::DiagnosticSeverity::Error;
                     }))
               return;
+            if (!declaration && checked.semanticValid) {
+              packet->declarationHovers =
+                  lang::LanguageQueries().declarationHovers(checked, model);
+            }
             stageName = declaration ? "declaration" : "typeChecking";
             checkpoint = std::move(packet);
             signal();
@@ -4837,32 +4903,53 @@ private:
   }
 
   void publishOpenFile(const AnalysisRequest &request,
-                       const DocumentAnalysis &checked,
-                       std::string_view stage) {
+                       DocumentAnalysis &checked, std::string_view stage) {
     const std::lock_guard publicationLock(analysisPublicationMutex);
     std::vector<DiagnosticPublication> publications;
+    std::vector<std::pair<JsonValue, lang::HoverInfo>> replies;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
       if (stoppingAnalysis || generation == analysisGenerations.end() ||
           generation->second != request.generation ||
           !documents.contains(request.uri) ||
-          analysisSnapshots.contains(request.uri) ||
           !sourceInputsCurrentLocked(checked.dependencies,
                                      request.documentGenerations,
                                      request.frontendSources))
         return;
-      auto &previous = diagnosticsByRoot[request.uri];
-      // A partial result is additive. An earlier analysis or another root
-      // may already have reported an ownership error at this location.
-      if (!previous.empty())
-        return;
-      for (const auto &diagnostic : checked.diagnostics)
-        if (diagnostic.uri == request.uri)
-          previous.push_back(diagnostic);
-      publications = publicationsForLocked({request.uri});
+      if (!checked.declarationHovers.empty()) {
+        checkedDeclarations[request.uri] = {
+            std::move(checked.declarationHovers), checked.dependencies,
+            request.documentGenerations, request.frontendSources};
+        for (auto it = pendingSemanticRequests.begin();
+             it != pendingSemanticRequests.end();) {
+          if (it->uri == request.uri && it->generation == request.generation &&
+              it->kind == SemanticRequestKind::Hover) {
+            if (auto hover = checkedHoverLocked(request.uri, &it->params,
+                                                request.source)) {
+              replies.emplace_back(it->id, std::move(*hover));
+              it = pendingSemanticRequests.erase(it);
+              continue;
+            }
+          }
+          ++it;
+        }
+      }
+      if (request.trigger == AnalysisTrigger::Opened &&
+          progressiveOpenDiagnostics &&
+          !analysisSnapshots.contains(request.uri)) {
+        auto &previous = diagnosticsByRoot[request.uri];
+        if (previous.empty()) {
+          for (const auto &diagnostic : checked.diagnostics)
+            if (diagnostic.uri == request.uri)
+              previous.push_back(diagnostic);
+          publications = publicationsForLocked({request.uri});
+        }
+      }
     }
     publish(std::move(publications), stage);
+    for (const auto &[id, hover] : replies)
+      sendHover(&id, request.source, hover);
   }
 
   void publishAnalysis(const AnalysisRequest &request,
@@ -4900,6 +4987,7 @@ private:
             advanceAnalysisGenerationLocked(request.uri),
             AnalysisTrigger::DependencyChanged);
       } else {
+        checkedDeclarations.erase(request.uri);
         for (const auto &[path, identity] : analysis.sourceIdentities) {
           frontendSnapshots.publish(path, identity);
         }
@@ -4928,6 +5016,7 @@ private:
           if (!std::ranges::equal(analysis.diagnostics, lastBodyDiagnostics, {},
                                   &LspDiagnostic::diagnostic)) {
             lastBodyDiagnostics.clear();
+            lastBodyBorrowProof = false;
             if (analysis.frontend && analysis.frontend->sourceValid &&
                 !analysis.frontend->syntaxValid &&
                 !analysis.frontend->mirValid &&
@@ -5264,6 +5353,7 @@ private:
         snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
       retireSnapshotLocked(std::move(snapshot->second.frontend));
     }
+    checkedDeclarations.erase(uri);
     return ++analysisGenerations[uri];
   }
 
@@ -5830,6 +5920,7 @@ private:
     std::vector<lang::Diagnostic> diagnostics;
   };
   std::shared_ptr<const BodyRecovery> bodyRecovery;
+  bool lastBodyBorrowProof = false;
   std::vector<lang::Diagnostic> lastBodyDiagnostics;
   struct BodyEdit {
     std::string uri;
@@ -5902,6 +5993,7 @@ private:
   bool stoppingAudit = false;
   bool auditRunning = false;
   std::deque<CompletionRequest> completionRequests;
+  std::unordered_map<std::string, CheckedDeclarations> checkedDeclarations;
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_map<std::string, ActiveCompletionRequest>
       activeCompletionRequests;
