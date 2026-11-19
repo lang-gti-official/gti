@@ -653,7 +653,8 @@ This extension does not retype named constants/values, suffixed literals,
 explicit casts, calls, or expressions containing them. Their written types retain
 the existing conversion rules. It is a semantic constant query, independent of
 optimization level; the checked result is materialized through the ordinary
-constant scalar boundary. Existing integer-literal operand contextualization
+constant scalar boundary. Already permitted value-assignment conversions retain
+their existing runtime semantics; this is not an implicit `constexpr` declaration. Existing integer-literal operand contextualization
 below remains a separate rule.
 
 See [example 186](../../examples/186-literal-call-arguments.gti) for a

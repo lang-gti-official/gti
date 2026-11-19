@@ -4597,6 +4597,7 @@ auto SemanticVisitor::Impl::analyzeInitializer(
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
   if (isInteger(expectedType) && isInteger(result) &&
+      !isAssignable(expectedType, result, expr.get()) &&
       isContextualIntegerArithmetic(expr.get()))
     result = materializeContextualIntegerArithmetic(*expr, expectedType);
   if (allowExactNullConstruction && expr &&
@@ -13838,6 +13839,10 @@ auto SemanticVisitor::Impl::contextualIntegerConstant(const Expr *expression)
 
 auto SemanticVisitor::Impl::materializeContextualIntegerArithmetic(
     const Expr &expression, const SemanticType &target) -> SemanticType {
+  // Preserve ordinary execution when no conversion is required. In
+  // particular, this facility is not an implicit constexpr declaration.
+  if (semanticModel.typeOf(expression) == target)
+    return target;
   const auto value = contextualIntegerConstant(&expression);
   if (!value || !integerFits(target, *value))
     return semanticModel.typeOf(expression);
