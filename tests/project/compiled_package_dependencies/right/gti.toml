@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "right-package"
+version = "1.0.0"
+[modules]
+api = "src/api.gti"
+[targets.api]
+kind = "gti-library"
+root = "src/api.gti"
+functions = ["right_value"]

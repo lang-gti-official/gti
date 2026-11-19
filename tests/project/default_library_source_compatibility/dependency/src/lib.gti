@@ -1,0 +1,3 @@
+export module utility;
+export using Number = int;
+export int value() { return 42; }

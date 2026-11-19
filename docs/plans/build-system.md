@@ -1735,7 +1735,7 @@ semantic and production-promotion goals remain open.
 | F1 identity and interface / frontend + semantics — identity foundation in progress | Finalize declaration-key grammar and metadata schema; export/private closure, module ownership, complete type/lifetime/borrow/callable contracts, generic declaration recipes and diagnostic provenance; import into existing semantic domains | Export/re-export visibility equals source mode; unrelated user-defined borrowed type and private layout dependencies; ID remapping across separate processes and reordered inputs; malformed references, incomplete summaries and untrusted private-capability declarations rejected. |
 | F2 unit lowering/linkage / HIR + MIR + LLVM — typed vertical slice implemented | F1; imported declaration/body distinction, stable symbol plan, selected runtime closure, per-library initialization/retirement, object verification; immutable driver target request distinct from C embedding | Multiple modules in one library, independent consumer links/runs with no library implementation source; correct cleanup/failure and exactly-once globals/TLS; no duplicate main/symbols; retained exports; platform object/ABI and runtime mismatch gates. C++ receives no new feature work. |
 | F3 generics and early constants / semantics + staged HIR/MIR | F1/F2; generic recipe importer and instance inventory, shared consumer instantiation owner, query-driven completed constexpr closures | New consumer substitution, constraints/defaults/specializations, early array extent/value argument/static assertion/branch shaping, resource/cycle errors and compile-time/runtime parity; no requirement to seal whole-program MIR before these queries. Private generic dependencies and unrelated user types included. |
-| F4 reusable target graph / driver — same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
+| F4 reusable target graph / driver — package and same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
 | F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
 
 The end-to-end fixture must build a library target containing an exported API,
@@ -1847,7 +1847,7 @@ This does not complete whole-module re-export semantics, ordinary multi-module
 source ownership, colliding qualified names or the remaining lifecycle/generic
 contracts.
 
-Dependency progress: same-manifest `compiled-dependencies` edges build targets in
+Dependency progress: local and direct-package `compiled-dependencies` edges build targets in
 topological order, deduplicate diamonds and reject cycles. Bundles retain exact
 direct dependency receipts; consumers validate the complete transitive closure.
 A conservative source/configuration/compiler/runtime/dependency fingerprint reuses
@@ -1855,8 +1855,15 @@ unchanged library outputs and rebuilds stale or corrupted ones. This still reads
 producer source inputs to establish freshness. `check` remains read-only and
 requires existing dependency artifacts. Explicit distributed artifact closures
 remain usable without sources. The `tests/slow/project/compiled_dependencies` example covers
-these paths. Package-qualified source edges, zero-source-read freshness, input-race
+these paths. Zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
+
+Automatic target selection builds on this graph. A registered `lib.gti`
+or an explicitly selected default library serves ordinary package imports.
+Exported declarations and re-exports drive interface selection. Dependencies
+outside the supported metadata profile retain source compilation. The
+`default_library_targets`, `default_library_overrides`, and
+`default_library_source_compatibility` project tests cover these paths.
 
 Artifact-selection progress (F4): a project dependency build now retains the
 exact bytes returned by each successful producer or validated cache hit. A

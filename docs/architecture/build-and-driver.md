@@ -1819,8 +1819,9 @@ math = { path = "../math" }
 members = ["packages/game", "packages/math"]
 ```
 
-`[targets]` is optional so a source-only dependency package does not need a
-dummy executable or test. Selecting such a package for `build`, `check`,
+`[targets]` is optional. A package with neither declared targets nor a
+discoverable program or library root can still supply source modules.
+Selecting such a package for `build`, `check`,
 `run`, or `test` produces a focused no-target diagnostic; it remains valid as
 a dependency.
 
@@ -3131,7 +3132,7 @@ and the [separate-compilation stage plan](../plans/build-system.md#compiled-libr
 `gti/driver/compiled_scalar_library.h` provides an LLVM producer and consumer
 for compiled GTI targets. Its development API names retain “scalar” for source
 compatibility; project commands expose the typed profile through `gti-library`,
-explicit artifact imports and same-manifest `compiled-dependencies` edges.
+explicit artifact imports and `compiled-dependencies` edges to local or dependency-package targets.
 C embedding retains its separate request and ABI. Runnable examples cover
 [primitive APIs](../../examples/compiled-primitive-library/README.md),
 [value types](../../examples/compiled-value-types/README.md),
@@ -3141,8 +3142,9 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
-The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
-root-module function names, including all exported overloads. Names may be
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
+explicitly selected root-module functions or the public declarations of the
+root and its re-exported modules, including their exported overloads. Names may be
 namespace-qualified; explicit exports and exports inherited from enclosing
 namespace declarations are preserved. Reopening a namespace does not export its
 private siblings. Functions must be nongeneric, without default arguments. Parameters and
@@ -3150,8 +3152,8 @@ results admit bool, char, fixed integers, float/double, concrete value records,
 integral enums and checked references to those values; void results remain valid.
 Constexpr functions, entry functions and unsafe/private capabilities reject.
 A target may contain multiple source modules. Its exposed nominal closure can
-belong to the root module or to verified compiled dependencies; ordinary non-root
-source modules still require a logical ownership mapping. There are at most 256
+belong to its root, public re-exported modules, or verified compiled
+dependencies. Each public module retains its logical owner. There are at most 256
 exported overloads and 64 nominal declarations per interface.
 
 Qualified declaration names retain their complete namespace path, with at most
@@ -3328,7 +3330,40 @@ whole-program inlining or complete F5 performance acceptance.
 
 ### Compiled-library project requests
 
-A producer declares a reusable target and explicitly selects its public API:
+A registered interface at `<source-root>/lib.gti` supplies the default GTI
+library. The target takes the package name, or the package name with a
+`-lib` suffix when the executable already uses it. With no target table, a
+plain `<source-root>/main.gti` supplies an executable. A named module at
+that path retains its existing source-package meaning.
+
+The root's exports and re-exports select the public interface. Private
+implementation imports contribute to the library object and its freshness
+check. An executable can import its own library by module name. A direct
+package dependency can import the default library with `import alias;`.
+Both use the same project dependency builder. An application-only edit
+reuses compatible library outputs.
+
+For a nonstandard root, declare a target with `kind = "gti-library"` and
+`root`. A sole library target with an export-derived interface supplies the
+default in the absence of a conventional root. A nonstandard target with a
+hand-picked `functions` list stays independently buildable. To use it as
+the default, or to select between several targets, set `[package]`'s
+`default-library = "target-name"`. Set `default-library = false` to disable
+automatic selection. A consumer may choose a different target via
+`compiled-dependencies`; omitting `interface` binds the ordinary module
+import to that target. Quoted virtual interfaces and distributed artifact
+selections remain available.
+
+Automatic compilation requires the bundle format to represent the complete
+public surface. A dependency with unsupported public declarations or native
+inputs can still be consumed from source. If the consumer directly imports a
+private implementation file that also contributed to the library object, the
+driver uses source for that library so both paths share its storage.
+An explicit request to build that
+library reports the unsupported interface. Read-only source checks can resolve
+ordinary imports before any library has been built.
+
+A producer may also select a specific set of exported functions explicitly:
 
 ```toml
 [targets.numbers]
@@ -3410,13 +3445,33 @@ and atomic-replacement rules: a failure preserves the prior good artifact,
 outputs cannot overwrite any selected bundle/interface, and staged imported
 objects are removed on success or failure.
 
-Source dependencies can instead name library targets in the same manifest:
+A compiled dependency can select a library target in the current manifest:
 
 ```toml
 [[targets.app.compiled-dependencies]]
 target = "numbers"
 interface = "api/numbers.gti"
 ```
+
+To build a library target from another package, set `package` to a direct
+dependency alias from the importing package's manifest. For example:
+
+```toml
+[dependencies]
+math = { path = "../arithmetic" }
+
+[[targets.app.compiled-dependencies]]
+package = "math"
+target = "numbers"
+interface = "api/numbers.gti"
+```
+
+The application imports its generated interface (for example
+`import "api/numbers.gti";` from a root beside the manifest). The resolver uses
+the same locked package graph as a source import. A producer resolves its own
+aliases and source modules. The build writes foreign artifacts under
+`build/gti/packages/<package>/<profile>/<triple>/` in the consumer workspace,
+including when the producer comes from a read-only dependency cache.
 
 Both executables and compiled library targets accept these tables alongside
 explicit artifact selections. The reusable project resolver constructs a bounded,
@@ -3425,8 +3480,7 @@ owners/facades, and returns each dependency once in topological order. Build and
 run commands execute those plans through the ordinary driver before the selected
 target. Shared transitive objects link once; only directly selected interfaces
 enter the source graph. Metadata exposes the declared source edges as
-`compiledDependencies`. Workspace/package-qualified source target edges remain
-future work; existing source package resolution is unchanged.
+`compiledDependencies`. Each edge identifies its target and, when present, its direct dependency alias.
 
 Successful library outputs are reused when their compiler/runtime/configuration,
 complete loaded source graph, export selection and direct dependency digests still
