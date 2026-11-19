@@ -1410,6 +1410,21 @@ auto SemanticVisitor::Impl::validateConstructorFieldRegions(
   }
 }
 
+// Region checking can revisit a local reference's initializer after entering
+// a nested scope. Use its resolved binding, not a same-spelled shadowing local.
+auto SemanticVisitor::Impl::regionExpressionSymbol(const Variable &variable)
+    -> const Symbol * {
+  const SymbolId id = semanticModel.findResolvedSymbol(variable);
+  const Symbol *current = resolve(variable.name());
+  if (id == 0 || (current != nullptr && toolingSymbolFor(*current) == id))
+    return current;
+  for (const auto &scope : scopes)
+    if (const auto found = scope.find(variable.name().lexeme);
+        found != scope.end() && toolingSymbolFor(found->second) == id)
+      return &found->second;
+  return nullptr;
+}
+
 auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
                                            const ExprPtr &argument)
     -> std::string {
@@ -1435,7 +1450,7 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
   const auto *variable = exprAs<Variable>(expression);
   if (variable == nullptr)
     return "<local>";
-  const Symbol *symbol = resolve(variable->name());
+  const Symbol *symbol = regionExpressionSymbol(*variable);
   if (symbol == nullptr)
     return "<local>";
   if (symbol->bindingKind == SemanticBindingKind::GlobalVariable &&
@@ -1455,9 +1470,14 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
 }
 
 auto SemanticVisitor::Impl::validateReturnedCallRegion(
-    const FunctionDecl &syntax, const ExprPtr &value) -> bool {
+    const FunctionDecl &syntax, const ExprPtr &value,
+    std::vector<const Expr *> visited) -> bool {
   if (!value)
     return true;
+  // Error recovery can leave a self-referential initializer in the AST.
+  // Its earlier binding error is authoritative; never recurse through it.
+  if (std::find(visited.begin(), visited.end(), value.get()) != visited.end())
+    return false;
   const auto declared = resultRegion(syntax.returnType());
   if (!declared || declared->kind != TokenKind::IDENTIFIER)
     return true;
@@ -1470,22 +1490,6 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const Expr *returned = value.get();
   while (const auto *group = exprAs<Grouping>(returned))
     returned = group->expression().get();
-  // A local reference binding is never rebound: a returned one supplies
-  // exactly what its initializer supplies, a call's every supplier included.
-  for (std::unordered_set<const Expr *> followed;;) {
-    const auto *variable = exprAs<Variable>(returned);
-    const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
-    if (symbol == nullptr ||
-        symbol->bindingKind != SemanticBindingKind::LocalVariable ||
-        symbol->type.kind != SemanticType::Reference ||
-        symbol->variableDeclaration == nullptr ||
-        !symbol->variableDeclaration->initializer() ||
-        !followed.insert(returned).second)
-      break;
-    returned = symbol->variableDeclaration->initializer().get();
-    while (const auto *group = exprAs<Grouping>(returned))
-      returned = group->expression().get();
-  }
   const auto relations = declaredOutlives(syntax);
   // A disjunctive requires clause proves the relation only when every
   // alternative does (each one, plus the conjunctive relations).
@@ -1513,8 +1517,10 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   };
   // A returned reference parameter supplies its own written region.
   if (const auto *variable = exprAs<Variable>(returned)) {
+    const Symbol *returnedSymbol = regionExpressionSymbol(*variable);
     for (const auto &parameter : syntax.parameters())
-      if (parameter.name.lexeme == variable->name().lexeme &&
+      if (returnedSymbol != nullptr &&
+          returnedSymbol->parameterDeclaration == &parameter &&
           parameter.type.reference && parameter.type.referenceLifetime) {
         const std::string supplier =
             parameter.type.referenceLifetime->name.lexeme;
@@ -1544,6 +1550,19 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           return false;
         }
       }
+    // Immutable local references retain their initializer's complete supplier
+    // set. Following only the primary retained place loses secondary owners.
+    if (const Symbol *symbol = regionExpressionSymbol(*variable);
+        symbol != nullptr &&
+        symbol->bindingKind == SemanticBindingKind::LocalVariable &&
+        symbol->type.kind == SemanticType::Reference &&
+        symbol->variableDeclaration != nullptr &&
+        symbol->variableDeclaration->initializer()) {
+      visited.push_back(value.get());
+      return validateReturnedCallRegion(
+          syntax, symbol->variableDeclaration->initializer(),
+          std::move(visited));
+    }
     return true;
   }
   // A carrier parameter's storage and what it stores live in different
@@ -1665,20 +1684,6 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   }
   if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
     return true;
-  const auto outlives = [&](const std::string &longer) {
-    if (longer == target || longer == "static")
-      return true;
-    std::vector<std::string> reached{longer};
-    for (bool grew = true; grew;) {
-      grew = false;
-      for (const auto &[from, to] : relations)
-        if (contains(reached, from) && !contains(reached, to)) {
-          reached.push_back(to);
-          grew = true;
-        }
-    }
-    return contains(reached, target);
-  };
   const auto fieldRecord = [&](SymbolId id) -> const SymbolRecord * {
     const SymbolRecord *field = semanticModel.database().findSymbol(id);
     if (field == nullptr && instanceBaseModel != nullptr)
@@ -1727,7 +1732,7 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       expression = group->expression().get();
     const auto *variable = exprAs<Variable>(expression);
     const Symbol *symbol =
-        variable == nullptr ? nullptr : resolve(variable->name());
+        variable == nullptr ? nullptr : regionExpressionSymbol(*variable);
     if (symbol == nullptr ||
         symbol->bindingKind != SemanticBindingKind::LocalVariable ||
         symbol->type.kind != SemanticType::Reference ||
@@ -1868,10 +1873,10 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   std::function<std::optional<std::string>(const Call &, const FunctionDecl &,
                                            const Token &)>
       failingSupplier;
-  failingSupplier = [&](const Call &relay, const FunctionDecl &relayed,
-                        const Token &region) -> std::optional<std::string> {
-    const auto &parameters = relayed.parameters();
-    const auto &arguments = relay.arguments();
+  const auto failingArguments =
+      [&](std::span<const Parameter> parameters, const ExprList &arguments,
+          const Token &region,
+          bool constructorSuppliers = false) -> std::optional<std::string> {
     // A final forwarded pack supplies every remaining fixed parameter.
     const bool forwardedPack =
         !arguments.empty() &&
@@ -1908,18 +1913,63 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
             innerResolved->borrowOrigin == BorrowOriginKind::Argument)
           for (const auto &parameter : innerCallee->lifetimeParameters())
             innerBound |= parameter.name.lexeme == innerRegion->lexeme;
+        if (innerRegion && innerRegion->kind == TokenKind::IDENTIFIER &&
+            innerResolved->borrowOrigin == BorrowOriginKind::Receiver)
+          if (const auto *member = exprAs<Get>(inner->callee().get()))
+            innerBound =
+                semanticModel.findConstruction(*member->object()) != nullptr;
         if (innerBound) {
           if (auto failed = failingSupplier(*inner, *innerCallee, *innerRegion))
             return failed;
           continue;
         }
       }
-      if (!outlives(supplier))
+      if (!outlivesTarget(supplier)) {
+        const Expr *source = argument.get();
+        while (const auto *group = exprAs<Grouping>(source))
+          source = group->expression().get();
+        if (const auto *variable = exprAs<Variable>(source))
+          if (const Symbol *symbol = regionExpressionSymbol(*variable);
+              constructorSuppliers && symbol != nullptr &&
+              (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
+               symbol->bindingKind == SemanticBindingKind::Parameter) &&
+              symbol->type.kind != SemanticType::Reference &&
+              parameters[index].type.reference)
+            return "<body-owned>";
         return supplier;
+      }
     }
     return std::nullopt;
   };
+  failingSupplier = [&](const Call &relay, const FunctionDecl &relayed,
+                        const Token &region) -> std::optional<std::string> {
+    // A temporary receiver has no written local type to check. Its
+    // constructor's parameters supply its stored regions just as the
+    // parameters of an ordinary returning call supply that call's region.
+    if (const auto *member = exprAs<Get>(relay.callee().get())) {
+      const Expr *receiver = member->object().get();
+      while (const auto *group = exprAs<Grouping>(receiver))
+        receiver = group->expression().get();
+      const auto *construction = semanticModel.findConstruction(*receiver);
+      const auto *arguments = exprAs<Call>(receiver);
+      if (construction != nullptr && construction->declaration != nullptr &&
+          arguments != nullptr)
+        if (auto failed =
+                failingArguments(construction->declaration->parameters(),
+                                 arguments->arguments(), region, true))
+          return failed;
+    }
+    return failingArguments(relayed.parameters(), relay.arguments(), region);
+  };
   if (const auto supplier = failingSupplier(*call, callee, *calleeRegion)) {
+    if (*supplier == "<body-owned>") {
+      report(
+          call->paren(),
+          "The returned reference depends on storage owned by this function, "
+          "which is destroyed when the function returns.",
+          "GTI-S2017");
+      return false;
+    }
     report(call->paren(),
            "The returned call's region is supplied by " +
                (supplier->front() == '<' ? std::string("an argument's region")

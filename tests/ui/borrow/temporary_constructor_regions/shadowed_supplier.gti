@@ -1,0 +1,13 @@
+// Returning an alias checks the original supplier, not a later shadowing name.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> relay<lifetime a>(int&<a> keep, int&<a> other) {
+  int& saved = Two(keep, other).pick(false);
+  { int other = 0; return saved; }
+}
+int main() { return 0; }

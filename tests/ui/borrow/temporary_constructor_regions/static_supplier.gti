@@ -1,0 +1,13 @@
+// Static storage may supply a returned region beside a formal.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int global = 7;
+int&<a> relay<lifetime a>(int&<a> keep) {
+  return Two(keep, global).pick(false);
+}
+int main() { int local = 1; return relay(local) - 7; }

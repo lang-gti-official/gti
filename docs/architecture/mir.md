@@ -4925,6 +4925,19 @@ endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
 
+A singleton argument reference-return contract checks every retained owner,
+including secondary owners relayed by a consumed carrier. Immutable non-thread-local
+static storage may additionally supply any region. Field-selected reference returns
+may use a narrower dependency set only when complete-flow reconstruction actually
+observed every normal return and normalized its dependencies against the enclosing
+signature. The program-local proof cache retains these observations separately
+from conservative declaration claims, including for functions without a complete
+claim. Verifier-only flow composition may use an independently observed callee's
+selected fields; public contracts remain unchanged upper bounds. A well-formed
+claim with unknown body flow is not this proof. Unknown and recursive edges fall
+back conservatively and retain owner checks. The cache is rebuilt for each MIR
+verification, so no proof survives a program edit or optimization pass.
+
 A call whose result is written in its receiver's class region
 (`receiverClassRegionRelay`) borrows what the receiver stores, never the
 receiver. Lowering parents a fresh temporary receiver's call-result loan to

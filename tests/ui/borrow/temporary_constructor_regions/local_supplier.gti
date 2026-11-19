@@ -1,0 +1,13 @@
+// A consumed temporary cannot return a reference to a local secondary owner.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> relay<lifetime a>(int&<a> keep) {
+  int local = 42;
+  return Two(keep, local).pick(false); //~ ERROR GTI-S2017
+}
+int main() { return 0; }
