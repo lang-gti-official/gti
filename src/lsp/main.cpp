@@ -3539,7 +3539,8 @@ private:
     // Library-only concrete instance analyses are reused across snapshots;
     // see InstanceAnalysisCache.
     frontendOptions.instanceCache = request.frontendSources.instanceCache;
-    frontendOptions.mirVerificationCache = mirVerificationCache;
+    frontendOptions.mirVerificationCache =
+        request.frontendSources.mirVerificationCache;
     // The standard-library prefix is analysed once per include graph and
     // adopted by every later snapshot; see SemanticPreambleCache.
     frontendOptions.preambleCache = request.frontendSources.preambleCache;
@@ -5708,8 +5709,6 @@ private:
   }
 
   lang::StandardLibraryLayout standardLibrary;
-  std::shared_ptr<lang::MirVerificationCache> mirVerificationCache =
-      std::make_shared<lang::MirVerificationCache>();
   std::optional<lang::ExecutionProfile> executionProfileOverride;
   std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
   std::optional<std::size_t> errorLimitOverride;
