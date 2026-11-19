@@ -9,7 +9,7 @@ using namespace gti_test::mir_fixture;
 // The shipped backend consumes a verified lowered program natively.
 bool nativeEmits(const lang::LoweredProgram &lowered, std::string *error) {
   try {
-    return !lang::LlvmBackend().generate(lowered).contents.empty();
+    return !lang::LlvmBackend().generate(lowered).singleObject().empty();
   } catch (const std::exception &failure) {
     if (error != nullptr)
       *error = failure.what();

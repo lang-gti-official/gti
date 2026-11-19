@@ -255,7 +255,7 @@ void expectSelected(const lang::BackendArtifact &artifact,
                     const lang::MirFunctionInstance &leaf,
                     const lang::MirFunctionInstance &caller,
                     const lang::MirFunctionInstance &entry) {
-  expect(!artifact.contents.empty(),
+  expect(!artifact.singleObject().empty(),
          "the shipped backend should accept the hosted failure component");
   expect(leaf.mayRaiseDefinedFailure && caller.mayRaiseDefinedFailure &&
              entry.mayRaiseDefinedFailure,
@@ -703,7 +703,7 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
                optimized.report.transformations);
       const lang::MirFunctionInstance *optimizedEntry =
           findFunction(frontend.hir, optimized.mir, "main");
-      expect(optimizedEntry != nullptr && !artifact.contents.empty(),
+      expect(optimizedEntry != nullptr && !artifact.singleObject().empty(),
              "an open or cyclic graph must still emit its entry from the "
              "general MIR route without reviving the legacy component ABI");
     }
@@ -764,7 +764,7 @@ void testNonOwningClassMention(const std::filesystem::path &fixture) {
       expect(optimizedChecked != nullptr && optimizedEntry != nullptr &&
                  optimizedChecked->mayRaiseDefinedFailure &&
                  optimizedEntry->mayRaiseDefinedFailure &&
-                 !artifact.contents.empty(),
+                 !artifact.singleObject().empty(),
              "nonowning reference/raw-pointer mentions should not demote the "
              "otherwise closed checked graph");
     }

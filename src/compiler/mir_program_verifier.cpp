@@ -23489,8 +23489,10 @@ verifyMirProgramContracts(const MirProgram &program) {
   return result;
 }
 
-MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
-    const MirProgram &program, const MirProgram *verifiedInput) {
+MirVerificationResult
+mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
+                                               const MirProgram *verifiedInput,
+                                               VerificationSession *reuse) {
   MirVerificationResult result;
   // Prove inline sum containment finite before any recursive lifecycle query.
   // Type arguments alone are not storage edges: follow exact variant fields,
@@ -23851,7 +23853,7 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
     const MirBody *verifiedBody =
         verifiedInput ? findMirBody(*verifiedInput, address) : nullptr;
     if (!verifiedBody || *verifiedBody != *body)
-      appendVerification(result, verifyMirBody(*body, address.owner));
+      appendVerification(result, verifyMirBody(*body, address.owner, reuse));
     std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
     for (const auto &entry : body->programConstantSubstitutions)
       publishedConstants.emplace(entry.hirValue, &entry.constant);
@@ -24286,7 +24288,8 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
 }
 
 MirVerificationResult verifyMirProgram(const MirProgram &program,
-                                       MirVerificationComponents components) {
+                                       MirVerificationComponents components,
+                                       mir_detail::VerificationSession *reuse) {
   if (components != requiredMirVerificationComponents) {
     MirVerificationResult result;
     result.errors.push_back(
@@ -24294,7 +24297,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
          .message = "MIR verification component set is incomplete or invalid"});
     return result;
   }
-  return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr);
+  return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr,
+                                                        reuse);
 }
 
 } // namespace lang

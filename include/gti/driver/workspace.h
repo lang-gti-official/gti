@@ -96,6 +96,10 @@ public:
   [[nodiscard]] const ResolvedProjectPackage &selectedPackage() const;
   [[nodiscard]] const ResolvedProjectPackage *
   findPackage(std::string_view identity) const;
+  // Narrow source ownership and native inputs to a library's own dependency
+  // closure. Outputs remain under the consuming workspace's managed root.
+  [[nodiscard]] ProjectWorkspace
+  buildViewFor(const ResolvedProjectPackage &package) const;
   [[nodiscard]] std::vector<PackageSourceRoot> packageSourceRoots() const;
   // Program-wide [build] flags from the selected package and its transitive
   // dependency closure; target/profile flags are selected separately.

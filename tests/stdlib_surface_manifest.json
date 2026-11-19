@@ -6546,6 +6546,7 @@
         "std::optional<std::optional<std::string>>"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "tests/fixtures/optional_lifecycle.gti",
         "tests/fixtures/optional_value.gti",
         "tests/ui/stdlib/optional/clone.gti",
@@ -7681,6 +7682,7 @@
         "owned copy independent of foreign storage"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "examples/151-c-string-import.gti",
         "tests/ui/stdlib/string/c_string_import",
         "tests/ui/stdlib/string/c_string_import/import.gti",

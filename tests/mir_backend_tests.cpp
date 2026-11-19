@@ -197,7 +197,7 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
 
   const lang::BackendArtifact o0Artifact =
       emit(frontend, o0.mir, o0Compatibility);
-  expect(!o0Artifact.contents.empty(),
+  expect(!o0Artifact.singleObject().empty(),
          "the shipped backend should accept the verified O0 scalar family");
   // The checked component uses only the explicit defined-failure ABI: the
   // checked bodies, and their caller, carry a defined-failure summary while
@@ -229,7 +229,8 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
          "the O1 transformed production MIR input should be fully verified");
   if (o1.valid()) {
     expect(!emit(frontend, o1.mir, o1Compatibility, o1.report.transformations)
-                .contents.empty(),
+                .singleObject()
+                .empty(),
            "the shipped backend should accept the verified O1 program");
     expect(identityFoldLiterals(
                sourceFunction(frontend, o0.mir, "mir_constant")) == 0 &&
@@ -728,7 +729,7 @@ int main() { mut C c = C(); return 0; }
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       emit(frontend, frontend.mir, compatibility);
-  expect(!artifact.contents.empty(),
+  expect(!artifact.singleObject().empty(),
          "the widening constructor's program should reach code generation");
 }
 

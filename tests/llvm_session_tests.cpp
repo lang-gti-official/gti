@@ -1749,7 +1749,7 @@ void gti_rt_posix_free_v1(void *address) {
                                 global, &session.module());
     }
     const auto object = root / "probe.o";
-    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+    expect(driver::writeArtifact(object, session.emitObject().singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write real scalar-owner payload body object");
     driver::NativeInputs inputs;
