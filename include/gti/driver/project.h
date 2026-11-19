@@ -13,6 +13,8 @@
 namespace lang::driver {
 
 struct ProjectBuildOverrides {
+  bool automaticLibraries = true;
+  std::vector<std::filesystem::path> sourceOnlyLibraries;
   std::optional<OptimizationLevel> optimization;
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;

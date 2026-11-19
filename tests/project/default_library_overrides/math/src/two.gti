@@ -1,0 +1,4 @@
+export module two;
+export namespace values {
+  int increment() { return 2; }
+}
