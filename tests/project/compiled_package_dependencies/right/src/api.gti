@@ -1,2 +1,7 @@
 export module api;
-export int right_value() { return 28; }
+import std.optional;
+
+export int right_value() {
+  std::optional<int> empty = std::nullopt;
+  return empty.has_value() ? -1 : 28;
+}
