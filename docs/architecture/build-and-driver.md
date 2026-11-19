@@ -3344,8 +3344,10 @@ Both use the same project dependency builder. An application-only edit
 reuses compatible library outputs.
 
 For a nonstandard root, declare a target with `kind = "gti-library"` and
-`root`. A sole library target supplies the default in the absence of a
-conventional root. With several choices, set `[package]`'s
+`root`. A sole library target with an export-derived interface supplies the
+default in the absence of a conventional root. A nonstandard target with a
+hand-picked `functions` list stays independently buildable. To use it as
+the default, or to select between several targets, set `[package]`'s
 `default-library = "target-name"`. Set `default-library = false` to disable
 automatic selection. A consumer may choose a different target via
 `compiled-dependencies`; omitting `interface` binds the ordinary module

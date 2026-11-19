@@ -3091,8 +3091,10 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         package.defaultLibrary = target.name;
       }
     }
+    // A hand-picked function list may be an auxiliary distribution target.
+    // Outside lib.gti it becomes the default only by explicit selection.
     if (!package.defaultLibrary && module == package.modules.end() &&
-        libraries == 1)
+        libraries == 1 && only->compiledFunctions.empty())
       package.defaultLibrary = only->name;
     if (!package.defaultLibrary && module != package.modules.end()) {
       std::string name = package.name;
