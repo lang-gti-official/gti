@@ -1,4 +1,5 @@
 // An executed formatted panic, not yet constant-eligible, fails the request.
+//@ slow
 //@ check-fail
 //@ snapshot: diagnostics
 import std.panic;

@@ -11,7 +11,6 @@
 namespace lang {
 
 class MirBodyAnalysisManager;
-struct MirClosedCallSafetyAnalysis;
 
 void rebuildMirReachability(MirBody &body);
 [[nodiscard]] bool rebuildMirValueUses(MirBody &body);
@@ -217,8 +216,7 @@ private:
     MirSafetyDischarge discharge;
   };
 
-  [[nodiscard]] MirEditResult
-  applyWithSafetySnapshot(const MirClosedCallSafetyAnalysis *sourceSafety);
+  [[nodiscard]] MirEditResult applyImpl(MirBodyAnalysisManager *analyses);
 
   MirProgram &program;
   std::string pass;

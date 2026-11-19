@@ -167,9 +167,14 @@ when every instance has the same value.
 
 `run(OptimizationRequest)` takes ownership of a `MirProgram`, verifies it, and
 returns an `OptimizedProgram` containing both the unchanged canonical
-`sourceMir` snapshot and the possibly transformed `mir`. `-O0` schedules no
-transform and keeps pre/post MIR structurally identical. `-O1` schedules the
-following deterministic local pipeline:
+`sourceMir` snapshot and the possibly transformed `mir`. During intermediate edits
+the verifier can reuse a body-local success from that immutable input when the
+complete body at the same kind and owner compares equal, including source debug
+tables. Other bodies and all cross-body contracts are verified on the candidate.
+Standalone verification and final independent replay keep their full checks.
+
+`-O0` schedules no transform and keeps pre/post MIR structurally identical.
+`-O1` schedules the following deterministic local pipeline:
 
 1. `scalar-promotion`;
 2. `fold-literal-identities`;
