@@ -159,12 +159,10 @@ void MirEditor::queueSafetyDischarge(MirInstructionKey target,
       {.target = target, .discharge = std::move(discharge)});
 }
 
-MirEditResult MirEditor::apply() { return applyWithSafetySnapshot(nullptr); }
+MirEditResult MirEditor::apply() { return applyImpl(nullptr); }
 
 MirEditResult MirEditor::apply(MirBodyAnalysisManager &analyses) {
-  const MirClosedCallSafetyAnalysis *sourceSafety =
-      safetyDischarges.empty() ? nullptr : analyses.closedCallSafety(program);
-  MirEditResult result = applyWithSafetySnapshot(sourceSafety);
+  MirEditResult result = applyImpl(&analyses);
   if (!result.changed) {
     return result;
   }
@@ -207,8 +205,7 @@ MirEditResult MirEditor::apply(MirBodyAnalysisManager &analyses) {
   return result;
 }
 
-MirEditResult MirEditor::applyWithSafetySnapshot(
-    const MirClosedCallSafetyAnalysis *cachedSourceSafety) {
+MirEditResult MirEditor::applyImpl(MirBodyAnalysisManager *analyses) {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
   patches.clear();
@@ -455,7 +452,10 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     }
   }
   std::optional<MirClosedCallSafetyAnalysis> ownedSourceSafety;
-  const MirClosedCallSafetyAnalysis *sourceSafety = cachedSourceSafety;
+  const MirClosedCallSafetyAnalysis *sourceSafety =
+      analyses && !queuedSafetyDischarges.empty()
+          ? analyses->closedCallSafety(program)
+          : nullptr;
   if (!queuedSafetyDischarges.empty() && sourceSafety == nullptr) {
     ownedSourceSafety = analyzeMirClosedCallSafetyChecks(program);
     sourceSafety = &*ownedSourceSafety;
@@ -886,7 +886,8 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     return result;
   }
 
-  result.verification = verifyMirProgram(candidate);
+  result.verification = analyses ? analyses->verifyEditedProgram(candidate)
+                                 : verifyMirProgram(candidate);
   if (!result.verification.valid()) {
     return result;
   }

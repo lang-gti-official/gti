@@ -11,6 +11,12 @@
 
 namespace lang::mir_detail {
 
+// Runs every program check. Only verifyMirBody(body, owner) may be reused,
+// and only for equal bodies at the same address in a verified immutable input.
+[[nodiscard]] MirVerificationResult
+verifyMirProgramWithVerifiedBodies(const MirProgram &program,
+                                   const MirProgram *verifiedInput);
+
 // Whole-program verification depends only on program content, and callers
 // often hold a program they have just verified. These entry points skip only
 // that repeated check; every other step, and so every result, is unchanged.

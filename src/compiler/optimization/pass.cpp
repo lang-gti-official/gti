@@ -1,6 +1,8 @@
 #include "gti/optimization/pass.h"
+#include "../mir_verification_support.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/optimization/coverage.h"
 
 #include <algorithm>
@@ -373,6 +375,12 @@ MirBodyAnalysisManager::findEntry(MirBodyAddress address) const {
         return candidate.address == address;
       });
   return found == entries.end() ? nullptr : &*found;
+}
+
+MirVerificationResult
+MirBodyAnalysisManager::verifyEditedProgram(const MirProgram &candidate) const {
+  return mir_detail::verifyMirProgramWithVerifiedBodies(candidate,
+                                                        verifiedInput);
 }
 
 bool MirBodyAnalysisManager::accepts(const MirProgram &program) {
