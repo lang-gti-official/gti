@@ -3786,6 +3786,9 @@ the path that reaches it:
   drop proved to retire a moved-from shell has no destructor on that path,
   but the proof walks back to its producer, so the drop stays in its edge's
   private prefix.
+- A fallible call ends its temporary argument loans in reverse order in its
+  own failure successor, after any provisional result loan. This prefix stays
+  private so the following cleanup can join a shared continuation.
 - A prepared call argument's drop stays private, because verification counts
   it along its producer's own cleanup chain.
 - A lifecycle-bound loan's end stays private, because verification justifies

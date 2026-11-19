@@ -167,14 +167,20 @@ SemanticVisitor::Impl::diagnoseEditedBody(
     return std::nullopt;
   }
   const auto &checked = *input.body.extent();
+  // Some body checks point at the function name (for example a path
+  // that falls through). The declaration header has identical source.
+  const auto &name = input.declaration.operatorName()
+                         ? input.declaration.operatorName()->keyword
+                         : input.declaration.name();
   for (const auto &diagnostic : worker->diagnostics) {
     // Diagnostics about other bodies, contracts or generated inputs belong
     // to the authoritative whole-snapshot run.
+    const bool inBody = diagnostic.primary.start >= checked.start &&
+                        diagnostic.primary.end <= checked.end;
     if (diagnostic.severity != DiagnosticSeverity::Error ||
         diagnostic.primary.source != checked.source ||
-        diagnostic.primary.start < checked.start ||
-        diagnostic.primary.end > checked.end || !diagnostic.related.empty() ||
-        !diagnostic.fixes.empty())
+        (!inBody && diagnostic.primary != tokenSpan(name)) ||
+        !diagnostic.related.empty() || !diagnostic.fixes.empty())
       return std::nullopt;
   }
   return worker->diagnostics;

@@ -1151,36 +1151,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   StmtList declarations;
   bool syntaxValid = true;
   const std::string syntaxContext = syntaxCacheContext(options);
-  // Compile limits decide which constant, macro and expansion requests
-  // succeed, so every semantic reuse (preamble, instance analysis) keys on
-  // them; lexing and parsing do not depend on them.
-  std::string frontendCacheContext =
-      semanticCacheContext(options) +
-      "\nlimits:" + compileLimitsIdentity(options.limits) +
-      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
-      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
-      "\nsource-owners:" +
-      (result.sourceGraph.sourceOwners()
-           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
-           : std::string{});
-  // Logical maps are relocatable, but a loaded file's containment, module
-  // membership and compiler trust also affect semantic meaning. Never reuse
-  // a preamble merely because its source bytes and public map are unchanged.
-  const auto appendIdentity = [&](std::string_view value) {
-    frontendCacheContext += std::to_string(value.size()) + ":";
-    frontendCacheContext += value;
-  };
-  for (const auto &unit : result.sourceGraph.sourceUnits()) {
-    appendIdentity(unit.path.generic_string());
-    const auto owners = result.sourceGraph.sourceOwners();
-    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
-    appendIdentity(owner ? owner->identity : std::string{});
-    const auto *module = result.sourceGraph.findModule(unit.moduleId);
-    appendIdentity(module ? module->ownerIdentity : std::string{});
-    appendIdentity(module ? module->name : std::string{});
-    appendIdentity(std::to_string(static_cast<int>(unit.role)));
-    appendIdentity(unit.prelude ? "prelude" : "source");
-  }
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
   const auto parseStart = std::chrono::steady_clock::now();
@@ -1298,12 +1268,61 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
   if (options.stopAfter == FrontendPhase::Parsing) {
+    result.parsingComplete = true;
     return result;
   }
-  if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
-    return result;
-  }
+  return checkParsed(entryPath, std::move(result));
+}
 
+FrontendResult Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                                       FrontendResult result) const {
+  if (!result.parsingComplete)
+    return result;
+  result.parsingComplete = false;
+  result = checkParsed(entryPath, std::move(result));
+  applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+  return result;
+}
+
+FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
+                                     FrontendResult result) const {
+  if (!result.syntaxValid && !options.analyzeRecoveredProgram)
+    return result;
+  if (options.cancellation &&
+      options.cancellation->load(std::memory_order_relaxed)) {
+    result.cancelled = true;
+    return result;
+  }
+  // Compile limits decide which constant, macro and expansion requests
+  // succeed, so every semantic reuse (preamble, instance analysis) keys on
+  // them; lexing and parsing do not depend on them.
+  std::string frontendCacheContext =
+      semanticCacheContext(options) +
+      "\nlimits:" + compileLimitsIdentity(options.limits) +
+      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
+      "\nsource-owners:" +
+      (result.sourceGraph.sourceOwners()
+           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
+           : std::string{});
+  // Logical maps are relocatable, but a loaded file's containment, module
+  // membership and compiler trust also affect semantic meaning. Never reuse
+  // a preamble merely because its source bytes and public map are unchanged.
+  const auto appendIdentity = [&](std::string_view value) {
+    frontendCacheContext += std::to_string(value.size()) + ":";
+    frontendCacheContext += value;
+  };
+  for (const auto &unit : result.sourceGraph.sourceUnits()) {
+    appendIdentity(unit.path.generic_string());
+    const auto owners = result.sourceGraph.sourceOwners();
+    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
+    appendIdentity(owner ? owner->identity : std::string{});
+    const auto *module = result.sourceGraph.findModule(unit.moduleId);
+    appendIdentity(module ? module->ownerIdentity : std::string{});
+    appendIdentity(module ? module->name : std::string{});
+    appendIdentity(std::to_string(static_cast<int>(unit.role)));
+    appendIdentity(unit.prelude ? "prelude" : "source");
+  }
   // Concrete generic discovery can select bodies which were not visible to
   // declaration-time analysis. With bounded trusted-body analysis the
   // semantic visitor completes such a body while HIR runs (late demand): it
@@ -2091,9 +2110,34 @@ const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
 }
 } // namespace
 
+bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
+  const auto *unit =
+      baseline->sourceGraph.findUnit(baseline->sourceGraph.entryUnit());
+  const auto *text =
+      unit ? baseline->sources.find(unit->path.string()) : nullptr;
+  return text && *text == source;
+}
+
 std::optional<std::vector<Diagnostic>>
 EditorBodyDiagnostics::check(const std::string &source,
                              const std::atomic<bool> *cancel) const {
+  return checkEdit(source, cancel, std::nullopt);
+}
+
+bool EditorBodyDiagnostics::reproducesRecovery(
+    const std::string &source, const std::vector<Diagnostic> &observed,
+    const std::atomic<bool> *cancel) const {
+  if (!std::ranges::any_of(observed, [](const Diagnostic &d) {
+        return d.phase == DiagnosticPhase::Parsing;
+      }))
+    return false;
+  const auto replay = checkEdit(source, cancel, observed.size() + 1);
+  return replay && *replay == observed;
+}
+
+std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
+    const std::string &source, const std::atomic<bool> *cancel,
+    std::optional<std::size_t> recoveryLimit) const {
   const std::lock_guard lock(queryMutex);
   if (cancel && cancel->load(std::memory_order_relaxed))
     return std::nullopt;
@@ -2141,19 +2185,25 @@ EditorBodyDiagnostics::check(const std::string &source,
   }
   tokens.push_back(scanned.back());
   Parser parser(std::move(tokens), source);
-  parser.setErrorLimit(1);
+  parser.setErrorLimit(recoveryLimit.value_or(1));
   auto changed = parser.parseFunctionBody();
-  if (!changed || parser.hadError() || !parser.lifetimeNames().empty() ||
+  if (!changed || (parser.hadError() && !recoveryLimit) ||
+      !parser.lifetimeNames().empty() ||
       changed->extent()->start != span.start ||
       changed->extent()->end != bodyEnd)
     return std::nullopt;
 
   auto sources = baseline->sources;
   sources.set(path, source);
-  return context->diagnoseEditedBody({baseline->program, baseline->semantics,
-                                      baseline->sourceGraph, sources, *prior,
-                                      *changed},
-                                     cancel);
+  auto answer = context->diagnoseEditedBody(
+      {baseline->program, baseline->semantics, baseline->sourceGraph, sources,
+       *prior, *changed},
+      cancel);
+  if (!answer || !parser.hadError())
+    return answer;
+  answer->insert(answer->begin(), parser.errors().begin(),
+                 parser.errors().end());
+  return answer;
 }
 
 } // namespace lang

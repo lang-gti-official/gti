@@ -128,6 +128,13 @@ public:
   [[nodiscard]] BackendKind backend() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] LlvmInstrumentationMode llvmInstrumentation() const;
+  [[nodiscard]] LlvmCodegenUnits llvmCodegenUnits() const { return codegen; }
+  [[nodiscard]] CompilationRequest
+  withLlvmCodegenUnits(LlvmCodegenUnits policy) const {
+    auto result = *this;
+    result.codegen = policy;
+    return result;
+  }
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
@@ -181,6 +188,7 @@ private:
   CppStandard backendStandard;
   BackendKind selectedBackend = BackendKind::Llvm;
   LlvmInstrumentationMode instrumentationMode = LlvmInstrumentationMode::None;
+  LlvmCodegenUnits codegen;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   ConfigurationFlags declaredFlags;

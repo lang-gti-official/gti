@@ -2912,8 +2912,7 @@ private:
     FailurePropagationKind propagation = FailurePropagationKind::None;
     // Routes an Invoke and a secondary record for its destructor.
     bool fallible = false;
-    // False for a drop proved to retire a moved-from shell: the proof walks
-    // back to the drop's producer, which a shared copy cannot repeat.
+    // False when verification needs this step on its own producer's edge.
     bool contextFree = true;
   };
 
@@ -3371,6 +3370,13 @@ private:
             {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
         failureEndedLoans.push_back(*loan);
       }
+    }
+    // The failure successor must end the call's temporary input loans here,
+    // after any provisional result loan. Only the remaining cleanup may join
+    // a shared continuation.
+    if (auto *plan = planningCleanup(); plan && !temporaryInputLoans.empty()) {
+      for (auto &step : plan->steps)
+        step.contextFree = false;
     }
     // A fresh constructor argument has already transferred its owning slot to
     // the callee before this Invoke. On failure the callee has drained that
