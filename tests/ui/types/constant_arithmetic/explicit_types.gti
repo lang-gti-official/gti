@@ -1,0 +1,9 @@
+// Explicitly typed operands and named constants retain ordinary call conversion rules.
+uint64_t take(uint64_t value) { return value; }
+int main() {
+  constexpr int width = 32;
+  auto named = take(width * 32); //~ ERROR GTI-S2003
+  auto suffixed = take(32i32 * 32); //~ ERROR GTI-S2003
+  auto converted = take(int(32) * 32); //~ ERROR GTI-S2003
+  return 0;
+}

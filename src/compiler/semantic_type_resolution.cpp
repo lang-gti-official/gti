@@ -1037,6 +1037,9 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
       // it adopts the selected parameter type as a direct argument would.
       analysis.types[index] =
           analyzeContextualIntegerOperand(arguments[index], parameter);
+    } else if (isInteger(parameter) &&
+               isContextualIntegerArithmetic(arguments[index].get())) {
+      analysis.types[index] = analyzeInitializer(arguments[index], parameter);
     } else {
       analysis.types[index] =
           analyzeExpectedCallableResult(arguments[index], parameter);
@@ -1332,17 +1335,11 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
 
 auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
     const SemanticType &parameter, const SemanticType &argument,
-    const ExprPtr &expression) const -> bool {
-  // Only a written literal, optionally parenthesized and optionally carrying
-  // one sign, may adopt a fitting parameter type after exact matching fails.
-  // A named constant or any other expression keeps its declared type.
+    const ExprPtr &expression) -> bool {
   if (!expression || semanticModel.findMacroIntegerLiteralType(*expression) ||
-      parameter == argument || !isInteger(parameter) || !isInteger(argument) ||
-      !isContextualIntegerLiteral(expression.get())) {
+      parameter == argument || !isInteger(parameter) || !isInteger(argument))
     return false;
-  }
-  const std::optional<IntegerConstant> value =
-      integerConstant(expression.get());
+  const auto value = contextualIntegerConstant(expression.get());
   return value && integerFits(parameter, *value);
 }
 
@@ -1657,17 +1654,42 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       }
     }
     const std::optional<IntegerConstant> literal =
-        isInteger(parameter) && isInteger(argument) &&
-                isContextualIntegerLiteral(expression.get())
-            ? integerConstant(expression.get())
+        isInteger(parameter) && isInteger(argument)
+            ? contextualIntegerConstant(expression.get())
             : std::nullopt;
     if (literal && !integerFits(parameter, *literal)) {
       diagnostic.hints.emplace_back(
-          "Integer literal '" + std::string(literal->negative ? "-" : "") +
+          std::string(isContextualIntegerLiteral(expression.get())
+                          ? "Integer literal '"
+                          : "Constant integer expression '") +
+          std::string(literal->negative ? "-" : "") +
           std::to_string(literal->magnitude) +
           "' does not fit the parameter type '" + typeSpelling(parameter) +
-          "'; a literal adopts an integer parameter type only when its value "
-          "is representable.");
+          (isContextualIntegerLiteral(expression.get())
+               ? "'; a literal adopts an integer parameter type only when its "
+                 "value is representable."
+               : "'; a constant arithmetic result converts only when its value "
+                 "is representable."));
+    } else if (isInteger(parameter) &&
+               isContextualIntegerArithmetic(expression.get())) {
+      auto context = makeConstexprInterpreter();
+      context.requireMir = true;
+      context.recordValues = false;
+      const auto evaluated = evaluateConstexprExpression(expression, context);
+      diagnostic.hints.emplace_back(
+          "Constant arithmetic must evaluate successfully in its original "
+          "operand types before its result can convert.");
+      if (evaluated.failure == ConstantEvaluationFailure::IntegerOverflow)
+        diagnostic.hints.emplace_back(
+            "An intermediate integer operation overflows.");
+      else if (evaluated.failure == ConstantEvaluationFailure::DivisionByZero ||
+               evaluated.failure == ConstantEvaluationFailure::ModuloByZero)
+        diagnostic.hints.emplace_back(
+            "Constant arithmetic encountered a zero divisor.");
+      if (!evaluated.detail.empty())
+        diagnostic.hints.push_back(evaluated.detail);
+      if (!evaluated.limitHint.empty())
+        diagnostic.hints.push_back(evaluated.limitHint);
     } else {
       diagnostic.hints.emplace_back(
           hasView
@@ -2697,15 +2719,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             const std::optional<IntegerConstant> literal =
                 !argument.forwardedPackElement && !argument.deferred &&
                         argument.expression != nullptr &&
-                        isInteger(parameter) && isInteger(argument.type) &&
-                        isContextualIntegerLiteral(argument.expression->get())
-                    ? integerConstant(argument.expression->get())
+                        isInteger(parameter) && isInteger(argument.type)
+                    ? contextualIntegerConstant(argument.expression->get())
                     : std::nullopt;
             if (!literal || integerFits(parameter, *literal)) {
               continue;
             }
             diagnostic.hints.emplace_back(
-                "Integer literal '" +
+                std::string(
+                    isContextualIntegerLiteral(argument.expression->get())
+                        ? "Integer literal '"
+                        : "Constant integer expression '") +
                 std::string(literal->negative ? "-" : "") +
                 std::to_string(literal->magnitude) +
                 "' does not fit the parameter type '" +

@@ -4459,7 +4459,7 @@ private:
   [[nodiscard]] bool
   contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
                                        const SemanticType &argument,
-                                       const ExprPtr &expression) const;
+                                       const ExprPtr &expression);
 
   SemanticType
   adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
@@ -7034,6 +7034,12 @@ private:
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
 
+  [[nodiscard]] static bool
+  isContextualIntegerArithmetic(const Expr *expression);
+  SemanticType
+  materializeContextualIntegerArithmetic(const Expr &expression,
+                                         const SemanticType &target);
+
   // A written integer literal with a numeric suffix (`10u8`), optionally
   // parenthesized and optionally carrying one sign. Its type is the suffix
   // type; it never adopts a contextual type.
@@ -7098,6 +7104,9 @@ private:
     bool negative = false;
     std::uint64_t magnitude = 0;
   };
+
+  [[nodiscard]] std::optional<IntegerConstant>
+  contextualIntegerConstant(const Expr *expression);
 
   [[nodiscard]] static bool integerFits(SemanticType type,
                                         IntegerConstant value);

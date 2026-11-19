@@ -1,0 +1,5 @@
+// Same-type arithmetic and ordinary widening keep their existing MIR operations.
+//@ snapshot: mir
+// CHECK: operation=mul
+// CHECK: operation=sub
+int main() { int64_t value = 32 * 32; return 3 - 3; }
