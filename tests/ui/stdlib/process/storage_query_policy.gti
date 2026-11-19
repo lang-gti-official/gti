@@ -82,10 +82,21 @@ int main() {
         provider_test_releases() != 0 || values[std::size_t(0)] != 42) { return 13; }
     values.reserve(std::size_t(16));
     if (provider_test_size_queries() != 2 || provider_test_calls() != 2 ||
-        provider_test_releases() != 1 || values[std::size_t(0)] != 42) { return 14; }
+        values[std::size_t(0)] != 42) { return 14; }
+#if target.os == "windows"
+    if (provider_test_releases() != 1) { return 14; }
+#else
+    // Byte growth retains the existing process region until final cleanup.
+    if (provider_test_releases() != 0) { return 14; }
+#endif
   }
+#if target.os == "windows"
   if (provider_test_releases() != 2 || provider_test_events() != 2 ||
       provider_test_event_at(0) != -1 || provider_test_event_at(1) != -2) { return 15; }
+#else
+  if (provider_test_releases() != 1 || provider_test_events() != 1 ||
+      provider_test_event_at(0) != -1) { return 15; }
+#endif
 
   provider_test_mode(1);
   {
