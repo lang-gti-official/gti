@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "base": "68cec4fa9c3db7b1dda796e1a58b98c3b6a1c56f",
+  "members": [
+    {
+      "pr": 619,
+      "head": "6ed1f7a794a7a0ff0a22617780b0bd8e6d0bf9c2",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #619: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "gti_test_ui",
+          "source_owner_registration",
+          "driver_module_facts",
+          "project_model"
+        ],
+        "owning": [
+          "compiled_scalar_library",
+          "compiled_interface_types",
+          "compiled_library_project",
+          "compiled_libraries_project",
+          "project_cli_workflow",
+          "lsp_project_facts"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #619; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiled_scalar_library",
+          "compiled_interface_types",
+          "compiled_library_project",
+          "compiled_libraries_project",
+          "project_cli_workflow",
+          "lsp_project_facts"
+        ]
+      }
+    },
+    {
+      "pr": 625,
+      "head": "c695ee4df1943e14481decd94dd5d9c4e3fc9c70",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #625: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "module_semantic_identity",
+          "module_preamble_identity"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #625; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "module_semantic_identity",
+          "module_preamble_identity"
+        ]
+      }
+    },
+    {
+      "pr": 622,
+      "head": "959bc410c909953384cf2d8376bb4304c41a1524",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #622: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "compile_limits",
+          "mir_program_initialization",
+          "global_class_storage_runtime",
+          "llvm_native_c_storage_execution"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #622; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "compile_limits",
+          "mir_program_initialization",
+          "global_class_storage_runtime",
+          "llvm_native_c_storage_execution"
+        ]
+      }
+    }
+  ]
+}
