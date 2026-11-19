@@ -1,0 +1,24 @@
+// Publish parser errors from a compile-time declaration before recovered semantic errors, then recheck the corrected program.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "consteval bool valid() { return 1 == 1; } int main() { static_assert(valid()); return 0; }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "consteval bool valid() { return 1 == 1; } int main() { static_assert(valid()); return 0; }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "consteval bool valid() { return 1 = 1; } int main() { static_assert(valid()); return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-P0001"}]}}}
+// The full answer for the same version also contains the diagnostic from checking the recovered function.
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": {"$contains": [{"code": "GTI-S2031"}]}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "consteval bool valid() { return 1 == 1; } int main() { static_assert(valid()); return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 4}, "contentChanges": [{"text": "consteval bool valid() { return false; } int main() { static_assert(valid()); return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 4, "diagnostics": [{"code": "GTI-S2079"}]}}}
+// A repaired parse also has to preserve an independent type error reported by the completed check.
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 5}, "contentChanges": [{"text": "int broken() { return 1 = 2; } int main() { bool x = \"bad\"; return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 5, "diagnostics": {"$contains": [{"code": "GTI-P0001"}, {"code": "GTI-S2003"}]}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 6}, "contentChanges": [{"text": "int broken() { return 1; } int main() { bool x = \"bad\"; return 0; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 6, "diagnostics": [{"code": "GTI-S2003"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "id": 5}}
+{"expect": {"id": 5, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}
