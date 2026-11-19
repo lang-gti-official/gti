@@ -1,0 +1,9 @@
+// Two packages expose identically named targets through direct aliases; their shared dependency links once.
+$ cd app
+$ gti build app
+$ gti run app --no-build
+$ sh -c "test ! -e ../left/build && test ! -e ../right/build && test $(find build -name api.gtilib | wc -l) -eq 2"
+$ sh -c "sed s/lhs/shared/g gti.toml | sed 's/^shared =/lhs =/' > broken.toml && mv broken.toml gti.toml"
+$ gti check app
+? 65
+stderr: must be a direct dependency alias

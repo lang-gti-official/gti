@@ -2943,14 +2943,14 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
             targetError(*node, "Target field 'compiled-dependencies' requires "
                                "1 to 64 dependency tables.");
           } else {
-            std::set<std::string> names;
+            std::set<std::pair<std::string, std::string>> names;
             for (const auto &entry : *array) {
               const auto *table = entry.as_table();
               if (!table) {
                 targetError(entry, "A compiled dependency must be a table.");
                 continue;
               }
-              validateFields(*table, {"target", "interface"},
+              validateFields(*table, {"target", "interface", "package"},
                              "compiled-dependency", sourceName, source,
                              result.diagnostics);
               const auto name =
@@ -2959,13 +2959,25 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               const auto interface =
                   requiredString(*table, "interface", "compiled-dependency",
                                  sourceName, source, result.diagnostics);
+              std::optional<std::string> alias;
+              if (const auto *field = table->get("package")) {
+                alias = requiredString(*table, "package", "compiled-dependency",
+                                       sourceName, source, result.diagnostics);
+                if (!alias)
+                  continue;
+                if (!isImportAlias(*alias) || *alias == "std") {
+                  targetError(*field, "Compiled dependency package must name a "
+                                      "dependency alias.");
+                  continue;
+                }
+              }
               if (!name || !interface)
                 continue;
               std::error_code error;
               const auto facade = std::filesystem::weakly_canonical(
                   packageRoot / *interface, error);
               if (!isPortableProjectName(*name) ||
-                  !names.insert(*name).second) {
+                  !names.emplace(alias.value_or(""), *name).second) {
                 targetError(*table->get("target"),
                             "Compiled dependency targets must be unique "
                             "portable names.");
@@ -2980,7 +2992,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
                             ".gti path inside the package.");
               } else {
                 parsedTarget.compiledDependencies.push_back(
-                    {*name, facade, sourceSpan(sourceName, source, entry)});
+                    {std::move(alias), *name, facade,
+                     sourceSpan(sourceName, source, entry)});
               }
             }
           }
