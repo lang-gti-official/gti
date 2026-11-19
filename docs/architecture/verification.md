@@ -22,6 +22,14 @@ per-entry census and CPU times in its `--json` report are information only.
 `--only`, `--shard I/N`, `--jobs N` and entry substrings narrow a run. Those
 binaries' own fixtures stay as the `*_fixtures` entries.
 
+The trusted check proves one cold preamble build and a warm adoption separately
+for the reachable editor and complete configurations. Reachable entry-unit
+analysis can include imported application modules in its reusable prefix;
+complete analysis uses only the compiler-trusted prefix. A policy switch may
+therefore require a different preamble. Both configurations must still preserve
+application diagnostics and valid HIR; complete analysis preserves all library
+diagnostics, while reachable analysis may report a subset.
+
 ## C++ unit tests
 
 C++ tests of library code that need no GTI program (runtime ABI boundaries,
