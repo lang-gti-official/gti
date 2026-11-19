@@ -4142,6 +4142,16 @@ generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the request's
 configured step and call-depth limits (`CompileLimits`).
 
+Staged lowering brings the checked data of referenced constexpr program
+storage and its address dependencies into the ordinary initialization plan.
+A borrowed result must pass MIR's static-result proof and the executor's
+publication check. The persisted address records the storage symbol and
+typed field or fixed-array projections. Each request reconstructs read-only
+designators from those symbols, with
+one storage cell per symbol under the ordinary constant-storage budget.
+Verified MIR checks symbol, path, access and type before LLVM emits the
+corresponding relocatable addresses using the selected target layout.
+
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
 may name a polymorphic, inherited or otherwise runtime-only class without
@@ -4152,12 +4162,10 @@ profile's restrictions. This is a general identity/representation distinction,
 not an exemption for named reflection types.
 
 Only fully initialized structural aggregates enter this representation.
-Semantics rejects bases, polymorphism, stored references, union state, active
-cleanup, mutable receiver execution, and unsupported field types before a
-constant is accepted. HIR and MIR retain only facts needed by runtime or
-program-storage materialization. The C++ backend may serialize an accepted
-constant from its exact fields, but it cannot invoke source constructors or
-host constant evaluation to recover language meaning.
+Bases, polymorphism, union state, active cleanup, and unsupported field types
+remain outside the published aggregate profile. Read-only address fields
+retain their verified static referents. Local constexpr execution can also
+use mutable receivers and transient references under ordinary MIR checks.
 
 Literal-backed text inspection dispatches on resolved `StringViewSize` and
 `StringViewEmpty` intrinsic identities and the typed string-view index
@@ -4332,6 +4340,23 @@ profile; it is not admitted by the integral-enum catalog.
 
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
+
+### Embedded byte storage
+
+The frontend creates an immutable, source-local `constexpr uint8_t[N]`
+declaration for each distinct embedded input in a unit. The declaration's
+packed constant retains the exact array type and byte extent with no
+per-element syntax or constant nodes. Semantics rewrites the public
+expression into the normal checked array-to-span call. The program
+initialization plan records the backing array as data-only. Staged MIR
+materializes that verified static origin and can project individual bytes
+with the same checked array rules. LLVM emits the packed array as constant
+data. Both paths use the ordinary source-defined span code.
+
+When an otherwise publishable constant expression consumes a borrowed
+intermediate, staging keeps the producer and consumer in one verified MIR
+body. Its temporary loans live until the full expression completes, and only
+the final persistent value returns to semantic analysis.
 
 ## Staged Constant Limits And Reuse
 

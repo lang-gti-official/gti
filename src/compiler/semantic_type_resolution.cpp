@@ -3312,10 +3312,73 @@ auto SemanticVisitor::Impl::recordSelectedConstructionOccurrence(
   }
 }
 
+auto SemanticVisitor::Impl::arraySpanFactory() const
+    -> const CallableCandidate * {
+  const auto &symbols = activeNamespaceSymbols();
+  const auto found = symbols.find("gti_internal::array_as_span");
+  if (!sourceGraph || found == symbols.end() ||
+      found->second.overloads.size() != 1)
+    return nullptr;
+  const auto &candidate = found->second.overloads.front();
+  const auto &record = candidate.record();
+  const auto *unit = sourceGraph->findUnit(record.sourceUnit);
+  const auto *body = candidate.bodyDeclaration();
+  if (!unit || unit->role != SourceUnitRole::StandardLibrary ||
+      unit->standardLibraryName != "std/span" || candidate.ownerClass != 0 ||
+      !body || !body->body() || record.intrinsic != IntrinsicKind::None ||
+      record.requiresUnsafe || candidate.parameterTypes.size() != 1)
+    return nullptr;
+  const auto &input = candidate.parameterTypes.front();
+  return input.kind == SemanticType::Reference &&
+                 input.referenceAccess == AccessMode::ReadOnly &&
+                 input.arguments.size() == 1 &&
+                 input.arguments.front().kind == SemanticType::Array
+             ? &candidate
+             : nullptr;
+}
+
 auto SemanticVisitor::Impl::analyzeArrayMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)
     -> void {
+  if (member.name().lexeme == "as_span") {
+    currentType = SemanticType::Unknown;
+    if (!argumentTypes.empty()) {
+      report(paren, "Fixed array 'as_span' expects no arguments.", "GTI-S2016");
+      return;
+    }
+    const auto *factory = arraySpanFactory();
+    if (!factory) {
+      report(member.name(), "Import std.span to use fixed array 'as_span'.",
+             "GTI-S2016");
+      return;
+    }
+    const std::vector<SemanticType> types{memberAccessObjectType(member)};
+    CallableCandidate selected;
+    std::vector<SemanticType> typeArguments;
+    std::vector<CompileTimeValue> valueArguments;
+    ConstraintFailure failure;
+    if (!tryInstantiateFunction(*factory, {}, {}, types, call.arguments(),
+                                selected, typeArguments, valueArguments,
+                                &failure)) {
+      if (hasConstraintFailure(failure))
+        reportConstraintFailure(paren, failure);
+      else
+        report(paren, "Cannot form a span over this fixed array.", "GTI-S2016");
+      return;
+    }
+    if (!callArgumentMatches(selected.parameterTypes.front(), types.front(),
+                             member.object())) {
+      reportCallArgumentMismatch(0, selected.parameterTypes.front(),
+                                 types.front(), member.object(), "Fixed array");
+      return;
+    }
+    recordResolvedCall(call, selected, std::move(typeArguments),
+                       std::move(valueArguments), {}, {},
+                       CallReceiverMode::None, &member.object());
+    currentType = callExpressionType(selected.returnType);
+    return;
+  }
   const bool generatedBegin =
       member.name().generated &&
       (member.name().lexeme == "begin" || member.name().lexeme == "begin_mut");

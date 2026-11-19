@@ -1,0 +1,6 @@
+// Absolute paths are not compile-time file inputs.
+import std.span;
+
+std::span<uint8_t, static> absolute() {
+  return embed_bytes("/assets/data.bin");  //~ ERROR GTI-S2129 nonempty relative file path
+}

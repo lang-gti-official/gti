@@ -1,0 +1,25 @@
+// A user-defined constexpr object retains checked references to nested immutable static fields.
+//@ run-pass
+struct Data {
+  int header;
+  int values[3] = {2, 17, 6};
+
+  constexpr Data(int header) : header(header) {}
+};
+
+struct Source {
+  static constexpr Data data = Data(4);
+};
+
+struct View<lifetime a> {
+  int&<a> value;
+
+  constexpr View(int&<a> value) : value(value) {}
+  constexpr int read() { return this.value; }
+};
+
+constexpr View<static> view = View<static>(Source::data.values[1]);
+static_assert(view.read() == 17);
+static_assert(view.value == 17);
+
+int main() { return view.read() + view.value - 34; }

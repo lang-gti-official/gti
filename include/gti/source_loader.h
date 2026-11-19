@@ -105,6 +105,8 @@ private:
                                int braceDepth, int conditionalDepth,
                                bool reexport);
 
+  void loadEmbeddedFiles();
+
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000");
 

@@ -1,0 +1,7 @@
+// A constexpr borrow cannot publish a read-only raw address into an execution-local frame.
+constexpr const int* dangling() {
+  int value = 17;
+  unsafe { return &value; }
+}
+
+constexpr const int* bad = dangling();  //~ ERROR GTI-S2057 immutable constexpr program storage

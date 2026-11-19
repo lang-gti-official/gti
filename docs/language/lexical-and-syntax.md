@@ -44,6 +44,9 @@ separate UTF-8 bytes.
 Fixed lexemes, token classes, keywords, literals, operators, and punctuation
 are defined by the incorporated grammar and lexer contract.
 
+`embed_bytes` is reserved for the call-like
+[compile-time asset expression](ranges.md#embedding-files-as-bytes).
+
 `#macro` is a declaration token followed by an optional result type, a name, typed parameter clause and
 braced GTI body; it is not a line-oriented C preprocessor replacement directive.
 An omitted result type is implicitly void; explicit types use `#macro T name(...)`.

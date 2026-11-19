@@ -2694,6 +2694,9 @@ The current key includes:
 - the ordered `SourceGraph::preludeRoots()` logical identities, followed by
   SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
+- embedded file inputs by requesting unit and call offset, with the exact
+  loaded bytes hashed by SHA-256. Changing only an asset invalidates the cache,
+  and a missing asset cannot reuse the last successful executable;
 - the native C++ compiler command, resolved executable content, and `--version`
   output (plus the same identity for the C compiler when C sources are
   declared);

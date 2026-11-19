@@ -468,14 +468,48 @@ implicitly suspend an exclusive borrow.
 ## Spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
-source prefix owner. `std::vector<T>::as_span()` and
-`std::string::as_span()` construct a complete span without exposing an address
-or pointer-length pair. A span stores an offset and count alongside its checked
-read-only storage dependency and provides checked indexing, `front()`,
-`back()`, `first()`, `last()`, `subspan()`, and structural iteration. Empty
-spans remain valid. Copy and move construction preserve the same shared owner
-dependency; assignment is unavailable because the current lifetime model does
-not reseat borrowed-state carriers.
+contiguous owner. `std::vector<T>::as_span()`, `std::array<T, N>::as_span()`,
+and `std::string::as_span()` construct a complete span. The span holds a
+checked erased owner borrow alongside its internal base address and bounds.
+It provides checked indexing, `front()`, `back()`, `first()`, `last()`,
+`subspan()`, and structural iteration. An empty span retains its owner even
+when there is no element address. Copy and move construction preserve the
+shared owner dependency. The view remains bound to that owner for its lifetime.
+Vector- and array-backed spans support constant evaluation when their storage
+and operations are eligible for constexpr execution.
+
+With `std.span` available, a built-in array `T[N]` offers the same
+`array.as_span()` operation. It borrows the whole array, including when
+`N` is zero. An array in static storage can back a `std::span<T, static>`.
+When that array is `constexpr`, its elements can also be read through the
+span during constant evaluation.
+
+### Embedding files as bytes
+
+With `import std.span;`, `embed_bytes("relative/path")` produces a read-only
+`std::span<uint8_t, static>`. Its single argument is a string literal giving a
+path relative to the GTI file that contains the call. Project paths must stay
+within the source file's owning package, including after resolving symlinks.
+Direct compilation confines the path to the containing source directory.
+GTI diagnoses missing or unreadable files, non-regular files, and paths that
+cross those boundaries. The limits are 16 MiB per file and 64 MiB across
+canonical inputs per compilation.
+
+The span contains every byte verbatim, including zero bytes and bytes above
+127, without a terminator. An empty input produces an empty span. The compiler
+reads the file while loading build inputs and publishes the bytes in immutable
+static storage. A running executable can use the view without the original
+file. A constexpr binding can save the span and use it both at compile time
+and at run time.
+
+```gti
+import std.span;
+
+constexpr std::span<uint8_t, static> logo = embed_bytes("assets/logo.bin");
+static_assert(logo.size() > 0);
+```
+
+### String views
 
 `std::string::view()` returns a counted `std::string_view` over the string's
 live character prefix. Literal-backed string views remain independent trivial

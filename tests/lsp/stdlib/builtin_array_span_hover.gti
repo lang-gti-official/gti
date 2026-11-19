@@ -1,0 +1,9 @@
+// Editor hover presents the fixed-array span member at its call site.
+//@ hover @member: as_span()
+import std.span;
+
+int main() {
+  int values[3] = {1, 2, 3};
+  auto view = values./*@member*/as_span();
+  return view[0];
+}

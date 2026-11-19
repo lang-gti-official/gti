@@ -2649,6 +2649,9 @@ public:
   [[nodiscard]] const BindingInfo *
   findBinding(const VariableDecl &declaration) const;
 
+  [[nodiscard]] std::optional<ProgramInitializationStep>
+  findConstantProgramStorage(SymbolId symbol) const;
+
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const;
 
@@ -3069,6 +3072,7 @@ private:
                        const SemanticFullExpression &expression);
 
   void recordFullExpression(const Stmt &statement, const ExprPtr &root);
+  void recordFullExpression(const Stmt &statement, const Expr &root);
 
   void recordFullExpression(const ConstructorInitializer &initializer);
 

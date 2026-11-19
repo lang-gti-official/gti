@@ -1,0 +1,21 @@
+// A constexpr carrier can retain independent static references when copied.
+//@ run-pass
+constexpr int a = 17;
+constexpr int b = 25;
+
+struct Refs<lifetime first, lifetime second> {
+  int&<first> a;
+  int&<second> b;
+
+  constexpr Refs(int&<first> a, int&<second> b) : a(a), b(b) {}
+  constexpr int sum() { return this.a + this.b; }
+};
+
+constexpr Refs<static, static> first = Refs<static, static>(a, b);
+constexpr Refs<static, static> second = first;
+static_assert(first.sum() == 42 && second.b == 25);
+int main() {
+  constexpr Refs<static, static> third = second;
+  static_assert(third.sum() == 42);
+  return third.a + third.b - 42;
+}

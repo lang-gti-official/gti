@@ -1,0 +1,20 @@
+// An authored asset returns a static byte span readable in constant evaluation.
+// --- main.gti
+import std.span;
+
+constexpr std::span<uint8_t, static> payload() {
+  return embed_bytes("data.txt");
+}
+
+constexpr bool check_payload() {
+  auto bytes = payload();
+  auto tail = bytes.subspan(1, 2);
+  return bytes.size() == 4 && tail[0] == 0x54 && tail[1] == 0x49;
+}
+
+static_assert(check_payload());
+constexpr std::size_t size = embed_bytes("data.txt").size();
+static_assert(size == 4);
+static_assert(embed_bytes("data.txt")[1] == 0x54);
+// --- data.txt
+GTI

@@ -7227,7 +7227,9 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return storage != nullptr &&
          (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
           step->storageKind == ProgramStorageKind::StaticField) &&
-         storage->access == AccessMode::ReadOnly;
+         storage->access == AccessMode::ReadOnly &&
+         (!storage->traits.containsBorrowedState ||
+          findMirConstantStorage(program, place.symbol));
 }
 
 // RFC 0004: a declared `static` reference result with no exact summarized
@@ -23538,11 +23540,13 @@ mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
     }
   }
 
-  // A published constant is immutable data, never an executor-local owner or
-  // a loan. Validate every aggregate layer against the sealed type catalog;
-  // body-local verification alone cannot know a record's exact field layout.
+  // A published constant is immutable data. Its address fields name only
+  // immutable program storage. Validate every layer against the sealed type
+  // inventory before checking the exact value and its address projections.
   const auto passiveConstantType = [&](const auto &self,
                                        const SemanticType &type) -> bool {
+    if (isReadOnlyConstantAddressType(type))
+      return true;
     if (type.kind == SemanticType::Array)
       return type.arguments.size() == 1 && self(self, type.arguments.front());
     if (type.kind == SemanticType::Class) {
@@ -23550,10 +23554,14 @@ mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
           program.classInstances().begin(), program.classInstances().end(),
           [&](const auto &candidate) { return candidate.type == type; });
       if (owner == program.classInstances().end() ||
-          owner->requiresActiveCleanup || owner->traits.containsBorrowedState ||
-          owner->polymorphic || owner->kind == ClassKind::Union ||
+          owner->requiresActiveCleanup || owner->polymorphic ||
+          owner->kind == ClassKind::Union ||
           owner->kind == ClassKind::Interface ||
           !owner->structuralBases.empty())
+        return false;
+      // A borrowed aggregate must have a concrete stored reference path.
+      if (owner->traits.containsBorrowedState &&
+          findStoredCarrierReferences(program, type).empty())
         return false;
       return std::all_of(
           owner->declaredFields.begin(), owner->declaredFields.end(),

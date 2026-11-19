@@ -961,9 +961,12 @@ SemanticModel::canPresent(SourceUnitId requester,
     const auto *function = findFunction(occurrence.selectedCall->function);
     const auto *unit =
         function ? sourceGraph.findUnit(function->sourceUnit) : nullptr;
-    if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-        unit->standardLibraryName == "std/string_view")
-      return true;
+    if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary) {
+      if (unit->standardLibraryName == "std/string_view" ||
+          (unit->standardLibraryName == "std/span" &&
+           function->qualifiedName == "gti_internal::array_as_span"))
+        return true;
+    }
   }
   const SymbolRecord *symbol = semanticDatabase.findSymbol(occurrence.symbol);
   return symbol == nullptr || canPresent(requester, *symbol, sourceGraph);
@@ -1090,6 +1093,48 @@ SemanticModel::findBinding(const VariableDecl &declaration) const {
   if (inherited != nullptr)
     (void)semanticDatabase.noteBaseSymbol(inherited->symbol);
   return inherited;
+}
+
+std::optional<ProgramInitializationStep>
+SemanticModel::findConstantProgramStorage(SymbolId symbol) const {
+  const auto *record = semanticDatabase.findSymbol(symbol);
+  if (!record || record->mutableBinding || record->threadLocal ||
+      (record->kind != SymbolKind::GlobalVariable &&
+       !(record->kind == SymbolKind::Field && record->staticMember)))
+    return std::nullopt;
+  const auto found = std::find_if(
+      variableBindings.begin(), variableBindings.end(),
+      [&](const auto &entry) { return entry.second.symbol == symbol; });
+  if (found == variableBindings.end())
+    return base ? base->findConstantProgramStorage(symbol) : std::nullopt;
+  const auto &[declaration, binding] = *found;
+  if (!declaration->isConstexpr() || binding.access != AccessMode::ReadOnly ||
+      binding.foreignStorage || !binding.constant)
+    return std::nullopt;
+  ClassId owner = 0;
+  if (record->kind == SymbolKind::Field) {
+    const auto containing = std::find_if(
+        classTypes.begin(), classTypes.end(), [&](const auto &entry) {
+          return entry.second.genericParameters.empty() &&
+                 std::any_of(entry.second.staticFields.begin(),
+                             entry.second.staticFields.end(),
+                             [&](const auto &field) {
+                               return field.declaration == declaration;
+                             });
+        });
+    if (containing == classTypes.end())
+      return std::nullopt;
+    owner = containing->second.id;
+  }
+  return ProgramInitializationStep{
+      .sourceUnit = record->sourceUnit,
+      .kind = owner ? ProgramStorageKind::StaticField
+                    : ProgramStorageKind::NamespaceGlobal,
+      .role = ProgramInitializationStepRole::DataOnly,
+      .declaration = declaration,
+      .symbol = symbol,
+      .ownerClass = owner,
+      .declarationSpan = record->declarationSpan};
 }
 
 const ExprPtr &
@@ -2715,12 +2760,15 @@ bool SemanticModel::appendFullExpression(
 
 void SemanticModel::recordFullExpression(const Stmt &statement,
                                          const ExprPtr &root) {
-  if (root == nullptr) {
-    return;
-  }
+  if (root)
+    recordFullExpression(statement, *root);
+}
+
+void SemanticModel::recordFullExpression(const Stmt &statement,
+                                         const Expr &root) {
   SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
                                     .statement = &statement,
-                                    .roots = {root.get()}};
+                                    .roots = {&root}};
   if (appendFullExpression(statementFullExpressions[&statement], expression)) {
     fullExpressionOrder.push_back(std::move(expression));
   }

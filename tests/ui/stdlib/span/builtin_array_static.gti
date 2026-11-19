@@ -1,0 +1,10 @@
+// A span over a global byte array has a static lifetime and exposes every byte.
+//@ run-pass
+import std.span;
+
+uint8_t payload[4] = {0x47, 0, 0xff, 0x49};
+
+int main() {
+  std::span<uint8_t, static> view = payload.as_span();
+  return view.size() == 4 && view[1] == 0 && view[2] == 0xff ? 0 : 1;
+}
