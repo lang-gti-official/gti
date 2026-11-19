@@ -2117,6 +2117,23 @@ bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
 std::optional<std::vector<Diagnostic>>
 EditorBodyDiagnostics::check(const std::string &source,
                              const std::atomic<bool> *cancel) const {
+  return checkEdit(source, cancel, std::nullopt);
+}
+
+bool EditorBodyDiagnostics::reproducesRecovery(
+    const std::string &source, const std::vector<Diagnostic> &observed,
+    const std::atomic<bool> *cancel) const {
+  if (!std::ranges::any_of(observed, [](const Diagnostic &d) {
+        return d.phase == DiagnosticPhase::Parsing;
+      }))
+    return false;
+  const auto replay = checkEdit(source, cancel, observed.size() + 1);
+  return replay && *replay == observed;
+}
+
+std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
+    const std::string &source, const std::atomic<bool> *cancel,
+    std::optional<std::size_t> recoveryLimit) const {
   const std::lock_guard lock(queryMutex);
   if (cancel && cancel->load(std::memory_order_relaxed))
     return std::nullopt;
@@ -2164,19 +2181,25 @@ EditorBodyDiagnostics::check(const std::string &source,
   }
   tokens.push_back(scanned.back());
   Parser parser(std::move(tokens), source);
-  parser.setErrorLimit(1);
+  parser.setErrorLimit(recoveryLimit.value_or(1));
   auto changed = parser.parseFunctionBody();
-  if (!changed || parser.hadError() || !parser.lifetimeNames().empty() ||
+  if (!changed || (parser.hadError() && !recoveryLimit) ||
+      !parser.lifetimeNames().empty() ||
       changed->extent()->start != span.start ||
       changed->extent()->end != bodyEnd)
     return std::nullopt;
 
   auto sources = baseline->sources;
   sources.set(path, source);
-  return context->diagnoseEditedBody({baseline->program, baseline->semantics,
-                                      baseline->sourceGraph, sources, *prior,
-                                      *changed},
-                                     cancel);
+  auto answer = context->diagnoseEditedBody(
+      {baseline->program, baseline->semantics, baseline->sourceGraph, sources,
+       *prior, *changed},
+      cancel);
+  if (!answer || !parser.hadError())
+    return answer;
+  answer->insert(answer->begin(), parser.errors().begin(),
+                 parser.errors().end());
+  return answer;
 }
 
 } // namespace lang

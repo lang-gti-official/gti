@@ -4192,6 +4192,7 @@ private:
     if (bodyBaseline)
       retireSnapshotLocked(std::move(bodyBaseline));
     cancelBodyQueryLocked();
+    bodyRecovery.reset();
     lastBodyDiagnostics.clear();
   }
 
@@ -4199,6 +4200,7 @@ private:
     while (true) {
       BodyEdit request;
       std::shared_ptr<const BodyBaseline> baseline;
+      std::shared_ptr<const BodyRecovery> recovery;
       {
         std::unique_lock lock(stateMutex);
         bodyCondition.wait(
@@ -4208,6 +4210,7 @@ private:
         request = std::move(*pendingBodyQuery);
         pendingBodyQuery.reset();
         baseline = bodyBaseline;
+        recovery = bodyRecovery;
         if (!baseline || !sourceInputsCurrentLocked(
                              baseline->dependencies,
                              baseline->documentGenerations, baseline->inputs))
@@ -4216,9 +4219,18 @@ private:
       // The full frontend is scheduled independently, even if the foreground
       // query cannot answer, is superseded, or reaches a compiler limit.
       std::optional<std::vector<lang::Diagnostic>> answer;
+      const bool verified = baseline->context->matchesSource(request.source);
+      bool reproduced = false;
       try {
         answer = baseline->context->check(request.source,
                                           request.cancellation.get());
+        // A recovery pass may diagnose both a missing expression and the
+        // resulting incomplete function. Only retire its published set if
+        // the same isolated checker can account for every diagnostic.
+        if (answer && recovery && !verified)
+          reproduced = baseline->context->reproducesRecovery(
+              recovery->source, recovery->diagnostics,
+              request.cancellation.get());
       } catch (const std::exception &error) {
         std::cerr << "Body diagnostic query failed: " << error.what() << '\n';
       } catch (...) {
@@ -4245,8 +4257,15 @@ private:
         const auto previous = diagnosticsByRoot.find(request.uri);
         if (previous == diagnosticsByRoot.end())
           continue;
-        const bool verified = baseline->context->matchesSource(request.source);
-        if (!verified &&
+        const bool ownsRecovery =
+            reproduced && recovery == bodyRecovery &&
+            std::ranges::all_of(previous->second,
+                                [&](const LspDiagnostic &d) {
+                                  return d.source == recovery->source;
+                                }) &&
+            std::ranges::equal(previous->second, recovery->diagnostics, {},
+                               &LspDiagnostic::diagnostic);
+        if (!verified && !ownsRecovery &&
             !std::ranges::equal(previous->second, lastBodyDiagnostics, {},
                                 &LspDiagnostic::diagnostic))
           continue;
@@ -4262,6 +4281,7 @@ private:
         std::unordered_set<std::string> affected{request.uri};
         for (const auto &d : previous->second)
           affected.insert(d.uri);
+        bodyRecovery.reset();
         lastBodyDiagnostics = std::move(*answer);
         diagnosticsByRoot[request.uri] = std::move(current);
         publications = publicationsForLocked(affected);
@@ -4702,9 +4722,14 @@ private:
           }))
         return;
       std::erase_if(previous, localSyntax);
-      for (const auto &diagnostic : syntax.diagnostics)
-        if (localSyntax(diagnostic))
-          previous.push_back(diagnostic);
+      for (const auto &diagnostic : syntax.diagnostics) {
+        if (!localSyntax(diagnostic))
+          continue;
+        auto &published = previous.emplace_back(diagnostic);
+        if (!published.fixes.empty())
+          published.repairSnapshot =
+              request.uri + ":" + std::to_string(request.generation);
+      }
       publications = publicationsForLocked({request.uri});
     }
     publish(std::move(publications));
@@ -4768,11 +4793,30 @@ private:
               request.uri, analysis.rootPath, std::move(analysis.bodyContext),
               analysis.dependencies, request.documentGenerations,
               request.frontendSources});
-        } else if (bodyBaseline && bodyBaseline->uri == request.uri &&
-                   !std::ranges::equal(analysis.diagnostics,
-                                       lastBodyDiagnostics, {},
-                                       &LspDiagnostic::diagnostic)) {
-          lastBodyDiagnostics.clear();
+        } else if (bodyBaseline && bodyBaseline->uri == request.uri) {
+          bodyRecovery.reset();
+          if (!std::ranges::equal(analysis.diagnostics, lastBodyDiagnostics, {},
+                                  &LspDiagnostic::diagnostic)) {
+            lastBodyDiagnostics.clear();
+            if (analysis.frontend && analysis.frontend->sourceValid &&
+                !analysis.frontend->syntaxValid &&
+                !analysis.frontend->mirValid &&
+                !analysis.frontend->mirBorrowRejected &&
+                std::ranges::any_of(analysis.diagnostics,
+                                    [](const auto &d) {
+                                      return d.diagnostic.phase ==
+                                             lang::DiagnosticPhase::Parsing;
+                                    }) &&
+                std::ranges::all_of(analysis.diagnostics, [&](const auto &d) {
+                  return d.uri == request.uri;
+                })) {
+              BodyRecovery recovery{request.source, {}};
+              for (const auto &diagnostic : analysis.diagnostics)
+                recovery.diagnostics.push_back(diagnostic.diagnostic);
+              bodyRecovery =
+                  std::make_shared<const BodyRecovery>(std::move(recovery));
+            }
+          }
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
@@ -5643,6 +5687,13 @@ private:
     lang::lsp::FrontendSourceSnapshot inputs;
   };
   std::shared_ptr<const BodyBaseline> bodyBaseline;
+  // At most one failed source and its published diagnostics. No second
+  // semantic snapshot is retained for checking ownership on a later edit.
+  struct BodyRecovery {
+    std::string source;
+    std::vector<lang::Diagnostic> diagnostics;
+  };
+  std::shared_ptr<const BodyRecovery> bodyRecovery;
   std::vector<lang::Diagnostic> lastBodyDiagnostics;
   struct BodyEdit {
     std::string uri;

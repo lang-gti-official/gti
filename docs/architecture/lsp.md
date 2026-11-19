@@ -171,8 +171,14 @@ edits cancel earlier queries, and publication checks the document generation.
 A clean local result retracts errors this query previously published. Restoring
 the exact source bytes of the retained verified root also restores its clean
 ordinary diagnostics when its dependency and project inputs are still current.
-An intervening failed check can add recovery diagnostics for the broken version
-without invalidating that evidence.
+After a parse failure, the server retains the reported diagnostics and the
+failed text for that root. If the user repairs the body with different text,
+the isolated checker can replay the failed body. It can withdraw the recovery
+diagnostics only when it reproduces the complete published set, including the
+source ranges and related information, and can check the new body. An error
+from another declaration or a MIR borrow rejection keeps the full check in
+charge of clearing it.
+
 The complete frontend still checks callers, lifetimes, cleanup and MIR for
 every settled edit. Its diagnostics replace the partial result and its snapshot
 serves navigation and other requests. Edits to declarations, generic or

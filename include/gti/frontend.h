@@ -247,7 +247,17 @@ public:
   check(const std::string &source,
         const std::atomic<bool> *cancel = nullptr) const;
 
+  // A completed recovery pass may also diagnose the body it recovered.
+  // Establish local ownership only if the isolated checker reproduces every
+  // diagnostic, including positions, related information and fixes.
+  [[nodiscard]] bool reproducesRecovery(const std::string &source,
+                                        const std::vector<Diagnostic> &observed,
+                                        const std::atomic<bool> *cancel) const;
+
 private:
+  std::optional<std::vector<Diagnostic>>
+  checkEdit(const std::string &source, const std::atomic<bool> *cancel,
+            std::optional<std::size_t> recoveryLimit) const;
   explicit EditorBodyDiagnostics(
       const std::shared_ptr<FrontendResult> &snapshot);
   std::shared_ptr<const FrontendResult> baseline;
