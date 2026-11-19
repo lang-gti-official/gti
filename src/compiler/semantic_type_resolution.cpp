@@ -8436,7 +8436,7 @@ auto SemanticVisitor::Impl::substituteSymbol(
   Symbol result = symbol;
   const GenericSubstitution substitution = classSubstitution(objectType);
   result.type = substituteType(result.type, substitution);
-  for (CallableCandidate &overload : result.overloads) {
+  for (CallableCandidate &overload : result.overloads.edit()) {
     overload.returnType = substituteType(overload.returnType, substitution);
     for (SemanticType &parameter : overload.parameterTypes) {
       parameter = substituteType(parameter, substitution);
