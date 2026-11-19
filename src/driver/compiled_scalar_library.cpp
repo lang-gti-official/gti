@@ -418,13 +418,15 @@ private:
 std::optional<ScalarSelection>
 producerSelection(const FrontendResult &frontend,
                   const CompiledLibraryTarget *target) {
-  if (!target || !frontend.canGenerateCode())
+  if (!target || !frontend.sourceValid)
     return std::nullopt;
   const auto &graph = frontend.sourceGraph;
   const auto *entry = graph.findUnit(graph.entryUnit());
   if (!entry || !entry->moduleDeclaration)
     throw std::invalid_argument(
         "compiled library root must declare a module interface");
+  if (!frontend.canGenerateCode())
+    return std::nullopt;
   ScalarSelection selection;
   selection.functions = target->functions;
   if (selection.functions.empty()) {
