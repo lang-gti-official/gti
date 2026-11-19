@@ -1,0 +1,14 @@
+manifest-version = 1
+
+[package]
+name = "codegen_units"
+version = "0.1.0"
+
+[targets.codegen_units]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.numbers]
+kind = "gti-library"
+root = "src/numbers.gti"
+functions = ["choose"]

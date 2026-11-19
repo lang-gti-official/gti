@@ -2,6 +2,8 @@
 
 #include "gti/llvm_admission.h"
 
+#include <llvm/ADT/STLFunctionalExtras.h>
+#include <llvm/ADT/StringMap.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Target/TargetMachine.h>
@@ -24,6 +26,21 @@ inline constexpr unsigned executionAbiVersion = 2;
 
 [[nodiscard]] std::unique_ptr<llvm::TargetMachine>
 makeMachine(const TargetInfo &target, LlvmBackendOptions options);
+
+// Machine-code units consume verified LLVM IR after whole-module transforms.
+// The optional test probe injects diagnostics in the worker's own context.
+[[nodiscard]] BackendArtifact emitObjectUnits(
+    llvm::Module &module, const TargetInfo &target, LlvmBackendOptions options,
+    llvm::function_ref<void(unsigned, llvm::LLVMContext &)> testProbe = {});
+
+// Partition validation consumes each expected definition once. The final
+// empty inventory proves that the units contain every expected symbol.
+using CodegenDefinitionInventory =
+    llvm::StringMap<llvm::GlobalValue::LinkageTypes>;
+void consumeCodegenUnitDefinitions(const llvm::Module &unit,
+                                   CodegenDefinitionInventory &remaining);
+void requireCompleteCodegenDefinitions(
+    const CodegenDefinitionInventory &remaining);
 
 // The processor whose costs guide optimization and scheduling, without
 // enabling any instruction beyond the machine's generic feature baseline.
