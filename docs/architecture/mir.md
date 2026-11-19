@@ -1824,7 +1824,7 @@ raised. Program v50 adds the bounded two-phase mutable loan for plain
 source-defined subscript and dereference stores described below. Program v49
 and body v45 add the explicit early-exit full-expression
 marker role used by `?` propagation, which through `std::tryable` branches on
-its `has_value` call and returns the residual's construction. Each propagation
+its `has_value` call and returns the residual's construction or registered conversion. Each propagation
 failure edge retains a path-exclusive boundary alongside the one ordinary
 continuation boundary, so verification can prove exact temporary and lexical
 cleanup without reopening HIR. Program v48 and body v44 serialize the exact
@@ -1878,6 +1878,16 @@ constructor identities while body v39 was unchanged. Program/body v39 added
 verified call-scoped loans for fresh read-only temporary arguments; v38 added
 caller-expanded default-argument provenance to ordered call inputs and
 explicit-argument counts to constructor initializers.
+
+A source function whose signature gives its carrier result static origins may
+return only alternatives without stored references, even without a complete
+input-dependency contract. Complete-borrow verification independently reconstructs
+all reachable normal returns and may reuse their well-typed empty dependency
+set at callers. Unknown, recursive, non-returning or reference-bearing results
+cannot establish this empty proof. This supports source error adapters returning
+reference-capable result types without weakening the successful reference's
+owner contract; the non-returning mutation in
+`tests/unit/from_propagation_contract.cpp` protects the proof boundary.
 
 Every optimizer rewrite carries replayable proof in the rewritten node
 itself, so a backend consumes optimized MIR without recovering

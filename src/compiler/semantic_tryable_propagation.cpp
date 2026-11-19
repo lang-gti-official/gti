@@ -5,7 +5,8 @@
 // to that concept by trusted declaration identity and knows nothing about the
 // types that conform to it. The selected conformance block's functions run as
 // ordinary calls. A residual initializes the enclosing return type directly,
-// through its exact implicit constructor, or through std::from<Return, Residual>.
+// through its exact implicit constructor, or through std::from<Return,
+// Residual>.
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>

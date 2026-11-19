@@ -1,7 +1,10 @@
 // HIR retains the exact conversion selected for a propagation failure exit.
 #include "gti/frontend.h"
 #include "gti/hir.h"
+#include "gti/mir_verifier.h"
 #include "unit_test.h"
+#include <fstream>
+#include <iterator>
 
 GTI_UNIT_TEST(from_propagation_contract) {
   const std::string source = R"(
@@ -66,4 +69,45 @@ int main() {
                          .valid()
              ? 0
              : 3;
+}
+
+GTI_UNIT_TEST(from_empty_result_needs_normal_return) {
+  const auto root =
+      std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
+  const auto entry = root / "tests/ui/expected/from/reference_success.gti";
+  std::ifstream input(entry);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  auto frontend = lang::Frontend().analyze(entry, source,
+                                           {root / "stdlib/prelude.gti", entry},
+                                           {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    return 1;
+  lang::HirFunctionInstanceId adapter = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "from" &&
+        function.returnType.kind == lang::SemanticType::Class &&
+        function.returnBorrowOrigin == lang::BorrowOriginKind::Global)
+      adapter = function.id;
+  if (!adapter)
+    return 2;
+  auto forged = frontend.mir;
+  bool changed = false;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  for (auto &function : functions)
+    if (function.id == adapter)
+      for (auto &block : function.body.blocks)
+        if (block.terminator.kind == lang::MirTerminatorKind::Return) {
+          block.terminator = {.kind = lang::MirTerminatorKind::Unreachable};
+          changed = true;
+        }
+  if (!changed)
+    return 3;
+  const auto result = lang::verifyMirProgram(forged);
+  for (const auto &error : result.errors)
+    if (error.message.find(
+            "owner-dependent return is missing its escaping loan") !=
+        std::string::npos)
+      return 0;
+  return 4;
 }

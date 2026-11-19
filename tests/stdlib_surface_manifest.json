@@ -6861,8 +6861,8 @@
       "source": "stdlib/prelude.gti",
       "status": "executable",
       "operations": [
-        "std::tryable",
-        "std::from"
+        "std::from",
+        "std::tryable"
       ],
       "case_ids": [
         "tryable-borrowed-results",
