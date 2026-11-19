@@ -1858,6 +1858,13 @@ remain usable without sources. The `tests/slow/project/compiled_dependencies` ex
 these paths. Zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
 
+Automatic target selection builds on this graph. A registered `lib.gti`
+or an explicitly selected default library serves ordinary package imports.
+Exported declarations and re-exports drive interface selection. Dependencies
+outside the supported metadata profile retain source compilation. The
+`default_library_targets`, `default_library_overrides`, and
+`default_library_source_compatibility` project tests cover these paths.
+
 Artifact-selection progress (F4): a project dependency build now retains the
 exact bytes returned by each successful producer or validated cache hit. A
 driver-owned bounded snapshot collection shares those immutable inputs through

@@ -660,9 +660,9 @@ ProjectBuildPlan makeBuildPlan(
     const ProjectManifest &manifest, const ProjectTarget &selectedTarget,
     const ProjectProfile &selectedProfile, const TargetInfo &target,
     NativeInputs nativeInputs, std::vector<BuildScriptPlan> buildScripts,
-    const ProjectBuildOverrides &overrides = {},
-    RuntimeProfile runtimeProfile = RuntimeProfile::None,
-    ResolvedProjectToolchain toolchain = {}) {
+    const ProjectBuildOverrides &overrides, RuntimeProfile runtimeProfile,
+    ResolvedProjectToolchain toolchain,
+    const std::vector<CompiledLibraryImport> &sourceSelections) {
   for (BuildScriptPlan &script : buildScripts) {
     script.outputDirectory /= portableProjectNameKey(selectedTarget.name);
   }
@@ -853,21 +853,32 @@ ProjectBuildPlan makeBuildPlan(
   // loaded source.
   std::vector<PackageSourceRoot> packageSourceRoots =
       sourceWorkspace.packageSourceRoots();
-  for (const auto &library : compiledImports) {
+  const auto selectModule = [&](const CompiledLibraryImport &library,
+                                bool compiled) {
     if (library.moduleName.empty())
-      continue;
-    auto owner = std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
-                             [&](const auto &root) { return root.kind == SourceOwnerKind::Package && root.name == library.package; });
+      return;
+    auto owner = std::find_if(packageSourceRoots.begin(),
+                              packageSourceRoots.end(), [&](const auto &root) {
+                                return root.kind == SourceOwnerKind::Package &&
+                                       root.name == library.package;
+                              });
     if (owner == packageSourceRoots.end())
-      continue;
-    const auto matches = [&](const auto &member) { return member.first == library.moduleName; };
+      return;
+    const auto matches = [&](const auto &member) {
+      return member.first == library.moduleName;
+    };
     std::erase_if(owner->modules, matches);
     std::erase_if(owner->moduleLookupPaths, matches);
-    std::erase_if(owner->moduleImplementations, matches);
+    if (compiled)
+      std::erase_if(owner->moduleImplementations, matches);
     owner->modules.emplace_back(library.moduleName, library.interfacePath);
     if (library.directDependency)
       owner->defaultModule = library.moduleName;
-  }
+  };
+  for (const auto &library : compiledImports)
+    selectModule(library, true);
+  for (const auto &library : sourceSelections)
+    selectModule(library, false);
   std::vector<BindgenImportPlan> bindgenImports;
   for (const ResolvedProjectPackage &resolved : sourceWorkspace.packages()) {
     for (const ProjectBindgenImport &import : resolved.manifest.bindgen()) {
@@ -969,28 +980,42 @@ std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
                            input.package + "/" + input.target + "'.");
             return false;
           }
+          const bool automatic = input.automatic && existing.automatic;
           if (input.directDependency)
             existing = std::move(input);
+          existing.automatic = automatic;
           return true;
         }
       }
       expanded.compiledImports.push_back(std::move(input));
       return true;
     };
+    std::vector<CompiledLibraryImport> sourceSelections;
     auto edges = node.compiledDependencies;
     const auto addDefault = [&](const ResolvedProjectPackage &producer,
                                 std::optional<std::string> alias) {
       const auto &name = producer.manifest.package().defaultLibrary;
-      if (!name || std::any_of(edges.begin(), edges.end(), [&](const auto &edge) {
+      if (!name || !overrides.automaticLibraries ||
+          overrides.debugInfo.value_or(profile.debugInfo) ||
+          overrides.keepCpp.value_or(profile.keepCpp) ||
+          std::find(overrides.sourceOnlyLibraries.begin(),
+                    overrides.sourceOnlyLibraries.end(),
+                    producer.manifest.path()) !=
+              overrides.sourceOnlyLibraries.end() ||
+          std::any_of(edges.begin(), edges.end(), [&](const auto &edge) {
             return edge.packageAlias == alias;
           }))
         return;
-      if (std::any_of(expanded.compiledImports.begin(), expanded.compiledImports.end(),
-                      [&](const auto &input) { return input.package == producer.manifest.package().name; }))
+      if (std::any_of(expanded.compiledImports.begin(),
+                      expanded.compiledImports.end(), [&](const auto &input) {
+                        return input.package ==
+                               producer.manifest.package().name;
+                      }))
         return;
-      edges.push_back({std::move(alias), *name, {}, node.declaration});
+      edges.push_back({std::move(alias), *name, {}, node.declaration, true});
     };
-    if (node.kind == ProjectTargetKind::Executable || node.kind == ProjectTargetKind::CompiledLibrary) {
+    if (node.kind == ProjectTargetKind::Executable ||
+        node.kind == ProjectTargetKind::CompiledLibrary) {
       if (node.kind == ProjectTargetKind::Executable)
         addDefault(owner, std::nullopt);
       for (const auto &dep : owner.dependencies)
@@ -1021,17 +1046,28 @@ std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
                  producer->manifest.package().name + "'.");
         return std::nullopt;
       }
+      const auto &package = producer->manifest.package();
+      CompiledLibraryImport input{
+          package.name, edge.target, {}, edge.interfacePath};
+      input.automatic = edge.automatic && dependency->compiledFunctions.empty();
+      if (edge.interfacePath.empty()) {
+        if (dependency->libraryModule.empty()) {
+          fail(edge.declaration,
+               "A named library dependency requires a root module interface.");
+          return std::nullopt;
+        }
+        input.moduleName = dependency->libraryModule;
+        input.interfacePath = dependency->root;
+        if (!overrides.automaticLibraries &&
+            dependency->compiledFunctions.empty()) {
+          sourceSelections.push_back(std::move(input));
+          continue;
+        }
+      }
       auto child = visit(*producer, *dependency);
       if (!child)
         return std::nullopt;
-      const auto &package = producer->manifest.package();
-      CompiledLibraryImport input{package.name, edge.target, child->output(), edge.interfacePath};
-      if (edge.interfacePath.empty()) {
-        const auto module = std::find_if(package.modules.begin(), package.modules.end(),
-            [&](const auto &member) { return member.second == dependency->root; });
-        input.moduleName = module == package.modules.end() ? "main" : module->first;
-        input.interfacePath = package.sourceRoot / (".gti-compiled-" + edge.target + ".gti");
-      }
+      input.artifact = child->output();
       if (!add(std::move(input), edge.declaration))
         return std::nullopt;
       for (auto input : child->compiledImports()) {
@@ -1090,7 +1126,7 @@ std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
     auto plan =
         makeBuildPlan(workspace, *sources, owner.manifest, expanded, profile,
                       target, std::move(*native), std::move(producerScripts),
-                      overrides, runtimeProfile, toolchain);
+                      overrides, runtimeProfile, toolchain, sourceSelections);
     active.pop_back();
     completed.emplace(key, plan);
     if (!root)
@@ -1608,6 +1644,12 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
       }
       selectedTarget = &target;
     }
+    if (!selectedTarget && manifest.package().defaultLibrary &&
+        std::none_of(manifest.targets().begin(), manifest.targets().end(),
+                     [](const auto &target) {
+                       return target.kind == ProjectTargetKind::Executable;
+                     }))
+      selectedTarget = manifest.findTarget(*manifest.package().defaultLibrary);
     if (selectedTarget == nullptr) {
       Diagnostic diagnostic = projectDiagnostic(
           "GTI-B1201", manifestSpan(manifest),

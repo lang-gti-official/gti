@@ -1,8 +1,5 @@
 // A normal dependency and a same-package library build once and survive an application-only edit.
-$ cd math
-$ gti build
-$ sh -c "test -f build/gti/dev/*/arithmetic.gtilib"
-$ cd ../app
+$ cd app
 $ gti run
 $ sh -c "test -f build/gti/dev/*/client-lib.gtilib && test -f build/gti/packages/arithmetic/dev/*/arithmetic.gtilib"
 $ sh -c "sed 's/answer() == 42/answer() > 41/' src/main.gti > edit && mv edit src/main.gti"

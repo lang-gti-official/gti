@@ -1,0 +1,4 @@
+
+[[targets.tool.compiled-dependencies]]
+package = "numbers"
+target = "special"

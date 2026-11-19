@@ -2,6 +2,7 @@
 #include "gti/compiled_interface_names.h"
 #include "gti/driver/registry.h"
 #include "gti/driver/semver.h"
+#include "gti/lexer.h"
 #include "gti/module_name.h"
 
 #include "gti/driver/dependencies.h"
@@ -2108,19 +2109,22 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           requiredTable(document, "package", "top-level", sourceName, source,
                         result.diagnostics)) {
     validateFields(*packageTable,
-                   {"name", "version", "source-root", "native", "build-script", "default-library"},
+                   {"name", "version", "source-root", "native", "build-script",
+                    "default-library"},
                    "package", sourceName, source, result.diagnostics);
     package.sourceRootDeclaration =
         sourceSpan(sourceName, source, *packageTable);
     if (const auto *field = packageTable->get("default-library")) {
-      if (auto name = field->value<std::string>(); name && isPortableProjectName(*name))
+      if (auto name = field->value<std::string>();
+          name && isPortableProjectName(*name))
         package.defaultLibrary = *name;
       else if (field->value<bool>() == false)
         discoverLibrary = false;
       else
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1005", sourceSpan(sourceName, source, *field),
-            "Package default-library must name a gti-library target or be false."));
+        result.diagnostics.push_back(
+            buildDiagnostic("GTI-B1005", sourceSpan(sourceName, source, *field),
+                            "Package default-library must name a gti-library "
+                            "target or be false."));
     }
     const std::optional<std::string> name =
         requiredString(*packageTable, "name", "package", sourceName, source,
@@ -2825,6 +2829,21 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
                               std::move(message)));
         };
         if (targetKind == ProjectTargetKind::CompiledLibrary) {
+          const auto registered =
+              std::find_if(package.modules.begin(), package.modules.end(),
+                           [&](const auto &module) {
+                             return module.second == parsedTarget.root;
+                           });
+          if (registered != package.modules.end()) {
+            parsedTarget.libraryModule = registered->first;
+          } else {
+            std::ifstream file(parsedTarget.root, std::ios::binary);
+            Lexer lexer;
+            const auto header = parseModuleHeader(
+                lexer.scanModuleHeader(file, parsedTarget.root.string()));
+            if (header && header->interface && !lexer.hadError())
+              parsedTarget.libraryModule = header->declaration.lexeme;
+          }
           const auto *functions = targetTable->get("functions");
           parsedTarget.compiledFunctions =
               stringArray(*targetTable, "functions", "GTI library target",
@@ -2967,8 +2986,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
                                  sourceName, source, result.diagnostics);
               std::optional<std::string> interface;
               if (table->contains("interface"))
-                interface = requiredString(*table, "interface", "compiled-dependency",
-                                           sourceName, source, result.diagnostics);
+                interface =
+                    requiredString(*table, "interface", "compiled-dependency",
+                                   sourceName, source, result.diagnostics);
               std::optional<std::string> alias;
               if (const auto *field = table->get("package")) {
                 alias = requiredString(*table, "package", "compiled-dependency",
@@ -2984,19 +3004,22 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               if (!name || (!interface && table->contains("interface")))
                 continue;
               std::error_code error;
-              const auto facade = interface ? std::filesystem::weakly_canonical(
-                  packageRoot / *interface, error) : std::filesystem::path{};
+              const auto facade =
+                  interface ? std::filesystem::weakly_canonical(
+                                  packageRoot / *interface, error)
+                            : std::filesystem::path{};
               if (!isPortableProjectName(*name) ||
                   !names.emplace(alias.value_or(""), *name).second) {
                 targetError(*table->get("target"),
                             "Compiled dependency targets must be unique "
                             "portable names.");
-              } else if (interface && (error ||
-                         isAbsoluteOnSupportedHost(
-                             *interface, std::filesystem::path(*interface)) ||
-                         facade.extension() != ".gti" ||
-                         !pathIsWithin(packageRoot, facade) ||
-                         std::filesystem::exists(facade, error) || error)) {
+              } else if (interface &&
+                         (error ||
+                          isAbsoluteOnSupportedHost(
+                              *interface, std::filesystem::path(*interface)) ||
+                          facade.extension() != ".gti" ||
+                          !pathIsWithin(packageRoot, facade) ||
+                          std::filesystem::exists(facade, error) || error)) {
                 targetError(*table->get("interface"),
                             "Compiled dependency interface must be an absent "
                             ".gti path inside the package.");
@@ -3016,21 +3039,42 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
+  // Older source packages use main.gti as a named module. Only a plain
+  // program root participates in executable discovery.
+  if (!document.contains("targets") && !package.name.empty()) {
+    std::error_code error;
+    const auto main =
+        std::filesystem::canonical(package.sourceRoot / "main.gti", error);
+    if (!error && pathIsWithin(packageRoot, main) &&
+        std::filesystem::is_regular_file(main, error)) {
+      std::ifstream file(main, std::ios::binary);
+      Lexer lexer;
+      if (file &&
+          !parseModuleHeader(lexer.scanModuleHeader(file, main.string())))
+        targets.push_back({.name = package.name,
+                           .kind = ProjectTargetKind::Executable,
+                           .root = main,
+                           .declaration = package.sourceRootDeclaration});
+    }
+  }
+
   // Only a registered public interface can introduce an inferred library.
   // Discovery already checked its module header, exclusions and containment.
   if (package.defaultLibrary) {
-    const auto found = std::find_if(targets.begin(), targets.end(), [&](const auto &target) {
-      return target.name == *package.defaultLibrary &&
-             target.kind == ProjectTargetKind::CompiledLibrary;
-    });
+    const auto found =
+        std::find_if(targets.begin(), targets.end(), [&](const auto &target) {
+          return target.name == *package.defaultLibrary &&
+                 target.kind == ProjectTargetKind::CompiledLibrary;
+        });
     if (found == targets.end())
       result.diagnostics.push_back(buildDiagnostic(
           "GTI-B1005", package.sourceRootDeclaration,
           "Package default-library must name a declared gti-library target."));
   } else if (discoverLibrary) {
     const auto conventional = package.sourceRoot / "lib.gti";
-    const auto module = std::find_if(package.modules.begin(), package.modules.end(),
-                                    [&](const auto &entry) { return entry.second == conventional; });
+    const auto module = std::find_if(
+        package.modules.begin(), package.modules.end(),
+        [&](const auto &entry) { return entry.second == conventional; });
     const ProjectTarget *only = nullptr;
     std::size_t libraries = 0;
     for (const auto &target : targets) {
@@ -3038,27 +3082,40 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         continue;
       ++libraries;
       only = &target;
-      if (module != package.modules.end() && target.root == module->second)
+      if (module != package.modules.end() && target.root == module->second) {
+        if (package.defaultLibrary)
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1005", target.declaration,
+                              "Multiple library targets use lib.gti; select "
+                              "one with package.default-library."));
         package.defaultLibrary = target.name;
+      }
     }
-    if (!package.defaultLibrary && libraries == 1)
+    if (!package.defaultLibrary && module == package.modules.end() &&
+        libraries == 1)
       package.defaultLibrary = only->name;
-    if (libraries == 0 && module != package.modules.end()) {
+    if (!package.defaultLibrary && module != package.modules.end()) {
       std::string name = package.name;
       const auto occupied = [&](const std::string &candidate) {
-        return std::any_of(targets.begin(), targets.end(), [&](const auto &target) {
-          return portableProjectNameKey(target.name) == portableProjectNameKey(candidate);
-        });
+        return std::any_of(targets.begin(), targets.end(),
+                           [&](const auto &target) {
+                             return portableProjectNameKey(target.name) ==
+                                    portableProjectNameKey(candidate);
+                           });
       };
       if (occupied(name))
         name += "-lib";
       if (occupied(name)) {
         result.diagnostics.push_back(buildDiagnostic(
             "GTI-B1005", package.sourceRootDeclaration,
-            "Inferred library target name conflicts with a declared target; declare the library explicitly."));
+            "Inferred library target name conflicts with a declared target; "
+            "declare the library explicitly."));
       } else {
-        targets.push_back({.name = name, .kind = ProjectTargetKind::CompiledLibrary,
-                           .root = module->second, .declaration = package.sourceRootDeclaration});
+        targets.push_back({.name = name,
+                           .kind = ProjectTargetKind::CompiledLibrary,
+                           .root = module->second,
+                           .declaration = package.sourceRootDeclaration,
+                           .libraryModule = module->first});
         package.defaultLibrary = std::move(name);
       }
     }

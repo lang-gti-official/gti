@@ -32,6 +32,7 @@ struct CompiledLibraryImport {
   CompiledLibrarySnapshot snapshot = {};
   // Public module registered for a package-selected virtual interface.
   std::string moduleName;
+  bool automatic = false;
 };
 
 // One project build's bounded artifact selection. Paths identify selections;

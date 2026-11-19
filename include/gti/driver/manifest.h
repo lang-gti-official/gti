@@ -216,6 +216,7 @@ struct CompiledSourceDependency {
   std::string target;
   std::filesystem::path interfacePath;
   SourceSpan declaration;
+  bool automatic = false;
 };
 
 struct ProjectTarget {
@@ -232,6 +233,7 @@ struct ProjectTarget {
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
+  std::string libraryModule;
 };
 
 struct ProjectProfile {

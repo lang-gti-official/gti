@@ -1,0 +1,10 @@
+// Public re-exports travel with a default library; a named target override uses the same dependency alias.
+$ cd app
+$ gti check
+$ gti run
+$ sh -c "test -f build/gti/packages/math/dev/*/common.gtilib"
+$ sh -c "cat ../alternate.toml >> gti.toml"
+$ cp ../alternate.gti src/main.gti
+$ gti check
+$ gti run
+$ sh -c "test -f build/gti/packages/math/dev/*/special.gtilib"

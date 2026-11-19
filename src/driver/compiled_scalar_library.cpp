@@ -1,4 +1,5 @@
 #include "gti/driver/compiled_scalar_library.h"
+#include "compilation_pipeline.h"
 #include "compiled_scalar_support.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
@@ -282,9 +283,9 @@ libraryIdentity(const std::vector<CompiledScalarSignature> &signatures) {
   const auto owner = decodedKey(signatures.front()).owner;
   for (const auto &signature : signatures) {
     const auto candidate = decodedKey(signature).owner;
-    if (candidate != owner)
+    if (candidate.package != owner.package || candidate.target != owner.target)
       throw std::invalid_argument(
-          "compiled library keys must belong to one package target module");
+          "compiled library keys must belong to one package target");
   }
   std::string identity = "gti.scalar-library.1";
   field(identity, owner.package);
@@ -331,9 +332,10 @@ LibraryBundleIdentity environment(const CompilationRequest &request,
   return id;
 }
 struct ScalarSelection {
-  PersistentDeclarationOwner owner;
-  SourceUnitId entry = 0;
+  std::vector<CompiledInterfaceUnit> units;
+  std::map<SourceUnitId, std::vector<SourceSpan>> declarations;
   std::vector<std::string> functions;
+  bool needsDependencySource = false;
 };
 class ScalarBackend final : public Backend {
 public:
@@ -346,6 +348,7 @@ public:
         selection(std::move(selection)) {}
   ScalarBackend(std::vector<CompiledScalarImport> imports, Backend &backend)
       : imports(std::move(imports)), backend(backend) {}
+  bool interfaceNeedsSource() const { return needsSource; }
   const std::vector<CompiledScalarSignature> &selectedSignatures() const {
     return signatures;
   }
@@ -354,14 +357,40 @@ public:
     std::optional<LoweredProgram> bound;
     try {
       if (producer) {
-        if (selection)
-          signatures = CompiledScalarUnitBuilder().selectExports(
-              program, selection->entry, selection->owner, selection->functions,
-              imports);
+        std::vector<CompiledScalarImport> exports;
+        if (selection) {
+          try {
+            if (selection->needsDependencySource)
+              throw std::invalid_argument(
+                  "public library or its implementation requires a dependency "
+                  "source interface");
+            for (const auto &unit : selection->units) {
+              const auto &surface = selection->declarations.at(unit.sourceUnit);
+              if (surface.empty() && selection->functions.empty())
+                continue;
+              auto group = CompiledScalarUnitBuilder().selectExports(
+                  program, unit.sourceUnit, unit.owner, selection->functions,
+                  imports, surface, selection->units);
+              for (auto &signature : group) {
+                exports.push_back({signature, unit.sourceUnit});
+                signatures.push_back(std::move(signature));
+              }
+            }
+            if (exports.empty())
+              throw std::invalid_argument("public interface requires source: "
+                                          "no representable callables");
+          } catch (const std::invalid_argument &) {
+            needsSource = selection->functions.empty();
+            throw;
+          }
+        } else {
+          for (const auto &signature : signatures)
+            exports.push_back({signature, root});
+        }
         (void)interface(signatures);
         (void)libraryIdentity(signatures);
-        bound = CompiledScalarUnitBuilder().bindCombined(
-            std::move(program), root, signatures, imports);
+        bound = CompiledScalarUnitBuilder().bindScoped(std::move(program),
+                                                       exports, imports);
       } else {
         bound = CompiledScalarUnitBuilder().bindImports(std::move(program),
                                                         imports);
@@ -377,23 +406,53 @@ private:
   std::vector<CompiledScalarImport> imports;
   SourceUnitId root = 0;
   bool producer = false;
+  bool needsSource = false;
   Backend &backend;
   std::optional<ScalarSelection> selection;
 };
 std::optional<ScalarSelection>
-producerSelection(const CompilationInputs &inputs,
+producerSelection(const FrontendResult &frontend,
                   const CompiledLibraryTarget *target) {
-  std::optional<ScalarSelection> selection;
-  if (target && inputs.succeeded()) {
-    const SourceGraph &graph = inputs.sourceGraph;
-    const auto *entry = graph.findUnit(graph.entryUnit());
-    if (!entry || !entry->moduleDeclaration)
-      throw std::invalid_argument(
-          "compiled library root must declare a module interface");
-    selection = ScalarSelection{
-        {target->package, target->target, entry->moduleDeclaration->lexeme, ""},
-        entry->id,
-        target->functions};
+  if (!target || !frontend.canGenerateCode())
+    return std::nullopt;
+  const auto &graph = frontend.sourceGraph;
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  if (!entry || !entry->moduleDeclaration)
+    throw std::invalid_argument(
+        "compiled library root must declare a module interface");
+  ScalarSelection selection;
+  selection.functions = target->functions;
+  if (selection.functions.empty()) {
+    for (const auto &unit : graph.sourceUnits())
+      if (unit.packageIdentity &&
+          unit.packageIdentity != entry->packageIdentity &&
+          unit.role == SourceUnitRole::Application &&
+          !unit.compiledScalarInterface)
+        selection.needsDependencySource = true;
+  }
+  std::vector<SourceUnitId> pending{entry->id};
+  while (!pending.empty()) {
+    const auto id = pending.back();
+    pending.pop_back();
+    if (selection.declarations.contains(id))
+      continue;
+    const auto &unit = *graph.findUnit(id);
+    if (unit.packageIdentity != entry->packageIdentity ||
+        unit.compiledScalarInterface ||
+        unit.role == SourceUnitRole::StandardLibrary ||
+        !unit.moduleDeclaration) {
+      selection.needsDependencySource = true;
+      continue;
+    }
+    selection.declarations.emplace(id, unit.exportedDeclarations);
+    selection.units.push_back({id,
+                               {target->package, target->target,
+                                unit.moduleDeclaration->lexeme, ""}});
+    if (selection.functions.empty())
+      for (const auto &edge : graph.dependencyEdges())
+        if (edge.source == id &&
+            edge.kind == SourceDependencyKind::ExportImport)
+          pending.push_back(edge.target);
   }
   return selection;
 }
@@ -463,15 +522,19 @@ CompiledScalarLibraryResult buildScalarLibrary(
                       ? ScalarConsumerInputs{loadCompilationInputs(request)}
                       : prepareScalarConsumer(request, imports, runtime);
   auto &inputs = prepared.compilation;
-  auto selection = producerSelection(inputs, target);
   id.sources = producerSources(inputs, target);
+  const auto producerRequest = request.withApplicationBodies();
+  auto frontend =
+      detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
+  auto selection = producerSelection(frontend, target);
   LlvmBackend native(llvmBackendOptions(request));
-  ScalarBackend backend(std::move(signatures), inputs.sourceGraph.entryUnit(),
+  ScalarBackend backend(std::move(signatures), frontend.sourceGraph.entryUnit(),
                         native, std::move(selection),
                         std::move(prepared.imports));
   CompiledScalarLibraryResult result;
-  result.compilation = compileWithBackend(request.withApplicationBodies(),
-                                          std::move(inputs), backend);
+  result.compilation = detail::generateArtifact(
+      producerRequest, std::move(frontend), backend, nullptr);
+  result.interfaceNeedsSource = backend.interfaceNeedsSource();
   if (result.compilation.succeeded()) {
     auto metadata = interface(backend.selectedSignatures());
     id.library = libraryIdentity(backend.selectedSignatures());
@@ -632,16 +695,32 @@ prepareScalarConsumer(const CompilationRequest &request,
   };
   for (std::size_t i = 0; i < bundles.size(); ++i)
     visit(i);
+  auto sources = request.packageSources();
+  const SourceOwnerRegistry owners(sources);
+  const auto registered = [&](const std::filesystem::path &path,
+                              const std::string &name) {
+    const auto *owner = owners.ownerForPath(path);
+    return owner && std::any_of(owner->modules.begin(), owner->modules.end(),
+                                [&](const auto &module) {
+                                  return module.first == name &&
+                                         module.second == path;
+                                });
+  };
   std::vector<std::filesystem::path> interfacePaths;
   std::set<std::string> distinctPaths;
   for (std::size_t i = 0; i < bundles.size(); ++i) {
     const auto &input = bundles[i];
-    auto path = input.selected && !input.selected->interfaceRequired && input.selected->moduleName.empty()
+    auto path = input.selected && !input.selected->interfaceRequired &&
+                        input.selected->moduleName.empty()
                     ? std::filesystem::absolute(request.entry()).parent_path() /
                           (".gti-compiled-" + admitted[i].library + ".gti")
                     : input.path;
     if (!path.is_absolute() || path.extension() != ".gti" ||
-        std::filesystem::exists(path) || path.lexically_normal() != path)
+        (std::filesystem::exists(path) &&
+         !(input.selected && !input.selected->moduleName.empty() &&
+           registered(path, input.selected->moduleName) &&
+           owners.ownerForPath(path)->name == input.selected->package)) ||
+        path.lexically_normal() != path)
       throw std::invalid_argument("compiled interface requires an absent "
                                   "normalized absolute .gti path");
     path = std::filesystem::weakly_canonical(path);
@@ -650,10 +729,72 @@ prepareScalarConsumer(const CompilationRequest &request,
     interfacePaths.push_back(std::move(path));
   }
   struct Facade {
-    std::string path;
+    std::filesystem::path path;
+    std::string name;
     std::vector<CompiledScalarSignature> signatures;
   };
-  std::vector<Facade> facades;
+  std::vector<std::map<std::string, Facade>> groups(bundles.size());
+  std::vector<std::string> rootNames;
+  for (std::size_t i = 0; i < bundles.size(); ++i) {
+    const auto &selection = bundles[i].selected;
+    const bool named = selection && !selection->moduleName.empty();
+    const auto &path = interfacePaths[i];
+    auto &modules = groups[i];
+    for (auto &signature : admitted[i].signatures)
+      modules[decodedKey(signature).owner.module].signatures.push_back(
+          std::move(signature));
+    const auto rootName = named ? selection->moduleName
+                                : "compiled_scalar_" + admitted[i].library;
+    rootNames.push_back(rootName);
+    for (auto &[name, group] : modules) {
+      if ((named && name == rootName) || (!named && modules.size() == 1)) {
+        group.path = path;
+        group.name = rootName;
+      } else {
+        const auto key = hash(admitted[i].library + "/" + name);
+        group.path = path.parent_path() / (".gti-interface-" + key + ".gti");
+        group.name = "compiled_scalar_" + key;
+        bool sourceModule = false;
+        if (named) {
+          auto *owner = owners.ownerForPath(path);
+          if (owner) {
+            for (const auto &module : owner->modules)
+              if (module.first == name) {
+                group.path = module.second;
+                group.name = name;
+                sourceModule = true;
+                break;
+              }
+          }
+        }
+        if ((!sourceModule && std::filesystem::exists(group.path)) ||
+            !distinctPaths.insert(group.path.string()).second)
+          throw std::invalid_argument(
+              "conflicting compiled module interface path");
+      }
+    }
+  }
+  const auto importPath = [&](const std::filesystem::path &from,
+                              const std::filesystem::path &to) {
+    const auto *sourceOwner = owners.ownerForPath(from);
+    const auto *targetOwner = owners.ownerForPath(to);
+    if (sourceOwner == targetOwner)
+      return quotedInterfacePath(to.lexically_relative(from.parent_path()));
+    if (sourceOwner && targetOwner) {
+      for (const auto &edge : sourceOwner->dependencies)
+        if (edge.targetIdentity == targetOwner->identity)
+          for (const auto &module : targetOwner->modules)
+            if (module.second == to)
+              return edge.alias + "." + module.first;
+    }
+    throw std::invalid_argument(
+        "compiled type import has no declared package/module path");
+  };
+  const auto publishOverlay = [&](const std::filesystem::path &path,
+                                  std::string source) {
+    if (!overlays.emplace(path.string(), std::move(source)).second)
+      throw std::invalid_argument("duplicate compiled module interface path");
+  };
   std::vector<LibraryBundleMember> objects;
   std::vector<LibraryBundleDependency> direct;
   std::vector<std::string> directSymbols;
@@ -686,45 +827,71 @@ prepareScalarConsumer(const CompilationRequest &request,
       directSymbols.insert(directSymbols.end(), metadata.symbols.begin(),
                            metadata.symbols.end());
     }
-    const auto canonical = interfacePaths[index].string();
-    const auto moduleName = input.selected && !input.selected->moduleName.empty()
-                                ? input.selected->moduleName
-                                : "compiled_scalar_" + metadata.library;
-    std::string source = "export module " + moduleName + ";\n";
-    std::set<std::size_t> typeDependencies;
-    for (const auto &signature : metadata.signatures)
-      for (const auto &owner :
-           compiledInterfaceDependencies(signature.typeMetadata)) {
-        std::optional<std::size_t> defining;
-        for (const auto candidate : dependencyClosure[index])
-          if (admitted[candidate].owner == owner)
-            defining = candidate;
-        if (!defining)
-          throw std::invalid_argument("nominal interface owner is absent from "
-                                      "the compiled dependency closure");
-        typeDependencies.insert(*defining);
+    auto &modules = groups[index];
+    const auto &root = interfacePaths[index];
+    std::string forwards;
+    for (const auto &[name, group] : modules)
+      if (group.path != root)
+        forwards += "export import " + importPath(root, group.path) + ";\n";
+    bool hasRoot = false;
+    for (auto &[name, group] : modules) {
+      std::string source = "export module " + group.name + ";\n";
+      if (group.path == root) {
+        hasRoot = true;
+        source += forwards;
       }
-    for (const auto dependency : typeDependencies)
-      source +=
-          "import " +
-          quotedInterfacePath(interfacePaths[dependency].lexically_relative(
-              interfacePaths[index].parent_path())) +
-          ";\n";
-    source += compiledInterfaceSource(metadata.signatures);
-    if (!overlays.emplace(canonical, std::move(source)).second)
-      throw std::invalid_argument("duplicate compiled library interface path");
-    facades.push_back({canonical, std::move(metadata.signatures)});
+      std::set<std::filesystem::path> typePaths;
+      for (const auto &signature : group.signatures)
+        for (const auto &owner :
+             compiledInterfaceDependencies(signature.typeMetadata)) {
+          std::optional<std::filesystem::path> defining;
+          const auto find = [&](std::size_t candidate) {
+            if (admitted[candidate].owner.package != owner.package ||
+                admitted[candidate].owner.target != owner.target)
+              return;
+            const auto found = groups[candidate].find(owner.module);
+            if (found != groups[candidate].end())
+              defining = found->second.path;
+          };
+          find(index);
+          for (const auto candidate : dependencyClosure[index])
+            find(candidate);
+          if (!defining)
+            throw std::invalid_argument("nominal interface owner is absent "
+                                        "from the compiled dependency closure");
+          typePaths.insert(*defining);
+        }
+      for (const auto &dependency : typePaths)
+        source += "import " + importPath(group.path, dependency) + ";\n";
+      source += compiledInterfaceSource(group.signatures);
+      publishOverlay(group.path, std::move(source));
+      for (auto &owner : sources)
+        if (registered(group.path, name) &&
+            owners.ownerForPath(group.path)->identity == owner.identity)
+          std::erase_if(owner.moduleImplementations, [&](const auto &member) {
+            return member.first == name;
+          });
+    }
+    if (!hasRoot)
+      publishOverlay(root,
+                     "export module " + rootNames[index] + ";\n" + forwards);
   }
-  auto inputs = loadCompilationInputs(request, progress, overlays);
+  auto inputs = loadCompilationInputs(
+      request.withPackageSources(std::move(sources)), progress, overlays);
+  for (const auto &path : interfacePaths)
+    if (const auto unit = inputs.sourceGraph.sourceUnitForPath(path.string()))
+      inputs.sourceGraph.markCompiledScalarInterface(unit);
   std::vector<CompiledScalarImport> imports;
-  for (auto &facade : facades) {
-    const auto unit = inputs.sourceGraph.sourceUnitForPath(facade.path);
-    if (!unit)
-      continue;
-    inputs.sourceGraph.markCompiledScalarInterface(unit);
-    for (auto &signature : facade.signatures)
-      imports.push_back({std::move(signature), unit});
-  }
+  for (auto &modules : groups)
+    for (auto &[name, group] : modules) {
+      const auto unit =
+          inputs.sourceGraph.sourceUnitForPath(group.path.string());
+      if (!unit)
+        continue;
+      inputs.sourceGraph.markCompiledScalarInterface(unit);
+      for (auto &signature : group.signatures)
+        imports.push_back({std::move(signature), unit});
+    }
   return {std::move(inputs), std::move(imports), std::move(objects),
           std::move(direct), std::move(directSymbols)};
 }
@@ -925,12 +1092,14 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
               : prepareScalarConsumer(request, consumers,
                                       toolchain.runtimeLibrary, progress);
       auto &inputs = prepared.compilation;
-      auto selection = producerSelection(inputs, &*producer);
-      ScalarBackend backend({}, inputs.sourceGraph.entryUnit(), sink,
+      const auto producerRequest = request.withApplicationBodies();
+      auto frontend = detail::analyzeForArtifact(producerRequest,
+                                                 std::move(inputs), progress);
+      auto selection = producerSelection(frontend, &*producer);
+      ScalarBackend backend({}, frontend.sourceGraph.entryUnit(), sink,
                             std::move(selection), std::move(prepared.imports));
-      return compiledScalarCheckResult(
-          compileWithBackend(request.withApplicationBodies(), std::move(inputs),
-                             backend, progress));
+      return compiledScalarCheckResult(detail::generateArtifact(
+          producerRequest, std::move(frontend), backend, progress));
     }
     auto prepared = prepareScalarConsumer(request, consumers,
                                           toolchain.runtimeLibrary, progress);

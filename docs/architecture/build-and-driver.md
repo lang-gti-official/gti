@@ -3328,7 +3328,35 @@ whole-program inlining or complete F5 performance acceptance.
 
 ### Compiled-library project requests
 
-A producer declares a reusable target and explicitly selects its public API:
+A registered interface at `<source-root>/lib.gti` supplies the default GTI
+library. The target takes the package name, or the package name with a
+`-lib` suffix when the executable already uses it. With no target table, a
+plain `<source-root>/main.gti` supplies an executable. A named module at
+that path retains its existing source-package meaning.
+
+The root's exports and re-exports select the public interface. Private
+implementation imports contribute to the library object and its freshness
+check. An executable can import its own library by module name. A direct
+package dependency can import the default library with `import alias;`.
+Both use the same project dependency builder. An application-only edit
+reuses compatible library outputs.
+
+For a nonstandard root, declare a target with `kind = "gti-library"` and
+`root`. A sole library target supplies the default in the absence of a
+conventional root. With several choices, set `[package]`'s
+`default-library = "target-name"`. Set `default-library = false` to disable
+automatic selection. A consumer may choose a different target via
+`compiled-dependencies`; omitting `interface` binds the ordinary module
+import to that target. Quoted virtual interfaces and distributed artifact
+selections remain available.
+
+Automatic compilation requires the bundle format to represent the complete
+public surface. A dependency with unsupported public declarations or native
+inputs can still be consumed from source. An explicit request to build that
+library reports the unsupported interface. Read-only source checks can resolve
+ordinary imports before any library has been built.
+
+A producer may also select a specific set of exported functions explicitly:
 
 ```toml
 [targets.numbers]

@@ -4219,6 +4219,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         auto built = buildCompiledScalarLibraryTarget(
             request.compilation(), *request.compiledLibrary(),
             request.toolchain().runtimeLibrary, request.compiledImports());
+        result.libraryInterfaceNeedsSource = built.interfaceNeedsSource;
         result.compilation = std::move(built.compilation);
         compiledBundle = std::move(built.bundle);
       } else {
@@ -5246,8 +5247,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
     if (request.compiledLibrary()) {
       if (auto diagnostic =
-              compiledScalarProducerInputDiagnostic(request.nativeInputs()))
+              compiledScalarProducerInputDiagnostic(request.nativeInputs())) {
+        result.libraryInterfaceNeedsSource = true;
         return rejectCompiled(*diagnostic);
+      }
     }
   }
   if (nativeObjectCache(request)) {

@@ -379,6 +379,7 @@ struct ExecutableBuildResult {
   // The exact published or cache-validated bytes, retained for downstream
   // targets without reopening an artifact another build may replace.
   CompiledLibrarySnapshot compiledLibrarySnapshot = {};
+  bool libraryInterfaceNeedsSource = false;
 
   [[nodiscard]] bool succeeded() const {
     return status == ExecutableBuildStatus::Success;

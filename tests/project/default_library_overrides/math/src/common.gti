@@ -1,0 +1,3 @@
+export module common;
+export import "two.gti";
+export int answer() { return 40; }

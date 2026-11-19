@@ -1,0 +1,10 @@
+// An inferred library with an unrepresentable public alias retains its complete source API.
+$ cd app
+$ gti check
+$ gti run --verbose
+stderr: using source interface for
+$ sh -c "test -z \"$(find build -name '*.gtilib' -print)\""
+$ cd ../dependency
+$ gti build
+? 65
+stderr: public declaration requires source interface metadata

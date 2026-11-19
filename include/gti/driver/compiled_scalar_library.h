@@ -22,6 +22,7 @@ checkCompiledScalarProject(const ProjectBuildPlan &, const ToolchainLayout &,
 // borrow contracts. Producers may own verified passive zero/constant storage;
 // generic APIs, producer entry points and executable storage lifetimes reject.
 struct CompiledScalarLibraryResult {
+  bool interfaceNeedsSource = false;
   CompilationResult compilation;
   std::string bundle;
 };
