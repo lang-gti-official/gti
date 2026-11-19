@@ -1,0 +1,10 @@
+// An argument-free substring preserves the borrow of the original owner.
+import std.string;
+import std.string_view;
+
+int main() {
+  mut std::string owner{"data"};
+  std::string_view same = owner.view().substr();
+  owner.clear();  //~ ERROR GTI-S2017
+  return int(same.size());
+}

@@ -3366,29 +3366,21 @@ auto SemanticVisitor::Impl::analyzeArrayMemberCall(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
-auto SemanticVisitor::Impl::textViewMemberFactory(
-    std::string_view member, std::optional<std::size_t> inputs) const
-    -> std::optional<CallableCandidate> {
-  // A builtin counted view has no source class body. Its members are
-  // ordinary source functions selected only from this trusted unit, whose
-  // first formal receives the view by read-only reference (a cursor that
-  // retains the view itself), by value (a result that relays only the view's
-  // owner dependency) or by mutable reference (an in-place update of a
-  // writable view place). Overloads differ by arity alone; `inputs`
-  // counts the receiver, and without it any valid overload answers.
-  // The public alias spelling is deliberately absent from this binding.
+auto SemanticVisitor::Impl::textViewAdapters(std::string_view name,
+                                             std::string_view libraryUnit) const
+    -> std::vector<CallableCandidate> {
+  // A builtin counted view has no source class body. Only ordinary functions
+  // from the trusted library units supply its forwarded operations.
   const auto &symbols = activeNamespaceSymbols();
-  const auto found =
-      symbols.find("gti_internal::text_view_" + std::string(member));
-  if (found == symbols.end() || found->second.overloads.empty() ||
-      sourceGraph == nullptr)
-    return std::nullopt;
-  std::optional<CallableCandidate> selected;
+  const auto found = symbols.find("gti_internal::" + std::string(name));
+  if (found == symbols.end() || sourceGraph == nullptr)
+    return {};
+  std::vector<CallableCandidate> candidates;
   for (const auto &candidate : found->second.overloads) {
     const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
     if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
-        unit->standardLibraryName != "std/string_view" ||
-        candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        unit->standardLibraryName != libraryUnit || candidate.ownerClass != 0 ||
+        candidate.declaration == nullptr ||
         candidate.bodyDeclaration()->body() == nullptr ||
         candidate.record().intrinsic != IntrinsicKind::None ||
         candidate.record().requiresUnsafe || candidate.parameterPack ||
@@ -3401,16 +3393,65 @@ auto SemanticVisitor::Impl::textViewMemberFactory(
              SemanticType::referenceTo(SemanticType::StringView,
                                        AccessMode::Mutable) &&
          candidate.parameterTypes.front() != SemanticType::StringView))
-      return std::nullopt;
-    if (inputs && candidate.parameterTypes.size() != *inputs)
       continue;
-    // Two overloads of one arity would need ordinary overload ranking.
-    if (inputs && selected)
-      return std::nullopt;
-    if (!selected)
-      selected = candidate;
+    candidates.push_back(candidate);
   }
-  return selected;
+  return candidates;
+}
+
+auto SemanticVisitor::Impl::textViewMemberFactories(
+    std::string_view member) const -> std::vector<CallableCandidate> {
+  auto candidates =
+      textViewAdapters("text_view_" + std::string(member), "std/string_view");
+  auto owned =
+      textViewAdapters("text_owned_" + std::string(member), "std/string");
+  candidates.insert(candidates.end(), std::make_move_iterator(owned.begin()),
+                    std::make_move_iterator(owned.end()));
+  return candidates;
+}
+
+auto SemanticVisitor::Impl::textViewMemberFactory(std::string_view member) const
+    -> std::optional<CallableCandidate> {
+  auto candidates = textViewMemberFactories(member);
+  if (candidates.empty())
+    return std::nullopt;
+  return std::move(candidates.front());
+}
+
+auto SemanticVisitor::Impl::matchTextViewOverloads(
+    std::span<const CallableCandidate> candidates,
+    std::span<const ExprPtr *const> inputs, std::span<const SemanticType> types)
+    -> std::vector<TextViewOverload> {
+  std::vector<TextViewOverload> viable;
+  for (const auto &candidate : candidates) {
+    if (candidate.parameterTypes.size() != inputs.size())
+      continue;
+    TextViewOverload match{.candidate = &candidate};
+    std::size_t index = 0;
+    for (; index < inputs.size(); ++index) {
+      const auto kind = functionCallArgumentMatch(
+          candidate, index, types[index], *inputs[index], false);
+      if (kind == CallArgumentMatchKind::Mismatch)
+        break;
+      if (kind == CallArgumentMatchKind::EphemeralReadBorrow)
+        match.ephemeralBorrowArguments.push_back(index);
+      if (kind == CallArgumentMatchKind::ContextualIntegerLiteral)
+        match.contextualIntegerLiteralArguments.push_back(index);
+    }
+    if (index == inputs.size())
+      viable.push_back(std::move(match));
+  }
+  // Match ordinary calls: exact candidates take precedence over the single
+  // fallback tier for temporary borrows and contextual integer literals.
+  const auto fallback = [](const TextViewOverload &match) {
+    return !match.ephemeralBorrowArguments.empty() ||
+           !match.contextualIntegerLiteralArguments.empty();
+  };
+  if (std::any_of(
+          viable.begin(), viable.end(),
+          [&](const TextViewOverload &match) { return !fallback(match); }))
+    std::erase_if(viable, fallback);
+  return viable;
 }
 
 auto SemanticVisitor::Impl::analyzeStringViewAddition(
@@ -3469,6 +3510,64 @@ auto SemanticVisitor::Impl::analyzeStringViewAddition(
                            .parameterTypes = selected->parameterTypes,
                            .ephemeralBorrowArguments = std::move(ephemeral)});
   currentType = selected->returnType;
+  return true;
+}
+
+auto SemanticVisitor::Impl::analyzeStringViewComparison(
+    const Binary &expression, const SemanticType &rightType) -> bool {
+  const bool twoViews = rightType == SemanticType::StringView;
+  const char *operation;
+  switch (expression.oper().kind) {
+  case TokenKind::EQUAL_EQUAL:
+    // View-to-view equality already compares counted bytes in the compiler.
+    if (twoViews)
+      return false;
+    operation = "equal";
+    break;
+  case TokenKind::BANG_EQUAL:
+    if (twoViews)
+      return false;
+    operation = "not_equal";
+    break;
+  case TokenKind::LESS:
+    operation = "less";
+    break;
+  case TokenKind::LESS_EQUAL:
+    operation = "less_equal";
+    break;
+  case TokenKind::GREATER:
+    operation = "greater";
+    break;
+  case TokenKind::GREATER_EQUAL:
+    operation = "greater_equal";
+    break;
+  default:
+    return false;
+  }
+  std::string adapter = twoViews ? "text_compare_" : "text_compare_owned_";
+  adapter += operation;
+  const auto candidates =
+      textViewAdapters(adapter, twoViews ? "std/string_view" : "std/string");
+  std::vector<const ExprPtr *> inputs{&expression.left(), &expression.right()};
+  const std::array types{SemanticType(SemanticType::StringView), rightType};
+  auto viable = matchTextViewOverloads(candidates, inputs, types);
+  if (viable.size() != 1)
+    return false;
+  const auto &selected = *viable.front().candidate;
+  requireFunctionDefinition(selected, expression.oper());
+  validateCallPlaceExclusivityImpl(selected.parameterTypes, inputs,
+                                   expression.oper());
+  semanticModel.recordOperator(
+      expression,
+      ResolvedOperatorInfo{.operandArguments = true,
+                           .function = selected.id,
+                           .declaration = selected.declaration,
+                           .kind = *binaryOperator(expression.oper().kind),
+                           .returnType = selected.returnType,
+                           .parameterTypes = selected.parameterTypes,
+                           .ephemeralBorrowArguments = std::move(
+                               viable.front().ephemeralBorrowArguments)});
+  currentType = selected.returnType;
   return true;
 }
 
@@ -3532,18 +3631,17 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)
     -> void {
-  // A wrong arity still selects a member, reported as such below.
-  auto factory =
-      textViewMemberFactory(member.name().lexeme, call.arguments().size() + 1);
-  if (!factory)
-    factory = textViewMemberFactory(member.name().lexeme);
-  if (factory) {
+  auto candidates = textViewMemberFactories(member.name().lexeme);
+  if (!candidates.empty()) {
     std::vector<const ExprPtr *> inputs{&member.object()};
     for (const auto &argument : call.arguments())
       inputs.push_back(&argument);
     std::vector<SemanticType> types{memberAccessObjectType(member)};
     types.insert(types.end(), argumentTypes.begin(), argumentTypes.end());
-    if (inputs.size() != factory->parameterTypes.size()) {
+    std::erase_if(candidates, [&](const CallableCandidate &candidate) {
+      return candidate.parameterTypes.size() != inputs.size();
+    });
+    if (candidates.empty()) {
       report(paren,
              "Text-view '" + member.name().lexeme +
                  "' has the wrong number of arguments.",
@@ -3551,24 +3649,46 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
       currentType = SemanticType::Unknown;
       return;
     }
-    for (std::size_t index = 0; index < inputs.size(); ++index) {
-      if (!callArgumentMatches(factory->parameterTypes[index], types[index],
-                               *inputs[index])) {
-        reportCallArgumentMismatch(index, factory->parameterTypes[index],
-                                   types[index], *inputs[index], "Text-view");
-        currentType = SemanticType::Unknown;
-        return;
+    auto viable = matchTextViewOverloads(candidates, inputs, types);
+    if (viable.size() != 1) {
+      if (viable.empty() && candidates.size() == 1) {
+        const auto &candidate = candidates.front();
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+          if (functionCallArgumentMatch(candidate, index, types[index],
+                                        *inputs[index], false) ==
+              CallArgumentMatchKind::Mismatch) {
+            reportCallArgumentMismatch(index, candidate.parameterTypes[index],
+                                       types[index], *inputs[index],
+                                       "Text-view");
+            break;
+          }
+        }
+      } else if (std::find(types.begin(), types.end(), SemanticType::Unknown) ==
+                 types.end()) {
+        report(paren,
+               (viable.empty() ? "No matching overload for text-view '"
+                               : "Ambiguous call to text-view '") +
+                   member.name().lexeme + "'.",
+               "GTI-S2022");
       }
+      currentType = SemanticType::Unknown;
+      return;
     }
-    validateCallPlaceExclusivityImpl(factory->parameterTypes, inputs, paren);
+    auto &match = viable.front();
+    const auto &factory = *match.candidate;
+    for (std::size_t index : match.contextualIntegerLiteralArguments)
+      adoptContextualIntegerLiteralArgument(*inputs[index],
+                                            factory.parameterTypes[index]);
+    validateCallPlaceExclusivityImpl(factory.parameterTypes, inputs, paren);
     // A writable receiver or argument is a mutable use of its binding.
     for (std::size_t index = 0; index < inputs.size(); ++index)
-      if (factory->parameterTypes[index].kind == SemanticType::Reference &&
-          factory->parameterTypes[index].referenceAccess == AccessMode::Mutable)
+      if (factory.parameterTypes[index].kind == SemanticType::Reference &&
+          factory.parameterTypes[index].referenceAccess == AccessMode::Mutable)
         recordMutableBindingUse(*inputs[index]);
-    recordResolvedCall(call, *factory, {}, {}, {}, {}, CallReceiverMode::None,
-                       &member.object());
-    currentType = callExpressionType(factory->returnType);
+    recordResolvedCall(call, factory, {}, {},
+                       std::move(match.ephemeralBorrowArguments), {},
+                       CallReceiverMode::None, &member.object());
+    currentType = callExpressionType(factory.returnType);
     return;
   }
   if (member.name().lexeme != "size" && member.name().lexeme != "empty") {

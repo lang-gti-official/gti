@@ -1,0 +1,25 @@
+// String views order counted unsigned bytes and accept owning strings on either side.
+//@ run-pass
+import std.string;
+import std.string_view;
+
+constexpr bool compares_owning_string() {
+  std::string owner{"gti"};
+  return "gti" == owner && "gti!".compare(owner) > 0 &&
+         "gt" < std::string("gti");
+}
+static_assert(compares_owning_string());
+
+int main() {
+  std::string owner{"x\0a"};
+  std::string_view shorter = "x\0";
+  std::string_view equal = "x\0a";
+  std::string_view later = "x\0b";
+  if (!(shorter < equal && equal <= equal && later > equal && later >= equal)) { return 1; }
+  if (!(shorter < owner && equal <= owner && later > owner && later >= owner)) { return 2; }
+  if (!(equal == owner && shorter != owner && owner == equal && owner < later)) { return 3; }
+  if (!(shorter.compare(owner) < 0 && equal.compare(owner) == 0 && later.compare(owner) > 0)) { return 4; }
+  if (!("\u00e9" > "z" && "\u00e9".compare("z") > 0)) { return 5; }
+  if (!(equal == std::string("x\0a") && equal <= std::string("x\0b"))) { return 6; }
+  return 0;
+}
