@@ -1,0 +1,2 @@
+export module api;
+export int right_value() { return 28; }
