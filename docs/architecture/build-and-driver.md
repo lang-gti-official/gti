@@ -3344,7 +3344,10 @@ The native Linux x64 and macOS arm64 toolchains ship the 21 runtime functions
 of `std.cmath` as `share/gti/precompiled-stdlib/<target>/<profile>/cmath.gtilib`.
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release object when an import or re-export reaches the
-module. A producer can use the installed-module configuration identity only
+module. An executable can link the installed object alongside inferred or
+explicit project libraries. Each project library producer still compiles its
+own standard-library implementation dependencies from source. A producer can
+use the installed-module configuration identity only
 when every unit belongs to the toolchain and its configuration directives
 neither read nor modify named flags. Application and dependency defines then
 still participate in the consumer build's cache key. The compiler reads the

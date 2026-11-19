@@ -57,6 +57,20 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
+        # One executable can import its own compiled library and the installed
+        # standard library in the same source graph.
+        mixed = root / "mixed"
+        (mixed / "src").mkdir(parents=True)
+        (mixed / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "mixed"\nversion = "0.1.0"\n')
+        (mixed / "src/lib.gti").write_text(
+            "export module values;\nexport float radicand() { return 9.0; }\n")
+        (mixed / "src/main.gti").write_text(
+            "import values;\nimport std.cmath;\n"
+            "int main() { return std::sqrt(radicand()) == 3.0 ? 0 : 1; }\n")
+        run("run", "--release", cwd=mixed)
+        if not list(mixed.glob("build/gti/release/*/mixed-lib.gtilib")):
+            raise RuntimeError("mixed consumer did not build its inferred library")
         # The previous release run left a valid warm executable. A damaged
         # receipt must still fail before any cache hit can publish that output.
         bundle, = bundles.glob("*/release/cmath.gtilib")
@@ -67,6 +81,7 @@ def verify(stage):
             stream.write(b"0" if checksum != b"0" else b"1")
         for command in ("build", "check"):
             run(command, "--release", rejection="library bundle checksum mismatch")
+        run("build", "--release", cwd=mixed, rejection="library bundle checksum mismatch")
         source.write_text("int main() { return 0; }\n")
         run("run", "--release")
 
