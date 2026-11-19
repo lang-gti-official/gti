@@ -29,6 +29,13 @@ build mode now admits concrete value records, integral enums and bounded checked
 reference contracts. Same-manifest source-target edges build dependencies before
 consumers; explicit artifact imports continue to work with producer sources absent.
 
+The default GTI library follows the package's registered `lib.gti` module.
+The root's public exports and re-exports determine the interface. The driver
+chooses a compatible bundle when resolving an ordinary dependency and retains
+source compilation when the public interface or storage requires it. Explicit
+target and artifact selection remain available for specialized layouts and
+source-free distribution.
+
 ## Container decision
 
 Choose a small uncompressed, length-delimited container for this bounded stage.

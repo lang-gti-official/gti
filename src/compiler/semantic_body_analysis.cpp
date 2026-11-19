@@ -295,6 +295,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
+  if (registrationObserver && !hadError())
+    (*registrationObserver)();
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
   recordLifetimeNames(program);
@@ -4886,12 +4888,18 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
   if (buildingPreamble && sourceGraph && leafUnit &&
       !sourceGraph->isCompilerTrusted(leafUnit))
     prefixDemands.emplace(semanticModel, &demandedFunctions);
+  const std::size_t firstDiagnostic = diagnostics.size();
   analyze(statement);
   {
     std::vector<Diagnostic> held = std::move(heldDiagnostics.back());
     heldDiagnostics.pop_back();
     diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
                        std::make_move_iterator(held.end()));
+  }
+  if (entryDiagnosticObserver && heldDiagnostics.empty() && sourceGraph &&
+      leafUnit == sourceGraph->entryUnit() &&
+      diagnostics.size() > firstDiagnostic && unmetBodyDemandList().empty()) {
+    (*entryDiagnosticObserver)(std::span(diagnostics).subspan(firstDiagnostic));
   }
   measureTopLevelStatements = measure;
   if (measure && workMetrics != nullptr) {

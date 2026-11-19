@@ -659,6 +659,7 @@ add_library(
   "src/compiler/mir_body_lowering.cpp"
   "src/compiler/mir_loan_liveness.cpp"
   "src/compiler/mir_dominance.cpp"
+  "src/compiler/mir_verification_cache.cpp"
   "src/compiler/mir_failure_effects.cpp"
   "src/compiler/mir_hosted_startup_builder.cpp"
   "src/compiler/mir_lowering.cpp"

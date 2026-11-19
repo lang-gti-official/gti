@@ -1291,6 +1291,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
     const bool hasLocal = owner && local != owner->modules.end();
     const SourceOwnerDescriptor *target =
         sourceOwners->findImplicitAlias(names.front());
+    std::string selectedModule;
     if (owner) {
       const auto dependency = std::find_if(
           owner->dependencies.begin(), owner->dependencies.end(),
@@ -1300,13 +1301,16 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
           return reject("Dependency alias '" + names.front() +
                         "' conflicts with a configured source owner.");
         target = packageByIdentity(dependency->targetIdentity);
+        selectedModule = dependency->defaultModule;
         if (!target)
           return reject(
               "Imported source owner is absent from the resolved graph.");
       }
     }
     const std::string dependencyName =
-        target && names.size() == 1 ? target->defaultModule : joinNames(1);
+        target && names.size() == 1
+            ? (selectedModule.empty() ? target->defaultModule : selectedModule)
+            : joinNames(1);
     const std::pair<std::string, std::filesystem::path> *dependencyModule =
         nullptr;
     if (target) {

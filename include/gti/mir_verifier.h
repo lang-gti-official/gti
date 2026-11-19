@@ -9,6 +9,9 @@
 #include <vector>
 
 namespace lang {
+namespace mir_detail {
+class VerificationSession;
+}
 
 // A verifier rejection that is a property of the source program, not an
 // internal inconsistency: MIR is the single authority for body-local borrow
@@ -65,8 +68,9 @@ struct MirVerificationResult {
   [[nodiscard]] bool valid() const { return errors.empty(); }
 };
 
-[[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
-                                                  std::size_t owner = 0);
+[[nodiscard]] MirVerificationResult
+verifyMirBody(const MirBody &body, std::size_t owner = 0,
+              mir_detail::VerificationSession *reuse = nullptr);
 
 enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
 enum class MirDebugAvailabilityReason {
@@ -137,7 +141,8 @@ inline constexpr MirVerificationComponents requiredMirVerificationComponents =
 // is omitted or an unknown bit is supplied.
 [[nodiscard]] MirVerificationResult verifyMirProgram(
     const MirProgram &program,
-    MirVerificationComponents components = requiredMirVerificationComponents);
+    MirVerificationComponents components = requiredMirVerificationComponents,
+    mir_detail::VerificationSession *reuse = nullptr);
 [[nodiscard]] MirVerificationResult
 verifyMirEffectSummaries(const MirProgram &program);
 

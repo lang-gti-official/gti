@@ -1,0 +1,6 @@
+manifest-version = 1
+[package]
+name = "client"
+version = "1.0.0"
+[dependencies]
+math = { path = "../math" }

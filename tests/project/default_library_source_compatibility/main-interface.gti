@@ -1,0 +1,2 @@
+export module main;
+export import "lib.gti";

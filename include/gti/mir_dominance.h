@@ -7,6 +7,9 @@
 #include <vector>
 
 namespace lang {
+namespace mir_detail {
+class VerificationSession;
+}
 
 // Snapshot-scoped dominance facts for one MIR body. Results are expressed
 // only in GTI block identities; the implementation may use a private CFG
@@ -31,7 +34,8 @@ public:
 
 private:
   friend std::optional<MirDominanceInfo>
-  computeMirDominance(const MirBody &body);
+  computeMirDominance(const MirBody &body,
+                      mir_detail::VerificationSession *reuse);
 
   struct Block {
     MirBlockId parent = 0;
@@ -52,6 +56,7 @@ private:
 // No result is returned when block identities, the entry, or an edge target
 // are invalid. The result never retains pointers into the body.
 [[nodiscard]] std::optional<MirDominanceInfo>
-computeMirDominance(const MirBody &body);
+computeMirDominance(const MirBody &body,
+                    mir_detail::VerificationSession *reuse = nullptr);
 
 } // namespace lang

@@ -1,0 +1,8 @@
+import "api.gti";
+int main() {
+  units::Interval span = {.end = 20};
+  units::Bounds copy = span;
+  units::Scale scale = units::Unit::seconds;
+  reports::Score result = reports::add(units::upper(copy), 2);
+  return result == 42 && scale == units::Unit::seconds ? 0 : 1;
+}

@@ -139,6 +139,8 @@ public:
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
+  [[nodiscard]] CompilationRequest
+  withPackageSources(std::vector<PackageSourceRoot> roots) const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const ConfigurationFlags &declaredConfigurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;

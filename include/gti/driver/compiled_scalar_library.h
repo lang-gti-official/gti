@@ -44,8 +44,20 @@ checkCompiledScalarProject(const ProjectBuildPlan &, const ToolchainLayout &,
 // borrow contracts. Producers may own verified passive zero/constant storage;
 // generic APIs, producer entry points and executable storage lifetimes reject.
 struct CompiledScalarLibraryResult {
+  bool interfaceNeedsSource = false;
   CompilationResult compilation;
   std::string bundle;
+  std::vector<std::filesystem::path> sourceFiles;
+};
+class CompiledLibrarySourceConflict final : public std::runtime_error {
+public:
+  CompiledLibrarySourceConflict(const std::filesystem::path &source,
+                                std::filesystem::path manifest)
+      : std::runtime_error(
+            "compiled library implementation also imported from source: " +
+            source.string()),
+        sourceManifest(std::move(manifest)) {}
+  std::filesystem::path sourceManifest;
 };
 [[nodiscard]] CompiledScalarLibraryResult
 buildCompiledScalarLibrary(const CompilationRequest &,
@@ -64,12 +76,11 @@ reusableCompiledScalarLibraryTarget(const CompilationRequest &,
                                     const std::filesystem::path &runtime,
                                     const std::filesystem::path &artifact);
 // Same validation as the boolean query, retaining the bytes it actually read.
-[[nodiscard]] CompiledLibrarySnapshot
-reusableCompiledScalarLibrarySnapshot(const CompilationRequest &,
-                                      const CompiledLibraryTarget &,
-                                      std::span<const CompiledLibraryImport>,
-                                      const std::filesystem::path &runtime,
-                                      const std::filesystem::path &artifact);
+[[nodiscard]] CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
+    const CompilationRequest &, const CompiledLibraryTarget &,
+    std::span<const CompiledLibraryImport>,
+    const std::filesystem::path &runtime, const std::filesystem::path &artifact,
+    std::vector<std::filesystem::path> *sourceFiles = nullptr);
 struct CompiledScalarConsumerResult {
   CompilationResult compilation;
   std::vector<LibraryBundleMember> objects;

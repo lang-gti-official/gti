@@ -1819,8 +1819,9 @@ math = { path = "../math" }
 members = ["packages/game", "packages/math"]
 ```
 
-`[targets]` is optional so a source-only dependency package does not need a
-dummy executable or test. Selecting such a package for `build`, `check`,
+`[targets]` is optional. A package with neither declared targets nor a
+discoverable program or library root can still supply source modules.
+Selecting such a package for `build`, `check`,
 `run`, or `test` produces a focused no-target diagnostic; it remains valid as
 a dependency.
 
@@ -3141,8 +3142,9 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
-The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
-root-module function names, including all exported overloads. Names may be
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
+explicitly selected root-module functions or the public declarations of the
+root and its re-exported modules, including their exported overloads. Names may be
 namespace-qualified; explicit exports and exports inherited from enclosing
 namespace declarations are preserved. Reopening a namespace does not export its
 private siblings. Functions must be nongeneric, without default arguments. Parameters and
@@ -3150,8 +3152,8 @@ results admit bool, char, fixed integers, float/double, concrete value records,
 integral enums and checked references to those values; void results remain valid.
 Constexpr functions, entry functions and unsafe/private capabilities reject.
 A target may contain multiple source modules. Its exposed nominal closure can
-belong to the root module or to verified compiled dependencies; ordinary non-root
-source modules still require a logical ownership mapping. There are at most 256
+belong to its root, public re-exported modules, or verified compiled
+dependencies. Each public module retains its logical owner. There are at most 256
 exported overloads and 64 nominal declarations per interface.
 
 Qualified declaration names retain their complete namespace path, with at most
@@ -3180,6 +3182,17 @@ payload enums and generic definitions require further contracts and reject.
 Field defaults are bounded resolved scalar constants or signed literals, not
 serialized expression bodies. This includes finite floating literals and source
 character literals; arbitrary runtime initializer expressions are not admitted.
+Fields without initializers retain the same construction requirements in the
+consumer. For example, a designated initializer must supply a required scalar
+field even if later fields have defaults.
+
+An automatically selected interface can include exported namespace or
+module-scope `using` aliases of scalar values, supported records and plain
+enums. Each alias records its qualified name and resolved target in its defining
+module, so chains preserve type identity after producer sources are removed.
+The reader accepts the earlier nominal metadata for bundles without aliases.
+Reference aliases and modules exporting only types still require a source
+interface.
 
 Checked reference parameters preserve read/mutable access. A reference result
 must identify exactly one whole reference parameter and its permitted access.
@@ -3353,7 +3366,40 @@ use source. Serialized generic bodies and MIR are outside this first module.
 
 ### Compiled-library project requests
 
-A producer declares a reusable target and explicitly selects its public API:
+A registered interface at `<source-root>/lib.gti` supplies the default GTI
+library. The target takes the package name, or the package name with a
+`-lib` suffix when the executable already uses it. With no target table, a
+plain `<source-root>/main.gti` supplies an executable. A named module at
+that path retains its existing source-package meaning.
+
+The root's exports and re-exports select the public interface. Private
+implementation imports contribute to the library object and its freshness
+check. An executable can import its own library by module name. A direct
+package dependency can import the default library with `import alias;`.
+Both use the same project dependency builder. An application-only edit
+reuses compatible library outputs.
+
+For a nonstandard root, declare a target with `kind = "gti-library"` and
+`root`. A sole library target with an export-derived interface supplies the
+default in the absence of a conventional root. A nonstandard target with a
+hand-picked `functions` list stays independently buildable. To use it as
+the default, or to select between several targets, set `[package]`'s
+`default-library = "target-name"`. Set `default-library = false` to disable
+automatic selection. A consumer may choose a different target via
+`compiled-dependencies`; omitting `interface` binds the ordinary module
+import to that target. Quoted virtual interfaces and distributed artifact
+selections remain available.
+
+Automatic compilation requires the bundle format to represent the complete
+public surface. A dependency with unsupported public declarations or native
+inputs can still be consumed from source. If the consumer directly imports a
+private implementation file that also contributed to the library object, the
+driver uses source for that library so both paths share its storage.
+An explicit request to build that
+library reports the unsupported interface. Read-only source checks can resolve
+ordinary imports before any library has been built.
+
+A producer may also select a specific set of exported functions explicitly:
 
 ```toml
 [targets.numbers]

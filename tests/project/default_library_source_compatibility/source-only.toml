@@ -1,0 +1,5 @@
+manifest-version = 1
+[package]
+default-library = false
+name = "utility"
+version = "1.0.0"
