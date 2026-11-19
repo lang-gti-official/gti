@@ -30,6 +30,8 @@ struct CompiledLibraryImport {
   // Owned input bytes, not an admission receipt. Every consumer still checks
   // the complete bundle, compatibility, object and dependency contracts.
   CompiledLibrarySnapshot snapshot = {};
+  // Public module registered for a package-selected virtual interface.
+  std::string moduleName;
 };
 
 // One project build's bounded artifact selection. Paths identify selections;

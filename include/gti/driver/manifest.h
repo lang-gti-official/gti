@@ -83,6 +83,7 @@ struct ProjectPackage {
   std::vector<std::pair<std::string, std::vector<std::filesystem::path>>>
       moduleImplementations;
   std::vector<std::pair<std::string, std::filesystem::path>> moduleLookupPaths;
+  std::optional<std::string> defaultLibrary;
 };
 
 // A pinned git dependency source as spelled in the manifest: an exact URL

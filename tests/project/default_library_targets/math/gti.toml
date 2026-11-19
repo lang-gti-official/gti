@@ -1,0 +1,4 @@
+manifest-version = 1
+[package]
+name = "arithmetic"
+version = "1.0.0"

@@ -158,6 +158,13 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
                                package.manifest.package().moduleImplementations,
                            .moduleLookupPaths =
                                package.manifest.package().moduleLookupPaths};
+    if (const auto &name = package.manifest.package().defaultLibrary) {
+      const auto *library = package.manifest.findTarget(*name);
+      const auto registered = std::find_if(root.modules.begin(), root.modules.end(),
+          [&](const auto &module) { return module.second == library->root; });
+      if (registered != root.modules.end())
+        root.defaultModule = registered->first;
+    }
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(

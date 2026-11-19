@@ -295,6 +295,17 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     std::span<const CompiledScalarImport> imports) const {
   auto units = interfaceUnits(imports);
   retainInterfaceUnit(units, entry, owner);
+  std::vector<std::string> inferred;
+  if (functions.empty()) {
+    std::set<std::string> publicNames;
+    for (const auto &item : program.declarations()) {
+      const auto *function = std::get_if<LoweredFunctionDeclaration>(&item.payload);
+      if (function && function->sourceUnit == entry && function->explicitlyExported && !function->ownerClass)
+        publicNames.insert(function->qualifiedName);
+    }
+    inferred.assign(publicNames.begin(), publicNames.end());
+    functions = inferred;
+  }
   if (functions.empty() || functions.size() > 256)
     throw std::invalid_argument(
         "compiled library requires 1 to 256 selected functions");

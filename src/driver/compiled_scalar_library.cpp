@@ -636,7 +636,7 @@ prepareScalarConsumer(const CompilationRequest &request,
   std::set<std::string> distinctPaths;
   for (std::size_t i = 0; i < bundles.size(); ++i) {
     const auto &input = bundles[i];
-    auto path = input.selected && !input.selected->interfaceRequired
+    auto path = input.selected && !input.selected->interfaceRequired && input.selected->moduleName.empty()
                     ? std::filesystem::absolute(request.entry()).parent_path() /
                           (".gti-compiled-" + admitted[i].library + ".gti")
                     : input.path;
@@ -687,8 +687,10 @@ prepareScalarConsumer(const CompilationRequest &request,
                            metadata.symbols.end());
     }
     const auto canonical = interfacePaths[index].string();
-    std::string source =
-        "export module compiled_scalar_" + metadata.library + ";\n";
+    const auto moduleName = input.selected && !input.selected->moduleName.empty()
+                                ? input.selected->moduleName
+                                : "compiled_scalar_" + metadata.library;
+    std::string source = "export module " + moduleName + ";\n";
     std::set<std::size_t> typeDependencies;
     for (const auto &signature : metadata.signatures)
       for (const auto &owner :

@@ -825,6 +825,7 @@ ProjectBuildPlan makeBuildPlan(
         "\ncompiled-import:" + library.package + ':' + library.target;
     modelIdentity += "\nartifact:" + library.artifact.generic_string();
     modelIdentity += "\ninterface:" + library.interfacePath.generic_string();
+    modelIdentity += "\nmodule:" + library.moduleName;
     modelIdentity += library.interfaceRequired ? "\nfacade" : "\nobject-only";
     modelIdentity += library.directDependency ? "\ndirect" : "\ntransitive";
   }
@@ -852,6 +853,21 @@ ProjectBuildPlan makeBuildPlan(
   // loaded source.
   std::vector<PackageSourceRoot> packageSourceRoots =
       sourceWorkspace.packageSourceRoots();
+  for (const auto &library : compiledImports) {
+    if (library.moduleName.empty())
+      continue;
+    auto owner = std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
+                             [&](const auto &root) { return root.kind == SourceOwnerKind::Package && root.name == library.package; });
+    if (owner == packageSourceRoots.end())
+      continue;
+    const auto matches = [&](const auto &member) { return member.first == library.moduleName; };
+    std::erase_if(owner->modules, matches);
+    std::erase_if(owner->moduleLookupPaths, matches);
+    std::erase_if(owner->moduleImplementations, matches);
+    owner->modules.emplace_back(library.moduleName, library.interfacePath);
+    if (library.directDependency)
+      owner->defaultModule = library.moduleName;
+  }
   std::vector<BindgenImportPlan> bindgenImports;
   for (const ResolvedProjectPackage &resolved : sourceWorkspace.packages()) {
     for (const ProjectBindgenImport &import : resolved.manifest.bindgen()) {
@@ -961,7 +977,27 @@ std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
       expanded.compiledImports.push_back(std::move(input));
       return true;
     };
-    for (const auto &edge : node.compiledDependencies) {
+    auto edges = node.compiledDependencies;
+    const auto addDefault = [&](const ResolvedProjectPackage &producer,
+                                std::optional<std::string> alias) {
+      const auto &name = producer.manifest.package().defaultLibrary;
+      if (!name || std::any_of(edges.begin(), edges.end(), [&](const auto &edge) {
+            return edge.packageAlias == alias;
+          }))
+        return;
+      if (std::any_of(expanded.compiledImports.begin(), expanded.compiledImports.end(),
+                      [&](const auto &input) { return input.package == producer.manifest.package().name; }))
+        return;
+      edges.push_back({std::move(alias), *name, {}, node.declaration});
+    };
+    if (node.kind == ProjectTargetKind::Executable || node.kind == ProjectTargetKind::CompiledLibrary) {
+      if (node.kind == ProjectTargetKind::Executable)
+        addDefault(owner, std::nullopt);
+      for (const auto &dep : owner.dependencies)
+        if (const auto *producer = workspace.findPackage(dep.targetIdentity))
+          addDefault(*producer, dep.alias);
+    }
+    for (const auto &edge : edges) {
       const auto *producer = &owner;
       if (edge.packageAlias) {
         const auto found = std::find_if(
@@ -988,14 +1024,21 @@ std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
       auto child = visit(*producer, *dependency);
       if (!child)
         return std::nullopt;
-      if (!add({producer->manifest.package().name, edge.target, child->output(),
-                edge.interfacePath},
-               edge.declaration))
+      const auto &package = producer->manifest.package();
+      CompiledLibraryImport input{package.name, edge.target, child->output(), edge.interfacePath};
+      if (edge.interfacePath.empty()) {
+        const auto module = std::find_if(package.modules.begin(), package.modules.end(),
+            [&](const auto &member) { return member.second == dependency->root; });
+        input.moduleName = module == package.modules.end() ? "main" : module->first;
+        input.interfacePath = package.sourceRoot / (".gti-compiled-" + edge.target + ".gti");
+      }
+      if (!add(std::move(input), edge.declaration))
         return std::nullopt;
       for (auto input : child->compiledImports()) {
         input.interfaceRequired = false;
         input.directDependency = false;
-        input.interfacePath.clear();
+        if (input.moduleName.empty())
+          input.interfacePath.clear();
         if (!add(std::move(input), edge.declaration))
           return std::nullopt;
       }
