@@ -386,10 +386,10 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
-    // Each argument is a closed type, a parameter, or a class/enum template, pointer
-    // or fixed-length array type applied to block parameters; every block
-    // parameter appears in some argument. A repeated parameter must bind the
-    // same type at each of its occurrences.
+    // Each argument is a closed type, a parameter, or a class/enum template,
+    // pointer or fixed-length array type applied to block parameters; every
+    // block parameter appears in some argument. A repeated parameter must bind
+    // the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
