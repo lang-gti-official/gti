@@ -4266,10 +4266,10 @@
       "source": "stdlib/std/detail/memory_capabilities.gti",
       "status": "executable",
       "operations": [
+        "gti_internal::runtime::gti_rt_realloc_v1",
         "gti_internal::shared_owner",
         "gti_internal::uninitialized_storage",
-        "gti_internal::unique_owner",
-        "gti_internal::runtime::gti_rt_realloc_v1"
+        "gti_internal::unique_owner"
       ],
       "case_ids": [
         "allocator-storage",
