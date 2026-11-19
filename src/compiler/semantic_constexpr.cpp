@@ -886,11 +886,19 @@ bool stagedClosureRequiresMir(const MirProgram &program) {
         body.loans.begin(), body.loans.end(),
         [](const auto &loan) { return loan.access == AccessMode::Mutable; });
   };
-  const auto resultValues = [](const MirBody &body) {
-    const auto resultType = [](const auto &self,
-                               const SemanticType &type) -> bool {
+  const auto opaque = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [](const auto &instance) {
+        return instance.compilerCapability ==
+               CompilerCapabilityTypeKind::ErasedObject;
+      });
+  const auto resultValues = [&](const MirBody &body) {
+    const auto resultType = [&](const auto &self,
+                                const SemanticType &type) -> bool {
       return type.kind == SemanticType::UniqueOwner ||
              type.kind == SemanticType::TypePack ||
+             (opaque != program.classInstances().end() &&
+              type == opaque->type) ||
              ((type.kind == SemanticType::Array ||
                type.kind == SemanticType::Reference) &&
               type.arguments.size() == 1 && self(self, type.arguments[0]));

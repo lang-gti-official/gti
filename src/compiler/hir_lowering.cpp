@@ -492,10 +492,13 @@ private:
     // Lifecycle-bearing structural values may execute transiently. The
     // constant executor checks their concrete operations and cleanup recipes;
     // staging never turns arbitrary runtime capabilities into constant ones.
+    // Checked erasure needs the opaque type's identity to verify its loans.
     if (constantClosure &&
         (declaration->kind == ClassKind::Union || declaration->polymorphic ||
          !declaration->bases.empty() || lifecycleBoundBorrowCarrier ||
-         declaration->compilerCapability != CompilerCapabilityTypeKind::None)) {
+         (declaration->compilerCapability != CompilerCapabilityTypeKind::None &&
+          declaration->compilerCapability !=
+              CompilerCapabilityTypeKind::ErasedObject))) {
       lifecycleValid = false;
       return std::nullopt;
     }

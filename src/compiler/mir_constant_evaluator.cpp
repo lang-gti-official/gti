@@ -279,7 +279,25 @@ private:
   }
 
   bool observedStorageType(const SemanticType &type) const {
-    return storageType(observedType(type));
+    return readOnlyErasedReference(type) || storageType(observedType(type));
+  }
+
+  bool isErasedObject(const SemanticType &type) const {
+    const auto *instance = type.kind == SemanticType::Class ? record(type)
+                                                            : nullptr;
+    return instance && instance->compilerCapability ==
+                           CompilerCapabilityTypeKind::ErasedObject;
+  }
+
+  bool readOnlyErasedReference(const SemanticType &type) const {
+    return type.kind == SemanticType::Reference &&
+           type.referenceAccess == AccessMode::ReadOnly &&
+           isErasedObject(observedType(type));
+  }
+
+  bool supportedPlace(const MirPlace &place) const {
+    return observedStorageType(place.type) ||
+           (place.access == AccessMode::ReadOnly && isErasedObject(place.type));
   }
 
   const MirClassInstance *record(const SemanticType &type) const {
@@ -392,6 +410,10 @@ private:
     std::size_t allocation = 0;
     // One plus the raw-region slot index; zero for every other storage.
     std::size_t slot = 0;
+    // Erasure hides the type from source; the executor keeps the original
+    // typed designator so restoration can validate it without reinterpreting
+    // storage. Copies and reborrows retain both the designator and this bit.
+    bool erased = false;
   };
   // A raw pointer designates an element of a typed raw region, the start of
   // an untyped region, or one ordinary place (offset zero only).
@@ -549,7 +571,7 @@ private:
   // array never creates a mutable alias to another binding.
   MirPlaceId cell(const Frame &frame, MirPlaceId id) const {
     const auto *place = frame.body.findPlace(id);
-    if (place == nullptr || !observedStorageType(place->type) ||
+    if (place == nullptr || !supportedPlace(*place) ||
         (place->root != MirPlaceRootKind::Binding &&
          place->root != MirPlaceRootKind::Temporary)) {
       return 0;
@@ -558,7 +580,7 @@ private:
       if (candidate.root == place->root && candidate.projections.empty() &&
           candidate.binding == place->binding &&
           candidate.temporary == place->temporary &&
-          observedStorageType(candidate.type)) {
+          supportedPlace(candidate)) {
         return candidate.id;
       }
     }
@@ -607,7 +629,7 @@ private:
                             bool writing = false, bool shell = false,
                             bool successor = false) {
     const auto *place = frame.body.findPlace(id);
-    if (!place || !observedStorageType(place->type))
+    if (!place || !supportedPlace(*place))
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     const MirPlace *binding = nullptr;
     if (place->root == MirPlaceRootKind::Loan && successor && !writing &&
@@ -822,7 +844,15 @@ private:
         return resolved;
       location = std::move(target);
     }
-    location.type = &observedType(place->type);
+    const auto &type = observedType(place->type);
+    if (!shell && isErasedObject(type)) {
+      if (!location.erased || location.access != AccessMode::ReadOnly)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    } else {
+      if (location.erased)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      location.type = &type;
+    }
     // locate's success has no value; callers distinguish it by failure.
     return {};
   }
@@ -1020,6 +1050,7 @@ private:
   ConstantEvaluation formReference(const Location &referent,
                                    const SemanticType &type) {
     if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+        (referent.erased != isErasedObject(type.arguments[0])) ||
         (type.referenceAccess == AccessMode::Mutable &&
          referent.access != AccessMode::Mutable))
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -1606,6 +1637,8 @@ private:
     const auto located = locate(frame, id, location);
     if (located.failure != ConstantEvaluationFailure::None)
       return located;
+    if (location.erased)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
     if (!location.path.empty()) {
       if (!charge(location.path.size() + 1))
         return {.failure = ConstantEvaluationFailure::ResourceLimit};
@@ -1677,6 +1710,8 @@ private:
   ConstantEvaluation writeLocation(const Location &location,
                                    const ConstantValue &value,
                                    bool initializing = false) {
+    if (location.erased)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
     auto &valueStorage = storage(location);
     if (location.epoch != epoch(location) ||
         (!location.path.empty() && !valueStorage))
@@ -2266,6 +2301,8 @@ private:
           locate(frame, instruction.operands.front().place, location);
       if (located.failure != ConstantEvaluationFailure::None)
         return fail(frame, located.failure);
+      if (location.erased)
+        return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
       std::int64_t offset = 0;
       // The address of a whole raw slot is an element pointer, which pointer
       // arithmetic may move; a subobject's address designates that place.
@@ -2325,6 +2362,9 @@ private:
       return {};
     }
     if (!observedStorageType(instruction.info.type) &&
+        !(instruction.info.category == ValueCategory::Place &&
+          instruction.info.access == AccessMode::ReadOnly &&
+          isErasedObject(instruction.info.type)) &&
         !(instruction.kind == MirInstructionKind::Call &&
           instruction.info.type == SemanticType::Void)) {
       return fail(frame, ConstantEvaluationFailure::UnsupportedType);
@@ -2818,6 +2858,30 @@ private:
           return throughCall(std::move(result), frame);
         evaluated.value = std::move(result.value);
         voidResult = result.voidResult;
+      } else if (instruction.intrinsic == IntrinsicKind::EraseReference ||
+                 instruction.intrinsic == IntrinsicKind::RestoreReference) {
+        if (!mir_detail::erasedReferenceResultLoan(program, frame.body,
+                                                   instruction))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location origin;
+        const auto located =
+            locateOperand(frame, instruction.operands.front(), origin);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        const bool restoring =
+            instruction.intrinsic == IntrinsicKind::RestoreReference;
+        const auto &exactType =
+            restoring ? instruction.info.type
+                      : instruction.parameterTypes.front().arguments.front();
+        if (origin.erased != restoring || !origin.type ||
+            *origin.type != exactType)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                      "Constant restoration requires the exact original "
+                      "referent type.");
+        origin.erased = !restoring;
+        origin.access = AccessMode::ReadOnly;
+        evaluated.value = arguments.front();
+        reference = std::move(origin);
       } else if (instruction.intrinsic == IntrinsicKind::RawBorrow ||
                  instruction.intrinsic == IntrinsicKind::RawBorrowMut) {
         // A checked borrow of the object a constant pointer designates; the
@@ -3416,7 +3480,7 @@ private:
       // belongs to a carrier whose destructor still uses it, which stays
       // outside this profile.
       if (loan.lifecycleBound || source == nullptr ||
-          !observedStorageType(source->type)) {
+          !supportedPlace(*source)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR only admits checked loans to supported "
                     "values, without cleanup-bound reference carriers.");
@@ -3447,7 +3511,16 @@ private:
       if (!observedStorageType(type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType);
       }
-      const auto exact = exactValue(arguments[index], observedType(type));
+      const SemanticType *expected = &observedType(type);
+      if (readOnlyErasedReference(type)) {
+        if (index >= argumentOrigins.size() || !argumentOrigins[index] ||
+            !argumentOrigins[index]->erased ||
+            argumentOrigins[index]->access != AccessMode::ReadOnly ||
+            !argumentOrigins[index]->type)
+          return fail(frame, ConstantEvaluationFailure::NonConstantReference);
+        expected = argumentOrigins[index]->type;
+      }
+      const auto exact = exactValue(arguments[index], *expected);
       if (!exact) {
         return fail(
             frame, exact.failure,
@@ -3666,6 +3739,7 @@ private:
                       result.failure == ConstantEvaluationFailure::None
                           ? ConstantEvaluationFailure::NonConstantReference
                           : result.failure);
+        const SemanticType *expected = &observedType(returnType);
         if (returnType.kind == SemanticType::Reference && referenceResult) {
           Location location;
           const auto located =
@@ -3679,10 +3753,13 @@ private:
                         "A constant reference result must retain its caller's "
                         "live origin and access.");
           location.access = returnType.referenceAccess;
+          if (location.erased != readOnlyErasedReference(returnType))
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          if (location.erased)
+            expected = location.type;
           *referenceResult = std::move(location);
         }
-        const auto converted =
-            convertValue(*result.value, observedType(returnType));
+        const auto converted = convertValue(*result.value, *expected);
         return converted ? MirConstantEvaluation{.value = converted.value}
                          : fail(frame, converted.failure);
       }

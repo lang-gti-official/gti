@@ -1,0 +1,11 @@
+// Constant evaluation rejects restoration with a different exact type.
+import std.memory;
+
+constexpr bool restore_wrong_type() {
+  int32_t owner = 7;
+  std::erased_object& hidden = std::erase_ref(owner);
+  unsafe { return std::restore_ref<uint32_t>(hidden) == 7; }
+}
+
+static_assert(restore_wrong_type());  //~ ERROR GTI-S2057 exact original referent type
+int main() { return 0; }

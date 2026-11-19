@@ -2407,6 +2407,11 @@ constant data: a reference to a runtime variable cannot supply it. Reference
 results can be read into constant values, but references themselves are not
 persistable constexpr bindings or fields. This capability requires the verified
 MIR executor; it does not extend the legacy AST evaluator with reference rules.
+Within one evaluation, `std::erase_ref` may hide the type of a checked
+read-only borrow to a supported value. The borrow can be forwarded or stored in
+a local carrier. The executor retains the exact original place and checks the
+unsafe `std::restore_ref<T>` against its original type. Only the observed data
+can persist out of the evaluation. Mutable erasure remains runtime-only.
 Mutable references preserve the live origin rather than a snapshot: edits by
 a `constexpr void` helper or mutable method are visible to the caller. An indexed
 reference retains the index chosen when it was formed, even if a separate index
