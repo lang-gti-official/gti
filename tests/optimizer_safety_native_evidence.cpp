@@ -689,9 +689,10 @@ void testRelationalBoundsEmission(const std::string &compiler,
                                  ? lang::LlvmCodegenOptimization::Aggressive
                                  : lang::LlvmCodegenOptimization::None})
             .generate(std::move(lowered));
-    expect(!artifact.contents.empty(), "LLVM accepts relational proof fixture");
+    expect(!artifact.singleObject().empty(),
+           "LLVM accepts relational proof fixture");
     const auto object = directory / (label + ".o");
-    std::ofstream(object, std::ios::binary) << artifact.contents;
+    std::ofstream(object, std::ios::binary) << artifact.singleObject();
     llvmBinaries.push_back(build(compiler, object, directory, label));
   }
   for (const std::string_view arguments :

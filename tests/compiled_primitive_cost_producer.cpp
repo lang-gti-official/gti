@@ -75,7 +75,7 @@ cost_model::Point identity_point(cost_model::Point value) { return value; }
       throw std::runtime_error(built.compilation.backendFailureDetails.value_or(
           "primitive cost producer failed"));
     }
-    write(root / "library.o", built.compilation.artifact->contents);
+    write(root / "library.o", built.compilation.artifact->singleObject());
     write(root / "primitive.gtilib", built.bundle);
     // Compiler-owned persistent identities and typed symbol contracts, never
     // inferred from nm ordering or reimplemented by the Python measurement

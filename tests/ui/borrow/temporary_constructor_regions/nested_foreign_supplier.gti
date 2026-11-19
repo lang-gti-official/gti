@@ -1,0 +1,13 @@
+// Nested ordinary calls must preserve every temporary constructor supplier.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool s) && { if (s) { return this.x; } return this.y; }
+};
+int&<a> identity<lifetime a>(int&<a> input) { return input; }
+int&<a> relay<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  return identity(Two(keep, other).pick(false)); //~ ERROR GTI-S2127
+}
+int main() { return 0; }

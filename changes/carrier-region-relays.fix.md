@@ -1,0 +1,1 @@
+Fix internal compiler errors when a function returns a `T&<o>` obtained through a reference to a borrow carrier, and when a reference to a carrier's own field stays live across a `T&<o>` accessor through a mutable stored reference; reading such a reference is now accepted and operating through the carrier is rejected with GTI-S2017.

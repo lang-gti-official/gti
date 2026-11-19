@@ -8,6 +8,7 @@
 #include "closure_environment.h"
 #include "constructor_field_publication.h"
 #include "coverage.h"
+#include "coverage_use_index.h"
 #include "dispatch.h"
 #include "embedding.h"
 #include "lifetimes.h"
@@ -3041,7 +3042,7 @@ public:
                      this->ownedMutexPointee(pointee);
             },
             [this] { return ownedMutexPointees.empty(); }, statistics),
-        statistics(statistics) {}
+        statistics(statistics), indices(statistics != nullptr) {}
 
   std::optional<MirBodyAddress> body;
   SourceSpan source;
@@ -5046,16 +5047,13 @@ public:
   void replay(const AdmissionCoverageStep &step) {
     const auto &entry = *step.entry;
     const auto *shape = step.shape;
-    const auto key = std::tuple(entry.family, entry.name, body.has_value(),
-                                body ? body->kind : MirBodyKind::Module,
-                                body ? body->owner : 0, step.required,
-                                step.executable, shape);
-    auto [found, inserted] = indices.try_emplace(key, uses.size());
+    const auto [index, inserted] = indices.insert(
+        {&entry, body, step.required, step.executable, shape}, uses.size());
     if (inserted) {
       uses.push_back({&entry, body, source, block, instruction, 0,
                       step.required, step.executable, shape});
     }
-    ++uses[found->second].occurrences;
+    ++uses[index].occurrences;
   }
 
   bool concretePackParameter(const MirPlace &place) const {
@@ -6286,8 +6284,6 @@ private:
       typeMemo{"type-walk"};
   native_llvm::AdmissionMemo<AdmissionCleanupWalkKey, Trace, AdmissionWalkHash>
       cleanupMemo{"cleanup-walk"};
-  using Key = std::tuple<std::string_view, std::string_view, bool, MirBodyKind,
-                         std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
   const MirProgram &program;
   const native_llvm::AdmissionTypeIndex &types;
@@ -6295,7 +6291,7 @@ private:
   const TargetInfo &nativeTarget;
   NativeValues natives;
   LlvmAdmissionStatistics *statistics;
-  std::map<Key, std::size_t> indices;
+  native_llvm::CoverageUseIndex indices;
   // Owner pointees whose mutex-storage representation is being decided.
   mutable std::vector<SemanticType> ownedMutexPointees;
 };

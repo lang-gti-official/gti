@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
             name + "\n" + "extern \"C\" " + (status ? "bool " : "int32_t ") +
             name + (status ? "(int32_t*, Channel*, int32_t" : "(int32_t") +
             (borrowedCleanup ? ", int32_t*, int32_t*, int32_t*);\n" : ");\n"));
-    write(prefix + ".o", object.contents);
+    write(prefix + ".o", object.singleObject());
     std::cout << GTI_C04_MODE << ' ' << level << ' ' << profileName
               << " verified closure emitted\n";
     return 0;

@@ -2768,14 +2768,13 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
-Native-object storage has a separate schema-v5 representation under
-`build/gti/cache/v5/<sha256>/`, marked `gti-build-cache-v5`. Its metadata
-requires `artifact object .o`, and `artifact.o` preserves opaque binary bytes,
-including NULs, rather than labeling them generated C++. Lookup verifies the
-object and executable digests, permissions and test catalog before restoration;
-native metadata and payload leaves must be regular files, not symlinks. A
-restored backend result retains object kind and `.o` extension. C++ continues
-to use the unchanged v4 identity and metadata format.
+Native-object storage uses schema v6 under `build/gti/cache/v6/<sha256>/`.
+Metadata stores the object count and ordered digests. `artifact.o` is the first
+object and `artifact-1.o`, `artifact-2.o`, and so on hold subsequent objects.
+Lookup checks the digest and regular-file status of every object, along with the
+executable, permissions and test catalog, before restoring the build. The
+backend artifact retains the ordered object list on a cache hit. Embedding
+libraries retain their separate one-object schema.
 
 LLVM reuse additionally consumes a producer-owned query of the same target
 machine factory used for object emission: resolved triple, data layout, CPU,
@@ -2993,8 +2992,10 @@ When a declared `-l` library cannot be resolved inside the declared search
 directories, an ordinary LLVM executable can reuse its whole-program GTI
 object on a later project build. The driver always recompiles the native
 sources and relinks with the current system libraries. The managed
-`compile-object-v1` record binds the compiler and LLVM identity, frontend
-policy, target and source graph to a checksummed object. Only diagnostic-free
+`compile-object-v2` record binds the compiler and LLVM identity, frontend
+policy, target and source graph to a checksummed, ordered object list. The
+reader validates the expected object count, binary lengths and payload digest
+before replay; malformed or truncated records are rebuilt. Only diagnostic-free
 builds can populate this record. Test catalogs, embedding companions, compiled
 imports, build reports and requested optimization outputs require their existing
 build paths. The separate in-process frontend cache used by editor analysis is

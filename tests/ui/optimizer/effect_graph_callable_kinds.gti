@@ -1,0 +1,18 @@
+// Calls through a constructor, destructor and function preserve their writes at O3.
+//@ run-pass
+//@ opt: O3
+//@ reason: The optimizer uses effect summaries to decide which calls can be discarded.
+mut int trace = 0;
+void mark(int step) { trace = trace * 10 + step; }
+class Scope {
+public:
+  Scope() { mark(1); }
+  ~Scope() { mark(3); }
+};
+int main() {
+  {
+    Scope scoped{};
+    mark(2);
+  }
+  return trace == 123 ? 0 : 1;
+}

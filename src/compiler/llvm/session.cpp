@@ -1077,8 +1077,10 @@ BackendArtifact Session::emitObject() {
   if (diagnosticError_)
     throw std::runtime_error("LLVM object emission diagnostic: " +
                              diagnostics_.back());
-  return {BackendArtifactKind::Object, std::string(bytes.begin(), bytes.end()),
-          ".o"};
+  BackendArtifact artifact{.kind = BackendArtifactKind::Object,
+                           .extension = ".o"};
+  artifact.objects.emplace_back(bytes.begin(), bytes.end());
+  return artifact;
 }
 
 } // namespace lang::native_llvm
