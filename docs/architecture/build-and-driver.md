@@ -3182,6 +3182,17 @@ payload enums and generic definitions require further contracts and reject.
 Field defaults are bounded resolved scalar constants or signed literals, not
 serialized expression bodies. This includes finite floating literals and source
 character literals; arbitrary runtime initializer expressions are not admitted.
+Fields without initializers retain the same construction requirements in the
+consumer. For example, a designated initializer must supply a required scalar
+field even if later fields have defaults.
+
+An automatically selected interface can include exported namespace or
+module-scope `using` aliases of scalar values, supported records and plain
+enums. Each alias records its qualified name and resolved target in its defining
+module, so chains preserve type identity after producer sources are removed.
+The reader accepts the earlier nominal metadata for bundles without aliases.
+Reference aliases and modules exporting only types still require a source
+interface.
 
 Checked reference parameters preserve read/mutable access. A reference result
 must identify exactly one whole reference parameter and its permitted access.

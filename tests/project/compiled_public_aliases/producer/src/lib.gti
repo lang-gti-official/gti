@@ -1,0 +1,7 @@
+export module metrics;
+export import "units.gti";
+export namespace reports {
+  using Score = int;
+  Score add(Score a, Score b) { return a + b; }
+}
+using HiddenAlias = bool;

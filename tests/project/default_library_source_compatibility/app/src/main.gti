@@ -1,2 +1,2 @@
 import util;
-int main() { Number n = value(); return n == 42 ? 0 : 1; }
+int main() { Number n = value(); return n == meaning && n == 42 ? 0 : 1; }

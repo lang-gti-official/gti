@@ -1,3 +1,4 @@
 export module utility;
 export using Number = int;
+export constexpr int meaning = 42;
 export int value() { return 42; }

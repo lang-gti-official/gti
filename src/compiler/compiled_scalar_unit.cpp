@@ -322,6 +322,7 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     retainInterfaceUnit(units, unit.sourceUnit, unit.owner);
   retainInterfaceUnit(units, entry, owner);
   std::vector<SemanticType> roots;
+  std::vector<CompiledInterfaceAlias> aliases;
   std::vector<std::string> inferred;
   if (functions.empty()) {
     if (!supportsCompiledStorage(program))
@@ -360,6 +361,13 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
                        std::get_if<LoweredEnumDeclaration>(&item.payload);
                    e && e->sourceUnit == entry && e->explicitlyExported) {
           roots.push_back(e->type);
+          represented = true;
+        } else if (const auto *alias =
+                       std::get_if<LoweredTypeAliasDeclaration>(&item.payload);
+                   alias && alias->sourceUnit == entry &&
+                   alias->explicitlyExported && !alias->compilerPrivate &&
+                   !item.generic) {
+          aliases.push_back({alias->qualifiedName, alias->type});
           represented = true;
         }
       }
@@ -403,8 +411,8 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
                                   "explicitly exported by the root module: " +
                                   name);
   }
-  const auto metadata =
-      projectCompiledInterfaceTypes(program, entry, owner, roots, units);
+  const auto metadata = projectCompiledInterfaceTypes(program, entry, owner,
+                                                      roots, units, aliases);
   const auto registry =
       compiledInterfaceTypeRegistry(program, entry, metadata, units);
   std::vector<CompiledScalarSignature> signatures;

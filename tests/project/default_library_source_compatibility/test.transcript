@@ -1,4 +1,4 @@
-// An inferred library with an unrepresentable public alias retains its complete source API.
+// An inferred library with an unrepresentable public constant retains its complete source API.
 $ cd app
 $ gti check
 $ gti run --verbose

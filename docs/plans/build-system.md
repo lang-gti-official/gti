@@ -1864,6 +1864,11 @@ Exported declarations and re-exports drive interface selection. Dependencies
 outside the supported metadata profile retain source compilation. The
 `default_library_targets`, `default_library_overrides`, and
 `default_library_source_compatibility` project tests cover these paths.
+Export-derived interfaces also carry public type aliases of supported scalar
+values, plain enums and records. The `compiled_public_aliases` transcript
+exercises a source-absent consumer and a re-exported alias chain. It checks
+that required scalar fields must still be initialized and neighboring defaults
+are preserved.
 
 Artifact-selection progress (F4): a project dependency build now retains the
 exact bytes returned by each successful producer or validated cache hit. A
