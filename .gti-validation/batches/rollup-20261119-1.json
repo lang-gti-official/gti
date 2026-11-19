@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "base": "ed405a031b1bdf2cdc3fe7f9f07d293e51a13b35",
+  "members": [
+    {
+      "pr": 598,
+      "head": "eb83224246bf2778dd4f4b20c5ff087234d02e60",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #598: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "optimizer_foundation",
+          "optimizer_safety",
+          "optimizer_analyses",
+          "optimizer_conformance",
+          "optimizer_intrinsic_context",
+          "optimizer_object_context",
+          "optimizer_object_context_runtime",
+          "optimizer_initializer_publication_runtime",
+          "optimizer_division_envelopes",
+          "optimizer_bounds_postconditions",
+          "optimizer_recurrence_capture",
+          "optimizer_safety_native_evidence",
+          "optimizer_runtime",
+          "llvm_optimization_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #598; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "optimizer_foundation",
+          "optimizer_safety",
+          "optimizer_analyses",
+          "optimizer_conformance",
+          "optimizer_intrinsic_context",
+          "optimizer_object_context",
+          "optimizer_object_context_runtime",
+          "optimizer_initializer_publication_runtime",
+          "optimizer_division_envelopes",
+          "optimizer_bounds_postconditions",
+          "optimizer_recurrence_capture",
+          "optimizer_safety_native_evidence",
+          "optimizer_runtime",
+          "llvm_optimization_pipeline"
+        ]
+      }
+    },
+    {
+      "pr": 597,
+      "head": "c336a5d038b620532d962acc37fa2b84022e6715",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #597: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "optimizer_foundation",
+          "optimizer_conformance",
+          "mir_verifier_hardening",
+          "mir_backend_scalar_failure_callgraph",
+          "optimizer_runtime"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #597; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "optimizer_foundation",
+          "optimizer_conformance",
+          "mir_verifier_hardening",
+          "mir_backend_scalar_failure_callgraph",
+          "optimizer_runtime"
+        ]
+      }
+    }
+  ]
+}
