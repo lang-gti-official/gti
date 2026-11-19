@@ -1534,6 +1534,9 @@ buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("llvm.relocation", backend->relocation);
     identity.add("llvm.code-model", backend->codeModel);
     identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.codegen-units",
+                 static_cast<std::uint64_t>(backend->codegenUnits));
+    identity.add("llvm.codegen-partitioner", backend->partitioner);
     identity.add("llvm.debug-info",
                  static_cast<std::uint64_t>(backend->debugInfo));
     identity.add("llvm.instrumentation", backend->instrumentation);
@@ -1569,10 +1572,28 @@ buildCacheKey(const ExecutableBuildRequest &request,
     for (const std::string &path : sourcePaths) {
       identity.add("debug.source-path", path);
     }
-    if (request.compilation().target().os == "macos" &&
-        !addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
-                             errorMessage)) {
-      return std::nullopt;
+    if (request.compilation().target().os == "macos") {
+      if (!addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
+                               errorMessage))
+        return std::nullopt;
+      if (request.compilation().llvmCodegenUnits().units > 1) {
+        // Apple's strip does not provide --version. Fingerprint both the
+        // system launcher and the tool selected by the active developer root.
+        const ProcessResult selected =
+            invokeProcess({"/usr/bin/xcrun", "--find", "strip"},
+                          {.captureSuccessfulOutput = true});
+        std::string path = selected.output;
+        path.erase(path.find_last_not_of("\r\n") + 1);
+        if (!selected.succeeded() ||
+            !std::filesystem::path(path).is_absolute()) {
+          errorMessage = "cannot resolve Darwin strip for split debug output";
+          return std::nullopt;
+        }
+        if (!addFileIdentity(identity, "debug.strip-launcher", "/usr/bin/strip",
+                             true, errorMessage) ||
+            !addFileIdentity(identity, "debug.strip", path, true, errorMessage))
+          return std::nullopt;
+      }
     }
   }
   identity.add(
@@ -2226,8 +2247,8 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    std::string_view expectedKey, bool object,
-                                   bool requiresSymbols,
-                                   bool embedding = false) {
+                                   bool requiresSymbols, bool embedding,
+                                   unsigned expectedObjects) {
   const std::filesystem::path metadataPath = entry / "metadata";
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
@@ -2260,6 +2281,9 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
+  if (object && metadata->additionalObjects.size() + 1 != expectedObjects)
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "cached object count does not match the requested units"};
   if (metadata->symbols.has_value() != requiresSymbols)
     return {.status = CacheLookupStatus::Corrupt,
             .detail =
@@ -2470,9 +2494,8 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     errorMessage = "backend artifact does not match the cache schema";
     return false;
   }
-  if (object && (artifact.objects.empty() ||
-                 artifact.objects.size() > maxLlvmCodegenUnits ||
-                 (embeddingBuild(request) && artifact.objects.size() != 1))) {
+  if (object && artifact.objects.size() !=
+                    request.compilation().llvmCodegenUnits().units) {
     errorMessage = "backend object count does not match the cache schema";
     return false;
   }
@@ -4156,6 +4179,19 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
 
   const bool compiledLibrary = request.compiledLibrary().has_value();
   const bool compiledImport = !request.compiledImports().empty();
+  const auto codegen = request.compilation().llvmCodegenUnits();
+  if (codegen.units == 0 || codegen.units > maxLlvmCodegenUnits ||
+      ((codegen.units > 1 || codegen.threads > 0) &&
+       request.compilation().backend() != BackendKind::Llvm) ||
+      (codegen.units > 1 && (library || compiledLibrary ||
+                             request.compilation().llvmInstrumentation() !=
+                                 LlvmInstrumentationMode::None))) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    result.driverDiagnostic = "gti: multiple LLVM code generation units "
+                              "require an uninstrumented hosted executable";
+    return result;
+  }
+
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
@@ -4347,8 +4383,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
             result.driverDiagnostic = diagnostic;
             return result;
           }
-          if (auto object = readCompilationObjects(*objectEntry, *key, 1,
-                                                   result.cache.warning)) {
+          if (auto object = readCompilationObjects(
+                  *objectEntry, *key, codegen.units, result.cache.warning)) {
             result.compilation.artifact =
                 BackendArtifact{.kind = BackendArtifactKind::Object,
                                 .extension = ".o",
@@ -4407,11 +4443,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup =
-            lookupCacheEntry(*cacheEntry, *key, object,
-                             request.compilation().debugInfo() &&
-                                 request.compilation().target().os == "macos",
-                             library);
+        const CacheLookupResult lookup = lookupCacheEntry(
+            *cacheEntry, *key, object,
+            request.compilation().debugInfo() &&
+                request.compilation().target().os == "macos",
+            library, request.compilation().llvmCodegenUnits().units);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -5056,6 +5092,22 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.driverDiagnostic =
             "gti: failed to collect native debug symbols: " +
             symbolProcess.output;
+        return result;
+      }
+    }
+    if (backendArtifact.objects.size() > 1) {
+      // dsymutil has consumed the Mach-O debug map. Its OSO records still
+      // name the unique object staging paths, so remove that map before
+      // publishing. The UUID and adjacent dSYM continue to identify the
+      // executable, including after the temporary objects are removed.
+      const ProcessResult stripProcess = invokeProcess(
+          {"/usr/bin/strip", "-S", stagedOutput.string()},
+          {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+      if (!stripProcess.succeeded()) {
+        result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+        result.driverDiagnostic = "gti: failed to remove staged object paths "
+                                  "from debug executable: " +
+                                  stripProcess.output;
         return result;
       }
     }
