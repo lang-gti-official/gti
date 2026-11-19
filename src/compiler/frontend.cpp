@@ -1427,6 +1427,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
   bool testDiscoveryComplete = false;
   std::unique_ptr<SemanticVisitor> semanticOwner;
   HirLoweringResult hir;
+  bool includeLibraryBodies = options.lowerLibraryOnlyInstanceBodies;
   TrustedBodyAnalysis trustedBodies = options.trustedBodies;
   const auto applyAuditPolicy = [&] {
     if (!options.reportLibraryAuditFindings)
@@ -1599,7 +1600,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     append(result.diagnostics, semantic.errors());
     if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
       return result;
-    const std::size_t semanticDiagnosticCount = semantic.errors().size();
+    std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
     const bool discoveredTestEntry = options.program.testSuite &&
@@ -1653,107 +1654,72 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
       return result;
     }
 
-    if (options.workMetrics != nullptr)
-      ++options.workMetrics->hirPasses;
-    const auto hirStart = std::chrono::steady_clock::now();
-    const std::size_t lateDemandStart =
-        options.workMetrics == nullptr
-            ? 0
-            : options.workMetrics->semanticLateDemandMicroseconds;
-    hir = [&] {
-      const PhaseTimeScope timeScope("gti-hir-lowering");
-      const ProgressScope progress(options.progress,
-                                   ProgressPhase::HirLowering);
-      HirLoweringScope scope{
-          .errorLimit = options.limits.errorLimit == 0
-                            ? 0
-                            : options.limits.errorLimit -
-                                  errorDiagnosticCount(result.diagnostics),
-          .reachablePrefix = options.lowerReachableOnly};
-      if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
-        std::vector<std::pair<std::size_t, std::size_t>> complete;
-        for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
-          if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
-              unit.declarationCount != 0) {
-            complete.emplace_back(unit.declarationStart, unit.declarationCount);
-          }
-        }
-        // Every application body must reach the MIR borrow checker. When
-        // library declarations are lowered completely too, the application
-        // units are lowered first so the check need not see the rest.
-        if (options.lowerLibraryReachableOnly)
-          scope.completeDeclarations = std::move(complete);
-        else
-          scope.borrowCheckedDeclarations = std::move(complete);
+    for (;;) {
+      hir = lowerHir(result, semantic, includeLibraryBodies);
+      // Late demand may report diagnostics in the bodies it analysed.
+      const auto &semanticErrors = semantic.errors();
+      for (std::size_t index = semanticDiagnosticCount;
+           index < semanticErrors.size(); ++index)
+        result.diagnostics.push_back(semanticErrors[index]);
+      semanticDiagnosticCount = semanticErrors.size();
+      if (errorLimitReached(hir.diagnostics, options.limits.errorLimit) ||
+          errorLimitReached(result.diagnostics, options.limits.errorLimit)) {
+        append(result.diagnostics, hir.diagnostics);
+        applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+        result.semanticValid = false;
+        return result;
       }
-      if (options.lowerEntryUnitOnly) {
-        if (const SourceUnit *entry =
-                result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
-          scope.entryDeclarations = {entry->declarationStart,
-                                     entry->declarationCount};
-        }
+      if (semantic.lateDemandFailed()) {
+        for (const FunctionDecl *body : semantic.lateDemandedBodies())
+          hir.requiredSemanticBodies.push_back(body);
       }
-      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
-        if (result.sourceGraph.isCompilerTrusted(unit.id))
-          scope.trustedSources.push_back(unit.path.string());
-      // MIR lowers an omitted instance as a signature-only declaration, so
-      // omission applies to analysis through HIR and through MIR alike; see
-      // FrontendOptions::lowerLibraryOnlyInstanceBodies.
-      if (!options.lowerLibraryOnlyInstanceBodies) {
-        scope.omitLibraryOnlyBodies = true;
-        for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
-          if (result.sourceGraph.isCompilerTrusted(unit.id))
-            scope.trustedUnits.push_back(unit.id);
+      // The net again: concrete discovery can leave a need that late demand
+      // could not meet.
+      if (trustedBodies == TrustedBodyAnalysis::Reachable)
+        for (const FunctionDecl *body : semantic.unmetBodyDemands())
+          hir.requiredSemanticBodies.push_back(body);
+
+      if (!hir.requiredSemanticBodies.empty() &&
+          trustedBodies != TrustedBodyAnalysis::Complete)
+        break;
+      if (hir.requiredSemanticBodies.empty())
+        semantic.publishInstanceAnalyses();
+
+      const bool canConfirm = options.confirmSignatureOnlyMir &&
+                              !includeLibraryBodies &&
+                              hir.omittedInstanceBodies != 0;
+      // A speculative MIR diagnostic belongs only to this lowering. Keep
+      // diagnostics from the primary semantic check, including late demands.
+      std::vector<Diagnostic> primaryDiagnostics;
+      if (canConfirm)
+        primaryDiagnostics = result.diagnostics;
+      verifyLowering(entryPath, result, hir, semantic.model());
+      applyAuditPolicy();
+      if (canConfirm &&
+          result.needsLibraryBodyConfirmation(hir.omittedInstanceBodies) &&
+          !(options.cancellation &&
+            options.cancellation->load(std::memory_order_relaxed))) {
+        result.confirmedWithLibraryBodies = true;
+        includeLibraryBodies = true;
+        result.diagnostics = std::move(primaryDiagnostics);
+        result.semanticValid = true;
+        result.mirBorrowRejected = false;
+        result.hirValid = result.failureMetadataValid = result.mirValid = false;
+        result.mir = {};
+        result.failureMetadata = {};
+        result.hir = {};
+        hir = {};
+        continue;
       }
-      return HirLowerer(options.target, scope)
-          .lower(result.program, semantic.model(), semantic);
-    }();
-    if (options.workMetrics != nullptr) {
-      // Late demand runs inside HIR discovery but is semantic work.
-      const std::size_t lateDemand =
-          options.workMetrics->semanticLateDemandMicroseconds - lateDemandStart;
-      const auto elapsed = static_cast<std::size_t>(
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              std::chrono::steady_clock::now() - hirStart)
-              .count());
-      options.workMetrics->semanticMicroseconds += lateDemand;
-      options.workMetrics->hirMicroseconds +=
-          elapsed > lateDemand ? elapsed - lateDemand : 0;
-      options.workMetrics->hirFunctionInstances =
-          hir.program.functionInstances().size();
-      options.workMetrics->hirOmittedInstanceBodies = hir.omittedInstanceBodies;
-    }
-    // Late demand may report diagnostics in the bodies it analysed.
-    const auto &semanticErrors = semantic.errors();
-    for (std::size_t index = semanticDiagnosticCount;
-         index < semanticErrors.size(); ++index)
-      result.diagnostics.push_back(semanticErrors[index]);
-    if (errorLimitReached(hir.diagnostics, options.limits.errorLimit) ||
-        errorLimitReached(result.diagnostics, options.limits.errorLimit)) {
-      append(result.diagnostics, hir.diagnostics);
-      applyErrorLimit(result.diagnostics, options.limits.errorLimit);
-      result.semanticValid = false;
+      result.semantics = semantic.takeModel();
+      if (options.retainBodyQueryContext) {
+        semantic.detachBodyQueryContext();
+        result.bodyQueryContext = std::move(semanticOwner);
+      }
       return result;
     }
-    if (semantic.lateDemandFailed()) {
-      for (const FunctionDecl *body : semantic.lateDemandedBodies())
-        hir.requiredSemanticBodies.push_back(body);
-    }
-    // The net again: concrete discovery can leave a need that late demand
-    // could not meet.
-    if (trustedBodies == TrustedBodyAnalysis::Reachable)
-      for (const FunctionDecl *body : semantic.unmetBodyDemands())
-        hir.requiredSemanticBodies.push_back(body);
-    if (hir.requiredSemanticBodies.empty()) {
-      // Final HIR: only now may its instance analyses serve later snapshots.
-      semantic.publishInstanceAnalyses();
-      break;
-    }
-    // Bound repeated registration/instantiation work. Complete checking is a
-    // conservative fallback, not permission to emit an unchecked body.
-    if (trustedBodies == TrustedBodyAnalysis::Complete)
-      break; // An unexpected missing fact remains an ordinary invalid-HIR
-             // error.
+    // Re-enter the existing bounded demand loop if lowering discovered a
+    // primary body it could not check with this semantic environment.
     const std::size_t previousCount = requiredBodies.size();
     requiredBodies.insert(hir.requiredSemanticBodies.begin(),
                           hir.requiredSemanticBodies.end());
@@ -1767,13 +1733,92 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     // Destroy partial instance models before replacing their base snapshot.
     hir = {};
   }
-  SemanticVisitor &semantic = *semanticOwner;
+}
+
+HirLoweringResult Frontend::lowerHir(const FrontendResult &result,
+                                     SemanticVisitor &semantic,
+                                     bool includeLibraryBodies) const {
+  if (options.workMetrics != nullptr)
+    ++options.workMetrics->hirPasses;
+  const auto hirStart = std::chrono::steady_clock::now();
+  const std::size_t lateDemandStart =
+      options.workMetrics == nullptr
+          ? 0
+          : options.workMetrics->semanticLateDemandMicroseconds;
+  auto hir = [&] {
+    const PhaseTimeScope timeScope("gti-hir-lowering");
+    const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
+    HirLoweringScope scope{
+        .errorLimit = options.limits.errorLimit == 0
+                          ? 0
+                          : options.limits.errorLimit -
+                                errorDiagnosticCount(result.diagnostics),
+        .reachablePrefix = options.lowerReachableOnly};
+    if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
+      std::vector<std::pair<std::size_t, std::size_t>> complete;
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
+        if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
+            unit.declarationCount != 0) {
+          complete.emplace_back(unit.declarationStart, unit.declarationCount);
+        }
+      }
+      // Every application body must reach the MIR borrow checker. When
+      // library declarations are lowered completely too, the application
+      // units are lowered first so the check need not see the rest.
+      if (options.lowerLibraryReachableOnly)
+        scope.completeDeclarations = std::move(complete);
+      else
+        scope.borrowCheckedDeclarations = std::move(complete);
+    }
+    if (options.lowerEntryUnitOnly) {
+      if (const SourceUnit *entry =
+              result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
+        scope.entryDeclarations = {entry->declarationStart,
+                                   entry->declarationCount};
+      }
+    }
+    for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+      if (result.sourceGraph.isCompilerTrusted(unit.id))
+        scope.trustedSources.push_back(unit.path.string());
+    // MIR lowers an omitted instance as a signature-only declaration, so
+    // omission applies to analysis through HIR and through MIR alike; see
+    // FrontendOptions::lowerLibraryOnlyInstanceBodies.
+    if (!includeLibraryBodies) {
+      scope.omitLibraryOnlyBodies = true;
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+        if (result.sourceGraph.isCompilerTrusted(unit.id))
+          scope.trustedUnits.push_back(unit.id);
+    }
+    return HirLowerer(options.target, scope)
+        .lower(result.program, semantic.model(), semantic);
+  }();
+  if (options.workMetrics != nullptr) {
+    // Late demand runs inside HIR discovery but is semantic work.
+    const std::size_t lateDemand =
+        options.workMetrics->semanticLateDemandMicroseconds - lateDemandStart;
+    const auto elapsed = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - hirStart)
+            .count());
+    options.workMetrics->semanticMicroseconds += lateDemand;
+    options.workMetrics->hirMicroseconds +=
+        elapsed > lateDemand ? elapsed - lateDemand : 0;
+    options.workMetrics->hirFunctionInstances =
+        hir.program.functionInstances().size();
+    options.workMetrics->hirOmittedInstanceBodies = hir.omittedInstanceBodies;
+  }
+  return hir;
+}
+
+void Frontend::verifyLowering(const std::filesystem::path &entryPath,
+                              FrontendResult &result, HirLoweringResult &hir,
+                              const SemanticModel &model) const {
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
   if (applyErrorLimit(result.diagnostics, options.limits.errorLimit)) {
     result.semanticValid = false;
-    return result;
+    return;
   }
   // Concrete instance discovery can demand semantic analysis while lowering
   // HIR. Its source errors are still semantic failures, not valid semantics
@@ -1790,8 +1835,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
     std::string message =
         "Internal compiler error: failed to construct valid HIR.";
-    const auto verification =
-        verifyHirProgramPlans(semantic.model(), result.hir);
+    const auto verification = verifyHirProgramPlans(model, result.hir);
     constexpr std::size_t maximumReportedDetails = 5;
     for (std::size_t index = 0;
          index < verification.errors.size() && index < maximumReportedDetails;
@@ -1804,21 +1848,13 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
                    0, 0, 1},
         std::move(message)));
   }
-  // HIR instance reanalysis is the last reader of the semantic visitor;
-  // move the model into the result instead of deep-copying it.
-  result.semantics = semantic.takeModel();
-  if (options.retainBodyQueryContext) {
-    semantic.detachBodyQueryContext();
-    result.bodyQueryContext = std::move(semanticOwner);
-  }
   // A program the parser recovered (analyzeRecoveredProgram) stops here.
   // Semantics stays quiet about recovered nodes to avoid cascades, so their
   // bodies can be incomplete; MIR checks only programs that parsed, and the
   // parse error is the program's diagnostic.
   if (!result.syntaxValid || !result.semanticValid || !result.hirValid ||
       options.stopAfter == FrontendPhase::Hir) {
-    applyAuditPolicy();
-    return result;
+    return;
   }
   // A superseded editor snapshot stops before MIR instead of lowering bodies
   // whose diagnostics would be discarded. HIR's completed instance analyses
@@ -1826,7 +1862,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
   if (options.cancellation != nullptr &&
       options.cancellation->load(std::memory_order_relaxed)) {
     result.cancelled = true;
-    return result;
+    return;
   }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
@@ -1895,8 +1931,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
           if (!check.internal)
             result.semanticValid = false;
           result.mirValid = false;
-          applyAuditPolicy();
-          return result;
+          return;
         }
       }
     }
@@ -1926,8 +1961,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
         SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
                    0, 0, 1},
         std::move(message)));
-    applyAuditPolicy();
-    return result;
+    return;
   }
 
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
@@ -1947,8 +1981,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     for (Diagnostic &diagnostic : mir.diagnostics)
       result.diagnostics.push_back(std::move(diagnostic));
     result.mirValid = false;
-    applyAuditPolicy();
-    return result;
+    return;
   }
   if (!result.mirValid) {
     // MIR is the single authority for body-local borrow validity: its borrow
@@ -1961,8 +1994,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
       for (Diagnostic &diagnostic : check.diagnostics)
         result.diagnostics.push_back(std::move(diagnostic));
       result.semanticValid = false;
-      applyAuditPolicy();
-      return result;
+      return;
     }
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
@@ -2024,8 +2056,6 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     diagnostic.related = std::move(related);
     result.diagnostics.push_back(std::move(diagnostic));
   }
-  applyAuditPolicy();
-  return result;
 }
 
 void Frontend::appendParserDiagnostics(

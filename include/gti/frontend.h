@@ -127,6 +127,9 @@ struct FrontendOptions {
   // `stopAfter == Mir`, MIR lowers each omitted instance as a signature-only
   // declaration and checks its callers against that declaration.
   bool lowerLibraryOnlyInstanceBodies = true;
+  // Confirm a scoped MIR rejection with complete library bodies in the
+  // same checked source snapshot. Used for editor diagnostic visibility.
+  bool confirmSignatureOnlyMir = false;
   // Report raw-pointer audit findings located inside compiler-trusted units
   // (the prelude and the standard library) to an application. Off by default:
   // such a finding describes the library's own implementation, which the
@@ -215,6 +218,14 @@ struct FrontendResult {
   // source-language (Semantics-phase) errors, so semanticValid is false too;
   // this records that the rejection came from MIR rather than semantics.
   bool mirBorrowRejected = false;
+  bool confirmedWithLibraryBodies = false;
+
+  [[nodiscard]] bool
+  needsLibraryBodyConfirmation(std::size_t omittedBodies) const {
+    return omittedBodies != 0 && !cancelled && sourceValid && syntaxValid &&
+           (semanticValid || mirBorrowRejected) && hirValid &&
+           failureMetadataValid && !mirValid;
+  }
   // Files consulted while discovering fixes, including negative candidates.
   // Editors must invalidate suggestions when any of these inputs changes.
   std::vector<std::filesystem::path> includeSuggestionInputs;
@@ -306,6 +317,13 @@ private:
   template <typename DiagnosticType>
   static void append(std::vector<Diagnostic> &destination,
                      const std::vector<DiagnosticType> &source);
+
+  HirLoweringResult lowerHir(const FrontendResult &result,
+                             SemanticVisitor &semantic,
+                             bool includeLibraryBodies) const;
+  void verifyLowering(const std::filesystem::path &entryPath,
+                      FrontendResult &result, HirLoweringResult &hir,
+                      const SemanticModel &model) const;
 
   FrontendOptions options;
 };
