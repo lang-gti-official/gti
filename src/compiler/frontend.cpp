@@ -1275,16 +1275,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::analyzeParsed(const std::filesystem::path &entryPath,
                                        FrontendResult result) const {
+  return analyzeParsed(entryPath, std::move(result), {});
+}
+
+FrontendResult
+Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                        FrontendResult result,
+                        const DiagnosticCheckpoint &observer) const {
   if (!result.parsingComplete)
     return result;
   result.parsingComplete = false;
-  result = checkParsed(entryPath, std::move(result));
+  result = checkParsed(entryPath, std::move(result), observer);
   applyErrorLimit(result.diagnostics, options.limits.errorLimit);
   return result;
 }
 
-FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
-                                     FrontendResult result) const {
+FrontendResult
+Frontend::checkParsed(const std::filesystem::path &entryPath,
+                      FrontendResult result,
+                      const DiagnosticCheckpoint &observer) const {
   if (!result.syntaxValid && !options.analyzeRecoveredProgram)
     return result;
   if (options.cancellation &&
@@ -1423,6 +1432,7 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
       }
     }
   }
+  bool reportedTypeChecking = false;
   std::unordered_set<const FunctionDecl *> requiredBodies;
   bool testDiscoveryComplete = false;
   std::unique_ptr<SemanticVisitor> semanticOwner;
@@ -1476,7 +1486,21 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
     {
       const PhaseTimeScope timeScope("gti-semantics");
       const ProgressScope progress(options.progress, ProgressPhase::Checking);
-      result.semanticValid = semantic.check(result.program);
+      if (observer && attempt == 0 && result.sourceValid &&
+          result.syntaxValid) {
+        result.semanticValid = semantic.check(
+            result.program,
+            [&](std::span<const Diagnostic> diagnostics) {
+              observer(DiagnosticStage::Declaration, result, semantic.model(),
+                       diagnostics);
+            },
+            [&] {
+              observer(DiagnosticStage::Registered, result, semantic.model(),
+                       {});
+            });
+      } else {
+        result.semanticValid = semantic.check(result.program);
+      }
       if (semantic.cancelled()) {
         // A superseded editor snapshot: no later phase runs and no instance
         // analysis is published.
@@ -1644,6 +1668,12 @@ FrontendResult Frontend::checkParsed(const std::filesystem::path &entryPath,
         }
         continue;
       }
+    }
+    if (observer && !reportedTypeChecking && result.sourceValid &&
+        result.syntaxValid && !options.completionOffset) {
+      observer(DiagnosticStage::TypeChecking, result, semantic.model(),
+               result.diagnostics);
+      reportedTypeChecking = true;
     }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||
@@ -2104,6 +2134,59 @@ const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
   }
   return nullptr;
 }
+
+// Only the edited declaration has current statement locations. Check its
+// concrete call closure, then publish solely diagnostics owned by this body.
+// The background pass owns callers, program storage and cross-body findings.
+std::optional<std::vector<Diagnostic>>
+verifyEditedBody(const SemanticModel &model, SemanticInstanceProvider &provider,
+                 FunctionId root, const BlockStmt &body,
+                 const SourceGraph &graph, const SourceManager &sources,
+                 const std::filesystem::path &entry,
+                 const std::atomic<bool> *cancel) {
+  const auto cancelled = [&] {
+    return cancel && cancel->load(std::memory_order_relaxed);
+  };
+  if (cancelled())
+    return std::nullopt;
+  auto hir = HirLowerer(model.analysisSeal().target)
+                 .lowerEditedFunction(model, provider, root, body);
+  if (!hir.valid() || !hir.diagnostics.empty() || cancelled())
+    return std::nullopt;
+  auto metadata =
+      FailureMetadataBuilder().build(graph, sources, hir.program, entry);
+  if (!metadata.valid() || cancelled())
+    return std::nullopt;
+  auto mir = MirLowerer().lower(hir.program, metadata.metadata);
+  if (!mir.diagnostics.empty() || cancelled())
+    return std::nullopt;
+  if (mir.valid())
+    return std::vector<Diagnostic>{};
+  if (mir.errors.empty())
+    return std::nullopt;
+  for (const auto &error : mir.errors) {
+    const auto *instance = hir.program.findFunctionInstance(error.body.owner);
+    if (error.body.kind != MirBodyKind::Function || !instance ||
+        instance->declaration != root)
+      return std::nullopt;
+  }
+  auto checked = mirBorrowDiagnostics(mir, mir.program, hir.program);
+  if (checked.internal || checked.diagnostics.empty())
+    return std::nullopt;
+  const auto &span = *body.extent();
+  const auto local = [&](const SourceSpan &site) {
+    return site.source == span.source && site.start >= span.start &&
+           site.end <= span.end;
+  };
+  for (const auto &diagnostic : checked.diagnostics) {
+    if (!local(diagnostic.primary) || !diagnostic.fixes.empty())
+      return std::nullopt;
+    for (const auto &related : diagnostic.related)
+      if (!local(related.span))
+        return std::nullopt;
+  }
+  return checked.diagnostics;
+}
 } // namespace
 
 bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
@@ -2116,8 +2199,9 @@ bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
 
 std::optional<std::vector<Diagnostic>>
 EditorBodyDiagnostics::check(const std::string &source,
-                             const std::atomic<bool> *cancel) const {
-  return checkEdit(source, cancel, std::nullopt);
+                             const std::atomic<bool> *cancel,
+                             bool *borrowProof) const {
+  return checkEdit(source, cancel, std::nullopt, borrowProof);
 }
 
 bool EditorBodyDiagnostics::reproducesRecovery(
@@ -2133,7 +2217,9 @@ bool EditorBodyDiagnostics::reproducesRecovery(
 
 std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
     const std::string &source, const std::atomic<bool> *cancel,
-    std::optional<std::size_t> recoveryLimit) const {
+    std::optional<std::size_t> recoveryLimit, bool *borrowProof) const {
+  if (borrowProof)
+    *borrowProof = false;
   const std::lock_guard lock(queryMutex);
   if (cancel && cancel->load(std::memory_order_relaxed))
     return std::nullopt;
@@ -2191,10 +2277,24 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
 
   auto sources = baseline->sources;
   sources.set(path, source);
-  auto answer = context->diagnoseEditedBody(
-      {baseline->program, baseline->semantics, baseline->sourceGraph, sources,
-       *prior, *changed},
-      cancel);
+  EditedFunctionBody input{baseline->program,
+                           baseline->semantics,
+                           baseline->sourceGraph,
+                           sources,
+                           *prior,
+                           *changed,
+                           {}};
+  if (borrowProof && !parser.hadError()) {
+    input.verify =
+        [&](const SemanticModel &model, SemanticInstanceProvider &provider,
+            FunctionId root) -> std::optional<std::vector<Diagnostic>> {
+      auto result = verifyEditedBody(model, provider, root, *changed,
+                                     input.graph, sources, unit->path, cancel);
+      *borrowProof = result.has_value();
+      return result;
+    };
+  }
+  auto answer = context->diagnoseEditedBody(input, cancel);
   if (!answer || !parser.hadError())
     return answer;
   answer->insert(answer->begin(), parser.errors().begin(),
