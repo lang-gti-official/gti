@@ -46,9 +46,9 @@ def verify(stage):
         shutil.copyfile(fixture / "gti.toml", project / "gti.toml")
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
 
-        def run(*arguments, rejection=None, cwd=project):
+        def run(*arguments, rejection=None, cwd=project, environment=env):
             result = subprocess.run([str(stage / "bin/gti"), *arguments, "--offline"],
-                                    cwd=cwd, env=env, capture_output=True, text=True)
+                                    cwd=cwd, env=environment, capture_output=True, text=True)
             output = result.stdout + result.stderr
             if rejection is None:
                 if result.returncode:
@@ -90,10 +90,9 @@ def verify(stage):
         shutil.copyfile(fixture.parents[2] / "cmake/stdlib-bundles/gti.toml", producer / "gti.toml")
         implementation = producer_stdlib / "std/detail/random_engine.gti"
         implementation.write_text(implementation.read_text().replace(
-            "return state;", "return random_engine_state{};"))
+            "return state;", "state.s0 = uint64_t(0); return state;"))
         producer_env = dict(env, GTI_STDLIB_PATH=str(producer_stdlib))
-        subprocess.run([str(stage / "bin/gti"), "build", "random", "--release", "--offline"],
-                       cwd=producer, env=producer_env, check=True, capture_output=True)
+        run("build", "random", "--release", cwd=producer, environment=producer_env)
         alternate, = (producer / "build/gti/release").glob("*/random.gtilib")
         destination, = bundles.glob("*/release/random.gtilib")
         original = destination.read_bytes()
