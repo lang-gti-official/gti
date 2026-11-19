@@ -6386,6 +6386,10 @@ private:
       valid = false;
       return;
     }
+    const auto appendMaterialization = [&](MirInstruction instruction) {
+      (void)initializeValueLifecycle(instruction, value);
+      (void)appendInstruction(std::move(instruction));
+    };
     ExpressionInfo materializedInfo = value.info;
     materializedInfo.category = ValueCategory::Value;
     materializedInfo.access = AccessMode::ReadOnly;
@@ -6408,7 +6412,7 @@ private:
       }
       const MirValueId result = appendValue(value.id, materializedInfo);
       loweredValues.insert_or_assign(value.id, result);
-      (void)appendInstruction(
+      appendMaterialization(
           {.kind = MirInstructionKind::Compute,
            .hirValue = value.id,
            .result = result,
@@ -6433,21 +6437,21 @@ private:
            .info = materializedInfo});
       const MirValueId result = appendValue(value.id, materializedInfo);
       loweredValues.insert_or_assign(value.id, result);
-      (void)appendInstruction({.kind = MirInstructionKind::Compute,
-                               .hirValue = value.id,
-                               .result = result,
-                               .operands = {{.kind = MirOperandKind::Value,
-                                             .value = magnitude,
-                                             .type = value.info.type}},
-                               .operation = MirOperation::Negate,
-                               .programConstantSubstitution = true,
-                               .info = materializedInfo});
+      appendMaterialization({.kind = MirInstructionKind::Compute,
+                             .hirValue = value.id,
+                             .result = result,
+                             .operands = {{.kind = MirOperandKind::Value,
+                                           .value = magnitude,
+                                           .type = value.info.type}},
+                             .operation = MirOperation::Negate,
+                             .programConstantSubstitution = true,
+                             .info = materializedInfo});
       emittedValues.insert(value.id);
       return;
     }
     const MirValueId result = appendValue(value.id, materializedInfo);
     loweredValues.insert_or_assign(value.id, result);
-    (void)appendInstruction(
+    appendMaterialization(
         {.kind = MirInstructionKind::Compute,
          .hirValue = value.id,
          .result = result,

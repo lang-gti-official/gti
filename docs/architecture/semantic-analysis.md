@@ -4555,6 +4555,9 @@ in `ephemeralBorrowArguments`; lowering materializes and borrows the constructed
 value, never the original operand. Complete stored-field dependencies accompany
 borrow-carrying contextual constructions, including unconditional region carriers.
 No protocol-side conversion decision or temporary lifetime extension is added.
+A published immediate class constant is also a materialized temporary: MIR's
+literal verifier checks its exact constant and type, while the ordinary
+call-input loan and drop proofs govern a read-only borrow of that value.
 
 `ResolvedCallInfo::checkedArguments` retains the selected construction and argument
 index for hover. The original occurrence remains the source identifier; adding
