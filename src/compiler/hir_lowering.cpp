@@ -29,7 +29,8 @@ public:
                         const std::vector<FunctionId> &completedFunctions,
                         const GenericSubstitution &substitution,
                         const std::vector<ConstructorId> &completedConstructors,
-                        const Expr *expressionRoot) {
+                        const Expr *expressionRoot,
+                        std::span<const SymbolId> storageDependencies) {
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
     constantExpression = expressionRoot;
@@ -99,6 +100,8 @@ public:
       output.program.valid_ = false;
       return std::move(output);
     }
+    for (const auto symbol : storageDependencies)
+      stageConstantProgramStorage(symbol);
     return finishConstant();
   }
 
@@ -106,13 +109,16 @@ public:
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors) {
+      const std::vector<ConstructorId> &completedConstructors,
+      std::span<const SymbolId> storageDependencies) {
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
     if (enqueueConstructor(root) == 0) {
       output.program.valid_ = false;
       return std::move(output);
     }
+    for (const auto symbol : storageDependencies)
+      stageConstantProgramStorage(symbol);
     return finishConstant();
   }
 
@@ -1483,14 +1489,13 @@ private:
     }
   }
 
-  // A staged constexpr closure needs the actual program storage identity of
-  // borrowed arrays. Publish the already checked constant as a normal data-only
-  // initializer; unrelated program initializers stay outside the closure.
-  void stageConstantArrayStorage(SymbolId symbol) {
+  // Borrowed constants retain the identity of the checked program datum.
+  // Stage just that data and any other storage named by its addresses.
+  void stageConstantProgramStorage(SymbolId symbol) {
     auto &plan = output.program.programInitialization;
     if (plan.findStepForSymbol(symbol))
       return;
-    const auto step = baseModel->findConstantArrayStorage(symbol);
+    const auto step = baseModel->findConstantProgramStorage(symbol);
     if (!step)
       return;
     HirClassInstanceId owner = 0;
@@ -1511,6 +1516,10 @@ private:
                           .symbol = symbol,
                           .ownerClass = owner,
                           .binding = binding});
+    if (const auto *info = baseModel->findBinding(*step->declaration);
+        info && info->constant)
+      for (const auto dependency : constantAddressDependencies(*info->constant))
+        stageConstantProgramStorage(dependency);
   }
 
   void lowerProgramInitializationPlan() {
@@ -2136,8 +2145,8 @@ private:
       if (field.declaration != nullptr && !info.threadLocal) {
         const bool stagedClass =
             constantClosure && declaration->genericParameters.empty();
-        if (stagedClass && type.kind == SemanticType::Array && info.constant)
-          stageConstantArrayStorage(info.symbol);
+        if (stagedClass && info.constant)
+          stageConstantProgramStorage(info.symbol);
         const auto found = loweredProgramStorage.find(field.declaration);
         if (found == loweredProgramStorage.end()) {
           // A staged class retains only its planned readonly program storage.
@@ -2636,8 +2645,10 @@ private:
         snapshot.declaration == constantExpressionFunction) {
       // The compiler-owned staged entry has one return. The expression has
       // already been analyzed at its original source site.
+      stagingOuterExpression = true;
       const auto result =
           lowerExpression(*constantExpression, *model, {}, {}, body);
+      stagingOuterExpression = false;
       if (!result)
         lifecycleValid = false;
       body.roots.push_back(appendStatement(
@@ -5977,6 +5988,9 @@ private:
                                   sourceLocationAt(*caller));
     if (const auto *immediate = model.findImmediateInvocation(expression)) {
       (void)enqueueClass(immediate->info.type);
+      if (constantClosure)
+        for (const auto storage : constantAddressDependencies(immediate->value))
+          stageConstantProgramStorage(storage);
       const HirValueId id = nextValueId++;
       body.values.push_back({.id = id,
                              .kind = HirValueKind::Literal,
@@ -6829,10 +6843,26 @@ private:
       value.info = *info;
       (void)enqueueClass(info->type);
       if (constantClosure && value.symbol &&
-          info->category == ValueCategory::Place &&
-          info->type.kind == SemanticType::Array)
-        stageConstantArrayStorage(value.symbol);
+          info->category == ValueCategory::Place)
+        stageConstantProgramStorage(value.symbol);
     }
+    const auto *stagedSymbol = stagingOuterExpression &&
+                                       value.kind == HirValueKind::Variable &&
+                                       value.constant
+                                   ? model.database().findSymbol(value.symbol)
+                                   : nullptr;
+    if (stagedSymbol && stagedSymbol->kind == SymbolKind::LocalVariable &&
+        !constantAddressDependencies(*value.constant).empty()) {
+      // The enclosing function does not execute in this staged entry.
+      // Reuse its verified constant value in an evaluation-local slot.
+      value.kind = HirValueKind::Literal;
+      value.info.category = ValueCategory::Value;
+      value.programConstantSubstitution = true;
+      value.symbol = 0;
+    }
+    if (constantClosure && value.programConstantSubstitution && value.constant)
+      for (const auto storage : constantAddressDependencies(*value.constant))
+        stageConstantProgramStorage(storage);
     if (const auto *assertion = model.findRawReferenceAssertion(*raw)) {
       const auto *dereference = exprAs<Unary>(raw);
       if (!dereference || value.operands.size() != 1 ||
@@ -7990,6 +8020,7 @@ private:
   std::vector<InstanceDiscovery> functionDiscoveryDepths;
   std::vector<InstanceDiscovery> constructorDiscoveryDepths;
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
+  bool stagingOuterExpression = false;
   const Expr *constantExpression = nullptr;
   FunctionId constantExpressionFunction = 0;
   std::vector<FunctionId> constantFunctions;
@@ -8043,20 +8074,21 @@ HirLoweringResult HirLowerer::lowerConstantFunction(
     FunctionId root, const std::vector<FunctionId> &completedFunctions,
     const GenericSubstitution &substitution,
     const std::vector<ConstructorId> &completedConstructors,
-    const Expr *expressionRoot) {
-  return impl->lowerConstantFunction(semantics, instanceProvider, root,
-                                     completedFunctions, substitution,
-                                     completedConstructors, expressionRoot);
+    const Expr *expressionRoot, std::span<const SymbolId> storageDependencies) {
+  return impl->lowerConstantFunction(
+      semantics, instanceProvider, root, completedFunctions, substitution,
+      completedConstructors, expressionRoot, storageDependencies);
 }
 
 HirLoweringResult HirLowerer::lowerConstantConstructor(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     const ResolvedConstructionInfo &root,
     const std::vector<FunctionId> &completedFunctions,
-    const std::vector<ConstructorId> &completedConstructors) {
-  return impl->lowerConstantConstructor(semantics, instanceProvider, root,
-                                        completedFunctions,
-                                        completedConstructors);
+    const std::vector<ConstructorId> &completedConstructors,
+    std::span<const SymbolId> storageDependencies) {
+  return impl->lowerConstantConstructor(
+      semantics, instanceProvider, root, completedFunctions,
+      completedConstructors, storageDependencies);
 }
 
 } // namespace lang

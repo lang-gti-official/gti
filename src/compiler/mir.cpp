@@ -1116,7 +1116,9 @@ programConstantMatchesType(const ConstantValue &constant,
     return type == SemanticType::Bool;
   }
   if (std::holds_alternative<NullConstant>(constant)) {
-    return type == SemanticType::NullPtr;
+    return type == SemanticType::NullPtr ||
+           (type.kind == SemanticType::RawPointer &&
+            isReadOnlyConstantAddressType(type));
   }
   if (const auto *enumerator = std::get_if<ConstantEnum>(&constant)) {
     return type.kind == SemanticType::Enum && type.enumId != 0 &&
@@ -1127,6 +1129,12 @@ programConstantMatchesType(const ConstantValue &constant,
         *aggregate->value->exactType != type) {
       return false;
     }
+    if (aggregate->value->staticAddress ||
+        aggregate->value->kind == ConstantAggregateKind::StaticAddress)
+      return isStaticAddressConstant(*aggregate->value, type) &&
+             (!program ||
+              resolveMirConstantAddress(
+                  *program, *aggregate->value->staticAddress, type));
     if (aggregate->value->packedBytes)
       return aggregate->value->packedBytesMatch(type);
     if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
@@ -11110,6 +11118,87 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
 }
 
 } // namespace
+
+const MirPlace *findMirConstantStorage(const MirProgram &program,
+                                       SymbolId symbol) {
+  const auto *step =
+      program.programInitializationPlan().findStepForSymbol(symbol);
+  if (!step || step->role != ProgramInitializationStepRole::DataOnly ||
+      step->dataInitialization != MirProgramDataInitializationKind::Constant ||
+      !step->dataConstant || step->requiresActiveCleanup)
+    return nullptr;
+  const auto *place = program.module().findPlace(step->storagePlace);
+  return place && place->symbol == symbol &&
+                 place->root == MirPlaceRootKind::Binding &&
+                 place->access == AccessMode::ReadOnly &&
+                 !place->foreignStorage && place->projections.empty()
+             ? place
+             : nullptr;
+}
+
+std::optional<MirConstantAddress>
+resolveMirConstantAddress(const MirProgram &program,
+                          const ConstantStorageAddress &address,
+                          const SemanticType &type) {
+  const auto *storage = findMirConstantStorage(program, address.symbol);
+  if (!storage || !isReadOnlyConstantAddressType(type))
+    return std::nullopt;
+
+  const auto findRecord =
+      [&](const SemanticType &selected) -> const MirClassInstance * {
+    if (selected.kind != SemanticType::Class)
+      return nullptr;
+    const auto &instances = program.classInstances();
+    const auto found = std::find_if(
+        instances.begin(), instances.end(),
+        [&](const auto &instance) { return instance.type == selected; });
+    return found == instances.end() ? nullptr : &*found;
+  };
+  const auto element = [](const SemanticType &array) -> const SemanticType * {
+    return array.kind == SemanticType::Array && array.arguments.size() == 1 &&
+                   array.arrayLengthParameterId == 0
+               ? &array.arguments.front()
+               : nullptr;
+  };
+
+  const auto *current = &storage->type;
+  MirConstantAddress result{.storage = storage, .types = {current}};
+  for (const auto &part : address.path) {
+    if (part.field) {
+      const auto *record = findRecord(*current);
+      if (!record || record->unionLayout || part.index != 0)
+        return std::nullopt;
+      const auto &fields = record->declaredFields;
+      const auto field =
+          std::find_if(fields.begin(), fields.end(), [&](const auto &entry) {
+            return entry.symbol == part.field;
+          });
+      if (field == fields.end())
+        return std::nullopt;
+      current = &field->type;
+    } else {
+      if (part.index >= current->arrayLength || !element(*current))
+        return std::nullopt;
+      current = element(*current);
+    }
+    result.types.push_back(current);
+  }
+  if (address.arrayOffset) {
+    if (type.kind != SemanticType::RawPointer ||
+        *address.arrayOffset > current->arrayLength || !element(*current))
+      return std::nullopt;
+    current = element(*current);
+  }
+  if (type.kind == SemanticType::Reference) {
+    const auto *referent = findRecord(type.arguments.front());
+    result.erased = referent && referent->compilerCapability ==
+                                    CompilerCapabilityTypeKind::ErasedObject;
+  }
+  if (!result.erased && *current != type.arguments.front())
+    return std::nullopt;
+  result.referent = current;
+  return result;
+}
 
 namespace mir_detail {
 

@@ -3,6 +3,7 @@
 #include "gti/checked_integer.h"
 #include "gti/token.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -36,6 +37,27 @@ struct ConstantEnum {
   ConstantInteger value;
 
   friend bool operator==(const ConstantEnum &, const ConstantEnum &) = default;
+};
+
+// A constant address names an object in the verified program initialization
+// plan. The path selects fields (nonzero symbol) or in-bounds array elements.
+// For raw pointers into an array, arrayOffset retains the array as the pointer
+// arithmetic base and may designate one past its end.
+struct ConstantStorageProjection {
+  std::size_t field = 0;
+  std::uint64_t index = 0;
+
+  friend bool operator==(const ConstantStorageProjection &,
+                         const ConstantStorageProjection &) = default;
+};
+
+struct ConstantStorageAddress {
+  std::size_t symbol = 0;
+  std::vector<ConstantStorageProjection> path;
+  std::optional<std::uint64_t> arrayOffset;
+
+  friend bool operator==(const ConstantStorageAddress &,
+                         const ConstantStorageAddress &) = default;
 };
 
 struct ConstantAggregate;
@@ -74,6 +96,7 @@ enum class ConstantAggregateKind {
   // referent it was bound to. Never a host or target address and never a
   // persistent constant.
   TransientReference,
+  StaticAddress,
 };
 
 struct ConstantAggregateField {
@@ -99,6 +122,7 @@ struct ConstantAggregate {
   // Compact backing for immutable, compiler-owned uint8_t arrays. A
   // packed constant has no elements or fields and an exact array type.
   std::shared_ptr<const std::string> packedBytes;
+  std::shared_ptr<const ConstantStorageAddress> staticAddress;
 
   [[nodiscard]] std::size_t elementCount() const {
     return packedBytes ? packedBytes->size() : elements.size();
@@ -150,6 +174,12 @@ struct ConstantEvaluation {
 
   [[nodiscard]] explicit operator bool() const { return value.has_value(); }
 };
+
+[[nodiscard]] bool isReadOnlyConstantAddressType(const SemanticType &type);
+[[nodiscard]] std::vector<std::size_t>
+constantAddressDependencies(const ConstantValue &value);
+[[nodiscard]] bool isStaticAddressConstant(const ConstantAggregate &value,
+                                           const SemanticType &type);
 
 [[nodiscard]] ConstantEvaluation
 convertConstantToType(const ConstantValue &value, const SemanticType &target);

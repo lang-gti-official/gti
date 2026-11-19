@@ -2650,7 +2650,7 @@ public:
   findBinding(const VariableDecl &declaration) const;
 
   [[nodiscard]] std::optional<ProgramInitializationStep>
-  findConstantArrayStorage(SymbolId symbol) const;
+  findConstantProgramStorage(SymbolId symbol) const;
 
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const;

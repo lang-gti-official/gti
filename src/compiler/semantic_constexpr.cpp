@@ -77,6 +77,15 @@ struct StagedHash {
       add(aggregate->value->variant);
       if (aggregate->value->packedBytes)
         add(std::hash<std::string>{}(*aggregate->value->packedBytes));
+      if (const auto &address = aggregate->value->staticAddress) {
+        add(address->symbol);
+        for (const auto &projection : address->path) {
+          add(projection.field);
+          add(projection.index);
+        }
+        add(address->arrayOffset.has_value());
+        add(address->arrayOffset.value_or(0));
+      }
       for (const auto &element : aggregate->value->elements)
         constant(element);
       for (const auto &field : aggregate->value->fields) {
@@ -333,12 +342,16 @@ auto SemanticVisitor::Impl::enforceImmediateInvocation(const Expr &expression,
   context.allowVoidCompletion = voidStatement;
   context.immediateRoot = &expression;
   ConstexprEvaluation result;
+  bool hasAddress = false;
   if (type == SemanticType::Void && !voidStatement) {
     result = constexprFailure(
         site, ConstantEvaluationFailure::UnsupportedType,
         "An immediate void call must be a standalone expression statement.");
   } else if (invocationType.kind == SemanticType::Reference ||
-             (type != SemanticType::Void && !isSupportedConstexprType(type))) {
+             (type != SemanticType::Void &&
+              (!isSupportedConstexprType(type, false, nullptr, false,
+                                         &hasAddress) ||
+               hasAddress))) {
     result = constexprFailure(
         site, ConstantEvaluationFailure::UnsupportedType,
         "An immediate invocation must publish a supported value, without "
@@ -1076,14 +1089,23 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     expressionModel.emplace(semanticModel);
     expressionModel->setFunctionDemandSink(nullptr);
     expressionModel->setCallJournal(nullptr);
+    const auto type =
+        constexprType(semanticModel.typeOf(*expressionRoot), context);
+    // A published borrow must pass the ordinary MIR proof of a static
+    // result. The executor additionally proves the backing datum is constexpr.
+    const bool staticResult =
+        (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
+        typeTraits(type).containsBorrowedState;
     expressionModel->record(
-        *expressionEntry, {.id = nextFunctionId,
-                           .sourceUnit = currentSourceUnit,
-                           .declaration = &*expressionEntry,
-                           .qualifiedName = name.lexeme,
-                           .returnType = constexprType(
-                               semanticModel.typeOf(*expressionRoot), context),
-                           .constexprFunction = true});
+        *expressionEntry,
+        {.id = nextFunctionId,
+         .sourceUnit = currentSourceUnit,
+         .declaration = &*expressionEntry,
+         .qualifiedName = name.lexeme,
+         .returnType = type,
+         .constexprFunction = true,
+         .returnBorrowOrigin =
+             staticResult ? BorrowOriginKind::Global : BorrowOriginKind::None});
     expressionModel->recordAnalyzedFunctionBody(*expressionEntry);
     expressionModel->recordFullExpression(*statement, *expressionRoot);
   }
@@ -1179,6 +1201,17 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   }
   const auto stagedConstants = requestSession.stagedConstants;
   const auto &concreteEffects = requestSession.programConcreteEffects;
+  std::vector<SymbolId> storageDependencies;
+  const auto collectStorage = [&](const ConstantValue &value) {
+    const auto storage = constantAddressDependencies(value);
+    storageDependencies.insert(storageDependencies.end(), storage.begin(),
+                               storage.end());
+  };
+  for (const auto &argument : arguments)
+    collectStorage(argument);
+  if (receiver)
+    collectStorage(*receiver);
+  // A closure with external addresses must contain the named storage.
   const auto reuseKey =
       !expressionRoot &&
               (!concreteEffects || concreteEffects->invalidInstances.empty())
@@ -1209,7 +1242,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // The closure this evaluation executes: an equal closure this request
   // already lowered (see StagedConstantResults), or a fresh lowering.
   std::optional<StagedConstantResults::Key> closureKey;
-  if (reuseKey) {
+  if (reuseKey && storageDependencies.empty()) {
     closureKey = *reuseKey;
     closureKey->arguments.clear();
     closureKey->receiver.reset();
@@ -1271,13 +1304,13 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     HirLowerer lowerer(target);
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
-      return construction
-                 ? lowerer.lowerConstantConstructor(stagingModel, provider,
-                                                    *construction, completed,
-                                                    constructors)
-                 : lowerer.lowerConstantFunction(
-                       stagingModel, provider, info->id, completed,
-                       substitution, constructors, expressionRoot);
+      return construction ? lowerer.lowerConstantConstructor(
+                                stagingModel, provider, *construction,
+                                completed, constructors, storageDependencies)
+                          : lowerer.lowerConstantFunction(
+                                stagingModel, provider, info->id, completed,
+                                substitution, constructors, expressionRoot,
+                                storageDependencies);
     }();
     // The closure lowers a callee whose constexpr body is still pending as a
     // declaration only (it is outside `completed`). When the closure cannot
@@ -1329,6 +1362,20 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     }();
     if (!mir.valid()) {
       needPendingCallees();
+      if (expressionRoot &&
+          std::any_of(
+              mir.errors.begin(), mir.errors.end(), [&](const auto &error) {
+                const auto *instance =
+                    error.body.kind == MirBodyKind::Function
+                        ? hir.program.findFunctionInstance(error.body.owner)
+                        : nullptr;
+                return instance && instance->declaration == info->id &&
+                       error.borrow.kind == MirBorrowRejectionKind::Escape;
+              }))
+        return constexprFailure(
+            callSite, ConstantEvaluationFailure::NonConstantReference,
+            "A published constexpr borrow must refer to immutable constexpr "
+            "program storage.");
       return std::nullopt;
     }
     MirBodyAddress root;

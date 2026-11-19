@@ -150,23 +150,29 @@ public:
               .detail = "Constant execution requires verified MIR: " +
                         verification.errors.front().message};
     }
-    for (const auto &argument : arguments) {
-      if (const auto failure = procedural ? ConstantEvaluationFailure::None
-                                          : persistentValue(argument);
-          failure != ConstantEvaluationFailure::None)
-        return {.failure = failure,
-                .body = root,
-                .detail =
-                    "A constant request cannot import transient ownership."};
+    std::vector<ConstantValue> importedArguments;
+    std::optional<ConstantValue> importedReceiver;
+    if (!procedural) {
+      importedArguments.reserve(arguments.size());
+      for (const auto &argument : arguments) {
+        auto imported = transferConstant(argument, Boundary::Import);
+        if (!imported)
+          return {.failure = imported.failure,
+                  .body = root,
+                  .detail = "A constant request requires a persistent input."};
+        importedArguments.push_back(std::move(*imported.value));
+      }
+      arguments = importedArguments;
     }
     if (receiver) {
-      if (const auto failure = persistentValue(*receiver);
-          failure != ConstantEvaluationFailure::None)
-        return {.failure = failure, .body = root};
+      auto imported = transferConstant(*receiver, Boundary::Import);
+      if (!imported)
+        return {.failure = imported.failure, .body = root};
+      importedReceiver = std::move(imported.value);
     }
     auto result = root.kind == MirBodyKind::Constructor
                       ? construct(root.owner, arguments, 0)
-                      : invoke(root.owner, arguments, 0, receiver);
+                      : invoke(root.owner, arguments, 0, importedReceiver);
     const auto *function = root.kind == MirBodyKind::Function
                                ? program.findFunctionInstance(root.owner)
                                : nullptr;
@@ -186,12 +192,13 @@ public:
                       "execution; return a passive value instead.";
     }
     if (result && result.value && !procedural) {
-      const auto failure = persistentValue(*result.value);
-      if (failure != ConstantEvaluationFailure::None) {
-        result.value.reset();
-        result.failure = failure;
+      auto published = transferConstant(*result.value, Boundary::Publish);
+      result.value = std::move(published.value);
+      if (!result.value) {
+        result.failure = published.failure;
         result.detail =
-            "A constant result must not retain transient ownership.";
+            "A published constexpr address must refer to immutable constexpr "
+            "program storage.";
       }
     }
     if (result &&
@@ -214,37 +221,78 @@ public:
   }
 
 private:
-  ConstantEvaluationFailure persistentValue(const ConstantValue &value,
-                                            std::size_t depth = 0) {
+  enum class Boundary { Import, Publish };
+
+  ConstantEvaluation transferConstant(const ConstantValue &value,
+                                      Boundary boundary,
+                                      std::size_t depth = 0) {
     if (nativeStackNearlyExhausted())
-      return onFreshNativeStack([&] { return persistentValue(value, depth); });
-    const auto *node = std::get_if<ConstantAggregateValue>(&value);
-    if (!node)
-      return ConstantEvaluationFailure::None;
+      return onFreshNativeStack(
+          [&] { return transferConstant(value, boundary, depth); });
+    const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+    if (!aggregate)
+      return {.value = value};
     if (depth >= limits.callDepth || !charge(1))
-      return ConstantEvaluationFailure::ResourceLimit;
-    if (!node->value ||
-        (node->value->kind == ConstantAggregateKind::TransientOwner ||
-         node->value->kind == ConstantAggregateKind::TransientSyntax ||
-         node->value->kind == ConstantAggregateKind::TransientPointer ||
-         node->value->kind == ConstantAggregateKind::TransientReference))
-      return ConstantEvaluationFailure::InvalidOperands;
-    for (const auto &item : node->value->elements)
-      if (const auto failure = persistentValue(item, depth + 1);
-          failure != ConstantEvaluationFailure::None)
-        return failure;
-    for (const auto &field : node->value->fields)
-      if (const auto failure = persistentValue(field.value, depth + 1);
-          failure != ConstantEvaluationFailure::None)
-        return failure;
-    return ConstantEvaluationFailure::None;
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    if (!aggregate->value)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    const auto &node = *aggregate->value;
+    switch (node.kind) {
+    case ConstantAggregateKind::TransientPointer:
+    case ConstantAggregateKind::TransientReference:
+      return boundary == Boundary::Publish
+                 ? publishAddress(value, node)
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::InvalidOperands};
+    case ConstantAggregateKind::StaticAddress:
+      return boundary == Boundary::Import
+                 ? importAddress(node)
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::InvalidOperands};
+    case ConstantAggregateKind::TransientOwner:
+    case ConstantAggregateKind::TransientSyntax:
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    case ConstantAggregateKind::Array:
+    case ConstantAggregateKind::Object:
+    case ConstantAggregateKind::PayloadEnum:
+      break;
+    }
+
+    std::optional<ConstantAggregate> updated;
+    for (std::size_t index = 0; index < node.elements.size(); ++index) {
+      const auto &element = node.elements[index];
+      auto mapped = transferConstant(element, boundary, depth + 1);
+      if (!mapped)
+        return mapped;
+      if (*mapped.value != element) {
+        if (!updated)
+          updated = node;
+        updated->elements[index] = std::move(*mapped.value);
+      }
+    }
+    for (std::size_t index = 0; index < node.fields.size(); ++index) {
+      const auto &field = node.fields[index].value;
+      auto mapped = transferConstant(field, boundary, depth + 1);
+      if (!mapped)
+        return mapped;
+      if (*mapped.value != field) {
+        if (!updated)
+          updated = node;
+        updated->fields[index].value = std::move(*mapped.value);
+      }
+    }
+    return {.value =
+                updated
+                    ? ConstantValue{makeConstantAggregate(std::move(*updated))}
+                    : value};
   }
 
   bool persistentType(const SemanticType &type, std::size_t depth = 0) const {
-    if (depth >= limits.callDepth || type.kind == SemanticType::UniqueOwner ||
-        type.kind == SemanticType::Reference ||
-        type.kind == SemanticType::RawPointer)
+    if (depth >= limits.callDepth || type.kind == SemanticType::UniqueOwner)
       return false;
+    if (type.kind == SemanticType::Reference ||
+        type.kind == SemanticType::RawPointer)
+      return isReadOnlyConstantAddressType(type);
     if (type.kind == SemanticType::Class) {
       const auto *instance = record(type);
       if (!instance || instance->syntaxKind != CompileTimeSyntaxKind::None ||
@@ -394,6 +442,8 @@ private:
     // Program storage materialized from its verified initializer. It lives
     // for the whole request and is never released.
     bool programStorage = false;
+    SymbolId constantStorageSymbol = 0;
+    bool containsConstantAddresses = false;
   };
   // A checked reference designates an existing constant cell and a resolved
   // field/index path, never a target address. Frames live throughout nested
@@ -857,12 +907,38 @@ private:
     return {};
   }
 
-  // Program storage lives for the entire request. Staging can observe a
-  // completed constexpr array's data directly. Otherwise a present verified
-  // initializer runs once before the storage becomes read-only.
+  // Program storage lives for the whole request. Its verified constexpr
+  // data is available directly. An ordinary initializer present in the
+  // closure runs once before its storage becomes read-only.
   ConstantEvaluation storageLocation(const MirPlace &place,
                                      Location &location) {
     auto found = programStorage.find(place.symbol);
+    if (found == programStorage.end()) {
+      const auto *storage = findMirConstantStorage(program, place.symbol);
+      if (storage) {
+        const auto *step =
+            program.programInitializationPlan().findStepForSymbol(place.symbol);
+        const auto &type = storage->type;
+        if (!persistentType(type))
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        if (!charge(1) || heap.size() >= limits.allocations)
+          return {.failure = ConstantEvaluationFailure::ResourceLimit};
+        // The program verifier checked the data constant. Keep its address
+        // descriptors in storage and restore them when a value is read, so
+        // resolving an address never recursively initializes a referent.
+        heap.push_back(std::make_unique<Allocation>(Allocation{
+            .type = type,
+            .units = 0,
+            .programStorage = true,
+            .constantStorageSymbol = place.symbol,
+            .containsConstantAddresses =
+                !constantAddressDependencies(*step->dataConstant).empty()}));
+        const auto stored = storeAllocation(heap.size(), *step->dataConstant);
+        if (!stored)
+          return {.failure = stored.failure};
+        found = programStorage.emplace(place.symbol, heap.size()).first;
+      }
+    }
     if (found == programStorage.end() && initializingStorage) {
       if (!charge(1) || heap.size() >= limits.allocations)
         return {.failure = ConstantEvaluationFailure::ResourceLimit};
@@ -871,29 +947,6 @@ private:
                      .units = 0,
                      .programStorage = true}));
       found = programStorage.emplace(place.symbol, heap.size()).first;
-    }
-    if (found == programStorage.end()) {
-      const auto *step =
-          program.programInitializationPlan().findStepForSymbol(place.symbol);
-      const auto *storage =
-          step ? program.module().findPlace(step->storagePlace) : nullptr;
-      if (storage && storage->type.kind == SemanticType::Array &&
-          storage->access == AccessMode::ReadOnly && step->dataConstant) {
-        const auto &type = storage->type;
-        if (!persistentType(type))
-          return {.failure = ConstantEvaluationFailure::UnsupportedType};
-        const auto exact = exactValue(*step->dataConstant, type);
-        if (!exact)
-          return exact;
-        if (!charge(1) || heap.size() >= limits.allocations)
-          return {.failure = ConstantEvaluationFailure::ResourceLimit};
-        heap.push_back(std::make_unique<Allocation>(
-            Allocation{.type = type, .units = 0, .programStorage = true}));
-        const auto stored = storeAllocation(heap.size(), *exact.value);
-        if (!stored)
-          return stored;
-        found = programStorage.emplace(place.symbol, heap.size()).first;
-      }
     }
     if (found == programStorage.end()) {
       const MirBody *owner = nullptr;
@@ -939,8 +992,9 @@ private:
     auto &storage = *heap[found->second - 1];
     location = {.epoch = storage.epoch,
                 .type = &storage.type,
-                .access = initializingStorage ? AccessMode::Mutable
-                                              : AccessMode::ReadOnly,
+                .access = initializingStorage && !storage.constantStorageSymbol
+                              ? AccessMode::Mutable
+                              : AccessMode::ReadOnly,
                 .allocation = found->second};
     return {};
   }
@@ -1127,6 +1181,104 @@ private:
     return {.value = referenceValue(type, node->value->identity)};
   }
 
+  ConstantEvaluation publishAddress(const ConstantValue &value,
+                                    const ConstantAggregate &node) {
+    if (!node.exactType || !isReadOnlyConstantAddressType(*node.exactType))
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    const auto &type = *node.exactType;
+    const PointerBase *base = nullptr;
+    std::int64_t offset = 0;
+    if (type.kind == SemanticType::Reference) {
+      if (node.kind != ConstantAggregateKind::TransientReference ||
+          node.identity == 0 || node.identity > referenceBases.size())
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      base = &referenceBases[node.identity - 1];
+    } else {
+      const auto pointer = decodePointer(value);
+      if (!pointer)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      if (!pointer->base)
+        return {.value = ConstantValue{NullConstant{}}};
+      base = &pointerBases[pointer->base - 1];
+      offset = pointer->offset;
+    }
+    const auto &location = base->location;
+    if (!location.allocation || location.slot || location.frame ||
+        !baseAlive(*base) || base->untyped || base->element || offset < 0 ||
+        (!base->arrayElement && offset != 0))
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    const auto &region = *heap[location.allocation - 1];
+    if (!region.constantStorageSymbol || !region.live ||
+        region.epoch != base->regionEpoch || region.epoch != location.epoch)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+
+    ConstantStorageAddress address{.symbol = region.constantStorageSymbol};
+    for (const auto &part : location.path) {
+      if (part.kind == MirProjectionKind::Field) {
+        address.path.push_back({.field = part.field});
+      } else if (part.kind == MirProjectionKind::Index && part.constantIndex &&
+                 !part.selection) {
+        address.path.push_back({.index = *part.constantIndex});
+      } else {
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      }
+    }
+    if (base->arrayElement)
+      address.arrayOffset = static_cast<std::uint64_t>(offset);
+    if (!charge(address.path.size() + 1))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    const auto verified = resolveMirConstantAddress(program, address, type);
+    if (!verified || verified->erased != location.erased)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    return {
+        .value = makeConstantAggregate(
+            {.kind = ConstantAggregateKind::StaticAddress,
+             .exactType = node.exactType,
+             .staticAddress = std::make_shared<const ConstantStorageAddress>(
+                 std::move(address))})};
+  }
+
+  ConstantEvaluation importAddress(const ConstantAggregate &node) {
+    if (!node.exactType || !isStaticAddressConstant(node, *node.exactType))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    const auto &type = *node.exactType;
+    const auto &address = *node.staticAddress;
+    const auto verified = resolveMirConstantAddress(program, address, type);
+    if (!verified)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    if (!charge(address.path.size() + 1))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    Location location;
+    const auto located = storageLocation(*verified->storage, location);
+    if (located.failure != ConstantEvaluationFailure::None)
+      return located;
+    if (!heap[location.allocation - 1]->constantStorageSymbol)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    for (const auto &part : address.path)
+      location.path.push_back(
+          part.field ? MirPlaceProjection{.kind = MirProjectionKind::Field,
+                                          .field = part.field}
+                     : MirPlaceProjection{.kind = MirProjectionKind::Index,
+                                          .constantIndex = part.index});
+    location.type = verified->referent;
+    location.erased = verified->erased;
+    if (type.kind == SemanticType::Reference)
+      return formReference(location, type);
+    const auto offset = address.arrayOffset.value_or(0);
+    if (offset >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    const auto regionEpoch = heap[location.allocation - 1]->epoch;
+    pointerBases.push_back(
+        {.location = std::move(location),
+         .regionEpoch = regionEpoch,
+         .arrayLength =
+             address.arrayOffset ? verified->types.back()->arrayLength : 0,
+         .arrayElement = address.arrayOffset.has_value()});
+    return {.value = pointerValue(type, pointerBases.size(),
+                                  static_cast<std::int64_t>(offset))};
+  }
+
   std::optional<std::uint64_t> slotCount(const Allocation &region) const {
     if (!region.typed)
       return std::nullopt;
@@ -1178,11 +1330,22 @@ private:
     const auto &base = pointerBases[decoded->base - 1];
     if (!baseAlive(base))
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto max = std::numeric_limits<std::int64_t>::max();
+    if ((extra > 0 && decoded->offset > max - extra) ||
+        (extra < 0 && decoded->offset < min - extra))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
     const std::int64_t offset = decoded->offset + extra;
     if (base.location.allocation) {
       auto &region = *heap[base.location.allocation - 1];
       if (!region.live || region.epoch != base.regionEpoch)
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      if (access && region.constantStorageSymbol) {
+        const auto &pointer = *std::get<ConstantAggregateValue>(value).value;
+        if (!pointer.exactType ||
+            !isReadOnlyConstantAddressType(*pointer.exactType))
+          return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      }
       if (region.raw && (base.element || base.untyped)) {
         if (base.untyped || !region.typed)
           return {.failure =
@@ -1648,7 +1811,11 @@ private:
            pathPrefix(location.path, moved.path)))
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
     }
-    return project(*value, location.path, *location.type, 0);
+    auto result = project(*value, location.path, *location.type, 0);
+    if (result && location.allocation &&
+        heap[location.allocation - 1]->containsConstantAddresses)
+      return transferConstant(*result.value, Boundary::Import);
+    return result;
   }
 
   ConstantEvaluation readPlace(Frame &frame, MirPlaceId id) {
@@ -1910,7 +2077,7 @@ private:
         !instruction.literal) {
       for (const auto &value : frame.body.programConstantSubstitutions)
         if (value.hirValue == instruction.hirValue)
-          return {.value = value.constant};
+          return transferConstant(value.constant, Boundary::Import);
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     }
     if (instruction.operation == MirOperation::Literal && instruction.literal) {

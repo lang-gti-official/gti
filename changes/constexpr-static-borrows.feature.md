@@ -1,0 +1,1 @@
+- Constexpr bindings can retain read-only borrows of immutable constexpr static storage. This includes embedded byte spans and user-defined records with checked references.

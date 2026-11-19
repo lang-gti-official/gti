@@ -7000,7 +7000,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Unique owners can only be local bindings, function values, or "
            "class fields.",
            "GTI-S2018");
-  } else if (typeTraits(declaredType).containsBorrowedState && globalStorage) {
+  } else if (typeTraits(declaredType).containsBorrowedState && globalStorage &&
+             !(stmt.isConstexpr() && !stmt.isThreadLocal() &&
+               declaredType.kind != SemanticType::Reference &&
+               isSupportedConstexprType(declaredType))) {
     report(stmt.name(),
            "Values carrying stored references cannot have global or static "
            "storage duration.",
@@ -14295,7 +14298,8 @@ auto SemanticVisitor::Impl::constexprValue(
 
 auto SemanticVisitor::Impl::isSupportedConstexprType(
     const SemanticType &type, bool allowDependent,
-    std::vector<SemanticType> *visiting, bool transient) const -> bool {
+    std::vector<SemanticType> *visiting, bool transient, bool *hasAddress) const
+    -> bool {
   if (allowDependent && type.kind == SemanticType::TypeParameter) {
     return true;
   }
@@ -14306,10 +14310,13 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return type.arguments.size() == 1 &&
            isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
                                     true);
-  // A raw pointer is execution-local too: the verified executor checks every
-  // access against its own allocations and never publishes a pointer.
-  if (transient && type.kind == SemanticType::RawPointer)
-    return type.arguments.size() == 1;
+  if (type.kind == SemanticType::Reference ||
+      type.kind == SemanticType::RawPointer) {
+    if (hasAddress)
+      *hasAddress = true;
+    return type.arguments.size() == 1 &&
+           (transient || isReadOnlyConstantAddressType(type));
+  }
   if (transient && type.kind == SemanticType::TypePack)
     return (!type.concretePack && allowDependent) ||
            (type.concretePack &&
@@ -14338,9 +14345,9 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     bool supported = true;
     for (const auto &variant : enumeration->enumerators)
       for (const auto &payload : variant.payloadTypes)
-        supported &=
-            isSupportedConstexprType(substituteType(payload, substitution),
-                                     allowDependent, visiting, transient);
+        supported &= isSupportedConstexprType(
+            substituteType(payload, substitution), allowDependent, visiting,
+            transient, hasAddress);
     visiting->pop_back();
     return supported;
   }
@@ -14349,20 +14356,16 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     return isSupportedConstexprType(type.arguments.front(), allowDependent,
-                                    visiting, transient);
+                                    visiting, transient, hasAddress);
   }
   if (type.kind != SemanticType::Class) {
     return false;
   }
   const ClassInfo *owner = classInfo(type);
-  // A stored checked reference is execution-local, like a raw pointer: the
-  // verified executor designates the referent it was bound to, checks every
-  // access through it, and never publishes a value that contains it.
   if (owner == nullptr || owner->kind == ClassKind::Interface ||
       owner->kind == ClassKind::Union || !owner->bases.empty() ||
       owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
-      owner->polymorphic || (!transient && owner->storedReference) ||
-      (!transient && owner->destructor)) {
+      owner->polymorphic || (!transient && owner->destructor)) {
     return false;
   }
   std::vector<SemanticType> localVisiting;
@@ -14380,14 +14383,10 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     const auto member = owner->members.find(field.declaration->name().lexeme);
-    if (member != owner->members.end() && transient &&
-        member->second.symbol.type.kind == SemanticType::Reference &&
-        member->second.symbol.type.arguments.size() == 1)
-      continue;
     if (member == owner->members.end() ||
         !isSupportedConstexprType(
             substituteType(member->second.symbol.type, substitution),
-            allowDependent, visiting, transient)) {
+            allowDependent, visiting, transient, hasAddress)) {
       visiting->pop_back();
       return false;
     }
@@ -15341,6 +15340,14 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
       return constexprFailure(
           member->name(), ConstantEvaluationFailure::UnsupportedExpression,
           "The selected member is not a constexpr structural field.");
+    }
+    if (const auto *stored = std::get_if<ConstantAggregateValue>(&found->value);
+        stored && stored->value && stored->value->staticAddress &&
+        stored->value->exactType->kind == SemanticType::Reference) {
+      context.expressionNeedsMir = true;
+      return constexprFailure(
+          member->name(), ConstantEvaluationFailure::UnsupportedExpression,
+          "Reading a constexpr reference requires verified MIR execution.");
     }
     return constexprSuccess(source, found->value, context);
   }
@@ -16534,13 +16541,17 @@ auto SemanticVisitor::Impl::constexprBindingValue(
            "GTI-S2057");
     valid = false;
   }
-  if (!isSupportedConstexprType(type)) {
+  bool hasAddress = false;
+  if (type.kind == SemanticType::Reference ||
+      !isSupportedConstexprType(type, false, nullptr, false, &hasAddress)) {
     report(
         *declaration.constexprKeyword(),
         "The bounded constexpr evaluator supports fixed-width integers, "
         "float, double, bool, char, string_view, and nullptr_t values, "
         "plus scoped enums, concrete fixed arrays, structural "
-        "aggregates, and expected results with supported alternatives; type '" +
+        "aggregates, and expected results with supported alternatives. "
+        "Published borrows must be read-only and refer to immutable constexpr "
+        "program storage. Type '" +
             typeSpelling(type) + "' is not supported yet.",
         "GTI-S2057");
     valid = false;
@@ -16550,8 +16561,23 @@ auto SemanticVisitor::Impl::constexprBindingValue(
   }
 
   ConstexprInterpreter context = makeConstexprInterpreter();
-  ConstexprEvaluation evaluated =
-      evaluateConstexprExpression(declaration.initializer(), context);
+  ConstexprEvaluation evaluated;
+  if (hasAddress) {
+    const auto &source = *declaration.initializer();
+    // Stage the complete initializer so checked references bind to the
+    // original places, including static storage passed into constructors.
+    auto staged = executeStagedConstexpr(
+        static_cast<const FunctionDecl *>(nullptr), {}, {}, {},
+        expressionToken(source), context, &source);
+    evaluated = staged ? std::move(*staged)
+                       : constexprFailure(
+                             expressionToken(source),
+                             ConstantEvaluationFailure::UnsupportedExpression,
+                             "This initializer requires verified constexpr MIR "
+                             "execution to publish its addresses.");
+  } else {
+    evaluated = evaluateConstexprExpression(declaration.initializer(), context);
+  }
   if (!evaluated) {
     reportConstexprFailure(declaration, type, evaluated);
     return std::nullopt;

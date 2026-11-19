@@ -1,0 +1,9 @@
+// Static lifetime alone cannot make a runtime binding a source of a constexpr borrow.
+int value = 17;
+
+struct View<lifetime a> {
+  int&<a> value;
+  constexpr View(int&<a> value) : value(value) {}
+};
+
+constexpr View<static> bad = View<static>(value);  //~ ERROR GTI-S2057 immutable constexpr program storage

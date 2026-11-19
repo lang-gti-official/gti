@@ -1158,6 +1158,18 @@ private:
             } else {
               output << "type:null";
             }
+            if (const auto &address = constantValue.value->staticAddress) {
+              output << ":storage=" << address->symbol;
+              for (const auto &projection : address->path) {
+                if (projection.field)
+                  output << ".field=" << projection.field;
+                else
+                  output << '[' << projection.index << ']';
+              }
+              if (address->arrayOffset)
+                output << ":array-offset=" << *address->arrayOffset;
+              return;
+            }
             if (constantValue.value->packedBytes) {
               output << ":packed-bytes="
                      << constantValue.value->packedBytes->size();

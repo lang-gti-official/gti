@@ -2246,11 +2246,10 @@ private:
   constexprValue(CompileTimeValue value,
                  const ConstexprInterpreter &context) const;
 
-  [[nodiscard]] bool
-  isSupportedConstexprType(const SemanticType &type,
-                           bool allowDependent = false,
-                           std::vector<SemanticType> *visiting = nullptr,
-                           bool transient = false) const;
+  [[nodiscard]] bool isSupportedConstexprType(
+      const SemanticType &type, bool allowDependent = false,
+      std::vector<SemanticType> *visiting = nullptr, bool transient = false,
+      bool *hasAddress = nullptr) const;
 
   [[nodiscard]] bool
   isSupportedConstexprSignatureType(const SemanticType &type) const;

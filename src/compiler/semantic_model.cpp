@@ -1096,7 +1096,7 @@ SemanticModel::findBinding(const VariableDecl &declaration) const {
 }
 
 std::optional<ProgramInitializationStep>
-SemanticModel::findConstantArrayStorage(SymbolId symbol) const {
+SemanticModel::findConstantProgramStorage(SymbolId symbol) const {
   const auto *record = semanticDatabase.findSymbol(symbol);
   if (!record || record->mutableBinding || record->threadLocal ||
       (record->kind != SymbolKind::GlobalVariable &&
@@ -1106,11 +1106,10 @@ SemanticModel::findConstantArrayStorage(SymbolId symbol) const {
       variableBindings.begin(), variableBindings.end(),
       [&](const auto &entry) { return entry.second.symbol == symbol; });
   if (found == variableBindings.end())
-    return base ? base->findConstantArrayStorage(symbol) : std::nullopt;
+    return base ? base->findConstantProgramStorage(symbol) : std::nullopt;
   const auto &[declaration, binding] = *found;
   if (!declaration->isConstexpr() || binding.access != AccessMode::ReadOnly ||
-      binding.foreignStorage || binding.type.kind != SemanticType::Array ||
-      !binding.constant)
+      binding.foreignStorage || !binding.constant)
     return std::nullopt;
   ClassId owner = 0;
   if (record->kind == SymbolKind::Field) {

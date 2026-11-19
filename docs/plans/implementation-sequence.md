@@ -9962,6 +9962,11 @@ follow-ups:
   input during compilation. The published static byte span uses the ordinary
   verified-MIR constexpr array read path. The [span contract](../language/ranges.md#embedding-files-as-bytes)
   records the supported path and input limits.
+- **Persistent read-only borrows:** Constexpr values, including ordinary
+  user-defined records, can retain read-only addresses of immutable constexpr
+  program storage. Verified MIR tracks each storage symbol and projection, and
+  LLVM emits the corresponding relocation. This lets the result of
+  `embed_bytes` initialize a constexpr span binding directly.
 
 - **Deferred constexpr library bodies (#398, draft):** unused trusted
   constexpr definitions are deferred like other trusted bodies and demanded

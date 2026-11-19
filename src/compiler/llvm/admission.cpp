@@ -4423,6 +4423,8 @@ public:
     // The verifier owns origin/access; the witness need not share the raw
     // pointer's type or address. Neither branch materializes or copies it.
     return passiveReferenceType(witness) ||
+           (witness.referenceAccess == AccessMode::ReadOnly &&
+            opaqueReferent(witness.arguments.front())) ||
            ordinaryRawReferenceObject(witness.arguments.front());
   }
   // The raw-borrow call's result names exactly the pointer's payload-enum

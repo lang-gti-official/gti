@@ -499,17 +499,14 @@ The span contains every byte verbatim, including zero bytes and bytes above
 127, without a terminator. An empty input produces an empty span. The compiler
 reads the file while loading build inputs and publishes the bytes in immutable
 static storage. A running executable can use the view without the original
-file. Compile-time code can inspect the view or obtain it from a constexpr
-function.
+file. A constexpr binding can save the span and use it both at compile time
+and at run time.
 
 ```gti
 import std.span;
 
-constexpr std::span<uint8_t, static> logo() {
-  return embed_bytes("assets/logo.bin");
-}
-
-static_assert(logo().size() > 0);
+constexpr std::span<uint8_t, static> logo = embed_bytes("assets/logo.bin");
+static_assert(logo.size() > 0);
 ```
 
 ### String views

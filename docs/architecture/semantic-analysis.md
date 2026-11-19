@@ -4137,12 +4137,15 @@ generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the request's
 configured step and call-depth limits (`CompileLimits`).
 
-Staged lowering publishes the already checked data of referenced constexpr
-arrays in the ordinary program initialization plan. The verifier uses those
-declaration symbols and places to prove static borrows. The executor retains
-one read-only storage cell per symbol for the request, so projections and
-reborrows share that storage across calls. Materializing the data uses the
-normal bounded constant-storage budget.
+Staged lowering brings the checked data of referenced constexpr program
+storage and its address dependencies into the ordinary initialization plan.
+A borrowed result must pass MIR's static-result proof and the executor's
+publication check. The persisted address records the storage symbol and
+typed field or fixed-array projections. Each request reconstructs read-only
+designators from those symbols, with
+one storage cell per symbol under the ordinary constant-storage budget.
+Verified MIR checks symbol, path, access and type before LLVM emits the
+corresponding relocatable addresses using the selected target layout.
 
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
@@ -4154,12 +4157,10 @@ profile's restrictions. This is a general identity/representation distinction,
 not an exemption for named reflection types.
 
 Only fully initialized structural aggregates enter this representation.
-Semantics rejects bases, polymorphism, stored references, union state, active
-cleanup, mutable receiver execution, and unsupported field types before a
-constant is accepted. HIR and MIR retain only facts needed by runtime or
-program-storage materialization. The C++ backend may serialize an accepted
-constant from its exact fields, but it cannot invoke source constructors or
-host constant evaluation to recover language meaning.
+Bases, polymorphism, union state, active cleanup, and unsupported field types
+remain outside the published aggregate profile. Read-only address fields
+retain their verified static referents. Local constexpr execution can also
+use mutable receivers and transient references under ordinary MIR checks.
 
 Literal-backed text inspection dispatches on resolved `StringViewSize` and
 `StringViewEmpty` intrinsic identities and the typed string-view index

@@ -2576,26 +2576,32 @@ body to mark and is constant-eligible with its class.
 - A `constexpr` class static or namespace variable read during evaluation
   takes the value its verified initializer computes. Other static storage is
   not a constant.
-- Raw pointers are execution-local constant values. They may appear in
-  `constexpr` signatures, locals and fields, but never in a published constant.
-  Every access must designate a live object: a null pointer, a pointer into a
+- Raw pointers may appear in `constexpr` signatures, locals and fields.
+  Every access requires a live object. A null pointer, a pointer into a
   released region or a returned call's local, and arithmetic outside one
-  region or place all fail evaluation. The address of a fixed-array element is
-  an element pointer that arithmetic may move within that array and one past
-  its end.
+  region or place all fail evaluation. The address of a fixed-array element
+  is an element pointer that arithmetic may move within that array and one
+  past its end. A published read-only pointer may be null or designate
+  immutable constexpr program storage, including the one-past position of a
+  fixed array.
 
 #### Stored references and range-based `for`
 
 A class whose fields include checked references, such as an iterator that
 refers to its container, may have `constexpr` constructors and methods and may
-be returned from `constexpr` functions. A stored reference is execution-local,
-like a raw pointer: it designates the object it was bound to, never a copy, so
-reads and writes through it reach that object. Its constructor binds it through
-the same stored loan native code uses. Every access checks that the referent is
-still live. A value containing a stored reference is never a published
-constant; the ordinary borrow rules still decide which references may be
-stored and for how long. A class whose cleanup still uses a stored borrow
-stays outside this profile.
+be returned from `constexpr` functions. A stored reference designates the
+object it was bound to. Its constructor binds it through the same stored loan
+native code uses, and every access checks that the referent is still live.
+
+A constexpr value can retain read-only checked references to immutable
+constexpr program storage. This covers a namespace constexpr binding, a
+concrete `static constexpr` field, and their fixed-array elements and
+ordinary object fields. The rule applies to user-defined classes and structs
+as well as library views. Every retained reference must meet the rule
+independently, and normal lifetime checking still applies. A runtime global,
+thread-local object, local object or allocation made during evaluation
+cannot supply a published address. Classes that require active cleanup
+cannot become constexpr bindings.
 
 Range-based `for` therefore runs during constant evaluation with the same
 plan as at run time ([Ranges](ranges.md#constant-evaluation)): fixed arrays by
