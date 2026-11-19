@@ -17,9 +17,12 @@ GTI_UNIT_TEST(incremental_mir_verification) {
   // the complete MIR (including loan ends, invoke edges and all summaries)
   // against cold lowering of the very same concrete HIR on every revision.
   for (const auto &leaf : {"return n;", "return 18 / n;", "return n;"}) {
-    const auto source = std::string("int leaf(int n) { ") + leaf +
-                        " } int middle(int n) { return leaf(n); } "
-                        "int main() { return middle(3); }";
+    const auto source =
+        std::string("int leaf(int n) { ") + leaf +
+        " } int middle(int n) { return leaf(n); } "
+        "struct Owner { int value; Owner(int n) : value(middle(n)) {} "
+        "~Owner() { int seen = middle(this.value); } }; "
+        "int main() { Owner local{3}; return local.value; }";
     const auto compiled = Frontend(options).analyze("reuse.gti", source);
     if (!compiled.mirValid || !compiled.diagnostics.empty() ||
         !work.mirRoundBodyReuses || !work.mirRoundBodyLowerings ||
@@ -30,9 +33,11 @@ GTI_UNIT_TEST(incremental_mir_verification) {
           << "Expected fully verified MIR with both fresh and reused bodies.\n";
       return 1;
     }
+    bool checkedCaller = false;
     for (const auto &instance : compiled.hir.functionInstances()) {
       if (!instance.source || instance.source->name().lexeme != "middle")
         continue;
+      checkedCaller = true;
       const auto *caller = compiled.mir.findFunctionInstance(instance.id);
       if (!caller || caller->mayRaiseDefinedFailure !=
                          (std::string_view(leaf) == "return 18 / n;")) {
@@ -41,6 +46,9 @@ GTI_UNIT_TEST(incremental_mir_verification) {
         return 1;
       }
     }
+    if (!checkedCaller || compiled.mir.constructorInstances().empty() ||
+        compiled.mir.destructorInstances().empty())
+      return 1;
     auto fresh = MirLowerer().lower(compiled.hir, compiled.failureMetadata);
     if (!fresh.valid() || !(fresh.program == compiled.mir)) {
       std::cerr << "Reused lowering differs from the clean fixed point after: "

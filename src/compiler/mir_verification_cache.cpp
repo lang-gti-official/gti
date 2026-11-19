@@ -15,7 +15,7 @@ template <class Value> class FactTable {
   };
   static constexpr std::size_t slots = 512;
   static constexpr std::size_t maximumWords = 4096;
-  std::array<Row, slots> rows;
+  std::array<std::shared_ptr<const Row>, slots> rows;
   std::mutex mutex;
 
   static std::size_t slot(const std::vector<std::size_t> &key) {
@@ -29,18 +29,28 @@ public:
   std::optional<Value> lookup(const std::vector<std::size_t> &key) {
     if (key.empty() || key.size() > maximumWords)
       return std::nullopt;
-    auto index = slot(key);
-    std::lock_guard lock(mutex);
-    if (rows[index].key != key)
+    const auto index = slot(key);
+    std::shared_ptr<const Row> row;
+    {
+      std::lock_guard lock(mutex);
+      row = rows[index];
+    }
+    if (!row || row->key != key)
       return std::nullopt;
-    return rows[index].value;
+    return row->value;
   }
-  void store(std::vector<std::size_t> key, Value value) {
+  void store(std::vector<std::size_t> key, const Value &value) {
     if (key.empty() || key.size() > maximumWords)
       return;
-    auto index = slot(key);
-    std::lock_guard lock(mutex);
-    rows[index] = {std::move(key), std::move(value)};
+    const auto index = slot(key);
+    std::shared_ptr<const Row> row =
+        std::make_shared<Row>(Row{std::move(key), value});
+    // Only exchange immutable row pointers in the critical section. Copying
+    // facts, comparing keys, allocation and eviction stay outside it.
+    {
+      std::lock_guard lock(mutex);
+      rows[index].swap(row);
+    }
   }
 };
 } // namespace
