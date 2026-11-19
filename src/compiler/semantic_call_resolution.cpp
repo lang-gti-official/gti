@@ -7628,7 +7628,7 @@ auto SemanticVisitor::Impl::warnCheckedOverloadOverlap(
   diagnostics.push_back(std::move(diagnostic));
 }
 
-// A mismatched class parameter with an immediate converting constructor is a
+// A mismatched class parameter with an implicit converting constructor is a
 // non-deduced context. Its complete type must come from other arguments or
 // explicit generic arguments before constructor selection.
 auto SemanticVisitor::Impl::implicitArgumentNonDeduced(

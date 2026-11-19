@@ -1258,6 +1258,10 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
                                     candidate.parameterTypes) == argument;
                        });
   }
+  if (semanticModel.findContextualConstruction(*expression)) {
+    const auto assessment = freshTemporaryBorrowValue(expression, true);
+    return assessment.eligible && assessment.type == argument;
+  }
   // An explicit move transfers a whole local into a temporary owned by the
   // enclosing full expression, exactly as a moved receiver is; the call
   // borrows that temporary.

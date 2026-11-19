@@ -8,4 +8,8 @@ struct Source {
 };
 struct Box { Source value; implicit Box(Source source) : value(std::move(source)) {} };
 int take(Box box) { return box.value.value; }
-int main() { Source source{42}; return take(std::move(source)) - 42; }
+int read(Box& box) { return box.value.value; }
+int main() {
+  Source owned{42}; Source borrowed{8};
+  return take(std::move(owned)) - 42 + read(std::move(borrowed)) - 8;
+}
