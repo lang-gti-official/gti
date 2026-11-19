@@ -508,6 +508,7 @@ struct LoweredTypeAliasDeclaration {
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
   bool compilerPrivate = false;
+  bool explicitlyExported = false;
 
   friend bool operator==(const LoweredTypeAliasDeclaration &,
                          const LoweredTypeAliasDeclaration &) = default;

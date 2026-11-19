@@ -1,0 +1,1 @@
+GTI discovers a package's reusable library from its registered `src/lib.gti` module. Ordinary dependency imports can reuse a compiled library across application edits. Library authors can use exports and re-exports to define the public API and select a nonstandard default with `package.default-library`.

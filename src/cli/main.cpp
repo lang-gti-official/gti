@@ -3050,18 +3050,26 @@ int buildProjectPlan(
     DiagnosticSummary *capturedDiagnostics = nullptr,
     std::vector<std::string> *capturedTestCases = nullptr,
     lang::driver::CompiledLibrarySnapshots *selectedLibraries = nullptr,
-    lang::driver::CompiledLibrarySnapshot *capturedLibrary = nullptr) {
+    lang::driver::ProjectLibrarySnapshot *capturedLibrary = nullptr,
+    std::filesystem::path *unsupportedLibrary = nullptr) {
   lang::driver::CompiledLibrarySnapshots localLibraries;
   auto &libraries = selectedLibraries ? *selectedLibraries : localLibraries;
   for (const auto &dependency : plan.compiledBuildDependencies()) {
-    lang::driver::CompiledLibrarySnapshot artifact;
-    const int status = buildProjectPlan(
-        dependency, options, toolchain, diagnosticSources, driver, nullptr,
-        nullptr, nullptr, &libraries, &artifact);
+    lang::driver::ProjectLibrarySnapshot artifact;
+    const bool optional = std::any_of(
+        plan.compiledImports().begin(), plan.compiledImports().end(),
+        [&](const auto &edge) {
+          return edge.artifact == dependency.output() && edge.automatic;
+        });
+    const int status =
+        buildProjectPlan(dependency, options, toolchain, diagnosticSources,
+                         driver, nullptr, nullptr, nullptr, &libraries,
+                         &artifact, optional ? unsupportedLibrary : nullptr);
     if (status != exitCode(ExitStatus::Success))
       return status;
     try {
-      libraries.retain(dependency.output(), std::move(artifact));
+      libraries.retain(dependency.output(), std::move(artifact.bytes),
+                       std::move(artifact.sourceFiles));
     } catch (const std::exception &error) {
       std::cerr << "gti: compiled library: " << error.what() << '\n';
       return exitCode(ExitStatus::Compilation);
@@ -3069,6 +3077,10 @@ int buildProjectPlan(
   }
   if (plan.compiledLibrary() &&
       (!plan.buildScripts().empty() || !plan.bindgenImports().empty())) {
+    if (unsupportedLibrary && capturedLibrary) {
+      *unsupportedLibrary = plan.manifestPath();
+      return exitCode(ExitStatus::Usage);
+    }
     std::cerr << "gti: compiled library producers do not support native build "
                  "scripts or bindgen imports in this profile\n";
     return exitCode(ExitStatus::Usage);
@@ -3214,6 +3226,15 @@ int buildProjectPlan(
               plan.compiledLibrary(), std::nullopt, std::move(imports)),
           progress.observer());
   progress.suspend();
+  if (unsupportedLibrary && !result.sourceFallbackManifest.empty()) {
+    *unsupportedLibrary = result.sourceFallbackManifest;
+    return exitCode(ExitStatus::Compilation);
+  }
+  if (unsupportedLibrary && capturedLibrary &&
+      result.libraryInterfaceNeedsSource) {
+    *unsupportedLibrary = plan.manifestPath();
+    return exitCode(ExitStatus::Compilation);
+  }
   const int status = reportBuildResult(
       result, options.verbose, options.testJson ? std::cerr : std::cout);
   if (capturedDiagnostics != nullptr) {
@@ -3226,7 +3247,8 @@ int buildProjectPlan(
     *capturedTestCases = result.compilation.testCases;
   }
   if (capturedLibrary != nullptr && result.succeeded())
-    *capturedLibrary = result.compiledLibrarySnapshot;
+    *capturedLibrary = {result.compiledLibrarySnapshot,
+                        result.compiledSourceFiles};
   progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }
@@ -3550,7 +3572,10 @@ bool searchedByPath(const std::filesystem::path &directory) {
   }
 }
 
-int runProject(const ProjectOptions &options, const char *driver) {
+int runProjectAttempt(
+    const ProjectOptions &options, const char *driver,
+    const std::vector<std::filesystem::path> &sourceOnlyLibraries,
+    std::filesystem::path &unsupportedLibrary) {
   const std::optional<std::filesystem::path> currentDirectory =
       projectDirectory(options);
   if (!currentDirectory) {
@@ -3558,6 +3583,10 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   lang::driver::ProjectBuildOverrides overrides;
+  overrides.automaticLibraries = options.command != ProjectCommand::Check &&
+                                 !options.emitMir && !options.buildReport &&
+                                 options.codegenPolicy().units == 1;
+  overrides.sourceOnlyLibraries = sourceOnlyLibraries;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
@@ -3749,9 +3778,9 @@ int runProject(const ProjectOptions &options, const char *driver) {
 
   std::optional<lang::driver::BuildProvenance> provenance;
   DiagnosticSummary diagnosticSummary;
-  const int status =
-      buildProjectPlan(plan, options, toolchain, &resolution.sources, driver,
-                       &provenance, &diagnosticSummary);
+  const int status = buildProjectPlan(
+      plan, options, toolchain, &resolution.sources, driver, &provenance,
+      &diagnosticSummary, nullptr, nullptr, nullptr, &unsupportedLibrary);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -3806,6 +3835,26 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return invokeProjectProgram(plan, options, false);
   }
   return exitCode(ExitStatus::Success);
+}
+
+int runProject(const ProjectOptions &options, const char *driver) {
+  std::vector<std::filesystem::path> sourceOnlyLibraries;
+  while (true) {
+    std::filesystem::path unsupported;
+    const int status =
+        runProjectAttempt(options, driver, sourceOnlyLibraries, unsupported);
+    if (unsupported.empty())
+      return status;
+    if (std::find(sourceOnlyLibraries.begin(), sourceOnlyLibraries.end(),
+                  unsupported) != sourceOnlyLibraries.end()) {
+      std::cerr << "gti: failed to resolve source fallback for " << unsupported
+                << '\n';
+      return status;
+    }
+    if (options.verbose)
+      std::cerr << "gti: using source interface for " << unsupported << '\n';
+    sourceOnlyLibraries.push_back(std::move(unsupported));
+  }
 }
 
 // Re-runs the build a recorded report describes and names every recorded
