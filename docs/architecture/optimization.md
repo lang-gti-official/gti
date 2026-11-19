@@ -378,6 +378,14 @@ or checked operation. This envelope is derived only from the existing MIR
 predicate and exact comparison operand; it is not a relational solver or a
 source-name rule.
 
+A single closed-call analysis reuses a body's alias facts, dominance, loops,
+and widening headers across calling contexts and its body-local proof pass.
+Independent replay constructs new inputs from its own program snapshot. The
+body-local pass needs only blocks with local failure origins and transfers
+instructions through the last such site when collecting proofs. Its solver
+still follows predecessor blocks to establish the incoming facts. Contextual
+collection also visits check-free bodies and instructions for call discovery.
+
 Block transfer retains a pre-instruction abstract-state snapshot only for the
 instruction named by an `Invoke` terminator. Its failure edge consumes that
 snapshot; normal edges consume the completed block state. Other intermediate
@@ -2162,7 +2170,9 @@ runtime calls, traps, user-code invocation, moves, drops, loans,
 synchronization, and receiver/argument escape.
 
 `deriveMirProgramEffectSummaries` computes the least summaries justified by
-MIR through a deterministic call-graph fixed point. An exact acyclic static
+MIR through a deterministic call-graph fixed point. Each derivation indexes
+callable bodies by kind and owner once, so looking up an exact callee does
+not scan the program for each call. An exact acyclic static
 target may refine its call instruction through that proved summary. Recursive
 SCCs, virtual dispatch, declarations, native/runtime boundaries, and
 unresolved targets remain maximally conservative unless an existing trusted

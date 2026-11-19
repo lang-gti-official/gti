@@ -1,0 +1,13 @@
+// A forwarding body with no local safety check carries its caller's bounded value into a checked callee.
+//@ snapshot: optimization-report
+//@ opt: O3
+//@ reason: Safe addition in the callee requires interprocedural MIR optimization.
+// CHECK: safety family arithmetic-overflow source=1 emitted=0 statically-discharged=1
+extern "C" { int external_input(); }
+int increment(int value) { return value + 1; }
+int forward(int value) { return increment(value); }
+int main() {
+  int raw = external_input();
+  if (raw == 2) { return forward(raw % 3); }
+  return forward(raw % 9);
+}
