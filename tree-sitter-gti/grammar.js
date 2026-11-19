@@ -775,11 +775,16 @@ module.exports = grammar({
         field("body", $.block),
       ),
 
+    _test_attribute: ($) => seq("test", optional(seq(
+      "(", field("case_name", $.string_literal),
+      repeat(seq(",", $.initializer_expression)), ")",
+    ))),
+
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"))),
+        choice($._test_attribute, "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"),
+        repeat(seq(",", choice($._test_attribute, "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"))),
         "]]",
       ),
 

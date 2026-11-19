@@ -4913,6 +4913,60 @@
         }
       ]
     },
+    "_test_attribute": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "test"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "("
+                },
+                {
+                  "type": "FIELD",
+                  "name": "case_name",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "string_literal"
+                  }
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": ","
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "initializer_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": ")"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
     "function_contract_attribute": {
       "type": "SEQ",
       "members": [
@@ -4924,8 +4978,8 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "STRING",
-              "value": "test"
+              "type": "SYMBOL",
+              "name": "_test_attribute"
             },
             {
               "type": "STRING",
@@ -4970,8 +5024,8 @@
                 "type": "CHOICE",
                 "members": [
                   {
-                    "type": "STRING",
-                    "value": "test"
+                    "type": "SYMBOL",
+                    "name": "_test_attribute"
                   },
                   {
                     "type": "STRING",

@@ -109,8 +109,8 @@ reports best-effort and aborts at its detector, as specified in
 `[[test]]` marks a defined, safe, non-generic namespace-scope function with no
 parameters and an exact `void` result. Namespaced functions are eligible;
 file-static functions, instance/static methods, operators, hosted `main`, foreign/runtime
-declarations, unsafe functions, bodyless declarations and attribute arguments
-are rejected with `GTI-S2099`. Duplicate annotations are also rejected.
+declarations, unsafe functions and bodyless declarations are rejected with
+`GTI-S2099`. Duplicate bare annotations are also rejected.
 Returning normally indicates success; a defined runtime failure, panic or
 abnormal process exit fails that test.
 
@@ -131,6 +131,37 @@ cleanup. Normal panic cleanup is unchanged. `--format json` emits versioned JSON
 Lines inventory, launch, completion and summary events on stdout, with build
 progress and diagnostics on stderr. See the [driver contract](../architecture/build-and-driver.md)
 for status and completion accounting.
+
+Named data-driven cases use the same attribute with a string-literal label and
+ordinary call arguments:
+
+```gti
+[[test("empty", "", "")]]
+[[test("spaces", "  hello  ", "hello")]]
+void trim_case(std::string_view input, std::string_view expected) {
+  auto actual = trim(std::string(input));
+  std::testing::check_string_eq(actual.view(), expected);
+}
+```
+
+Each row is discovered as `qualified_function/label`, independently selectable
+with `--filter`, `--exact`, and `--skip`, and independently executed in a fresh
+child. Labels require 1–256 UTF-8 bytes and cannot contain `/` or control bytes.
+Labels and complete case identities must be unique; named rows cannot mix with
+bare `[[test]]` on one function. Named zero-input rows are allowed. The function
+remains a defined, safe, non-generic, non-static namespace-scope `void` function;
+its parameters and each row's argument expressions use ordinary call typing,
+ownership, default arguments and cleanup. Arguments must select that exact
+annotated declaration, not another overload.
+
+Case inputs may call factories and construct owned user-defined values. They
+are checked even in ordinary source analysis, but evaluated only in the child
+executing that row, once in ordinary argument evaluation order. Listing and
+filtering do not execute unselected factories. Arguments resolve in the test's
+own source unit and namespace, including private helpers. No case data is
+serialized through the runner or shared between child processes. This is static
+case registration; runtime-generated inventories and generic test functions are
+not introduced.
 
 Annotated suites supply their entry point automatically and cannot also define
 their own hosted `main`. A legacy target with `main` and no annotations still

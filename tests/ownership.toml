@@ -1111,6 +1111,7 @@ consumers = [
 [[area]]
 area = "stdlib-system"
 paths = [
+  "stdlib/std/testing/",
   "stdlib/std/filesystem.gti",
   "stdlib/std/io.gti",
   "stdlib/std/process.gti",

@@ -1192,16 +1192,23 @@ private:
           }
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability condition.");
+        } else if (attribute.name.lexeme == "test" &&
+                   match({TokenKind::LEFT_PAREN})) {
+          attribute.argument = consume(
+              TokenKind::STRING_LITERAL,
+              "Expect a quoted case name in '[[test(name, arguments...)]]'.");
+          while (match({TokenKind::COMMA}))
+            attribute.testArguments.emplace_back(check(TokenKind::LEFT_BRACE)
+                                                     ? arrayInitializer()
+                                                     : assignment());
+          attribute.testClose = consume(
+              TokenKind::RIGHT_PAREN, "Expect ')' after test case arguments.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           if (attribute.name.lexeme == "inline" ||
               attribute.name.lexeme == "noinline" ||
               attribute.name.lexeme == "cold") {
             throw error(attribute.name, "[[" + attribute.name.lexeme +
                                             "]] takes no arguments.");
-          }
-          if (attribute.name.lexeme == "test") {
-            throw error(attribute.name, "[[test]] takes no arguments; annotate "
-                                        "a zero-argument void function.");
           }
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");

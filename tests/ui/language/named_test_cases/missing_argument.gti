@@ -1,0 +1,4 @@
+// Named rows cannot omit a required input.
+[[test("missing")]] //~ ERROR GTI-S2005
+void values(int value) {}
+int main() { return 0; }

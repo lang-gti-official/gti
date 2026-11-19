@@ -459,6 +459,26 @@ auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
     measureTopLevelStatements = false;
     analyzeDeferredBodies();
   }
+  // Named rows use ordinary call resolution, but must invoke the declaration
+  // carrying the row rather than silently selecting another overload.
+  if (!hadError()) {
+    for (const FunctionInfo *function : semanticModel.testFunctions()) {
+      const auto *wrapper = function->declaration;
+      if (!wrapper || !wrapper->generatedTestCaseTarget())
+        continue;
+      const auto *statement =
+          stmtAs<ExpressionStmt>(wrapper->body()->statements().front().get());
+      const auto *call = exprAs<Call>(statement->expression().get());
+      const auto *resolved = semanticModel.findCall(*call);
+      const auto *target =
+          semanticModel.findFunction(*wrapper->generatedTestCaseTarget());
+      if (!resolved || !target || resolved->function != target->id)
+        diagnostics.push_back(makeDiagnostic(
+            DiagnosticId::InvalidFunctionContract, statement->expressionStart(),
+            {"Test case arguments must select the annotated function, not "
+             "another overload."}));
+    }
+  }
   bodyPhaseActive = false;
   // A resumed analysis records and validates only what it added.
   lateFinalization = scope;
@@ -3663,6 +3683,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  std::unordered_set<std::string> testCaseNames;
   validateCodegenAttributes(
       stmt.functionAttributes(),
       functionInfo != nullptr && !stmt.hasCLinkage() &&
@@ -3743,21 +3764,43 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       continue;
     }
     if (attribute.lexeme == "test") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+      if (contract.argument) {
+        const auto &label = std::get<std::string>(contract.argument->literal);
+        if (label.empty() || label.size() > 256 ||
+            source_text::firstInvalidUtf8(label) ||
+            std::any_of(label.begin(), label.end(), [](unsigned char c) {
+              return c < 32 || c == 127 || c == '/';
+            }))
+          reportContract(*contract.argument,
+                         "A test case name requires 1–256 UTF-8 bytes without "
+                         "'/' or control characters.");
+        else if (!testCaseNames.insert(label).second)
+          reportContract(*contract.argument,
+                         "Duplicate test case name '" + label + "'.");
+        if (std::any_of(stmt.functionAttributes().begin(),
+                        stmt.functionAttributes().end(), [](const auto &a) {
+                          return a.name.lexeme == "test" && !a.argument;
+                        }))
+          reportContract(
+              attribute,
+              "Named test cases cannot be combined with bare [[test]].");
+      } else if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute, "Duplicate function attribute 'test'.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 functionInfo->ownerClass != 0 ||
-                 functionInfo->internalLinkage || isEntryPoint ||
-                 !functionInfo->genericParameters.empty() ||
-                 !functionInfo->parameterTypes.empty() ||
-                 functionInfo->returnType != SemanticType::Void ||
-                 functionInfo->requiresUnsafe || stmt.hasCLinkage() ||
-                 stmt.runtimeBinding() || !stmt.body() || stmt.operatorName()) {
+      }
+      if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
+          functionInfo->internalLinkage || isEntryPoint ||
+          !functionInfo->genericParameters.empty() ||
+          functionInfo->parameterPack ||
+          (!contract.argument && !functionInfo->parameterTypes.empty()) ||
+          functionInfo->returnType != SemanticType::Void ||
+          functionInfo->requiresUnsafe || stmt.hasCLinkage() ||
+          stmt.runtimeBinding() || !stmt.body() || stmt.operatorName() ||
+          stmt.isConsteval()) {
         reportContract(
             attribute,
-            "A test requires a defined, safe, non-generic "
-            "non-static namespace-scope void function with no parameters "
-            "or attribute arguments.");
+            "A test requires a defined, safe, non-generic, non-static "
+            "namespace-scope void function; parameters require named "
+            "[[test(\"name\", arguments...)]].");
       }
       continue;
     }

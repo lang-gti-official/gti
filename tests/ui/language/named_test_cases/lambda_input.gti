@@ -1,0 +1,5 @@
+// Named row inputs clone lambda bodies and retain ordinary name resolution.
+int source() { return 7; }
+[[test("lambda", []() -> int { int value = source(); return value; }())]]
+void values(int value) {}
+int main() { return 0; }

@@ -31,6 +31,7 @@ uint32_t gti_rt_fs_measure_v1(text_view path, uint32_t operation, uint64_t* valu
 uint32_t gti_rt_fs_equivalent_v1(text_view left, text_view right, uint32_t* value);
 uint32_t gti_rt_fs_mutate_v1(uint32_t operation, text_view first, text_view second, uint32_t option, uint64_t* value);
 uint32_t gti_rt_fs_path_v1(uint32_t operation, text_view input, int64_t* result);
+uint32_t gti_rt_fs_temp_directory_v1(text_view parent, int64_t* result);
 uint32_t gti_rt_fs_directory_open_v1(text_view path, int64_t* result);
 uint32_t gti_rt_fs_directory_next_v1(int64_t result, uint32_t* available);
 uint64_t gti_rt_fs_result_size_v1(int64_t result);
@@ -939,6 +940,19 @@ export expected<path, errc> weakly_canonical(std::string_view input) {
   return gti_internal::filesystem_detail::resolve(uint32_t(3), input);
 }
 export expected<path, errc> weakly_canonical(path& input) { return weakly_canonical(input.view()); }
+
+/// Atomically creates a private, uniquely named directory under an existing
+/// parent. The caller owns removal; testing::temporary_directory supplies RAII.
+export expected<path, errc> create_temp_directory(std::string_view parent) {
+  mut int64_t value = 0;
+  mut uint32_t code = 0;
+  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_temp_directory_v1(parent, &value); }
+  if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
+  auto owned = gti_internal::filesystem_result(value);
+  auto text = owned.text();
+  return path(text.view());
+}
+export expected<path, errc> create_temp_directory(path& parent) { return create_temp_directory(parent.view()); }
 
 export expected<path, errc> temp_directory_path() {
   return gti_internal::filesystem_detail::resolve(uint32_t(4), "");

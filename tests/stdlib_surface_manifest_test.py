@@ -89,6 +89,32 @@ def main() -> int:
     executable["case_ids"] = []
     expect_failure(missing_evidence, repository, "has no run case")
 
+    # A discovered runtime fixture supplies the same execution evidence without
+    # registering another case in the frozen legacy execution harness.
+    missing_evidence = copy.deepcopy(original)
+    executable = next(
+        entry for entry in missing_evidence["entries"]
+        if entry["status"] == "executable" and not entry.get("case_ids")
+    )
+    executable["test_paths"] = []
+    expect_failure(missing_evidence, repository, "has no run case")
+    execution_path = "tests/slow/testing/temporary_files.gti"
+    executable["test_paths"] = [execution_path]
+    surface.validate_manifest(missing_evidence, repository)
+    for paths, diagnostic in (
+        (["tests/slow/testing/not_present.gti"], "does not name a file"),
+        (["tests/fixtures/stdlib_surface_testing.gti"], "must name canonical"),
+        (["tests/slow/testing/../testing/temporary_files.gti"], "must name canonical"),
+        (["tests/ui/testing/portable_assertions.gti"], "requires an execution directive"),
+        ([execution_path, execution_path], "must be unique"),
+    ):
+        executable["test_paths"] = paths
+        expect_failure(missing_evidence, repository, diagnostic)
+    executable["test_paths"] = [execution_path]
+    executable["status"] = "scaffold"
+    executable["reason"] = "synthetic invalid classification"
+    expect_failure(missing_evidence, repository, "cannot cite executable test_paths")
+
     wrong_case_kind = copy.deepcopy(original)
     executable = next(
         entry

@@ -1,0 +1,6 @@
+// Named cases accept ordinary typed arguments and zero-input named rows.
+[[test("first", 7)]]
+[[test("second", -3)]]
+void values(int value) {}
+[[test("named")]] void no_data() {}
+int main() { return 0; }

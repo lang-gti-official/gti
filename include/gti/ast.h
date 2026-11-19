@@ -547,10 +547,15 @@ struct NativeCArrayAttribute {
   Token countParameter;
 };
 
+class Expr;
+
 struct FunctionAttribute {
   Token name;
   std::optional<Token> argument;
   std::optional<ConstraintExpression> capabilityPredicate;
+  // Immutable written case inputs; each executable case owns a deep copy.
+  std::vector<std::shared_ptr<const Expr>> testArguments;
+  std::optional<Token> testClose;
 };
 
 struct ClassAttribute {
@@ -2690,6 +2695,16 @@ public:
     return proceduralMacro_;
   }
   // Set only by the compiler after validating the selected test catalog.
+  void markGeneratedTestCase(std::string name, const FunctionDecl *target) {
+    generatedTestCaseName_ = std::move(name);
+    generatedTestCaseTarget_ = target;
+  }
+  [[nodiscard]] const std::string &generatedTestCaseName() const {
+    return generatedTestCaseName_;
+  }
+  [[nodiscard]] const FunctionDecl *generatedTestCaseTarget() const {
+    return generatedTestCaseTarget_;
+  }
   void markGeneratedTestEntry() { generatedTestEntry_ = true; }
   [[nodiscard]] bool generatedTestEntry() const { return generatedTestEntry_; }
 
@@ -2718,6 +2733,8 @@ private:
   std::vector<FunctionAttribute> functionAttributes_;
   std::optional<TypeRef> definitionOwner_;
   bool generatedTestEntry_ = false;
+  std::string generatedTestCaseName_;
+  const FunctionDecl *generatedTestCaseTarget_ = nullptr;
   std::optional<Token> implicitKeyword_;
   std::optional<Token> macroKeyword_;
   std::optional<Token> proceduralMacro_;

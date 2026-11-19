@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "diagnostic_registry.h"
+#include "gti/ast_clone.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
@@ -31,6 +32,125 @@
 
 namespace lang {
 namespace {
+
+// Desugar named cases to ordinary zero-argument functions in the declaration's
+// own source unit and namespace. Parsed/cache-owned AST stays immutable. All
+// argument typing, borrowing, cleanup and execution use the normal pipeline.
+StmtList expandNamedTestCases(const StmtList &written, const std::string &scope,
+                              const SourceGraph &graph,
+                              std::unordered_set<std::string> &occupied,
+                              bool &collectedNames, std::size_t &serial) {
+  StmtList result;
+  for (const auto &statement : written) {
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      auto children = expandNamedTestCases(
+          space->declarations(), scope + space->name().lexeme + "::", graph,
+          occupied, collectedNames, serial);
+      if (children == space->declarations()) {
+        result.push_back(statement);
+        continue;
+      }
+      auto replacement =
+          std::make_shared<NamespaceDecl>(space->name(), std::move(children));
+      if (space->extent())
+        replacement->setExtent(*space->extent());
+      if (space->exportKeyword())
+        replacement->setExportKeyword(*space->exportKeyword());
+      if (space->documentationMarkdown())
+        replacement->setDocumentationMarkdown(*space->documentationMarkdown());
+      result.push_back(std::move(replacement));
+      continue;
+    }
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+      std::vector<ConditionalBranch> branches;
+      bool changed = false;
+      for (const auto &branch : conditional->branches()) {
+        ConditionalBranch copy;
+        if (branch.condition)
+          copy.condition = cloneCompileCondition(*branch.condition);
+        copy.statements = expandNamedTestCases(
+            branch.statements, scope, graph, occupied, collectedNames, serial);
+        changed = changed || copy.statements != branch.statements;
+        branches.push_back(std::move(copy));
+      }
+      if (!changed) {
+        result.push_back(statement);
+        continue;
+      }
+      auto replacement = std::make_shared<ConditionalStmt>(
+          conditional->directive(), std::move(branches));
+      if (conditional->extent())
+        replacement->setExtent(*conditional->extent());
+      result.push_back(std::move(replacement));
+      continue;
+    }
+    result.push_back(statement);
+    const auto *function = stmtAs<FunctionDecl>(statement.get());
+    if (!function)
+      continue;
+    for (const auto &attribute : function->functionAttributes()) {
+      if (attribute.name.lexeme != "test" || !attribute.argument)
+        continue;
+      if (!collectedNames) {
+        for (const auto &unit : graph.sourceUnits())
+          if (unit.tokens)
+            for (const Token &token : *unit.tokens)
+              if (token.kind == TokenKind::IDENTIFIER)
+                occupied.insert(token.lexeme);
+        collectedNames = true;
+      }
+      Token name = attribute.name;
+      name.generated = true;
+      name.kind = TokenKind::IDENTIFIER;
+      do {
+        name.lexeme = "gti_generated_test_case_" + std::to_string(serial++);
+      } while (!occupied.insert(name.lexeme).second);
+      name.sourceLength =
+          static_cast<std::uint32_t>(attribute.name.lexeme.size());
+      Token voidToken = name;
+      voidToken.kind = TokenKind::VOID;
+      voidToken.lexeme = "void";
+      Token close = *attribute.testClose;
+      Token callee = function->name();
+      callee.position = attribute.name.position;
+      callee.line = attribute.name.line;
+      callee.sourceLength =
+          static_cast<std::uint32_t>(attribute.name.lexeme.size());
+      callee.generated = true;
+      ExprList arguments;
+      for (const auto &argument : attribute.testArguments)
+        arguments.push_back(cloneExpr(*argument));
+      // Keep the written callee identity and argument spans for diagnostics and
+      // editor references; only the wrapper declaration itself is synthetic.
+      auto call = std::make_unique<Call>(std::make_unique<Variable>(callee),
+                                         std::vector<TypeRef>{}, close,
+                                         std::move(arguments));
+      StmtList body;
+      body.push_back(
+          std::make_shared<ExpressionStmt>(attribute.name, std::move(call)));
+      auto wrapper = std::make_shared<FunctionDecl>(
+          TypeRef(voidToken), name, std::vector<GenericParameter>{},
+          std::vector<Parameter>{},
+          std::make_unique<BlockStmt>(std::move(body)));
+      wrapper->markGeneratedTestCase(
+          scope + function->name().lexeme + "/" +
+              std::get<std::string>(attribute.argument->literal),
+          function);
+      result.push_back(std::move(wrapper));
+    }
+  }
+  return result;
+}
+
+std::string testSelectorLiteral(std::string_view value) {
+  std::string result = "\"";
+  for (char c : value) {
+    if (c == '\\' || c == '"')
+      result += '\\';
+    result += c;
+  }
+  return result + "\"";
+}
 
 // The source diagnostics of MIR's borrow rejections. `internal` reports that
 // some error was not a classified borrow rejection.
@@ -1303,6 +1423,28 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     return result;
   }
 
+  {
+    StmtList expanded;
+    std::unordered_set<std::string> occupied;
+    bool collectedNames = false;
+    std::size_t serial = 0;
+    for (SourceUnitId id : result.sourceGraph.compilationOrder()) {
+      SourceUnit *unit = result.sourceGraph.findUnit(id);
+      if (!unit)
+        continue;
+      const auto first = result.program.declarations().begin() +
+                         static_cast<std::ptrdiff_t>(unit->declarationStart);
+      StmtList written(
+          first, first + static_cast<std::ptrdiff_t>(unit->declarationCount));
+      auto local = expandNamedTestCases(written, "", result.sourceGraph,
+                                        occupied, collectedNames, serial);
+      unit->declarationStart = expanded.size();
+      unit->declarationCount = local.size();
+      expanded.insert(expanded.end(), local.begin(), local.end());
+    }
+    result.program = Program(std::move(expanded));
+  }
+
   // Concrete generic discovery can select bodies which were not visible to
   // declaration-time analysis. With bounded trusted-body analysis the
   // semantic visitor completes such a body while HIR runs (late demand): it
@@ -1481,17 +1623,30 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       testDiscoveryComplete = true;
       SourceUnit *entry =
           result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+      std::unordered_map<std::string, std::string> caseFunctions;
       for (const FunctionInfo *function : semantic.model().testFunctions()) {
         const SourceUnit *unit =
             result.sourceGraph.findUnit(function->sourceUnit);
         if (entry != nullptr && unit != nullptr &&
             !result.sourceGraph.isCompilerTrusted(unit->id) &&
             unit->packageIdentity == entry->packageIdentity) {
-          result.testCases.push_back(function->qualifiedName);
+          const std::string name =
+              function->declaration->generatedTestCaseName().empty()
+                  ? function->qualifiedName
+                  : function->declaration->generatedTestCaseName();
+          if (!caseFunctions.emplace(name, function->qualifiedName).second) {
+            result.diagnostics.push_back(
+                makeDiagnostic(DiagnosticId::InvalidFunctionContract,
+                               function->declaration->name(),
+                               {"Duplicate test identity '" + name + "'."}));
+            result.semanticValid = false;
+          }
+          result.testCases.push_back(name);
         }
       }
       std::sort(result.testCases.begin(), result.testCases.end());
-      if (!result.testCases.empty() && entry != nullptr) {
+      if (result.semanticValid && !result.testCases.empty() &&
+          entry != nullptr) {
         if (!semantic.model().executableEntryDiagnostic(entry->id,
                                                         entry->path.string())) {
           result.diagnostics.push_back(makeDiagnostic(
@@ -1523,8 +1678,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               "\nint main(int " + argcName + ", std::vector<std::string> " +
               argvName + ") {\n  if (" + argcName + " != 2) { return 2; }\n";
           for (const std::string &name : result.testCases) {
-            dispatcher += "  if (" + argvName + "[std::size_t(1)] == \"" +
-                          name + "\") { " + name + "(); return 0; }\n";
+            dispatcher += "  if (" + argvName +
+                          "[std::size_t(1)] == " + testSelectorLiteral(name) +
+                          ") { " + caseFunctions.at(name) + "(); return 0; }\n";
           }
           dispatcher += "  return 2;\n}\n";
           const std::string expanded = prefix + dispatcher;

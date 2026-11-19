@@ -131,8 +131,11 @@ structured `exit_status` or a stable `process::errc`. Ordinary exit and signal
 termination remain distinct, including the difference between an exec failure
 and a program that starts and exits with code 127. The source wrapper owns
 validation and policy over the versioned `gti_rt_process_run_v1` scalar/counting
-ABI. Capture, redirection, environment/directory overrides, asynchronous child
-ownership, and Windows support remain later slices; see
+ABI. `output()` adds bounded stdout/stderr capture, optional child cwd, exact
+termination facts, deadline/output-limit outcomes and child-group cleanup over
+`gti_rt_process_output_v1`. `std.testing.resources` composes that facility with temporary
+directory ownership and bounded file helpers. Environment overrides, arbitrary
+redirection, asynchronous ownership and Windows process support remain later slices; see
 [`docs/language/process.md`](../docs/language/process.md).
 
 `std.thread` provides the first public managed-thread slice as an ordinary

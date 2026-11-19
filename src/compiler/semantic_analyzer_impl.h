@@ -18,6 +18,7 @@
 #include "semantic_diagnostics.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
+#include "source_text.h"
 
 #include <cassert>
 #include <chrono>
