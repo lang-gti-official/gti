@@ -394,6 +394,13 @@ CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress,
     const std::unordered_map<std::string, std::string> &overrides) {
   SourceLoader sourceLoader;
+  return loadCompilationInputs(request, sourceLoader, progress, overrides);
+}
+
+CompilationInputs loadCompilationInputs(
+    const CompilationRequest &request, SourceLoader &sourceLoader,
+    ProgressObserver *progress,
+    const std::unordered_map<std::string, std::string> &overrides) {
   sourceLoader.setErrorLimit(request.compileLimits().errorLimit);
   CompilationInputs inputs;
   std::vector<std::filesystem::path> preludes{
@@ -441,8 +448,15 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
 
 CheckResult checkCompilation(const CompilationRequest &request,
                              ProgressObserver *progress) {
-  FrontendResult frontend = analyze(
-      request, loadCompilationInputs(request, progress), progress, false);
+  return checkCompilation(request, loadCompilationInputs(request, progress),
+                          progress);
+}
+
+CheckResult checkCompilation(const CompilationRequest &request,
+                             CompilationInputs inputs,
+                             ProgressObserver *progress) {
+  FrontendResult frontend =
+      analyze(request, std::move(inputs), progress, false);
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);

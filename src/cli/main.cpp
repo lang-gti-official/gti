@@ -3741,7 +3741,7 @@ int runProjectAttempt(
         plan.compiledLibrary() || !plan.compiledImports().empty()
             ? lang::driver::checkCompiledScalarProject(plan, toolchain,
                                                        progress.observer())
-            : lang::driver::checkCompilation(
+            : lang::driver::checkWithStandardLibraries(
                   lang::driver::CompilationRequest(
                       plan.entry(), toolchain.standardLibrary, plan.target(),
                       plan.optimization(), plan.cppStandard(),
@@ -3752,7 +3752,7 @@ int runProjectAttempt(
                       plan.rawPointerAuditLibraryFindings())
                       .forExecutable()
                       .withCompileLimits(plan.compileLimits()),
-                  progress.observer());
+                  toolchain.runtimeLibrary, progress.observer());
     progress.suspend();
     if (!result.succeeded()) {
       if (result.driverDiagnostic)

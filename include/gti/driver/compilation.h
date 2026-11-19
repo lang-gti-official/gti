@@ -25,6 +25,7 @@
 #include <vector>
 
 namespace lang {
+class SourceLoader;
 class FrontendCache;
 class SemanticPreambleCache;
 } // namespace lang
@@ -228,6 +229,7 @@ struct CompilationInputs {
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
   bool sourceValid = false;
+  std::string standardLibraryBundleDigest;
 
   [[nodiscard]] bool succeeded() const { return sourceValid; }
 };
@@ -274,9 +276,17 @@ struct CheckResult {
 checkCompilation(const CompilationRequest &request,
                  ProgressObserver *progress = nullptr);
 
+[[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request,
+                                           CompilationInputs inputs,
+                                           ProgressObserver *progress);
+
 [[nodiscard]] CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress = nullptr,
     const std::unordered_map<std::string, std::string> &overrides = {});
+
+[[nodiscard]] CompilationInputs loadCompilationInputs(
+    const CompilationRequest &, SourceLoader &, ProgressObserver *,
+    const std::unordered_map<std::string, std::string> &overrides);
 
 // Run the canonical whole-program pipeline with a caller-provided backend.
 // Backend exceptions are translated into structured compilation failures at

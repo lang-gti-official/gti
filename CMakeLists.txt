@@ -950,6 +950,7 @@ add_library(
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"
+  "src/driver/file_digest.cpp"
   "src/driver/build_report.cpp"
   "src/driver/borrow_dependencies.cpp"
   "src/driver/compilation.cpp"
@@ -1274,6 +1275,19 @@ if(APPLE)
     if(NOT gti_bundle_result EQUAL 0)
       message(FATAL_ERROR \"Failed to bundle macOS toolchain runtime dependencies\")
     endif()
+  " COMPONENT gti_toolchain)
+endif()
+
+# The bundle identity includes the installed executable and runtime archive.
+# Produce it after rpath rewriting and macOS signing, with the staged compiler.
+if(NOT CMAKE_CROSSCOMPILING AND
+   ((APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$") OR
+    (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")))
+  install(CODE "
+    execute_process(
+      COMMAND \"${Python3_EXECUTABLE}\" \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_stdlib_bundles.py\"
+              --stage \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\"
+      COMMAND_ERROR_IS_FATAL ANY)
   " COMPONENT gti_toolchain)
 endif()
 

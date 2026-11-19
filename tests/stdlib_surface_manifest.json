@@ -3921,7 +3921,6 @@
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
       "operations": [
-        "std::abs(float)",
         "std::acos(float)",
         "std::asin(float)",
         "std::atan(float)",
@@ -3945,8 +3944,7 @@
         "std::trunc(float)"
       ],
       "case_ids": [
-        "cmath",
-        "constexpr-library"
+        "cmath"
       ],
       "required_instantiations": [
         "binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"
@@ -3954,7 +3952,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_cmath.gti",
         "tests/cmath_runtime_test.py",
-        "stdlib/std/cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti",
         "runtime/src/math.cpp"
       ]
     },
@@ -4227,6 +4225,22 @@
       ],
       "evidence": [
         "tests/stdlib_module_boundaries_test.py"
+      ]
+    },
+    {
+      "id": "detail.cmath-declarations",
+      "source": "stdlib/std/detail/cmath_declarations.gti",
+      "status": "executable",
+      "operations": [
+        "std::abs(float)"
+      ],
+      "case_ids": [
+        "cmath",
+        "constexpr-library"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti"
       ]
     },
     {

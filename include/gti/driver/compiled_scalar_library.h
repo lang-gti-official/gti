@@ -1,5 +1,6 @@
 #pragma once
 #include "gti/compiled_scalar_signature.h"
+#include "gti/compiled_scalar_unit.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/compiled_library.h"
 #include "gti/driver/library_bundle.h"
@@ -10,6 +11,27 @@ namespace lang::driver {
 decodeCompiledLibraryInterface(std::string_view bytes);
 [[nodiscard]] std::string encodeCompiledLibraryInterface(
     const std::vector<CompiledScalarSignature> &signatures);
+struct CompiledLibraryInputs {
+  CompilationInputs compilation;
+  std::vector<CompiledScalarImport> imports;
+  std::vector<LibraryBundleMember> objects;
+  std::vector<LibraryBundleDependency> dependencies;
+  std::vector<std::string> symbols;
+};
+
+// Select installed, compatible standard modules reached by this compilation.
+[[nodiscard]] CompiledLibraryInputs
+loadStandardLibraryInputs(const CompilationRequest &,
+                          const std::filesystem::path &runtime,
+                          ProgressObserver *progress = nullptr);
+[[nodiscard]] CompilationResult
+compileWithLibraryImports(const CompilationRequest &, CompilationInputs,
+                          std::vector<CompiledScalarImport>,
+                          ProgressObserver *progress = nullptr);
+[[nodiscard]] CheckResult
+checkWithStandardLibraries(const CompilationRequest &,
+                           const std::filesystem::path &runtime,
+                           ProgressObserver *);
 class ProjectBuildPlan;
 struct ToolchainLayout;
 // Read-only artifact-aware checking: validates metadata, compatibility, imports
