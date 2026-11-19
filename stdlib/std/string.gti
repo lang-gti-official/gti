@@ -158,7 +158,7 @@ namespace std {
   namespace detail {
     // Empty strings borrow a process-lifetime, immutable NUL without a heap
     // allocation. The counted view still records its string owner witness.
-    char empty_string_terminator = '\0';
+    constexpr char empty_string_terminator = '\0';
 
     // Source-owned termination policy on the same prefix owner used by vector
     // and span. The initialized physical prefix includes exactly one final

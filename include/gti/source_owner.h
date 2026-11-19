@@ -18,6 +18,8 @@ enum class SourceOwnerKind { Package, Toolchain, Generated, Direct };
 struct PackageSourceDependency {
   std::string alias;
   std::string targetIdentity;
+  // A consumer can select a named library for this edge's bare import.
+  std::string defaultModule;
 };
 
 struct SourceOwnerDescriptor {
@@ -101,6 +103,7 @@ public:
       for (const auto &edge : owner->dependencies) {
         append(edge.alias);
         append(edge.targetIdentity);
+        append(edge.defaultModule);
       }
       append(std::to_string(owner->moduleImplementations.size()));
       for (const auto &[name, paths] : owner->moduleImplementations) {

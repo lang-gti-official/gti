@@ -1,0 +1,2 @@
+export module messages;
+export bool ok() { return true; }

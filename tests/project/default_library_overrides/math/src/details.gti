@@ -1,0 +1,2 @@
+export module details;
+export int seed() { return 40; }

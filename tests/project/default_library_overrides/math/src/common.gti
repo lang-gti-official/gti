@@ -1,0 +1,4 @@
+export module common;
+export import "two.gti";
+import "details.gti";
+export int answer() { return seed(); }
