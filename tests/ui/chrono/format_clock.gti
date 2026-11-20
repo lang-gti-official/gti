@@ -1,0 +1,11 @@
+// Twelve-hour formatting distinguishes midnight/noon and keeps nanosecond digits.
+//@ run-pass
+import std.chrono;
+int main() {
+  auto midnight = std::chrono::time_of_day::create(0, 0, 0, 7);
+  auto noon = std::chrono::time_of_day::create(12, 0, 0);
+  if (std::chrono::format(midnight, "%I %p %f") != "12 AM 000000007") return 1;
+  if (std::chrono::format(noon, "%I %P") != "12 pm") return 2;
+  if (std::chrono::try_runtime_format(midnight, "%Y")) return 3;
+  return 0;
+}

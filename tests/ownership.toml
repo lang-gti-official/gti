@@ -1822,3 +1822,7 @@ paths = ["tests/ui/codegen/attributes/*.gti", "examples/llvm/codegen-attributes.
 owners = ["codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"
+
+[[unowned]]
+paths = ["scripts/build_chrono_tzdb.py"]
+reason = "Explicit offline resource maintenance; shipped bundle is validated by chrono database source tests and installation checks."

@@ -1,0 +1,18 @@
+// Zoned formats retain offset seconds and reject silently lossy minute offsets.
+//@ slow
+//@ reason: Integrated chrono formatting uses 4.53s CPU locally, above half the 5s fast runtime budget.
+//@ run-pass
+import std.chrono;
+import std.format;
+int main() {
+  auto zone = std::chrono::time_zone::fixed(3661);
+  auto instant = std::chrono::timestamp(0i64);
+  auto time = zone.at(instant);
+  auto precise = std::chrono::format(time, "%::z");
+  if (precise != "+01:01:01") { return 1; }
+  auto lossy = std::chrono::try_format(time, "%:z");
+  if (lossy) { return 2; }
+  auto text = std::format("{}", time);
+  if (!text.contains("1970-01-01T01:01:01+01:01:01")) { return 3; }
+  return 0;
+}

@@ -1,0 +1,30 @@
+// Explicit bundle loading snapshots bytes and reports malformed replacement data.
+//@ run-pass
+//@ slow
+import std.chrono;
+import std.cstdio;
+import std.filesystem;
+import std.string;
+namespace c = std::chrono;
+int main() {
+  uint8_t bytes[150] = {71, 84, 73, 84, 90, 68, 66, 49, 0, 0, 0, 4, 116, 101, 115, 116, 0, 0, 0, 1, 0, 0, 0, 8, 84, 101, 115, 116, 47, 85, 84, 67, 0, 0, 0, 114, 84, 90, 105, 102, 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 85, 84, 67, 0, 84, 90, 105, 102, 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 85, 84, 67, 0, 10, 85, 84, 67, 48, 10};
+  mut std::string content{};
+  for (auto byte : bytes) content.push_back(char(byte));
+  {
+    mut auto file = std::fopen("chrono-zones.bin", std::file_mode::write).expect("open");
+    [[discard]] file->write(content.view()).expect("write");
+  }
+  auto db = c::tzdb::load("chrono-zones.bin");
+  auto zone = db.locate("Test/UTC");
+  {
+    mut auto file = std::fopen("chrono-zones.bin", std::file_mode::write).expect("open");
+    [[discard]] file->write("invalid").expect("write");
+  }
+  if (c::tzdb::try_load("chrono-zones.bin")) return 1;
+  auto still_valid = db.locate("Test/UTC");
+  if (still_valid.at(c::timestamp(0i64)).offset_seconds() != 0) return 2;
+  if (zone.database_version() != "test") return 3;
+  [[discard]] std::filesystem::remove("chrono-zones.bin").expect("remove");
+  if (c::tzdb::try_load("chrono-zones.bin")) return 4;
+  return 0;
+}

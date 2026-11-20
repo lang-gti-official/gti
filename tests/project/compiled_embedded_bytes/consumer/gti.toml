@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "asset-reader"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "asset-bank"
+target = "asset-bank"
+path = "assets.gtilib"
+interface = "public.gti"

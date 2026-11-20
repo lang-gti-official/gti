@@ -1,0 +1,10 @@
+// Zone snapshots and zoned values satisfy existing shared ownership capabilities.
+import std.chrono;
+import std.meta;
+static_assert(std::meta::is_transferable<std::chrono::time_zone>());
+static_assert(std::meta::is_shareable<std::chrono::time_zone>());
+static_assert(std::meta::is_transferable<std::chrono::zoned_time>());
+static_assert(std::meta::is_shareable<std::chrono::zoned_time>());
+static_assert(std::meta::is_transferable<std::chrono::tzdb>());
+static_assert(std::meta::is_shareable<std::chrono::tzdb>());
+int main() { return 0; }

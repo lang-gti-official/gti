@@ -3097,7 +3097,10 @@ permission, host-width integer or native structure dump. The complete layout is:
    carries the lexical evidence checked by the consumer.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
-3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
+3. One interface-metadata blob, limited to 1 MiB for native envelopes and
+   68 MiB for generic envelopes carrying archived embedded inputs; empty for
+   opaque container-only use. The generic recipe separately bounds syntax and
+   embedded payloads as described below.
 4. Dependency count, then pairs of logical library SHA-256 and complete dependency
    bundle SHA-256, sorted strictly by logical library identity.
 5. Object count, then name/data blob pairs sorted strictly by name.
@@ -3382,8 +3385,8 @@ The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` uses the OS entropy backend. The public random module ships
 its GTI definitions in `std_random.gtilib`.
-The catalog packages 68 standard-library modules per target and profile.
-Alongside the two native libraries, 66 bundles carry parsed declarations
+The catalog packages 77 standard-library modules per target and profile.
+Alongside the two native libraries, 75 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
 assertions. The prelude and top-level re-export interface also load from source.
@@ -3398,6 +3401,27 @@ object or producer-side concrete substitution. The installed module provider
 checks an independent packaging receipt covering its
 complete bytes before the source loader can resolve its imports. The full
 artifact digest also participates in the consumer's build identity.
+
+The inner `gti.template-unit.3` recipe also snapshots `embed_bytes` inputs.
+Each record retains its authored keyword offset and literal spelling; repeated
+uses share one archived payload. Records must be ordered and bounded; aliases
+refer only to earlier validated storage. The source loader supplies producer bytes
+under its usual ownership and containment checks. Project consumers reparse
+the lexical witness and attest each record against an ordinary literal call.
+Installed modules retain their independent packaging receipt. Neither path
+resolves an archived asset name against the consumer filesystem: archived
+bytes become the same compiler-owned static arrays as source-loaded inputs.
+This also applies to declaration initializers visible in the skeleton. Removing
+producer source and assets therefore does not change a valid consumer build.
+
+Syntax metadata remains bounded to 1 MiB. Embedded payloads retain the source
+limits of 16 MiB per input and 64 MiB per compilation, with storage aliases
+counted once. The inner archive is bounded to 66 MiB and the project witness
+and outer template interface to 68 MiB. Native scalar interface metadata keeps
+its 1 MiB bound. Asset-only producer edits change the archived bytes and bundle
+digest, invalidating consumer caches without changing source declarations.
+The outer template envelope remains version 2, schema 2; older inner recipes are rejected
+by the versioned decoder and rebuilt by the owning toolchain.
 
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release bundle when an import or re-export reaches the

@@ -1,0 +1,30 @@
+// Compiled generic libraries own embedded bytes after producer source/assets disappear.
+$ cd producer
+$ python3 write_asset.py 7
+$ gti build --release
+$ sh -c "cp build/gti/release/*/asset-bank.gtilib ../consumer/assets.gtilib"
+$ cd ../consumer
+$ gti run --release --progress=never
+? 7
+$ cd ../producer
+$ gti build --release -v --progress=never
+stderr: gti: cache hit
+$ python3 write_asset.py 9
+$ gti build --release -v --progress=never
+stderr: gti: cache bypassed
+$ sh -c "cp build/gti/release/*/asset-bank.gtilib ../consumer/assets.gtilib"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ test ! -e public.gti
+$ mkdir assets
+$ sh -c "printf poison > assets/data.bin"
+$ gti run --release -v --progress=never
+? 9
+stderr: gti: cache bypassed
+$ gti run --release -v --progress=never
+? 9
+stderr: gti: cache bypassed
+$ rm -r assets
+$ gti run --release --progress=never
+? 9

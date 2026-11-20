@@ -1,0 +1,31 @@
+// Prepared/runtime patterns own their text and failed append leaves output intact.
+//@ slow
+//@ reason: Integrated chrono formatting uses 4.05s CPU locally, above half the 5s fast runtime budget.
+//@ run-pass
+import std.chrono;
+import std.string;
+int main() {
+  auto d = std::chrono::date::create(2024, 2, 29);
+  mut auto pattern = std::chrono::prepare_time_pattern<std::chrono::date>("%Y/%m/%d");
+  if (pattern.format(d) != "2024/02/29") { return 1; }
+  {
+    auto owned = std::string("%d %B %Y");
+    pattern.assign(owned.view());
+  }
+  if (pattern.format(d) != "29 February 2024") { return 6; }
+  if (pattern.try_assign("%H")) { return 7; }
+  if (pattern.format(d) != "29 February 2024") { return 8; }
+  mut std::string prepared_output = std::string("date: ");
+  pattern.format_to(prepared_output, d);
+  if (prepared_output != "date: 29 February 2024") { return 9; }
+  mut std::string out = std::string("prefix");
+  auto result = std::chrono::try_runtime_format_to(out, d, "%H");
+  if (result || result.error().position != 0 || out != "prefix") { return 2; }
+  auto invalid = std::chrono::try_runtime_format(d, "abc%");
+  if (invalid || invalid.error().position != 3) { return 3; }
+  auto trailing = std::chrono::try_runtime_format(d, "%{zone}");
+  if (trailing) { return 4; }
+  auto malformed = std::chrono::try_runtime_format(d, "%::");
+  if (malformed) { return 5; }
+  return 0;
+}

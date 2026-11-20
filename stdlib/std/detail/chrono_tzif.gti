@@ -1,0 +1,435 @@
+export module detail_chrono_tzif_impl;
+import "chrono_calendar.gti";
+import std.vector;
+import std.string;
+import std.span;
+import std.memory;
+
+export namespace std::chrono::detail {
+// This reader never exposes unchecked offsets from external data.
+class tz_reader {
+  std::span<uint8_t> input;
+  mut size_t position = 0;
+public:
+  tz_reader(std::span<uint8_t> bytes) : input(bytes) {}
+  size_t remaining() { return this.input.size() - this.position; }
+  size_t tell() { return this.position; }
+  expected<void, errc> skip(size_t count) mut {
+    if (count > this.remaining()) return unexpected(errc::invalid_data);
+    this.position += count;
+    return;
+  }
+  expected<uint8_t, errc> byte() mut {
+    if (this.remaining() == 0) return unexpected(errc::invalid_data);
+    auto result = this.input[this.position];
+    this.position++;
+    return std::move(result);
+  }
+  expected<uint32_t, errc> u32() mut {
+    mut uint32_t result = 0;
+    for (mut int i = 0; i < 4; i++) result = (result << 8) | uint32_t(?this.byte());
+    return std::move(result);
+  }
+  expected<int64_t, errc> i64() mut {
+    mut uint64_t result = 0;
+    for (mut int i = 0; i < 8; i++) result = (result << 8) | uint64_t(?this.byte());
+    if ((result >> 63) != uint64_t(0)) return -int64_t(~result) - int64_t(1);
+    return int64_t(result);
+  }
+  expected<string, errc> text(size_t length) mut {
+    if (length > this.remaining()) return unexpected(errc::invalid_data);
+    mut string result{};
+    result.reserve(length);
+    for (mut size_t i = 0; i < length; i++) result.push_back(char(?this.byte()));
+    return std::move(result);
+  }
+
+};
+
+struct tz_header {
+  uint32_t ut_count;
+  uint32_t standard_count;
+  uint32_t leap_count;
+  uint32_t transition_count;
+  uint32_t type_count;
+  uint32_t char_count;
+  tz_header(uint32_t u, uint32_t s, uint32_t l, uint32_t t, uint32_t y, uint32_t c) : ut_count(u), standard_count(s), leap_count(l), transition_count(t), type_count(y), char_count(c) {}
+};
+expected<tz_header, errc> read_tz_header(mut tz_reader& input, uint8_t version) {
+  auto magic = ?input.text(size_t(4));
+  if (magic != "TZif") return unexpected(errc::invalid_data);
+  auto actual_version = ?input.byte();
+  if (actual_version != version) return unexpected(errc::unsupported_data);
+  ?input.skip(size_t(15));
+  auto utc = ?input.u32();
+  auto standard = ?input.u32();
+  auto leap = ?input.u32();
+  auto transitions = ?input.u32();
+  auto types = ?input.u32();
+  auto chars = ?input.u32();
+  if (types == 0 || chars == 0) return unexpected(errc::invalid_data);
+  if (types > 256 || chars > 65536 || transitions > 200000) {
+    return unexpected(errc::resource_limit);
+  }
+  if ((utc != 0 && utc != types) || (standard != 0 && standard != types)) return unexpected(errc::invalid_data);
+  // A leap-aware file has a different time scale, even if its last correction is zero.
+  if (leap != 0) return unexpected(errc::unsupported_data);
+  return tz_header(utc, standard, leap, transitions, types, chars);
+}
+
+struct tz_type {
+  int32_t offset;
+  bool daylight;
+  uint8_t designation;
+  tz_type(int32_t o, bool d, uint8_t n) : offset(o), daylight(d), designation(n) {}
+};
+struct tz_transition {
+  int64_t second;
+  uint8_t type;
+  tz_transition(int64_t s, uint8_t t) : second(s), type(t) {}
+};
+struct tz_rule {
+  int32_t kind; // 0 Julian excluding leap day, 1 ordinal, 2 month/week/weekday.
+  int32_t first;
+  int32_t second;
+  int32_t third;
+  int32_t seconds;
+  tz_rule(int32_t k, int32_t a, int32_t b, int32_t c, int32_t s) : kind(k), first(a), second(b), third(c), seconds(s) {}
+};
+struct tz_footer {
+  mut bool present = false;
+  mut bool daylight = false;
+  mut int32_t standard_offset = 0;
+  mut int32_t daylight_offset = 0;
+  mut string standard_name{};
+  mut string daylight_name{};
+  mut tz_rule start{1, 0, 0, 0, 7200};
+  mut tz_rule end{1, 0, 0, 0, 7200};
+  tz_footer() {}
+  tz_footer(tz_footer& other) = delete;
+  tz_footer(tz_footer&& other) = default;
+};
+
+bool tz_digit(char c) { return uint8_t(c) >= uint8_t('0') && uint8_t(c) <= uint8_t('9'); }
+bool tz_alpha(char c) { return (uint8_t(c) >= uint8_t('A') && uint8_t(c) <= uint8_t('Z')) || (uint8_t(c) >= uint8_t('a') && uint8_t(c) <= uint8_t('z')); }
+class footer_reader {
+  string text;
+  mut size_t position = 0;
+  bool extended;
+public:
+  footer_reader(string_view value, bool extended) : text(string(value)), extended(extended) {}
+  bool done() { return this.position == this.text.size(); }
+  char peek() { return this.done() ? char(0) : this.text[this.position]; }
+  bool accept(char c) mut {
+    if (this.peek() != c) return false;
+    this.position++;
+    return true;
+  }
+  expected<int32_t, errc> number(int32_t maximum) mut {
+    if (!tz_digit(this.peek())) return unexpected(errc::invalid_data);
+    mut int32_t result = 0;
+    while (tz_digit(this.peek())) {
+      auto digit = int32_t(uint8_t(this.peek())) - int32_t(uint8_t('0'));
+      if (result > (maximum - digit) / 10) return unexpected(errc::invalid_data);
+      result = result * 10 + digit;
+      if (result > maximum) return unexpected(errc::invalid_data);
+      this.position++;
+    }
+    return std::move(result);
+  }
+  expected<string, errc> name() mut {
+    mut string result{};
+    if (this.accept('<')) {
+      while (!this.done() && this.peek() != '>') {
+        auto c = this.peek();
+        if (!tz_alpha(c) && !tz_digit(c) && c != '+' && c != '-') return unexpected(errc::invalid_data);
+        result.push_back(c);
+        this.position++;
+      }
+      if (!this.accept('>')) return unexpected(errc::invalid_data);
+    } else {
+      while (tz_alpha(this.peek())) {
+        result.push_back(this.peek());
+        this.position++;
+      }
+    }
+    if (result.size() < 3) return unexpected(errc::invalid_data);
+    return std::move(result);
+  }
+  expected<int32_t, errc> time(int32_t maximum_hour) mut {
+    mut int32_t sign = 1;
+    if (this.accept('-')) sign = -1;
+    else { [[discard]] this.accept('+'); }
+    auto hour = ?this.number(maximum_hour);
+    mut int32_t minute = 0;
+    mut int32_t second = 0;
+    if (this.accept(':')) {
+      minute = ?this.number(59);
+      if (this.accept(':')) second = ?this.number(59);
+    }
+    return sign * (hour * 3600 + minute * 60 + second);
+  }
+  expected<tz_rule, errc> rule() mut {
+    mut int32_t kind = 1;
+    mut int32_t a = 0;
+    mut int32_t b = 0;
+    mut int32_t c = 0;
+    if (this.accept('M')) {
+      kind = 2;
+      a = ?this.number(12);
+      if (a == 0 || !this.accept('.')) return unexpected(errc::invalid_data);
+      b = ?this.number(5);
+      if (b == 0 || !this.accept('.')) return unexpected(errc::invalid_data);
+      c = ?this.number(6);
+    } else if (this.accept('J')) {
+      kind = 0;
+      a = ?this.number(365);
+      if (a == 0) return unexpected(errc::invalid_data);
+    } else {
+      a = ?this.number(365);
+    }
+    mut int32_t seconds = 7200;
+    if (this.accept('/')) {
+      if (!this.extended && (this.peek() == '-' || this.peek() == '+')) return unexpected(errc::unsupported_data);
+      seconds = ?this.time(this.extended ? 167 : 24);
+    }
+    return tz_rule(kind, a, b, c, seconds);
+  }
+};
+
+expected<tz_footer, errc> parse_footer(string_view text, bool extended) {
+  mut tz_footer result{};
+  if (text.empty()) return std::move(result);
+  mut footer_reader reader{text, extended};
+  result.standard_name = ?reader.name();
+  result.standard_offset = -?reader.time(24);
+  result.present = true;
+  if (reader.done()) return std::move(result);
+  result.daylight = true;
+  result.daylight_name = ?reader.name();
+  result.daylight_offset = result.standard_offset + 3600;
+  if (reader.peek() != ',') result.daylight_offset = -?reader.time(24);
+  if (!reader.accept(',')) return unexpected(errc::unsupported_data);
+  result.start = ?reader.rule();
+  if (!reader.accept(',')) return unexpected(errc::invalid_data);
+  result.end = ?reader.rule();
+  if (!reader.done()) return unexpected(errc::unsupported_data);
+  return std::move(result);
+}
+
+int64_t rule_second(int32_t year, tz_rule& rule, int32_t previous_offset) {
+  mut int64_t days = civil_days(year, 1, 1);
+  if (rule.kind == 2) {
+    int64_t first_days = civil_days(year, rule.first, 1);
+    mut int32_t weekday = int32_t((first_days + 4i64) % 7i64);
+    if (weekday < 0) weekday += 7;
+    mut int32_t day = 1 + (rule.third - weekday + 7) % 7 + (rule.second - 1) * 7;
+    if (day > days_in_month(year, rule.first)) day -= 7;
+    days = civil_days(year, rule.first, day);
+  } else if (rule.kind == 0) {
+    days += int64_t(rule.first - 1);
+    if (is_leap_year(year) && rule.first >= 60) days++;
+  } else {
+    days += int64_t(rule.first);
+  }
+  return days * int64_t(86400) + int64_t(rule.seconds) - int64_t(previous_offset);
+}
+
+struct tz_info {
+  int32_t offset;
+  bool daylight;
+  string abbreviation;
+  tz_info(tz_info& other) = delete;
+  tz_info(tz_info&& other) = default;
+  tz_info(int32_t seconds, bool dst, string name) : offset(seconds), daylight(dst), abbreviation(std::move(name)) {}
+};
+class zone_rules {
+  mut string name_value;
+  mut string version_value;
+  mut vector<tz_transition> transitions_value;
+  mut vector<tz_type> types_value;
+  mut string designations_value;
+  mut tz_footer footer_value;
+  zone_rules() {}
+public:
+  zone_rules(zone_rules& other) = delete;
+  zone_rules(zone_rules&& other) = default;
+  string&<this> name() { return this.name_value; }
+  string&<this> version() { return this.version_value; }
+  vector<tz_transition>&<this> transitions() { return this.transitions_value; }
+  vector<tz_type>&<this> types() { return this.types_value; }
+  string&<this> designations() { return this.designations_value; }
+  tz_footer&<this> footer() { return this.footer_value; }
+  static expected<zone_rules, errc> try_fixed(int32_t offset) {
+    if (offset == (-2147483647 - 1)) return unexpected(errc::out_of_range);
+    mut zone_rules rules{};
+    mut string name = "UTC";
+    if (offset != 0) {
+      name.push_back(offset < 0 ? '-' : '+');
+      int64_t absolute = offset < 0 ? -int64_t(offset) : int64_t(offset);
+      auto count = std::to_string(absolute);
+      name.append(count.view());
+      name.push_back('s');
+    }
+    rules.name_value = name.clone();
+    rules.version_value = string("fixed");
+    rules.designations_value = std::move(name);
+    rules.designations_value.push_back(char(0));
+    rules.types_value.push_back(tz_type(offset, false, uint8_t(0)));
+    return std::move(rules);
+  }
+static expected<zone_rules, errc> try_parse(std::span<uint8_t>& bytes, string_view name, string_view version) {
+  if (bytes.size() > size_t(4194304)) return unexpected(errc::resource_limit);
+  if (bytes.size() < size_t(44)) return unexpected(errc::invalid_data);
+  auto v = bytes[size_t(4)];
+  if (v != uint8_t('2') && v != uint8_t('3') && v != uint8_t('4')) return unexpected(errc::unsupported_data);
+  mut tz_reader input{bytes};
+  auto first = ?read_tz_header(input, v);
+  size_t first_size = size_t(first.transition_count) * 5 + size_t(first.type_count) * 6 + size_t(first.char_count) + size_t(first.standard_count) + size_t(first.ut_count);
+  ?input.skip(first_size);
+  auto header = ?read_tz_header(input, v);
+  mut zone_rules result{};
+  result.name_value = string(name);
+  result.version_value = string(version);
+  mut vector<int64_t> times{};
+  for (mut uint32_t i = 0; i < header.transition_count; i++) {
+    auto t = ?input.i64();
+    if (!times.empty() && t <= times.back()) return unexpected(errc::invalid_data);
+    times.push_back(t);
+  }
+  for (mut uint32_t i = 0; i < header.transition_count; i++) {
+    auto kind = ?input.byte();
+    if (uint32_t(kind) >= header.type_count) return unexpected(errc::invalid_data);
+    result.transitions_value.push_back(tz_transition(times[size_t(i)], kind));
+  }
+  for (mut uint32_t i = 0; i < header.type_count; i++) {
+    auto raw = ?input.u32();
+    if (raw == uint32_t(2147483648)) return unexpected(errc::invalid_data);
+    int32_t offset = raw > uint32_t(2147483647) ? -int32_t(~raw) - 1 : int32_t(raw);
+    auto dst = ?input.byte();
+    auto index = ?input.byte();
+    if (dst > 1 || uint32_t(index) >= header.char_count) return unexpected(errc::invalid_data);
+    result.types_value.push_back(tz_type(offset, dst == 1, index));
+  }
+  result.designations_value = ?input.text(size_t(header.char_count));
+  if (result.designations_value[result.designations_value.size() - 1] != char(0)) return unexpected(errc::invalid_data);
+  mut vector<uint8_t> standards{};
+  for (mut uint32_t i = 0; i < header.standard_count; i++) {
+    auto flag = ?input.byte();
+    if (flag > 1) return unexpected(errc::invalid_data);
+    standards.push_back(flag);
+  }
+  for (mut uint32_t i = 0; i < header.ut_count; i++) {
+    auto flag = ?input.byte();
+    if (flag > 1 || (flag == 1 && (standards.empty() || standards[size_t(i)] == 0))) {
+      return unexpected(errc::invalid_data);
+    }
+  }
+  if (?input.byte() != uint8_t('\n')) return unexpected(errc::invalid_data);
+  if (input.remaining() == 0) return unexpected(errc::invalid_data);
+  auto footer = ?input.text(input.remaining() - 1);
+  if (?input.byte() != uint8_t('\n')) return unexpected(errc::invalid_data);
+  result.footer_value = ?parse_footer(footer.view(), v != uint8_t('2'));
+  if (result.footer_value.present && !result.transitions_value.empty()) {
+    auto last = result.transitions_value.back();
+    // The civil conversion API deliberately bounds years. Inputs with their
+    // final explicit transition beyond that domain cannot be validated against
+    // footer rules and are rejected, rather than accepting inconsistent rules.
+    auto info = footer_info(result.footer_value, last.second);
+    if (!info) return unexpected(errc::unsupported_data);
+    auto last_type = result.types_value[size_t(last.type)];
+    auto last_name = ?designation(result, last_type.designation);
+    if (info.value().offset != last_type.offset || info.value().daylight != last_type.daylight ||
+        info.value().abbreviation != last_name) return unexpected(errc::invalid_data);
+  }
+  return std::move(result);
+}
+
+};
+
+expected<string, errc> designation(zone_rules& rules, uint8_t index) {
+  mut string result{};
+  mut size_t position = size_t(index);
+  while (position < rules.designations().size()) {
+    auto c = rules.designations()[position];
+    if (c == char(0)) {
+      if (result == "-00") return unexpected(errc::unsupported_coverage);
+      return std::move(result);
+    }
+    result.push_back(c);
+    position++;
+  }
+  return unexpected(errc::invalid_data);
+}
+
+expected<zone_rules, errc> parse_tzif(std::span<uint8_t>& bytes, string_view name, string_view version) {
+  return zone_rules::try_parse(bytes, name, version);
+}
+
+expected<tz_info, errc> footer_info(tz_footer& footer, int64_t second) {
+  if (!footer.present) return unexpected(errc::unsupported_coverage);
+  if (!footer.daylight) {
+    if (footer.standard_name == "-00") return unexpected(errc::unsupported_coverage);
+    return tz_info(footer.standard_offset, false, footer.standard_name.clone());
+  }
+  // A supported civil endpoint can lie in the preceding/following UTC year.
+  // Rule years may span 0..10000 internally without widening public dates.
+  if (second < -62135769600i64 || second > 253402473599i64) return unexpected(errc::out_of_range);
+  int64_t bounded = second < -62135596800i64 ? -62135596800i64 :
+      (second > 253402300799i64 ? 253402300799i64 : second);
+  auto local = ?local_datetime::try_from_unix_seconds(bounded);
+  mut bool seen = false;
+  mut bool dst = false;
+  mut int64_t latest = 0;
+  // TZif v3 permits rule times up to 167 hours either side of the named day.
+  // Evaluate adjacent rule years, then choose the most recent actual event;
+  // testing only the UTC year's start/end fails at year-crossing rules.
+  for (mut int32_t year = local.year() - 1; year <= local.year() + 1; year++) {
+    if (year < 0 || year > 10000) continue;
+    auto start = rule_second(year, footer.start, footer.standard_offset);
+    auto end = rule_second(year, footer.end, footer.daylight_offset);
+    if (start == end) return unexpected(errc::unsupported_data);
+    if (start <= second && (!seen || start >= latest)) {
+      latest = start;
+      dst = true;
+      seen = true;
+    }
+    if (end <= second && (!seen || end > latest)) {
+      latest = end;
+      dst = false;
+      seen = true;
+    }
+  }
+  if (!seen) {
+    // At the lower supported year the previous rule year is outside the civil
+    // API. The first event determines the state immediately preceding it.
+    auto start = rule_second(local.year(), footer.start, footer.standard_offset);
+    auto end = rule_second(local.year(), footer.end, footer.daylight_offset);
+    dst = end < start;
+  }
+  if (dst) {
+    if (footer.daylight_name == "-00") return unexpected(errc::unsupported_coverage);
+    return tz_info(footer.daylight_offset, true, footer.daylight_name.clone());
+  }
+  if (footer.standard_name == "-00") return unexpected(errc::unsupported_coverage);
+  return tz_info(footer.standard_offset, false, footer.standard_name.clone());
+}
+expected<tz_info, errc> rules_info(zone_rules& rules, int64_t second) {
+  if (rules.transitions().empty()) {
+    if (rules.footer().present) return footer_info(rules.footer(), second);
+  } else if (second >= rules.transitions().back().second) {
+    return footer_info(rules.footer(), second);
+  }
+  mut size_t low = 0;
+  mut size_t high = rules.transitions().size();
+  while (low < high) {
+    auto mid = low + (high - low) / 2;
+    if (rules.transitions()[mid].second <= second) low = mid + 1;
+    else high = mid;
+  }
+  size_t kind = low == 0 ? size_t(0) : size_t(rules.transitions()[low - 1].type);
+  auto type = rules.types()[kind];
+  auto name = ?designation(rules, type.designation);
+  return tz_info(type.offset, type.daylight, std::move(name));
+}
+}

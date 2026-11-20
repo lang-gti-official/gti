@@ -1,0 +1,20 @@
+// A combined chrono error preserves the originating format failure and byte offset.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+expected<void, c::error> operation() {
+  auto value = ?c::date::try_create(2026, 11, 20);
+  auto text = ?c::try_runtime_format(value, "a%H");
+  return;
+}
+int main() {
+  auto result = operation();
+  if (result) return 1;
+  switch (result.error()) {
+    case c::error::calendar(cause): return 2;
+    case c::error::clock(cause): return 3;
+    case c::error::duration(cause): return 4;
+    case c::error::formatting(cause):
+      return cause.position == 1 && cause.code == c::errc::invalid_pattern ? 0 : 5;
+  }
+}
