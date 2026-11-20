@@ -399,13 +399,14 @@ public:
                     std::map<std::string, std::string> dependencies) {
     moduleDependencies_ = std::move(dependencies);
     moduleIdentity = std::move(identity);
-    stdlibRoot = std::move(rootPath);
+    stdlibRoot = std::filesystem::weakly_canonical(rootPath).string();
   }
   const auto &selectedModuleData() const { return moduleData; }
   void importModuleEntries(std::vector<CompiledModuleImport> entries,
                            std::string rootPath) {
     moduleImports = std::move(entries);
-    stdlibRoot = std::move(rootPath);
+    if (!moduleImports.empty())
+      stdlibRoot = std::filesystem::weakly_canonical(rootPath).string();
   }
   const auto &selectedModuleEntries() const { return moduleEntries; }
   bool interfaceNeedsSource() const { return needsSource; }
@@ -520,7 +521,9 @@ std::string dependencyFields(const ModuleDependencies &dependencies) {
   return bytes;
 }
 ModuleDependencies moduleDependencies(const FrontendResult &frontend,
-                                      const std::filesystem::path &root) {
+                                      const std::filesystem::path &rootPath) {
+  // SourceGraph paths are canonical, including for a symlinked sysroot.
+  const auto root = std::filesystem::weakly_canonical(rootPath);
   ModuleDependencies dependencies;
   for (const auto &unit : frontend.sourceGraph.sourceUnits()) {
     if (unit.id == frontend.sourceGraph.entryUnit() &&
@@ -540,9 +543,10 @@ ModuleDependencies moduleDependencies(const FrontendResult &frontend,
   return dependencies;
 }
 void validateModuleDependencies(const CompiledLibraryInputs &inputs,
-                                const std::filesystem::path &root) {
+                                const std::filesystem::path &rootPath) {
   if (!inputs.compilation.succeeded() || inputs.moduleImports.empty())
     return;
+  const auto root = std::filesystem::weakly_canonical(rootPath);
   std::set<const CompiledModuleScope *> checked;
   std::map<std::string, std::string> observed;
   for (const auto &binding : inputs.moduleImports) {
