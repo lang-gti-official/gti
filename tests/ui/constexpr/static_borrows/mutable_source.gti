@@ -1,0 +1,4 @@
+// A read-only result cannot publish an address into mutable static storage.
+mut int value = 17;
+
+constexpr const int* bad = unsafe { &value };  //~ ERROR GTI-S2057

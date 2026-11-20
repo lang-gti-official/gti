@@ -917,6 +917,26 @@ evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
 totals, attributes cost; a region that runs many times (instance analyses,
 staged evaluations) is best read as a count and a total.
 
+### LLVM code generation units
+
+`gti app.gti --codegen-units 8 --codegen-threads 4` splits machine-code
+generation into eight ordered objects and uses up to four workers. Both options
+are also available for project executable builds. Values range from 1 to 256,
+and the default unit count is 1. The default worker limit is the smaller of
+the unit count and available hardware threads. `gti build --all` caps each
+child's workers by the hardware budget divided by concurrent target builds.
+
+The unit count and partitioner version enter the executable cache identity.
+Worker count changes scheduling only. LLVM IR output remains the optimized
+whole-program module. Compiled-scalar and embedding libraries and instrumented
+builds require a single unit.
+
+For split debug builds on Darwin, the driver collects the dSYM, then removes
+the Mach-O debug map's temporary object paths from the staged executable.
+LLDB finds the dSYM by UUID, and worker-count changes leave the executable
+bytes stable. The cache fingerprints both symbol collection and stripping tools.
+
+
 ## Direct Mode
 
 Executable requests explicitly require a compiler-selected global `main`
@@ -1799,8 +1819,9 @@ math = { path = "../math" }
 members = ["packages/game", "packages/math"]
 ```
 
-`[targets]` is optional so a source-only dependency package does not need a
-dummy executable or test. Selecting such a package for `build`, `check`,
+`[targets]` is optional. A package with neither declared targets nor a
+discoverable program or library root can still supply source modules.
+Selecting such a package for `build`, `check`,
 `run`, or `test` produces a focused no-target diagnostic; it remains valid as
 a dependency.
 
@@ -2673,6 +2694,9 @@ The current key includes:
 - the ordered `SourceGraph::preludeRoots()` logical identities, followed by
   SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
+- embedded file inputs by requesting unit and call offset, with the exact
+  loaded bytes hashed by SHA-256. Changing only an asset invalidates the cache,
+  and a missing asset cannot reuse the last successful executable;
 - the native C++ compiler command, resolved executable content, and `--version`
   output (plus the same identity for the C compiler when C sources are
   declared);
@@ -3111,7 +3135,7 @@ and the [separate-compilation stage plan](../plans/build-system.md#compiled-libr
 `gti/driver/compiled_scalar_library.h` provides an LLVM producer and consumer
 for compiled GTI targets. Its development API names retain “scalar” for source
 compatibility; project commands expose the typed profile through `gti-library`,
-explicit artifact imports and same-manifest `compiled-dependencies` edges.
+explicit artifact imports and `compiled-dependencies` edges to local or dependency-package targets.
 C embedding retains its separate request and ABI. Runnable examples cover
 [primitive APIs](../../examples/compiled-primitive-library/README.md),
 [value types](../../examples/compiled-value-types/README.md),
@@ -3121,8 +3145,9 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
-The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
-root-module function names, including all exported overloads. Names may be
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
+explicitly selected root-module functions or the public declarations of the
+root and its re-exported modules, including their exported overloads. Names may be
 namespace-qualified; explicit exports and exports inherited from enclosing
 namespace declarations are preserved. Reopening a namespace does not export its
 private siblings. Functions must be nongeneric, without default arguments. Parameters and
@@ -3130,8 +3155,8 @@ results admit bool, char, fixed integers, float/double, concrete value records,
 integral enums and checked references to those values; void results remain valid.
 Constexpr functions, entry functions and unsafe/private capabilities reject.
 A target may contain multiple source modules. Its exposed nominal closure can
-belong to the root module or to verified compiled dependencies; ordinary non-root
-source modules still require a logical ownership mapping. There are at most 256
+belong to its root, public re-exported modules, or verified compiled
+dependencies. Each public module retains its logical owner. There are at most 256
 exported overloads and 64 nominal declarations per interface.
 
 Qualified declaration names retain their complete namespace path, with at most
@@ -3160,6 +3185,17 @@ payload enums and generic definitions require further contracts and reject.
 Field defaults are bounded resolved scalar constants or signed literals, not
 serialized expression bodies. This includes finite floating literals and source
 character literals; arbitrary runtime initializer expressions are not admitted.
+Fields without initializers retain the same construction requirements in the
+consumer. For example, a designated initializer must supply a required scalar
+field even if later fields have defaults.
+
+An automatically selected interface can include exported namespace or
+module-scope `using` aliases of scalar values, supported records and plain
+enums. Each alias records its qualified name and resolved target in its defining
+module, so chains preserve type identity after producer sources are removed.
+The reader accepts the earlier nominal metadata for bundles without aliases.
+Reference aliases and modules exporting only types still require a source
+interface.
 
 Checked reference parameters preserve read/mutable access. A reference result
 must identify exactly one whole reference parameter and its permitted access.
@@ -3305,10 +3341,78 @@ RSS, build latency and object/bundle/executable size. The latter includes a
 by-value Point record. These allocation-free operations do not claim parity with
 whole-program inlining or complete F5 performance acceptance.
 
+### Precompiled standard library
+
+The native Linux x64 and macOS arm64 toolchains ship two libraries in
+`share/gti/precompiled-stdlib/<target>/<profile>/`. `cmath.gtilib` contains
+the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64 seed expansion
+for `std::random_engine`. It returns the four-word state by value. The public
+class keeps the xoshiro256++ transition in source so an optimized draw loop
+can carry that state in registers.
+`std::random_device` retains its source implementation and OS entropy backend.
+Ordinary single-threaded, hosted LLVM project checks and builds select the
+development or release object when an import or re-export reaches the
+module. An executable can link the installed object alongside inferred or
+explicit project libraries. Each project library producer still compiles its
+own standard-library implementation dependencies from source. A producer can
+use the installed-module configuration identity only
+when every unit belongs to the toolchain and its configuration directives
+neither read nor modify named flags. Application and dependency defines then
+still participate in the consumer build's cache key. The compiler reads the
+checked callable signatures and links the target object. The distributed
+macOS arm64 object uses macOS 11.0, the first arm64 deployment target, for both
+native code generation and bundle compatibility. An OS update therefore does
+not invalidate that object. The shared source companion supplies `constexpr std::abs` and
+the runtime declarations in both modes. Toolchains retain the implementation
+source for other profiles and source-based tooling.
+
+Staging builds these objects using its final compiler and runtime, then checks
+and runs an independent project with the implementation source removed. A
+source-only toolchain repack rebuilds the objects from the replacement library.
+Bundle compatibility and object admission apply before executable cache reuse;
+the names and digests of the reached bundles participate in the cache key in
+name order. An executable importing both modules shares one compiler/runtime
+compatibility check. Unused bundles are never opened. Both paths hash the full
+compiler and runtime files with the same SHA-256 routine used by the build
+cache. Unsupported configurations
+use source. Serialized generic bodies and MIR are outside this first module.
 
 ### Compiled-library project requests
 
-A producer declares a reusable target and explicitly selects its public API:
+A registered interface at `<source-root>/lib.gti` supplies the default GTI
+library. The target takes the package name, or the package name with a
+`-lib` suffix when the executable already uses it. With no target table, a
+plain `<source-root>/main.gti` supplies an executable. A named module at
+that path retains its existing source-package meaning.
+
+The root's exports and re-exports select the public interface. Private
+implementation imports contribute to the library object and its freshness
+check. An executable can import its own library by module name. A direct
+package dependency can import the default library with `import alias;`.
+Both use the same project dependency builder. An application-only edit
+reuses compatible library outputs.
+
+For a nonstandard root, declare a target with `kind = "gti-library"` and
+`root`. A sole library target with an export-derived interface supplies the
+default in the absence of a conventional root. A nonstandard target with a
+hand-picked `functions` list stays independently buildable. To use it as
+the default, or to select between several targets, set `[package]`'s
+`default-library = "target-name"`. Set `default-library = false` to disable
+automatic selection. A consumer may choose a different target via
+`compiled-dependencies`; omitting `interface` binds the ordinary module
+import to that target. Quoted virtual interfaces and distributed artifact
+selections remain available.
+
+Automatic compilation requires the bundle format to represent the complete
+public surface. A dependency with unsupported public declarations or native
+inputs can still be consumed from source. If the consumer directly imports a
+private implementation file that also contributed to the library object, the
+driver uses source for that library so both paths share its storage.
+An explicit request to build that
+library reports the unsupported interface. Read-only source checks can resolve
+ordinary imports before any library has been built.
+
+A producer may also select a specific set of exported functions explicitly:
 
 ```toml
 [targets.numbers]
@@ -3390,13 +3494,33 @@ and atomic-replacement rules: a failure preserves the prior good artifact,
 outputs cannot overwrite any selected bundle/interface, and staged imported
 objects are removed on success or failure.
 
-Source dependencies can instead name library targets in the same manifest:
+A compiled dependency can select a library target in the current manifest:
 
 ```toml
 [[targets.app.compiled-dependencies]]
 target = "numbers"
 interface = "api/numbers.gti"
 ```
+
+To build a library target from another package, set `package` to a direct
+dependency alias from the importing package's manifest. For example:
+
+```toml
+[dependencies]
+math = { path = "../arithmetic" }
+
+[[targets.app.compiled-dependencies]]
+package = "math"
+target = "numbers"
+interface = "api/numbers.gti"
+```
+
+The application imports its generated interface (for example
+`import "api/numbers.gti";` from a root beside the manifest). The resolver uses
+the same locked package graph as a source import. A producer resolves its own
+aliases and source modules. The build writes foreign artifacts under
+`build/gti/packages/<package>/<profile>/<triple>/` in the consumer workspace,
+including when the producer comes from a read-only dependency cache.
 
 Both executables and compiled library targets accept these tables alongside
 explicit artifact selections. The reusable project resolver constructs a bounded,
@@ -3405,8 +3529,7 @@ owners/facades, and returns each dependency once in topological order. Build and
 run commands execute those plans through the ordinary driver before the selected
 target. Shared transitive objects link once; only directly selected interfaces
 enter the source graph. Metadata exposes the declared source edges as
-`compiledDependencies`. Workspace/package-qualified source target edges remain
-future work; existing source package resolution is unchanged.
+`compiledDependencies`. Each edge identifies its target and, when present, its direct dependency alias.
 
 Successful library outputs are reused when their compiler/runtime/configuration,
 complete loaded source graph, export selection and direct dependency digests still

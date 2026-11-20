@@ -606,7 +606,8 @@ int main() {
   const_cast<lang::MirLoan *>(changed.findLoan(dependency))->carriers.clear();
   // Reconstruct the source-defined string constructor and accessor effects;
   // a body-only query intentionally treats those retained contents as unknown.
-  const auto checked = lang::verifyMirBody(changed, main->id, &result.mir);
+  const auto checked =
+      lang::verifyMirBody(changed, main->id, nullptr, &result.mir);
   const bool rejected = std::any_of(
       checked.errors.begin(), checked.errors.end(), [](const auto &error) {
         return error.borrow.kind ==
@@ -1609,7 +1610,8 @@ int main() {
          "the control has a cleanup boundary with runtime drops");
   expect(lang::rebuildMirValueUses(cleanup),
          "the changed call input's SSA uses are rebuilt");
-  const auto cleanupProof = lang::verifyMirBody(cleanup, main->id, &result.mir);
+  const auto cleanupProof =
+      lang::verifyMirBody(cleanup, main->id, nullptr, &result.mir);
   if (!cleanupProof.valid())
     for (const auto &error : cleanupProof.errors)
       std::cerr << error.message << '\n';

@@ -1,0 +1,2 @@
+export module detail;
+export int helper() { return 42; }

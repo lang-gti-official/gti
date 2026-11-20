@@ -1,0 +1,11 @@
+// Concrete generic reanalysis preserves checked arithmetic conversions without changing deduction.
+//@ run-pass
+T relay<T>(T value) { return value; }
+uint64_t target(uint64_t value) { return value; }
+uint64_t generic<T>(T value) { return target(32 * 32); }
+T constant<T>() { return 8 * 8; }
+int main() {
+  int deduced = relay(32 * 32);
+  return deduced == 1024 && generic(0) == 1024 &&
+    constant<uint8_t>() == 64 && constant<uint64_t>() == 64 ? 0 : 1;
+}

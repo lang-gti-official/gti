@@ -431,7 +431,7 @@ int main(int argc, char **argv) {
            "slot operation module verifies");
     session.requireDefinition(*probe);
     const auto object = temporary / "probe.o";
-    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+    expect(driver::writeArtifact(object, session.emitObject().singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write native slot operation object");
     driver::NativeInputs native;

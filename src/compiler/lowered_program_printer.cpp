@@ -407,6 +407,11 @@ private:
             } else {
               output << "type:null";
             }
+            if (constantValue.value->packedBytes) {
+              output << ":packed-bytes="
+                     << constantValue.value->packedBytes->size();
+              return;
+            }
             output << ":[";
             for (std::size_t index = 0;
                  index < constantValue.value->elements.size(); ++index) {
@@ -533,7 +538,8 @@ private:
     output << "type-alias(unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
     type(value.type);
-    output << ";private=" << value.compilerPrivate << ')';
+    output << ";private=" << value.compilerPrivate
+           << ";exported=" << value.explicitlyExported << ')';
   }
 
   void printValue(const LoweredClassDeclaration &value) {

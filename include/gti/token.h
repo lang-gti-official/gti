@@ -106,6 +106,7 @@ enum class TokenKind : std::uint8_t {
   DELETE,
   DO,
   ELSE,
+  EMBED_BYTES,
   ENUM,
   EXPORT,
   EXTERN,
@@ -543,6 +544,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "DO";
   case TokenKind::ELSE:
     return "ELSE";
+  case TokenKind::EMBED_BYTES:
+    return "EMBED_BYTES";
   case TokenKind::ENUM:
     return "ENUM";
   case TokenKind::EXPORT:

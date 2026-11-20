@@ -185,16 +185,16 @@ export enum class arena_errc {
 namespace detail {
 // A monotonic arena has a live prefix; unlike sparse traversal, movement and
 // distance are constant-time and refer only to that prefix, not spare slots.
-class arena_iterator<std::storage_element T, uint64_t Reverse = 0> {
-  storage<T>& slots;
+class arena_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+  storage<T>&<owner> slots;
   size_t limit;
   mut size_t position;
 public:
-  arena_iterator(storage<T>& slots, size_t limit, size_t position)
+  arena_iterator(storage<T>&<owner> slots, size_t limit, size_t position)
       : slots(slots), limit(limit), position(position) {
     gti_internal::require_container_argument(position <= limit && limit <= slots.capacity());
   }
-  T& operator*() {
+  T&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, ptrdiff_t(-1));
       return this.slots.get(selected);
@@ -202,8 +202,8 @@ public:
     gti_internal::index_bounds_check(this.position, this.limit);
     return this.slots.get(this.position);
   }
-  T& operator->() { return *this; }
-  T& operator[](ptrdiff_t offset) {
+  T&<owner> operator->() { return *this; }
+  T&<owner> operator[](ptrdiff_t offset) {
     mut size_t selected = checked_iterator_position(this.position, size_t(0), this.limit, offset, Reverse != 0);
     if constexpr (Reverse != 0) { selected = checked_iterator_position(selected, size_t(0), this.limit, ptrdiff_t(-1)); }
     gti_internal::index_bounds_check(selected, this.limit);

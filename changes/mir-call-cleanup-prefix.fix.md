@@ -1,0 +1,1 @@
+Faster release builds for functions that pass temporaries by reference to fallible calls. The compiler can share the remaining cleanup across failure paths, reducing the number of blocks it generates and optimizes.

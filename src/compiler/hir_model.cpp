@@ -2450,24 +2450,44 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             ? program.findConstructorInstance(
                   *residualReturn->constructorTarget)
             : nullptr;
-    const bool constructsReturn = selected != nullptr
-                                      ? selected->returnConstruction.has_value()
-                                      : plan.residualReturn != 0;
+    const bool constructsReturn =
+        selected != nullptr ? selected->returnConstruction.has_value()
+                            : residualReturn != nullptr &&
+                                  residualReturn->constructorTarget.has_value();
+    const bool convertsReturn =
+        selected != nullptr ? selected->returnConversion.has_value()
+                            : residualReturn != nullptr &&
+                                  residualReturn->functionTarget.has_value();
+    const HirFunctionInstance *conversion =
+        residualReturn != nullptr && residualReturn->functionTarget
+            ? program.findFunctionInstance(*residualReturn->functionTarget)
+            : nullptr;
+    const bool returnInput =
+        residualReturn != nullptr && residualReturn->source == nullptr &&
+        residualReturn->operands == std::vector<HirValueId>{residual->id} &&
+        residualReturn->fullExpression == value.fullExpression &&
+        residualReturn->callPlan && !residualReturn->callPlan->receiver &&
+        residualReturn->callPlan->arguments.size() == 1 &&
+        residualReturn->callPlan->arguments.front().value == residual->id &&
+        residualReturn->callPlan->arguments.front().parameterType ==
+            residual->info.type &&
+        (selected == nullptr ||
+         residualReturn->info.type == selected->returnType);
     const bool returnsResidual =
         constructsReturn
-            ? residualReturn != nullptr &&
+            ? !convertsReturn && returnInput &&
                   residualReturn->kind == HirValueKind::DirectInitializer &&
-                  residualReturn->source == nullptr &&
                   construction != nullptr &&
                   (selected == nullptr ||
                    construction->declaration ==
-                       selected->returnConstruction->constructor) &&
-                  residualReturn->operands ==
-                      std::vector<HirValueId>{residual->id} &&
-                  residualReturn->fullExpression == value.fullExpression &&
-                  residualReturn->callPlan &&
-                  !residualReturn->callPlan->receiver &&
-                  residualReturn->callPlan->arguments.size() == 1
+                       selected->returnConstruction->constructor)
+        : convertsReturn
+            ? returnInput && residualReturn->kind == HirValueKind::Call &&
+                  residualReturn->intrinsic == IntrinsicKind::None &&
+                  conversion != nullptr &&
+                  (selected == nullptr ||
+                   conversion->declaration ==
+                       selected->returnConversion->function)
             : plan.residualReturn == 0;
     if ((selected != nullptr &&
          (plan.consumesOperand != selected->consumesOperand ||

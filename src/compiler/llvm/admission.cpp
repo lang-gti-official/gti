@@ -4424,9 +4424,12 @@ public:
       // Like a raw borrow, this publishes an already adjusted address. A
       // hierarchy view needs its dispatch layout, not by-value transport.
       // The independently verified loan still owns the source and access.
+      const auto &witness = stage.parameterTypes[1];
       return stage.info.type == pointer.arguments.front() &&
              representedAddress(stage.info.type) &&
-             representedAddress(stage.parameterTypes[1].arguments.front());
+             (representedAddress(witness.arguments.front()) ||
+              (witness.referenceAccess == AccessMode::ReadOnly &&
+               opaqueReferent(witness.arguments.front())));
     }
     // Borrowing a text-view object transports its address, not its counted
     // bytes. rawBorrowResultLoan already proves the exact typed pointer and
@@ -4451,6 +4454,8 @@ public:
     // The verifier owns origin/access; the witness need not share the raw
     // pointer's type or address. Neither branch materializes or copies it.
     return passiveReferenceType(witness) ||
+           (witness.referenceAccess == AccessMode::ReadOnly &&
+            opaqueReferent(witness.arguments.front())) ||
            ordinaryRawReferenceObject(witness.arguments.front());
   }
   // The raw-borrow call's result names exactly the pointer's payload-enum
@@ -5508,6 +5513,14 @@ public:
                                    ? std::optional(Shape::NativeCStorage)
                                    : std::nullopt);
     }
+    const auto nativeBorrowOrigin = [&](const MirPlace &place) {
+      // Dereferencing a checked opaque field contributes a retained address
+      // to the loan, never a by-value representation of its erased object.
+      return nativeValue(place.type) ||
+             (place.access == AccessMode::ReadOnly &&
+              opaqueReferent(place.type) && !place.projections.empty() &&
+              place.projections.back().kind == MirProjectionKind::Dereference);
+    };
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
       const auto nativeConditions = [&](const auto &conditions) {
@@ -5518,12 +5531,12 @@ public:
                      nativeValue(condition.enumeration);
             });
       };
-      bool nativeBorrow = origin && nativeValue(origin->type) &&
+      bool nativeBorrow = origin && nativeBorrowOrigin(*origin) &&
                           nativeConditions(loan.conditions);
       for (const auto &dependency : loan.additionalDependencies) {
         const auto *source = mir.findPlace(dependency.source);
         nativeBorrow &= nativeConditions(dependency.conditions) &&
-                        (source ? nativeValue(source->type)
+                        (source ? nativeBorrowOrigin(*source)
                                 : !dependency.source &&
                                       !dependency.designatedFields.empty());
       }

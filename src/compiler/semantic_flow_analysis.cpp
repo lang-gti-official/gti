@@ -4016,11 +4016,11 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   const auto *macroLiteralType =
       semanticModel.findMacroIntegerLiteralType(expr);
   std::optional<SemanticType> enclosingLiteralContext;
-  if (macroLiteralType)
+  if (macroLiteralType && !isContextualIntegerArithmetic(&expr))
     enclosingLiteralContext =
         std::exchange(contextualOperatorIntegerType, *macroLiteralType);
   expr.accept(*this);
-  if (macroLiteralType)
+  if (macroLiteralType && !isContextualIntegerArithmetic(&expr))
     contextualOperatorIntegerType = std::move(enclosingLiteralContext);
   SemanticType result = currentType;
   // Report only an otherwise valid assignment; an invalid one already has
@@ -4126,6 +4126,13 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
+  if (macroLiteralType && isInteger(*macroLiteralType) &&
+      isContextualIntegerArithmetic(&expr)) {
+    result = materializeContextualIntegerArithmetic(expr, *macroLiteralType);
+    currentType = result;
+    info = expressionInfo(result);
+  }
+
   if (!expressionAlias && expr.exprKind() == ExprKind::Call &&
       info.type.kind == SemanticType::RawPointer &&
       info.type.arguments.size() == 1 &&
@@ -4594,6 +4601,10 @@ auto SemanticVisitor::Impl::analyzeInitializer(
               (!isInteger(expectedType) || integerFits(expectedType, *literal))
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
+  if (isInteger(expectedType) && isInteger(result) &&
+      !isAssignable(expectedType, result, expr.get()) &&
+      isContextualIntegerArithmetic(expr.get()))
+    result = materializeContextualIntegerArithmetic(*expr, expectedType);
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
@@ -5757,7 +5768,7 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     return true;
   }
 
-  CallableCandidate candidate = std::move(incoming.overloads.front());
+  CallableCandidate candidate = std::move(incoming.overloads.edit().front());
   const FunctionInfo *candidateInfo =
       candidate.declaration == nullptr
           ? nullptr
@@ -5840,7 +5851,7 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     }
   }
 
-  existing.overloads.emplace_back(std::move(candidate));
+  existing.overloads.edit().emplace_back(std::move(candidate));
   refreshOverloadPrivacy(existing);
   return true;
 }
@@ -5938,7 +5949,7 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
       compilerPrivateDeclaration(symbol.sourceUnit, scope);
   symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
                            semanticModel.isCompilerPrivateType(symbol.type);
-  for (CallableCandidate &overload : symbol.overloads) {
+  for (CallableCandidate &overload : symbol.overloads.edit()) {
     overload.compilerPrivate =
         overload.compilerPrivate || symbol.compilerPrivate ||
         semanticModel.isCompilerPrivateType(overload.returnType) ||
@@ -6628,6 +6639,20 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "size",
          .detail = "uint64_t size()",
          .scopeDistance = 0});
+    if (const auto *factory = arraySpanFactory()) {
+      CallableCandidate selected;
+      std::vector<SemanticType> typeArguments;
+      std::vector<CompileTimeValue> valueArguments;
+      if (tryInstantiateFunction(*factory, {}, {}, {objectType}, {}, selected,
+                                 typeArguments, valueArguments)) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Method,
+             .name = "as_span",
+             .qualifiedName = "as_span",
+             .detail = typeSpelling(selected.returnType) + " as_span()",
+             .scopeDistance = 0});
+      }
+    }
   } else if (objectType.kind == SemanticType::StringView) {
     context.candidates.push_back(
         {.kind = SemanticCompletionCandidateKind::Method,
@@ -6659,7 +6684,15 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
     for (const auto &[name, detail] :
          {std::pair{"substr", "(std::size_t position, std::size_t count)"},
           std::pair{"remove_prefix", "(std::size_t count) mut"},
-          std::pair{"remove_suffix", "(std::size_t count) mut"}}) {
+          std::pair{"remove_suffix", "(std::size_t count) mut"},
+          std::pair{"find", "(std::string_view needle, std::size_t position)"},
+          std::pair{"rfind", "(std::string_view needle, std::size_t position)"},
+          std::pair{"contains", "(std::string_view needle)"},
+          std::pair{"starts_with", "(std::string_view prefix)"},
+          std::pair{"ends_with", "(std::string_view suffix)"},
+          std::pair{"compare", "(std::string_view right)"},
+          std::pair{"at", "(int position)"}, std::pair{"front", "()"},
+          std::pair{"back", "()"}}) {
       if (const auto factory = textViewMemberFactory(name)) {
         context.candidates.push_back(
             {.kind = SemanticCompletionCandidateKind::Method,
@@ -8063,7 +8096,7 @@ auto SemanticVisitor::Impl::resolveExpressionSymbol(
         Symbol symbol = substituteSymbol(member->symbol, memberObjectType);
         if (const auto selected = reflectedMethodTargets.find(get);
             selected != reflectedMethodTargets.end()) {
-          std::erase_if(symbol.overloads,
+          std::erase_if(symbol.overloads.edit(),
                         [&](const CallableCandidate &candidate) {
                           return candidate.declaration != selected->second;
                         });
@@ -8794,7 +8827,7 @@ auto SemanticVisitor::Impl::receiverClassRegionRelay(
     return false;
   const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
   return mapping.origin == BorrowOriginKind::Receiver &&
-         mapping.sourceFields.size() == 1 &&
+         !mapping.sourceFields.empty() &&
          mapping.resultFields.empty() == referenceResult &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
@@ -13751,6 +13784,116 @@ auto SemanticVisitor::Impl::isContextualIntegerLiteral(const Expr *expression)
   return contextualIntegerLiteral(expression) != nullptr;
 }
 
+auto SemanticVisitor::Impl::isContextualIntegerArithmetic(
+    const Expr *expression) -> bool {
+  // Eligibility is structural, not optimizer-dependent. Explicitly typed
+  // leaves, names, calls, mutation and overloaded operators never qualify.
+  if (!expression || isContextualIntegerLiteral(expression) ||
+      (expression->exprKind() != ExprKind::Binary &&
+       expression->exprKind() != ExprKind::Unary &&
+       expression->exprKind() != ExprKind::Grouping))
+    return false;
+  std::vector<const Expr *> pending{expression};
+  bool operation = false;
+  while (!pending.empty()) {
+    const Expr *node = pending.back();
+    pending.pop_back();
+    if (isContextualIntegerLiteral(node))
+      continue;
+    if (const auto *group = exprAs<Grouping>(node)) {
+      pending.push_back(group->expression().get());
+      continue;
+    }
+    if (const auto *unary = exprAs<Unary>(node)) {
+      if (unary->oper().kind != TokenKind::PLUS &&
+          unary->oper().kind != TokenKind::MINUS &&
+          unary->oper().kind != TokenKind::TILDE)
+        return false;
+      operation = true;
+      pending.push_back(unary->right().get());
+      continue;
+    }
+    if (const auto *binary = exprAs<Binary>(node)) {
+      switch (binary->oper().kind) {
+      case TokenKind::PLUS:
+      case TokenKind::MINUS:
+      case TokenKind::STAR:
+      case TokenKind::SLASH:
+      case TokenKind::PERCENT:
+      case TokenKind::AMPERSAND:
+      case TokenKind::PIPE:
+      case TokenKind::CARET:
+      case TokenKind::SHIFT_LEFT:
+      case TokenKind::SHIFT_RIGHT:
+        operation = true;
+        pending.push_back(binary->left().get());
+        pending.push_back(binary->right().get());
+        continue;
+      default:
+        return false;
+      }
+    }
+    return false;
+  }
+  return operation;
+}
+
+auto SemanticVisitor::Impl::contextualIntegerConstant(const Expr *expression)
+    -> std::optional<IntegerConstant> {
+  if (isContextualIntegerLiteral(expression))
+    return integerConstant(expression);
+  if (!isContextualIntegerArithmetic(expression) ||
+      !isInteger(semanticModel.typeOf(*expression)))
+    return std::nullopt;
+  // This query cannot call user code or observe mutable state. Cache only a
+  // successful typed result in the current semantic snapshot. The existing
+  // evaluator enforces checked intermediate operations and request limits.
+  auto value = semanticModel.findConstant(*expression);
+  if (!value) {
+    auto context = makeConstexprInterpreter();
+    context.requireMir = true;
+    context.recordValues = false;
+    auto evaluated = evaluateConstexprExpression(*expression, context);
+    if (!evaluated)
+      return std::nullopt;
+    value = std::move(evaluated.value);
+    semanticModel.recordConstant(*expression, *value);
+  }
+  const auto *integer = std::get_if<ConstantInteger>(&*value);
+  if (!integer)
+    return std::nullopt;
+  return IntegerConstant{.negative = integer->negative,
+                         .magnitude = integer->magnitude};
+}
+
+auto SemanticVisitor::Impl::materializeContextualIntegerArithmetic(
+    const Expr &expression, const SemanticType &target) -> SemanticType {
+  // Preserve ordinary execution when no conversion is required. In
+  // particular, this facility is not an implicit constexpr declaration.
+  if (semanticModel.typeOf(expression) == target)
+    return target;
+  const auto value = contextualIntegerConstant(&expression);
+  if (!value || !integerFits(target, *value))
+    return semanticModel.typeOf(expression);
+  const auto domain = constantIntegerDomain(target);
+  if (!domain)
+    return semanticModel.typeOf(expression);
+  const ConstantValue converted = makeConstantInteger(
+      {.negative = value->negative, .magnitude = value->magnitude}, *domain);
+  const auto info = expressionInfo(target);
+  // Reuse the required constant scalar publication boundary. The ordinary
+  // arithmetic was checked in its own types; never push the destination's
+  // width or signedness down into its intermediate operations.
+  semanticModel.recordImmediateInvocation(expression,
+                                          {.info = info, .value = converted});
+  semanticModel.record(expression, info);
+  semanticModel.recordConstant(expression, converted);
+  semanticModel.recordDefinedFailure(expression, {});
+  // No effect journal is erased: this literal-only tree has no calls or
+  // storage observations, and later arguments may already have been checked.
+  return target;
+}
+
 auto SemanticVisitor::Impl::suffixedIntegerLiteral(const Expr *expression,
                                                    bool allowSign)
     -> const LiteralExpr * {
@@ -13839,6 +13982,12 @@ auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
     const ExprPtr &expression, SemanticType target) -> SemanticType {
   if (expression && semanticModel.findMacroIntegerLiteralType(*expression))
     return analyze(expression);
+  if (isInteger(target) && isContextualIntegerArithmetic(expression.get())) {
+    if (!semanticModel.findExpression(*expression))
+      analyze(expression);
+    return materializeContextualIntegerArithmetic(*expression, target);
+  }
+
   // A numeric generic needs the same literal-operand contract as an
   // integral generic during symbolic checking (notably for equality).
   // Concrete floating operations retain their ordinary integer-to-float

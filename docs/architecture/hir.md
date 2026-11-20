@@ -340,8 +340,8 @@ Prefix `?` through `std::tryable`
 - the operand;
 - an ordinary static call of the block's `has_value`, borrowing it;
 - `take_value` and `take_residual` calls, each consuming it on its own path;
-- the residual return: an implicit construction of the return type, or the
-  residual itself.
+- the residual return: an implicit construction of the return type, a selected
+  `std::from<Return, Residual>::from` call, or the residual itself.
 
 A temporary operand is borrowed in place and moved into the consuming call.
 An explicit `std::move(place)` leaves the place in place: the test borrows it,
@@ -350,7 +350,13 @@ borrowed and copied. HIR verification checks:
 - each call against the semantic record's block function and its argument
   kind;
 - that every step belongs to the propagation's full expression;
-- the residual construction's identity.
+- the residual construction or conversion's selected identity, argument and type.
+
+Semantic analysis selects the direct path before consulting `std::from`, checks
+the selected conformance's constraints, and records its ordinary call and complete
+return dependency contract. HIR retains that call in `residualReturn`; MIR's
+existing failure branch schedules it with ordinary call effects and cleanup.
+No new MIR operation, backend intrinsic, or wrapper-specific conversion is used.
 
 `expect(message)` uses the same selected-combinator record and eager input
 contract, with receiver then counted message rather than a mapper. Its success

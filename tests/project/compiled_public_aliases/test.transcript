@@ -1,0 +1,17 @@
+// Public aliases preserve their checked target in a source-absent library, including public re-exports.
+$ cd producer
+$ gti build
+$ sh -c "cp build/gti/dev/*/metrics.gtilib ../consumer/"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check
+$ gti run
+$ cp ../missing_field.gti main.gti
+$ gti check
+? 65
+stderr: Missing initializer for field 'end'
+$ cp ../hidden.gti main.gti
+$ gti check
+? 65
+stderr: HiddenAlias

@@ -838,11 +838,11 @@ public:
   size_t position() { return this.limit; }
 };
 
-export class sparse_iterator<std::storage_element T, uint64_t Reverse = 0> {
-  gti_internal::sparse_slots<T>& slots;
+export class sparse_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+  gti_internal::sparse_slots<T>&<owner> slots;
   mut size_t position;
 public:
-  sparse_iterator(gti_internal::sparse_slots<T>& slots, size_t position)
+  sparse_iterator(gti_internal::sparse_slots<T>&<owner> slots, size_t position)
       : slots(slots), position(position) {
     gti_internal::require_container_argument(position <= slots.capacity());
     if constexpr (Reverse != 0) {
@@ -858,14 +858,14 @@ public:
       }
     }
   }
-  T& operator*() {
+  T&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t selected = checked_iterator_position(this.position, size_t(0), this.slots.capacity(), ptrdiff_t(-1));
       return this.slots.read(selected);
     }
     return this.slots.read(this.position);
   }
-  T& operator->() { return *this; }
+  T&<owner> operator->() { return *this; }
   void operator++() mut {
     if constexpr (Reverse != 0) {
       gti_internal::require_container_argument(this.position > size_t(0));

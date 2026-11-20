@@ -1,0 +1,48 @@
+// LLVM code generation preserves owning-global cleanup, object order and cache identity across worker counts.
+$ gti src/main.gti --codegen-units 0 --progress=never
+? 64
+stderr: --codegen-units requires a whole number from 1 to 256
+$ gti src/main.gti --codegen-threads 257 --progress=never
+? 64
+stderr: --codegen-threads requires a whole number from 1 to 256
+$ gti src/main.gti --codegen-units 1 --emit-llvm --progress=never -o one.ll
+$ gti src/main.gti --codegen-units 8 --emit-llvm --progress=never -o eight.ll
+$ cmp one.ll eight.ll
+$ gti src/main.gti --codegen-units 8 --codegen-threads 1 --progress=never -o program
+$ ./program
+stdout: 2
+stdout: 1
+$ cp program previous
+$ gti src/main.gti --codegen-units 8 --codegen-threads 2 --progress=never -o program
+$ cmp previous program
+$ gti src/main.gti --codegen-units 8 --codegen-threads 8 --progress=never -o program
+$ cmp previous program
+$ gti src/main.gti -g --codegen-units 8 --codegen-threads 1 --progress=never -o debug
+$ cp debug debug-previous
+$ gti src/main.gti -g --codegen-units 8 --codegen-threads 8 --progress=never -o debug
+$ cmp debug-previous debug
+$ ./debug
+stdout: 2
+stdout: 1
+$ gti build -O0 --codegen-units 8 --codegen-threads 1 --progress=never
+$ python3 check_cache.py record
+$ gti build -O0 --codegen-units 8 --codegen-threads 8 --progress=never -v
+stderr: gti: cache hit
+$ python3 check_cache.py corrupt
+$ gti build -O0 --codegen-units 8 --codegen-threads 2 --progress=never -v
+stderr: gti: cache recovered
+$ python3 check_cache.py compare
+$ python3 check_cache.py truncate
+$ gti build -O0 --codegen-units 8 --codegen-threads 8 --progress=never -v
+stderr: cached object count does not match the requested units
+stderr: gti: cache recovered
+$ python3 check_cache.py compare
+$ gti build -O0 --codegen-units 1 --progress=never -v
+stderr: gti: cache miss
+$ gti build numbers --codegen-units 2 --progress=never
+? 65
+stderr: multiple LLVM code generation units require an uninstrumented hosted executable
+$ gti build -O0 -g --codegen-units 8 --codegen-threads 1 --progress=never -v
+stderr: gti: cache miss
+$ gti build -O0 -g --codegen-units 8 --codegen-threads 8 --progress=never -v
+stderr: gti: cache hit

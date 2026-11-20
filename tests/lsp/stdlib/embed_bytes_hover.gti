@@ -1,0 +1,25 @@
+// Hover describes the public static byte view at an embed expression.
+//@ hover @embed: std::span<uint8_t>
+// --- main.gti
+import std.span;
+
+int main() {
+  auto bytes = /*@embed*/embed_bytes("data.txt");
+  return int(bytes.size());
+}
+// --- data.txt
+GTI
+// --- step 2
+import std.span;
+
+int main() {
+  auto bytes = embed_bytes("not-present.txt");  //~ ERROR GTI-S2129 Cannot read embedded file
+  return 0;
+}
+// --- step 3
+import std.span;
+
+int main() {
+  auto bytes = embed_bytes("data.txt");
+  return int(bytes.size());
+}

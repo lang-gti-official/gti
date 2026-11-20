@@ -1,0 +1,12 @@
+// Completing library bodies in the same frontend preserves a real reborrow error and both related locations.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": true}}}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "import std.format;\nimport std.string;\n\nvoid keep(int& value) {}\n\nint main() {\n  auto message = std::runtime_format(\"a={}\", uint64_t(1));\n  std::println(message);\n  mut int owner = 1;\n  mut int& parent = owner;\n  mut int& child = parent;\n  keep(parent);\n  keep(child);\n  return 0;\n}\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.format;\nimport std.string;\n\nvoid keep(int& value) {}\n\nint main() {\n  auto message = std::runtime_format(\"a={}\", uint64_t(1));\n  std::println(message);\n  mut int owner = 1;\n  mut int& parent = owner;\n  mut int& child = parent;\n  keep(parent);\n  keep(child);\n  return 0;\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2017", "range": {"start": {"line": 11, "character": 7}, "end": {"line": 11, "character": 13}}, "relatedInformation": [{"location": {"uri": "$URI", "range": {"start": {"line": 10, "character": 19}, "end": {"line": 10, "character": 25}}}}, {"location": {"uri": "$URI", "range": {"start": {"line": 12, "character": 2}, "end": {"line": 12, "character": 14}}}}]}]}}}
+{"analysisTrace": {"generation": 1, "mirSignatureOnlyFallback": true, "frontendPasses": 1}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

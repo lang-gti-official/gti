@@ -1,0 +1,22 @@
+// Converted failures preserve the successful result's external reference owner.
+//@ run-pass
+enum Source { failed };
+enum Target { failed };
+for concept std::from<Target, Source> {
+  Target from(Source error) { return Target::failed; }
+};
+expected<int&, Source> load(int& value, bool fail) {
+  if (fail) return unexpected(Source::failed);
+  return value;
+}
+expected<int&, Target> forward(int& value, bool fail) {
+  int& result = ?load(value, fail);
+  return result;
+}
+int main() {
+  int value = 42;
+  auto result = forward(value, false);
+  if (!result.has_value() || result.value() != 42) return 1;
+  auto failed = forward(value, true);
+  return failed.has_value() ? 2 : 0;
+}

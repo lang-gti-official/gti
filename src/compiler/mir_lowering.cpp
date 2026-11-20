@@ -3,7 +3,9 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "mir_carrier_flow.h"
+#include "mir_lowering_rounds.h"
 #include "mir_source_debug.h"
+#include "mir_verification_session.h"
 
 namespace lang {
 
@@ -201,8 +203,10 @@ MirLowerer::lower(const HirProgram &source,
 MirLoweringResult
 MirLowerer::lowerVerified(const HirProgram &source,
                           const FailureMetadata &failureMetadata) const {
-  MirLoweringResult seed =
-      lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false);
+  mir_detail::LoweringRounds rounds;
+  auto *reuse = verification ? &rounds : nullptr;
+  MirLoweringResult seed = lowerProgram(
+      source, failureMetadata, MirDefinedFailureEffects{}, false, nullptr);
   // Borrow publication in the seed may be incomplete: callees have not yet
   // supplied retaining effects, so a copied container element can still name
   // its physical accessor instead of its external contents. Such a seed is
@@ -219,7 +223,7 @@ MirLowerer::lowerVerified(const HirProgram &source,
   MirCarrierAnalysis seedAnalysis(seed.program);
   MirLoweringResult provisional =
       lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false,
-                   &seed.program, &seedAnalysis);
+                   reuse, &seed.program, &seedAnalysis);
   if (!provisional.valid()) {
     return provisional;
   }
@@ -239,7 +243,8 @@ MirLowerer::lowerVerified(const HirProgram &source,
       provisionalVerification, seedAnalysis);
   const auto provisionalProof = [&] {
     const MirCarrierAnalysisScope scope(*verificationAnalysis);
-    return verifyMirProgram(provisionalVerification);
+    return verifyMirProgram(provisionalVerification,
+                            requiredMirVerificationComponents, verification);
   }();
   if (!provisionalProof.valid()) {
     for (const auto &error : provisionalProof.errors)
@@ -266,9 +271,15 @@ MirLowerer::lowerVerified(const HirProgram &source,
     const MirCarrierAnalysisScope scope(provisionalAnalysis);
     return deriveMirDefinedFailureEffects(provisional.program);
   }();
+  // A body lowered with the seed's retention facts cannot be reused when
+  // those facts may have changed. Equal programs have the same retained
+  // context. Move bodies out of the seed so the verified snapshot remains
+  // intact for call analysis throughout the final rounds.
+  if (reuse && seed.program == provisional.program)
+    rounds.previous = &seed.program;
   MirLoweringResult result =
-      lowerProgram(source, failureMetadata, effects, true, &provisional.program,
-                   &provisionalAnalysis);
+      lowerProgram(source, failureMetadata, effects, true, reuse,
+                   &provisional.program, &provisionalAnalysis);
   // The final program's effects and its verification share one analysis
   // session. A session never outlives the program contents it read.
   // Functions whose bodies and reached bodies the rounds left unchanged keep
@@ -288,7 +299,8 @@ MirLowerer::lowerVerified(const HirProgram &source,
        ++round) {
     effects = finalEffects;
     resultAnalysis.reset();
-    result = lowerProgram(source, failureMetadata, effects, true,
+    rounds.previous = &result.program;
+    result = lowerProgram(source, failureMetadata, effects, true, reuse,
                           &provisional.program, &provisionalAnalysis);
     resultAnalysis =
         std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
@@ -316,8 +328,11 @@ MirLowerer::lowerVerified(const HirProgram &source,
                  [](bool mayRaise, const MirDestructorInstance &destructor) {
                    return mayRaise == destructor.mayRaiseDefinedFailure;
                  });
-  result.program.valid_ = result.program.valid_ && exactSummaries &&
-                          verifyMirProgram(result.program).valid();
+  result.program.valid_ =
+      result.program.valid_ && exactSummaries &&
+      verifyMirProgram(result.program, requiredMirVerificationComponents,
+                       verification)
+          .valid();
   resultAnalysis.reset();
   return result;
 }
@@ -325,8 +340,9 @@ MirLowerer::lowerVerified(const HirProgram &source,
 MirLoweringResult MirLowerer::lowerProgram(
     const HirProgram &source, const FailureMetadata &failureMetadata,
     const MirDefinedFailureEffects &definedFailureEffects,
-    bool includeHostedStartup, const MirProgram *retainingProgram,
-    MirCarrierAnalysis *sharedRetainingAnalysis) {
+    bool includeHostedStartup, mir_detail::LoweringRounds *rounds,
+    const MirProgram *retainingProgram,
+    MirCarrierAnalysis *sharedRetainingAnalysis) const {
   // Calls are interpreted against the previous, immutable MIR snapshot, never
   // the output program being assembled by this lowering pass. Rounds over
   // one snapshot share its analysis and call summaries.
@@ -385,12 +401,12 @@ MirLoweringResult MirLowerer::lowerProgram(
   // provisional module would turn owning global receivers into unproved
   // dynamic calls, even when their declaration fixes the complete type.
   // Only the hosted entry wrapper waits for the derived failure contracts.
-  result.program.moduleBody =
-      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
-                SemanticType::Void, {}, definedFailureEffects, retainingProgram,
-                retainingAnalysis, valid, result.errors, 0, false, nullptr,
-                nullptr, nullptr, nullptr, &source.programInitializationPlan(),
-                &result.program.programInitialization);
+  result.program.moduleBody = lowerBody(
+      rounds, source, failureMetadata, source.module(), MirBodyKind::Module,
+      SemanticType::Void, {}, definedFailureEffects, retainingProgram,
+      retainingAnalysis, valid, result.errors, 0, false, nullptr, nullptr,
+      nullptr, nullptr, &source.programInitializationPlan(),
+      &result.program.programInitialization);
 
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
@@ -453,19 +469,19 @@ MirLoweringResult MirLowerer::lowerProgram(
            .requiresActiveCleanup = field.requiresActiveCleanup});
     }
     lowered.fieldInitializers =
-        lowerBody(source, failureMetadata, instance.fieldInitializers,
+        lowerBody(rounds, source, failureMetadata, instance.fieldInitializers,
                   MirBodyKind::FieldInitializers, SemanticType::Void, {},
                   definedFailureEffects, retainingProgram, retainingAnalysis,
                   valid, result.errors, instance.id, false, nullptr, nullptr,
                   nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
-    lowered.staticFieldInitializers =
-        lowerBody(source, failureMetadata, instance.staticFieldInitializers,
-                  MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, retainingProgram, retainingAnalysis,
-                  valid, result.errors, instance.id, false, nullptr, nullptr,
-                  nullptr, nullptr, nullptr, nullptr,
-                  compilerTrustedSourceUnit(source, instance.sourceUnit));
+    lowered.staticFieldInitializers = lowerBody(
+        rounds, source, failureMetadata, instance.staticFieldInitializers,
+        MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
+        definedFailureEffects, retainingProgram, retainingAnalysis, valid,
+        result.errors, instance.id, false, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr,
+        compilerTrustedSourceUnit(source, instance.sourceUnit));
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
          ++field) {
       if (field->info.traits.drop == DropKind::Lexical) {
@@ -588,10 +604,10 @@ MirLoweringResult MirLowerer::lowerProgram(
              instance.id > definedFailureEffects.functions.size() ||
              definedFailureEffects.functions[instance.id - 1],
          .body = lowerBody(
-             source, failureMetadata, instance.body, MirBodyKind::Function,
-             instance.returnType, {}, definedFailureEffects, retainingProgram,
-             retainingAnalysis, valid, result.errors, instance.id,
-             implicitZeroReturn, nullptr,
+             rounds, source, failureMetadata, instance.body,
+             MirBodyKind::Function, instance.returnType, {},
+             definedFailureEffects, retainingProgram, retainingAnalysis, valid,
+             result.errors, instance.id, implicitZeroReturn, nullptr,
              signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit))});
@@ -699,10 +715,11 @@ MirLoweringResult MirLowerer::lowerProgram(
              definedFailureEffects.constructors[instance.id - 1],
          .initializers = std::move(initializers),
          .body = lowerBody(
-             source, failureMetadata, instance.body, MirBodyKind::Constructor,
-             SemanticType::Void, instance.initializerValues,
-             definedFailureEffects, retainingProgram, retainingAnalysis, valid,
-             result.errors, instance.id, false, &instance.initializers, nullptr,
+             rounds, source, failureMetadata, instance.body,
+             MirBodyKind::Constructor, SemanticType::Void,
+             instance.initializerValues, definedFailureEffects,
+             retainingProgram, retainingAnalysis, valid, result.errors,
+             instance.id, false, &instance.initializers, nullptr,
              signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
@@ -753,10 +770,11 @@ MirLoweringResult MirLowerer::lowerProgram(
              instance.id > definedFailureEffects.destructors.size() ||
              definedFailureEffects.destructors[instance.id - 1],
          .body = lowerBody(
-             source, failureMetadata, instance.body, MirBodyKind::Destructor,
-             SemanticType::Void, {}, definedFailureEffects, retainingProgram,
-             retainingAnalysis, valid, result.errors, instance.id, false,
-             nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+             rounds, source, failureMetadata, instance.body,
+             MirBodyKind::Destructor, SemanticType::Void, {},
+             definedFailureEffects, retainingProgram, retainingAnalysis, valid,
+             result.errors, instance.id, false, nullptr, nullptr, nullptr,
+             nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
              &instance)});
     // A polymorphic class's source destructor runs under its own class:
@@ -800,7 +818,7 @@ MirLoweringResult MirLowerer::lowerProgram(
               : false);
     }
     lowered.body = lowerBody(
-        source, failureMetadata, instance.body, MirBodyKind::Lambda,
+        rounds, source, failureMetadata, instance.body, MirBodyKind::Lambda,
         instance.returnType, {}, definedFailureEffects, retainingProgram,
         retainingAnalysis, valid, result.errors, instance.id, false, nullptr,
         nullptr, nullptr, &instance, nullptr, nullptr,
@@ -819,7 +837,7 @@ MirLoweringResult MirLowerer::lowerProgram(
                                       storage.requiresActiveCleanup,
                                   .dataInitializer = storage.dataInitializer};
     lowered.initializer =
-        lowerBody(source, failureMetadata, storage.initializer,
+        lowerBody(rounds, source, failureMetadata, storage.initializer,
                   MirBodyKind::ThreadLocalInitializer, storage.type, {},
                   definedFailureEffects, retainingProgram, retainingAnalysis,
                   valid, result.errors, storage.symbol);

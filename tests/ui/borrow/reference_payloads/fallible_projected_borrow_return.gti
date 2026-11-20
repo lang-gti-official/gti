@@ -1,0 +1,19 @@
+// A fallible return holds the field projected from a reference parameter.
+//@ run-pass
+enum class LookupError { missing };
+
+struct Record {
+  int first = 11;
+  int selected = 37;
+  Record() = default;
+};
+
+expected<int&, LookupError> lookup(Record& record) {
+  return record.selected;
+}
+
+int main() {
+  Record record{};
+  auto found = lookup(record);
+  return found.value() - 37;
+}

@@ -1052,7 +1052,7 @@ bool isMirStructuralValueType(const MirProgram &program,
       return false;
     const MirClassInstance *owner = nullptr;
     for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
+      if (candidate.type.classId == type.classId && candidate.type == type) {
         if (owner)
           return false;
         owner = &candidate;
@@ -2086,7 +2086,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   const auto classFor =
       [&](const SemanticType &selected) -> const MirClassInstance * {
     for (const auto &candidate : program.classInstances())
-      if (candidate.type == selected)
+      if (candidate.type.classId == selected.classId &&
+          candidate.type == selected)
         return &candidate;
     return nullptr;
   };
@@ -2120,9 +2121,9 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*child},
                          .requiresActiveCleanup = true};
     }
-    if (const auto *owner =
-            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
-        owner != nullptr &&
+    const auto *owner =
+        selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
+    if (owner != nullptr &&
         owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
       if (selected.arguments.size() != 1)
         return std::nullopt;
@@ -2137,9 +2138,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*pointee},
                          .requiresActiveCleanup = true};
     }
-    if (const auto *owner =
-            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
-        owner != nullptr && (owner->compilerCapability ==
+    if (owner != nullptr && (owner->compilerCapability ==
                                  CompilerCapabilityTypeKind::MutexStorage ||
                              owner->compilerCapability ==
                                  CompilerCapabilityTypeKind::OptionalStorage)) {
@@ -2291,8 +2290,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*child},
                          .requiresActiveCleanup = true};
     }
-    const auto *owner =
-        selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
     if (owner != nullptr && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(

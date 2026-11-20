@@ -1,0 +1,19 @@
+// An embedded byte span and its derived subspan can be saved and read in constexpr and native code.
+//@ run-pass
+// --- main.gti
+import std.span;
+
+constexpr std::span<uint8_t, static> logo = embed_bytes("logo.bin");
+constexpr std::span<uint8_t, static> suffix = logo.subspan(1, 2);
+
+static_assert(logo.size() == 4);
+static_assert(logo[0] == 0x47);
+static_assert(suffix[0] == 0x54 && suffix[1] == 0x49);
+
+uint8_t from_suffix(std::size_t index) { return suffix[index]; }
+
+int main() {
+  return logo[0] == 0x47 && from_suffix(1) == 0x49 ? 0 : 1;
+}
+// --- logo.bin
+GTI

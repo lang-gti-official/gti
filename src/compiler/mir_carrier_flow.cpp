@@ -1004,6 +1004,24 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       found->second = mirUniqueCleanupType(*program, type);
     return found->second;
   };
+  // A copy through a named receiver field keeps the physical storage loan
+  // alongside the owner's contents. Derive this from the selected reference
+  // call, even if the scoped body no longer has the original HIR binding.
+  std::set<MirLoanId> mappedReferenceLoans;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (!instruction.tombstone &&
+          instruction.kind == MirInstructionKind::Call && instruction.loan &&
+          instruction.info.category == ValueCategory::Place &&
+          instruction.info.traits.containsBorrowedState &&
+          instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+          instruction.borrowFields.size() == 1 &&
+          instruction.borrowFields.front().resultFields.empty() &&
+          !instruction.borrowFields.front().sourceFields.empty())
+        if (const auto *loan = body.findLoan(*instruction.loan);
+            loan && loan->kind == MirLoanKind::CallResult)
+          mappedReferenceLoans.insert(loan->id);
+
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
     const auto id = current.id;
@@ -1044,6 +1062,18 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         const Fact held = operandFact(body, state, operand);
         join(producedInputs, held);
         join(expiredInputs, operandFact(body, state, operand, true));
+        if (!mappedReferenceLoans.empty() &&
+            operand.kind == MirOperandKind::Copy) {
+          const auto *place = body.findPlace(operand.place);
+          if (place && place->root == MirPlaceRootKind::Loan &&
+              place->projections.empty() &&
+              mappedReferenceLoans.contains(place->loan)) {
+            const Fact physical{std::vector<MirLoanId>{place->loan}};
+            join(producedInputs, physical);
+            if (state.unavailable.contains(place->loan))
+              join(expiredInputs, physical);
+          }
+        }
         join(expiredRead, operandRead(body, state, operand, true));
         join(read, operandRead(body, state, operand));
       }

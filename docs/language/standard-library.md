@@ -92,7 +92,7 @@ public surface includes:
 | --- | --- |
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
-| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories; `substr`, `remove_prefix` and `remove_suffix` select part of it without copying |
+| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories, with text search, comparison, and subviews |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
@@ -638,7 +638,8 @@ The current implemented foundation includes:
   the old payload before taking the new one. A consuming `value() &&` moves
   the payload out. Both `optional(T)` and `optional(nullopt_t)` are `implicit`,
   so a declaration or declared value return accepts one exact payload or
-  `std::nullopt`. A named move-only payload needs `std::move`; a string literal
+  `std::nullopt`. The empty marker is a `constexpr nullopt_t` object.
+  A named move-only payload needs `std::move`; a string literal
   cannot chain through `string` into `optional<string>`. The ordinary
   `std::tryable` implementation enables `?` propagation. A moved source cannot
   be used under GTI's ordinary ownership rules. Storage is now an ordinary
@@ -1553,7 +1554,7 @@ Invalid indices take the checked bounds failure path.
 
 String uses the same owner with an extra initialized terminator excluded from
 its logical size/capacity. Empty strings use an allocation-free static sentinel.
-Vector and string therefore share the same checked span/iterator owner boundary,
+Vector and string therefore share the same checked prefix-storage owner boundary,
 not separate compiler-recognized storage handles. Allocation, exact layout,
 object lifetime, generated relocation and checked loans remain distinct lower
 boundaries; moving policy into source does not remove those compiler facts.
@@ -1576,22 +1577,24 @@ slice.
 
 `std.span` provides `std::span<T>`, an ordinary source-defined, checked,
 read-only view over one contiguous owner. `std::vector<T>::as_span()` and
-`std::string::as_span()` are its public owner factories; `first`, `last`, and
+`std::array<T, N>::as_span()`, along with `std::string::as_span()`, are its
+public owner factories. `first`, `last`, and
 `subspan` preserve the same owner dependency without exposing a pointer-length
 pair. Local copies, moves, exact factory/relay returns, empty views, checked
 indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
-The element contract is `std::storage_element<T>`. Generic span relays must
-carry `requires std::storage_element<T>` and import `std.memory` when
-spelling it; a span
-neither requires copying/moving its elements nor grants independent ownership.
+A span requires a complete object layout. Built-in array views require
+`std::storage_element<T>`, and vector views also accept the shared borrowed
+elements supported by the vector. A copy through a span or its cursor retains
+the physical container borrow through the copy's last use. Generic span relays
+can use `requires std::layout_queryable<T>` from `std.memory`.
 
 The same module provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable
 iteration and subviews preserve parent suspension; `as_span()` produces a
-retained shared projection without granting mutation. These views cover
-initialized prefix storage, not arbitrary native pointers or fixed arrays.
+retained shared projection without granting mutation. The exclusive factories
+cover the initialized prefixes of vectors and strings.
 See [ranges](ranges.md) for the exact lifetime and operation contract.
 `std.io` adds `std::byte_buffer` (an initialized `vector<uint8_t>`), generic
 reader/writer contracts, exact transfer/copy/line helpers, memory and native
@@ -1600,7 +1603,7 @@ progress and error semantics.
 
 `std.paired_span` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
-types, each satisfying the span's `storage_element` contract. Its constructor
+types, each satisfying the `storage_element` contract. Its constructor
 takes the two spans by value; `size()` is the smaller
 input length, `empty()` tests that length, and `first(index)`/`second(index)`
 return checked references into the corresponding buffer. `subspan(offset,
@@ -1628,8 +1631,25 @@ cursor into a local view shell remains invalid. The implementation names in
 `std::detail` remain private. See the
 [counted text iteration example](../../examples/146-counted-text-view-iteration.gti).
 
+With `import std.string_view`, a view supports `find`, `rfind`, `contains`,
+`starts_with`, and `ends_with` with a view or a character. Import
+`std.string` for overloads that borrow a `std::string` operand for the
+duration of the call. Search positions are byte offsets. `find` starts at
+the given position (default zero), and `rfind` searches backward from the
+latest allowed starting position (default the end). An empty needle matches
+at every valid offset, including `size()`. A miss returns
+`std::string_view::npos`. Embedded NUL bytes participate in all operations.
+
+`compare` and the relational operators use lexicographic unsigned-byte
+order. Comparisons accept another view or an owning string. `at`,
+`front`, and `back` return a `char` by value, with an out-of-bounds
+access raising `GTI-R0007`. The search, comparison, and character access
+operations can run in constant expressions when the input bytes are
+available at compile time.
+
 `view.substr(position, count)` returns a counted sub-view of the same
-characters without copying them; `view.substr(position)` takes the rest. As in
+characters without copying them. `view.substr(position)` takes the rest and
+`view.substr()` returns the full view. As in
 C++, the count clamps to the characters remaining after `position`, and a
 position equal to `size()` yields an empty view. A position past `size()`
 raises `GTI-R0007` (`index_out_of_bounds` in `string_view`), even when the

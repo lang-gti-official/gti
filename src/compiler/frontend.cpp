@@ -11,6 +11,7 @@
 #include "gti/source_owner.h"
 #include "gti/support.h"
 #include "mir_borrow_audit_diagnostics.h"
+#include "mir_verification_session.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -1004,6 +1005,28 @@ FrontendUnitCacheKey unitCacheKey(const FrontendOptions &options,
               unit.entry ? options.completionOffset : std::nullopt};
 }
 
+StmtPtr embeddedArrayDeclaration(const EmbeddedFile &file) {
+  const auto token = [&](TokenKind kind, std::string spelling) {
+    auto result = file.storageName();
+    result.kind = kind;
+    result.lexeme = std::move(spelling);
+    return result;
+  };
+  TypeRef type(token(TokenKind::UINT8, "uint8_t"));
+  auto extent =
+      token(TokenKind::INT_LITERAL, std::to_string(file.bytes->size()));
+  extent.literal = static_cast<std::uint64_t>(file.bytes->size());
+  type.arrayExtents.emplace_back(
+      std::make_shared<const ArrayExtentExpr>(std::move(extent)));
+  auto initializer = std::make_unique<ArrayInitializer>(
+      token(TokenKind::LEFT_BRACE, "{"), ExprList{},
+      token(TokenKind::RIGHT_BRACE, "}"), file.bytes);
+  return std::make_shared<VariableDecl>(
+      Mutability::Immutable, std::move(type), file.storageName(),
+      std::move(initializer), token(TokenKind::STATIC, "static"), false,
+      token(TokenKind::CONSTEXPR, "constexpr"));
+}
+
 std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
   std::size_t result = tokens.size() * sizeof(Token);
   for (const Token &token : tokens) {
@@ -1224,36 +1247,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   StmtList declarations;
   bool syntaxValid = true;
   const std::string syntaxContext = syntaxCacheContext(options);
-  // Compile limits decide which constant, macro and expansion requests
-  // succeed, so every semantic reuse (preamble, instance analysis) keys on
-  // them; lexing and parsing do not depend on them.
-  std::string frontendCacheContext =
-      semanticCacheContext(options) +
-      "\nlimits:" + compileLimitsIdentity(options.limits) +
-      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
-      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
-      "\nsource-owners:" +
-      (result.sourceGraph.sourceOwners()
-           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
-           : std::string{});
-  // Logical maps are relocatable, but a loaded file's containment, module
-  // membership and compiler trust also affect semantic meaning. Never reuse
-  // a preamble merely because its source bytes and public map are unchanged.
-  const auto appendIdentity = [&](std::string_view value) {
-    frontendCacheContext += std::to_string(value.size()) + ":";
-    frontendCacheContext += value;
-  };
-  for (const auto &unit : result.sourceGraph.sourceUnits()) {
-    appendIdentity(unit.path.generic_string());
-    const auto owners = result.sourceGraph.sourceOwners();
-    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
-    appendIdentity(owner ? owner->identity : std::string{});
-    const auto *module = result.sourceGraph.findModule(unit.moduleId);
-    appendIdentity(module ? module->ownerIdentity : std::string{});
-    appendIdentity(module ? module->name : std::string{});
-    appendIdentity(std::to_string(static_cast<int>(unit.role)));
-    appendIdentity(unit.prelude ? "prelude" : "source");
-  }
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
   const auto parseStart = std::chrono::steady_clock::now();
@@ -1329,6 +1322,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
+        StmtList embeddedDeclarations;
+        for (const auto &file : unit->embeddedFiles) {
+          if (!file.bytes || file.storageOffset != file.keyword.position)
+            continue;
+          embeddedDeclarations.push_back(embeddedArrayDeclaration(file));
+          estimatedInputBytes += file.bytes->size();
+        }
+        unitDeclarations.insert(
+            unitDeclarations.begin(),
+            std::make_move_iterator(embeddedDeclarations.begin()),
+            std::make_move_iterator(embeddedDeclarations.end()));
         unit->lifetimeNames =
             parser.lifetimeNames().empty()
                 ? nullptr
@@ -1371,12 +1375,70 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
   if (options.stopAfter == FrontendPhase::Parsing) {
+    result.parsingComplete = true;
     return result;
   }
-  if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
-    return result;
-  }
+  return checkParsed(entryPath, std::move(result));
+}
 
+FrontendResult Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                                       FrontendResult result) const {
+  return analyzeParsed(entryPath, std::move(result), {});
+}
+
+FrontendResult
+Frontend::analyzeParsed(const std::filesystem::path &entryPath,
+                        FrontendResult result,
+                        const DiagnosticCheckpoint &observer) const {
+  if (!result.parsingComplete)
+    return result;
+  result.parsingComplete = false;
+  result = checkParsed(entryPath, std::move(result), observer);
+  applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+  return result;
+}
+
+FrontendResult
+Frontend::checkParsed(const std::filesystem::path &entryPath,
+                      FrontendResult result,
+                      const DiagnosticCheckpoint &observer) const {
+  if (!result.syntaxValid && !options.analyzeRecoveredProgram)
+    return result;
+  if (options.cancellation &&
+      options.cancellation->load(std::memory_order_relaxed)) {
+    result.cancelled = true;
+    return result;
+  }
+  // Compile limits decide which constant, macro and expansion requests
+  // succeed, so every semantic reuse (preamble, instance analysis) keys on
+  // them; lexing and parsing do not depend on them.
+  std::string frontendCacheContext =
+      semanticCacheContext(options) +
+      "\nlimits:" + compileLimitsIdentity(options.limits) +
+      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
+      "\nsource-owners:" +
+      (result.sourceGraph.sourceOwners()
+           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
+           : std::string{});
+  // Logical maps are relocatable, but a loaded file's containment, module
+  // membership and compiler trust also affect semantic meaning. Never reuse
+  // a preamble merely because its source bytes and public map are unchanged.
+  const auto appendIdentity = [&](std::string_view value) {
+    frontendCacheContext += std::to_string(value.size()) + ":";
+    frontendCacheContext += value;
+  };
+  for (const auto &unit : result.sourceGraph.sourceUnits()) {
+    appendIdentity(unit.path.generic_string());
+    const auto owners = result.sourceGraph.sourceOwners();
+    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
+    appendIdentity(owner ? owner->identity : std::string{});
+    const auto *module = result.sourceGraph.findModule(unit.moduleId);
+    appendIdentity(module ? module->ownerIdentity : std::string{});
+    appendIdentity(module ? module->name : std::string{});
+    appendIdentity(std::to_string(static_cast<int>(unit.role)));
+    appendIdentity(unit.prelude ? "prelude" : "source");
+  }
   // Concrete generic discovery can select bodies which were not visible to
   // declaration-time analysis. With bounded trusted-body analysis the
   // semantic visitor completes such a body while HIR runs (late demand): it
@@ -1478,10 +1540,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       }
     }
   }
+  bool reportedTypeChecking = false;
   std::unordered_set<const FunctionDecl *> requiredBodies;
   bool testDiscoveryComplete = false;
   std::unique_ptr<SemanticVisitor> semanticOwner;
   HirLoweringResult hir;
+  bool includeLibraryBodies = options.lowerLibraryOnlyInstanceBodies;
   TrustedBodyAnalysis trustedBodies = options.trustedBodies;
   const auto applyAuditPolicy = [&] {
     if (!options.reportLibraryAuditFindings)
@@ -1531,7 +1595,21 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     {
       const PhaseTimeScope timeScope("gti-semantics");
       const ProgressScope progress(options.progress, ProgressPhase::Checking);
-      result.semanticValid = semantic.check(result.program);
+      if (observer && attempt == 0 && result.sourceValid &&
+          result.syntaxValid) {
+        result.semanticValid = semantic.check(
+            result.program,
+            [&](std::span<const Diagnostic> diagnostics) {
+              observer(DiagnosticStage::Declaration, result, semantic.model(),
+                       diagnostics);
+            },
+            [&] {
+              observer(DiagnosticStage::Registered, result, semantic.model(),
+                       {});
+            });
+      } else {
+        result.semanticValid = semantic.check(result.program);
+      }
       if (semantic.cancelled()) {
         // A superseded editor snapshot: no later phase runs and no instance
         // analysis is published.
@@ -1654,7 +1732,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     append(result.diagnostics, semantic.errors());
     if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
       return result;
-    const std::size_t semanticDiagnosticCount = semantic.errors().size();
+    std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
     const bool discoveredTestEntry = options.program.testSuite &&
@@ -1700,6 +1778,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         continue;
       }
     }
+    if (observer && !reportedTypeChecking && result.sourceValid &&
+        result.syntaxValid && !options.completionOffset) {
+      observer(DiagnosticStage::TypeChecking, result, semantic.model(),
+               result.diagnostics);
+      reportedTypeChecking = true;
+    }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||
         options.stopAfter == FrontendPhase::Semantics) {
@@ -1708,107 +1792,72 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       return result;
     }
 
-    if (options.workMetrics != nullptr)
-      ++options.workMetrics->hirPasses;
-    const auto hirStart = std::chrono::steady_clock::now();
-    const std::size_t lateDemandStart =
-        options.workMetrics == nullptr
-            ? 0
-            : options.workMetrics->semanticLateDemandMicroseconds;
-    hir = [&] {
-      const PhaseTimeScope timeScope("gti-hir-lowering");
-      const ProgressScope progress(options.progress,
-                                   ProgressPhase::HirLowering);
-      HirLoweringScope scope{
-          .errorLimit = options.limits.errorLimit == 0
-                            ? 0
-                            : options.limits.errorLimit -
-                                  errorDiagnosticCount(result.diagnostics),
-          .reachablePrefix = options.lowerReachableOnly};
-      if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
-        std::vector<std::pair<std::size_t, std::size_t>> complete;
-        for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
-          if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
-              unit.declarationCount != 0) {
-            complete.emplace_back(unit.declarationStart, unit.declarationCount);
-          }
-        }
-        // Every application body must reach the MIR borrow checker. When
-        // library declarations are lowered completely too, the application
-        // units are lowered first so the check need not see the rest.
-        if (options.lowerLibraryReachableOnly)
-          scope.completeDeclarations = std::move(complete);
-        else
-          scope.borrowCheckedDeclarations = std::move(complete);
+    for (;;) {
+      hir = lowerHir(result, semantic, includeLibraryBodies);
+      // Late demand may report diagnostics in the bodies it analysed.
+      const auto &semanticErrors = semantic.errors();
+      for (std::size_t index = semanticDiagnosticCount;
+           index < semanticErrors.size(); ++index)
+        result.diagnostics.push_back(semanticErrors[index]);
+      semanticDiagnosticCount = semanticErrors.size();
+      if (errorLimitReached(hir.diagnostics, options.limits.errorLimit) ||
+          errorLimitReached(result.diagnostics, options.limits.errorLimit)) {
+        append(result.diagnostics, hir.diagnostics);
+        applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+        result.semanticValid = false;
+        return result;
       }
-      if (options.lowerEntryUnitOnly) {
-        if (const SourceUnit *entry =
-                result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
-          scope.entryDeclarations = {entry->declarationStart,
-                                     entry->declarationCount};
-        }
+      if (semantic.lateDemandFailed()) {
+        for (const FunctionDecl *body : semantic.lateDemandedBodies())
+          hir.requiredSemanticBodies.push_back(body);
       }
-      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
-        if (result.sourceGraph.isCompilerTrusted(unit.id))
-          scope.trustedSources.push_back(unit.path.string());
-      // MIR lowers an omitted instance as a signature-only declaration, so
-      // omission applies to analysis through HIR and through MIR alike; see
-      // FrontendOptions::lowerLibraryOnlyInstanceBodies.
-      if (!options.lowerLibraryOnlyInstanceBodies) {
-        scope.omitLibraryOnlyBodies = true;
-        for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
-          if (result.sourceGraph.isCompilerTrusted(unit.id))
-            scope.trustedUnits.push_back(unit.id);
+      // The net again: concrete discovery can leave a need that late demand
+      // could not meet.
+      if (trustedBodies == TrustedBodyAnalysis::Reachable)
+        for (const FunctionDecl *body : semantic.unmetBodyDemands())
+          hir.requiredSemanticBodies.push_back(body);
+
+      if (!hir.requiredSemanticBodies.empty() &&
+          trustedBodies != TrustedBodyAnalysis::Complete)
+        break;
+      if (hir.requiredSemanticBodies.empty())
+        semantic.publishInstanceAnalyses();
+
+      const bool canConfirm = options.confirmSignatureOnlyMir &&
+                              !includeLibraryBodies &&
+                              hir.omittedInstanceBodies != 0;
+      // A speculative MIR diagnostic belongs only to this lowering. Keep
+      // diagnostics from the primary semantic check, including late demands.
+      std::vector<Diagnostic> primaryDiagnostics;
+      if (canConfirm)
+        primaryDiagnostics = result.diagnostics;
+      verifyLowering(entryPath, result, hir, semantic.model());
+      applyAuditPolicy();
+      if (canConfirm &&
+          result.needsLibraryBodyConfirmation(hir.omittedInstanceBodies) &&
+          !(options.cancellation &&
+            options.cancellation->load(std::memory_order_relaxed))) {
+        result.confirmedWithLibraryBodies = true;
+        includeLibraryBodies = true;
+        result.diagnostics = std::move(primaryDiagnostics);
+        result.semanticValid = true;
+        result.mirBorrowRejected = false;
+        result.hirValid = result.failureMetadataValid = result.mirValid = false;
+        result.mir = {};
+        result.failureMetadata = {};
+        result.hir = {};
+        hir = {};
+        continue;
       }
-      return HirLowerer(options.target, scope)
-          .lower(result.program, semantic.model(), semantic);
-    }();
-    if (options.workMetrics != nullptr) {
-      // Late demand runs inside HIR discovery but is semantic work.
-      const std::size_t lateDemand =
-          options.workMetrics->semanticLateDemandMicroseconds - lateDemandStart;
-      const auto elapsed = static_cast<std::size_t>(
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              std::chrono::steady_clock::now() - hirStart)
-              .count());
-      options.workMetrics->semanticMicroseconds += lateDemand;
-      options.workMetrics->hirMicroseconds +=
-          elapsed > lateDemand ? elapsed - lateDemand : 0;
-      options.workMetrics->hirFunctionInstances =
-          hir.program.functionInstances().size();
-      options.workMetrics->hirOmittedInstanceBodies = hir.omittedInstanceBodies;
-    }
-    // Late demand may report diagnostics in the bodies it analysed.
-    const auto &semanticErrors = semantic.errors();
-    for (std::size_t index = semanticDiagnosticCount;
-         index < semanticErrors.size(); ++index)
-      result.diagnostics.push_back(semanticErrors[index]);
-    if (errorLimitReached(hir.diagnostics, options.limits.errorLimit) ||
-        errorLimitReached(result.diagnostics, options.limits.errorLimit)) {
-      append(result.diagnostics, hir.diagnostics);
-      applyErrorLimit(result.diagnostics, options.limits.errorLimit);
-      result.semanticValid = false;
+      result.semantics = semantic.takeModel();
+      if (options.retainBodyQueryContext) {
+        semantic.detachBodyQueryContext();
+        result.bodyQueryContext = std::move(semanticOwner);
+      }
       return result;
     }
-    if (semantic.lateDemandFailed()) {
-      for (const FunctionDecl *body : semantic.lateDemandedBodies())
-        hir.requiredSemanticBodies.push_back(body);
-    }
-    // The net again: concrete discovery can leave a need that late demand
-    // could not meet.
-    if (trustedBodies == TrustedBodyAnalysis::Reachable)
-      for (const FunctionDecl *body : semantic.unmetBodyDemands())
-        hir.requiredSemanticBodies.push_back(body);
-    if (hir.requiredSemanticBodies.empty()) {
-      // Final HIR: only now may its instance analyses serve later snapshots.
-      semantic.publishInstanceAnalyses();
-      break;
-    }
-    // Bound repeated registration/instantiation work. Complete checking is a
-    // conservative fallback, not permission to emit an unchecked body.
-    if (trustedBodies == TrustedBodyAnalysis::Complete)
-      break; // An unexpected missing fact remains an ordinary invalid-HIR
-             // error.
+    // Re-enter the existing bounded demand loop if lowering discovered a
+    // primary body it could not check with this semantic environment.
     const std::size_t previousCount = requiredBodies.size();
     requiredBodies.insert(hir.requiredSemanticBodies.begin(),
                           hir.requiredSemanticBodies.end());
@@ -1822,13 +1871,92 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     // Destroy partial instance models before replacing their base snapshot.
     hir = {};
   }
-  SemanticVisitor &semantic = *semanticOwner;
+}
+
+HirLoweringResult Frontend::lowerHir(const FrontendResult &result,
+                                     SemanticVisitor &semantic,
+                                     bool includeLibraryBodies) const {
+  if (options.workMetrics != nullptr)
+    ++options.workMetrics->hirPasses;
+  const auto hirStart = std::chrono::steady_clock::now();
+  const std::size_t lateDemandStart =
+      options.workMetrics == nullptr
+          ? 0
+          : options.workMetrics->semanticLateDemandMicroseconds;
+  auto hir = [&] {
+    const PhaseTimeScope timeScope("gti-hir-lowering");
+    const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
+    HirLoweringScope scope{
+        .errorLimit = options.limits.errorLimit == 0
+                          ? 0
+                          : options.limits.errorLimit -
+                                errorDiagnosticCount(result.diagnostics),
+        .reachablePrefix = options.lowerReachableOnly};
+    if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
+      std::vector<std::pair<std::size_t, std::size_t>> complete;
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
+        if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
+            unit.declarationCount != 0) {
+          complete.emplace_back(unit.declarationStart, unit.declarationCount);
+        }
+      }
+      // Every application body must reach the MIR borrow checker. When
+      // library declarations are lowered completely too, the application
+      // units are lowered first so the check need not see the rest.
+      if (options.lowerLibraryReachableOnly)
+        scope.completeDeclarations = std::move(complete);
+      else
+        scope.borrowCheckedDeclarations = std::move(complete);
+    }
+    if (options.lowerEntryUnitOnly) {
+      if (const SourceUnit *entry =
+              result.sourceGraph.findUnit(result.sourceGraph.entryUnit())) {
+        scope.entryDeclarations = {entry->declarationStart,
+                                   entry->declarationCount};
+      }
+    }
+    for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+      if (result.sourceGraph.isCompilerTrusted(unit.id))
+        scope.trustedSources.push_back(unit.path.string());
+    // MIR lowers an omitted instance as a signature-only declaration, so
+    // omission applies to analysis through HIR and through MIR alike; see
+    // FrontendOptions::lowerLibraryOnlyInstanceBodies.
+    if (!includeLibraryBodies) {
+      scope.omitLibraryOnlyBodies = true;
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+        if (result.sourceGraph.isCompilerTrusted(unit.id))
+          scope.trustedUnits.push_back(unit.id);
+    }
+    return HirLowerer(options.target, scope)
+        .lower(result.program, semantic.model(), semantic);
+  }();
+  if (options.workMetrics != nullptr) {
+    // Late demand runs inside HIR discovery but is semantic work.
+    const std::size_t lateDemand =
+        options.workMetrics->semanticLateDemandMicroseconds - lateDemandStart;
+    const auto elapsed = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - hirStart)
+            .count());
+    options.workMetrics->semanticMicroseconds += lateDemand;
+    options.workMetrics->hirMicroseconds +=
+        elapsed > lateDemand ? elapsed - lateDemand : 0;
+    options.workMetrics->hirFunctionInstances =
+        hir.program.functionInstances().size();
+    options.workMetrics->hirOmittedInstanceBodies = hir.omittedInstanceBodies;
+  }
+  return hir;
+}
+
+void Frontend::verifyLowering(const std::filesystem::path &entryPath,
+                              FrontendResult &result, HirLoweringResult &hir,
+                              const SemanticModel &model) const {
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
   if (applyErrorLimit(result.diagnostics, options.limits.errorLimit)) {
     result.semanticValid = false;
-    return result;
+    return;
   }
   // Concrete instance discovery can demand semantic analysis while lowering
   // HIR. Its source errors are still semantic failures, not valid semantics
@@ -1845,8 +1973,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
     std::string message =
         "Internal compiler error: failed to construct valid HIR.";
-    const auto verification =
-        verifyHirProgramPlans(semantic.model(), result.hir);
+    const auto verification = verifyHirProgramPlans(model, result.hir);
     constexpr std::size_t maximumReportedDetails = 5;
     for (std::size_t index = 0;
          index < verification.errors.size() && index < maximumReportedDetails;
@@ -1859,21 +1986,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                    0, 0, 1},
         std::move(message)));
   }
-  // HIR instance reanalysis is the last reader of the semantic visitor;
-  // move the model into the result instead of deep-copying it.
-  result.semantics = semantic.takeModel();
-  if (options.retainBodyQueryContext) {
-    semantic.detachBodyQueryContext();
-    result.bodyQueryContext = std::move(semanticOwner);
-  }
   // A program the parser recovered (analyzeRecoveredProgram) stops here.
   // Semantics stays quiet about recovered nodes to avoid cascades, so their
   // bodies can be incomplete; MIR checks only programs that parsed, and the
   // parse error is the program's diagnostic.
   if (!result.syntaxValid || !result.semanticValid || !result.hirValid ||
       options.stopAfter == FrontendPhase::Hir) {
-    applyAuditPolicy();
-    return result;
+    return;
   }
   // A superseded editor snapshot stops before MIR instead of lowering bodies
   // whose diagnostics would be discarded. HIR's completed instance analyses
@@ -1881,7 +2000,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (options.cancellation != nullptr &&
       options.cancellation->load(std::memory_order_relaxed)) {
     result.cancelled = true;
-    return result;
+    return;
   }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
@@ -1950,8 +2069,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           if (!check.internal)
             result.semanticValid = false;
           result.mirValid = false;
-          applyAuditPolicy();
-          return result;
+          return;
         }
       }
     }
@@ -1981,14 +2099,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
                    0, 0, 1},
         std::move(message)));
-    applyAuditPolicy();
-    return result;
+    return;
   }
 
+  mir_detail::VerificationSession verification(
+      options.mirVerificationCache.get(), options.workMetrics);
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
   ProgressScope mirProgress(options.progress, ProgressPhase::MirLowering);
   MirLoweringResult mir =
-      MirLowerer().lower(result.hir, result.failureMetadata);
+      MirLowerer(verification.enabled() ? &verification : nullptr)
+          .lower(result.hir, result.failureMetadata);
   mirProgress.finish();
   if (rawAudit && !rawAudited)
     for (Diagnostic &diagnostic :
@@ -2002,8 +2122,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     for (Diagnostic &diagnostic : mir.diagnostics)
       result.diagnostics.push_back(std::move(diagnostic));
     result.mirValid = false;
-    applyAuditPolicy();
-    return result;
+    return;
   }
   if (!result.mirValid) {
     // MIR is the single authority for body-local borrow validity: its borrow
@@ -2016,8 +2135,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (Diagnostic &diagnostic : check.diagnostics)
         result.diagnostics.push_back(std::move(diagnostic));
       result.semanticValid = false;
-      applyAuditPolicy();
-      return result;
+      return;
     }
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
@@ -2079,8 +2197,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     diagnostic.related = std::move(related);
     result.diagnostics.push_back(std::move(diagnostic));
   }
-  applyAuditPolicy();
-  return result;
 }
 
 void Frontend::appendParserDiagnostics(
@@ -2159,11 +2275,92 @@ const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
   }
   return nullptr;
 }
+
+// Only the edited declaration has current statement locations. Check its
+// concrete call closure, then publish solely diagnostics owned by this body.
+// The background pass owns callers, program storage and cross-body findings.
+std::optional<std::vector<Diagnostic>>
+verifyEditedBody(const SemanticModel &model, SemanticInstanceProvider &provider,
+                 FunctionId root, const BlockStmt &body,
+                 const SourceGraph &graph, const SourceManager &sources,
+                 const std::filesystem::path &entry,
+                 const std::atomic<bool> *cancel) {
+  const auto cancelled = [&] {
+    return cancel && cancel->load(std::memory_order_relaxed);
+  };
+  if (cancelled())
+    return std::nullopt;
+  auto hir = HirLowerer(model.analysisSeal().target)
+                 .lowerEditedFunction(model, provider, root, body);
+  if (!hir.valid() || !hir.diagnostics.empty() || cancelled())
+    return std::nullopt;
+  auto metadata =
+      FailureMetadataBuilder().build(graph, sources, hir.program, entry);
+  if (!metadata.valid() || cancelled())
+    return std::nullopt;
+  auto mir = MirLowerer().lower(hir.program, metadata.metadata);
+  if (!mir.diagnostics.empty() || cancelled())
+    return std::nullopt;
+  if (mir.valid())
+    return std::vector<Diagnostic>{};
+  if (mir.errors.empty())
+    return std::nullopt;
+  for (const auto &error : mir.errors) {
+    const auto *instance = hir.program.findFunctionInstance(error.body.owner);
+    if (error.body.kind != MirBodyKind::Function || !instance ||
+        instance->declaration != root)
+      return std::nullopt;
+  }
+  auto checked = mirBorrowDiagnostics(mir, mir.program, hir.program);
+  if (checked.internal || checked.diagnostics.empty())
+    return std::nullopt;
+  const auto &span = *body.extent();
+  const auto local = [&](const SourceSpan &site) {
+    return site.source == span.source && site.start >= span.start &&
+           site.end <= span.end;
+  };
+  for (const auto &diagnostic : checked.diagnostics) {
+    if (!local(diagnostic.primary) || !diagnostic.fixes.empty())
+      return std::nullopt;
+    for (const auto &related : diagnostic.related)
+      if (!local(related.span))
+        return std::nullopt;
+  }
+  return checked.diagnostics;
+}
 } // namespace
+
+bool EditorBodyDiagnostics::matchesSource(std::string_view source) const {
+  const auto *unit =
+      baseline->sourceGraph.findUnit(baseline->sourceGraph.entryUnit());
+  const auto *text =
+      unit ? baseline->sources.find(unit->path.string()) : nullptr;
+  return text && *text == source;
+}
 
 std::optional<std::vector<Diagnostic>>
 EditorBodyDiagnostics::check(const std::string &source,
-                             const std::atomic<bool> *cancel) const {
+                             const std::atomic<bool> *cancel,
+                             bool *borrowProof) const {
+  return checkEdit(source, cancel, std::nullopt, borrowProof);
+}
+
+bool EditorBodyDiagnostics::reproducesRecovery(
+    const std::string &source, const std::vector<Diagnostic> &observed,
+    const std::atomic<bool> *cancel) const {
+  if (!std::ranges::any_of(observed, [](const Diagnostic &d) {
+        return d.phase == DiagnosticPhase::Parsing;
+      }))
+    return false;
+  const auto replay = checkEdit(source, cancel, observed.size() + 1);
+  return replay && *replay == observed;
+}
+
+std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
+    const std::string &source, const std::atomic<bool> *cancel,
+    std::optional<std::size_t> recoveryLimit, bool *borrowProof) const {
+  if (borrowProof)
+    *borrowProof = false;
   const std::lock_guard lock(queryMutex);
   if (cancel && cancel->load(std::memory_order_relaxed))
     return std::nullopt;
@@ -2205,25 +2402,46 @@ EditorBodyDiagnostics::check(const std::string &source,
   for (const auto &token : scanned) {
     if (token.position < span.start || token.position >= bodyEnd)
       continue;
-    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO)
+    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO ||
+        token.kind == TokenKind::EMBED_BYTES)
       return std::nullopt;
     tokens.push_back(token);
   }
   tokens.push_back(scanned.back());
   Parser parser(std::move(tokens), source);
-  parser.setErrorLimit(1);
+  parser.setErrorLimit(recoveryLimit.value_or(1));
   auto changed = parser.parseFunctionBody();
-  if (!changed || parser.hadError() || !parser.lifetimeNames().empty() ||
+  if (!changed || (parser.hadError() && !recoveryLimit) ||
+      !parser.lifetimeNames().empty() ||
       changed->extent()->start != span.start ||
       changed->extent()->end != bodyEnd)
     return std::nullopt;
 
   auto sources = baseline->sources;
   sources.set(path, source);
-  return context->diagnoseEditedBody({baseline->program, baseline->semantics,
-                                      baseline->sourceGraph, sources, *prior,
-                                      *changed},
-                                     cancel);
+  EditedFunctionBody input{baseline->program,
+                           baseline->semantics,
+                           baseline->sourceGraph,
+                           sources,
+                           *prior,
+                           *changed,
+                           {}};
+  if (borrowProof && !parser.hadError()) {
+    input.verify =
+        [&](const SemanticModel &model, SemanticInstanceProvider &provider,
+            FunctionId root) -> std::optional<std::vector<Diagnostic>> {
+      auto result = verifyEditedBody(model, provider, root, *changed,
+                                     input.graph, sources, unit->path, cancel);
+      *borrowProof = result.has_value();
+      return result;
+    };
+  }
+  auto answer = context->diagnoseEditedBody(input, cancel);
+  if (!answer || !parser.hadError())
+    return answer;
+  answer->insert(answer->begin(), parser.errors().begin(),
+                 parser.errors().end());
+  return answer;
 }
 
 } // namespace lang

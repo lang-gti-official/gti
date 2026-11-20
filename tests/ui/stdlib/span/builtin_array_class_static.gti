@@ -1,0 +1,19 @@
+// Class-static constexpr arrays back returned static spans during constant evaluation.
+import std.span;
+
+struct Storage {
+  static constexpr uint8_t payload[3] = {7, 0, 11};
+  static int runtime_only = 23;
+
+  static constexpr std::span<uint8_t, static> bytes() {
+    return Storage::payload.as_span();
+  }
+};
+
+constexpr bool check() {
+  auto view = Storage::bytes();
+  return view.size() == 3 && view[2] == 11;
+}
+
+static_assert(check());
+int main() { return 0; }

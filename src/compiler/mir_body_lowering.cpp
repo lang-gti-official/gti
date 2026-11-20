@@ -5,8 +5,10 @@
 #include "gti/support.h"
 #include "mir_carrier_flow.h"
 #include "mir_loan_liveness.h"
+#include "mir_lowering_rounds.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
+#include "mir_verification_session.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -240,11 +242,12 @@ public:
   // Cleared only to lower a program in which every normal exit destroys its
   // own live owners.
   bool shareExitCleanupEnabled = true;
+  mir_detail::VerificationSession *verificationSession = nullptr;
 
   MirBodyLowerer(
       const HirProgram &program, const FailureMetadata &failureMetadata,
       const HirBody &source, MirBodyKind kind, SemanticType returnType,
-      const MirDefinedFailureEffects &definedFailureEffects,
+      const mir_detail::BodyFailureInputs &definedFailureEffects,
       bool implicitZeroReturn = false,
       const HirFunctionInstance *function = nullptr,
       const HirConstructorInstance *constructor = nullptr,
@@ -1867,11 +1870,10 @@ private:
       FailurePropagationKind propagation, CallDispatch dispatch,
       const std::optional<HirFunctionInstanceId> &target) const {
     if (propagation != FailurePropagationKind::DirectCall ||
-        dispatch != CallDispatch::Static || !target || *target == 0 ||
-        *target > definedFailureEffects.functions.size()) {
+        dispatch != CallDispatch::Static || !target)
       return propagation;
-    }
-    return definedFailureEffects.functions[*target - 1]
+    return definedFailureEffects.mayRaise(mir_detail::FailureTarget::Function,
+                                          *target)
                ? FailurePropagationKind::DirectCall
                : FailurePropagationKind::None;
   }
@@ -1879,11 +1881,10 @@ private:
   [[nodiscard]] FailurePropagationKind normalizedConstructorPropagation(
       FailurePropagationKind propagation,
       const std::optional<HirConstructorInstanceId> &target) const {
-    if (propagation != FailurePropagationKind::Constructor || !target ||
-        *target == 0 || *target > definedFailureEffects.constructors.size()) {
+    if (propagation != FailurePropagationKind::Constructor || !target)
       return propagation;
-    }
-    return definedFailureEffects.constructors[*target - 1]
+    return definedFailureEffects.mayRaise(
+               mir_detail::FailureTarget::Constructor, *target)
                ? FailurePropagationKind::Constructor
                : FailurePropagationKind::None;
   }
@@ -1897,9 +1898,8 @@ private:
     }
     bool mayRaise = mirDropHasPolymorphicCleanup(drop->dropType);
     for (const auto target : mirDropDestructorTargets(drop->dropType)) {
-      mayRaise = mayRaise || target == 0 ||
-                 target > definedFailureEffects.destructors.size() ||
-                 definedFailureEffects.destructors[target - 1];
+      mayRaise = mayRaise || definedFailureEffects.mayRaise(
+                                 mir_detail::FailureTarget::Destructor, target);
     }
     return mayRaise;
   }
@@ -3322,8 +3322,7 @@ private:
     FailurePropagationKind propagation = FailurePropagationKind::None;
     // Routes an Invoke and a secondary record for its destructor.
     bool fallible = false;
-    // False for a drop proved to retire a moved-from shell: the proof walks
-    // back to the drop's producer, which a shared copy cannot repeat.
+    // False when verification needs this step on its own producer's edge.
     bool contextFree = true;
   };
 
@@ -3629,9 +3628,10 @@ private:
     // read. The rebuild and whole-program verification check every body.
     if (!retainingProgram && !retainingAnalysis)
       return;
-    verification = retainingAnalysis
-                       ? verifyMirBody(output, 0, *retainingAnalysis)
-                       : verifyMirBody(output, 0, retainingProgram);
+    verification =
+        retainingAnalysis
+            ? verifyMirBody(output, 0, *retainingAnalysis, verificationSession)
+            : verifyMirBody(output, 0, verificationSession, retainingProgram);
     valid = verification.valid() && valid;
   }
 
@@ -3886,6 +3886,13 @@ private:
             {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
         failureEndedLoans.push_back(*loan);
       }
+    }
+    // The failure successor must end the call's temporary input loans here,
+    // after any provisional result loan. Only the remaining cleanup may join
+    // a shared continuation.
+    if (auto *plan = planningCleanup(); plan && !temporaryInputLoans.empty()) {
+      for (auto &step : plan->steps)
+        step.contextFree = false;
     }
     // A fresh constructor argument has already transferred its owning slot to
     // the callee before this Invoke. On failure the callee has drained that
@@ -5294,12 +5301,26 @@ private:
                     found != bindingLoans.end())
                   through = output.findLoan(found->second.exact());
             }
+        // A constructor or call that stores the whole reference a call
+        // returned borrows through that exact live result. The unpacked
+        // address still comes from the operand, while its retained owners
+        // and permissions come from the accessor loan.
+        const bool exactCallResult = [&] {
+          if (!input || input->info.category != ValueCategory::Place ||
+              !through || through->kind != MirLoanKind::CallResult ||
+              !mapping.sourceFields.empty())
+            return false;
+          const auto *place = output.findPlace(placeForValue(*argument));
+          return place && place->root == MirPlaceRootKind::Loan &&
+                 place->loan == through->id && place->projections.empty();
+        }();
         if (input != nullptr && input->info.category == ValueCategory::Place &&
             through != nullptr &&
             (through->referenceSelection ||
              (through->designatedFields.empty() &&
               through->conditions.empty() &&
-              (referenceBinding || through->kind == MirLoanKind::Local ||
+              (referenceBinding || exactCallResult ||
+               through->kind == MirLoanKind::Local ||
                through->kind == MirLoanKind::Parameter)))) {
           sources.push_back({.source = through->source,
                              .parent = through->id,
@@ -7013,6 +7034,52 @@ private:
          .programConstantSubstitution = true,
          .info = materializedInfo});
     emittedValues.insert(value.id);
+    if (value.info.traits.containsBorrowedState) {
+      const auto storage = constantAddressDependencies(*value.constant);
+      if (!storage.empty()) {
+        const auto supplier =
+            globalStoragePlace({.root = storage.front()}, source.placeDomain);
+        if (supplier)
+          bindStaticConstantLoan(value, supplier);
+      }
+    }
+  }
+
+  void bindStaticConstantLoan(const HirValue &value, MirPlaceId place) {
+    const auto type = output.findPlace(place)->type;
+    const auto loan =
+        createLoan(MirLoanKind::Stored, place, AccessMode::ReadOnly, value.id);
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Borrow,
+         .hirValue = value.id,
+         .operands = {{.kind = MirOperandKind::BorrowRead,
+                       .place = place,
+                       .type = type}},
+         .loan = loan,
+         .info = {.type = type,
+                  .category = ValueCategory::Place,
+                  .access = AccessMode::ReadOnly,
+                  .traits = output.findPlace(place)->traits}});
+    valueLoans.insert_or_assign(value.id, loan);
+    scopes.back().loans.push_back(loan);
+  }
+
+  void borrowStaticConstantCarrier(const HirValue &value, MirPlaceId place) {
+    if (!value.info.traits.containsBorrowedState ||
+        value.info.access != AccessMode::ReadOnly || loanForValue(value.id))
+      return;
+    const auto *root = output.findPlace(place);
+    if (!root || root->root != MirPlaceRootKind::Symbol || root->capture ||
+        !root->projections.empty())
+      return;
+    const auto *step =
+        program.programInitializationPlan().findStepForSymbol(root->symbol);
+    if (!step || step->role != ProgramInitializationStepRole::DataOnly ||
+        !value.constant || constantAddressDependencies(*value.constant).empty())
+      return;
+    // The checked datum holds only immutable static addresses. Its storage
+    // supplies a static authority when a use copies the carrier by value.
+    bindStaticConstantLoan(value, place);
   }
 
   [[nodiscard]] MirOperand valueOperand(HirValueId id) {
@@ -7136,6 +7203,7 @@ private:
         return valueOperand(id);
       }
       const MirPlaceId place = placeForValue(id);
+      borrowStaticConstantCarrier(*value, place);
       (void)appendInstruction({.kind = MirInstructionKind::Load,
                                .hirValue = value->id,
                                .result = resultFor(*value),
@@ -12211,9 +12279,8 @@ private:
                 FailurePropagationKind::Destructor;
           for (const auto target :
                mirDropDestructorTargets(*call.elementCleanup)) {
-            if (target == 0 ||
-                target > definedFailureEffects.destructors.size() ||
-                definedFailureEffects.destructors[target - 1]) {
+            if (definedFailureEffects.mayRaise(
+                    mir_detail::FailureTarget::Destructor, target)) {
               call.definedFailure.propagation =
                   FailurePropagationKind::Destructor;
               break;
@@ -14687,6 +14754,21 @@ private:
     BindingLoanSet contents;
     for (const auto id : loansForValue(sourceValue).groups) {
       const auto *loan = output.findLoan(id);
+      // A reference returned through a stored owner is a view of that
+      // owner's storage. Copying a borrowed payload through the view keeps
+      // that physical borrow; only a direct owning lookup can detach it
+      // from the container and keep the contents' own dependencies alone.
+      if (loan && loan->kind == MirLoanKind::CallResult) {
+        const auto *producer = findValue(loan->producedBy);
+        if (producer && producer->info.traits.containsBorrowedState &&
+            producer->borrowOrigin == BorrowOriginKind::Receiver &&
+            producer->borrowFields.size() == 1 &&
+            producer->borrowFields.front().resultFields.empty() &&
+            !producer->borrowFields.front().sourceFields.empty()) {
+          contents.groups.insert(id);
+          continue;
+        }
+      }
       // Copying a checked referent copies its contents, not its address. The
       // read still uses the physical loan, while the destination retains the
       // independently verified external group. Stored values already name
@@ -15140,9 +15222,8 @@ private:
             prepare.definedFailure.propagation =
                 FailurePropagationKind::Destructor;
           for (const auto target : mirDropDestructorTargets(*cleanup)) {
-            if (target == 0 ||
-                target > definedFailureEffects.destructors.size() ||
-                definedFailureEffects.destructors[target - 1]) {
+            if (definedFailureEffects.mayRaise(
+                    mir_detail::FailureTarget::Destructor, target)) {
               prepare.definedFailure.propagation =
                   FailurePropagationKind::Destructor;
               break;
@@ -21232,7 +21313,7 @@ private:
   // The reference or borrowed-carrier binding each initializer value
   // initializes.
   std::unordered_map<HirValueId, HirBindingId> initializedBindings;
-  const MirDefinedFailureEffects &definedFailureEffects;
+  const mir_detail::BodyFailureInputs &definedFailureEffects;
   bool implicitZeroReturn = false;
   const HirFunctionInstance *function = nullptr;
   const HirConstructorInstance *constructor = nullptr;
@@ -21338,8 +21419,9 @@ private:
 thread_local bool MirLowerer::shareFailureCleanup_ = true;
 
 MirBody MirLowerer::lowerBody(
-    const HirProgram &program, const FailureMetadata &failureMetadata,
-    const HirBody &body, MirBodyKind kind, SemanticType returnType,
+    mir_detail::LoweringRounds *rounds, const HirProgram &program,
+    const FailureMetadata &failureMetadata, const HirBody &body,
+    MirBodyKind kind, SemanticType returnType,
     const std::vector<HirValueId> &prologueValues,
     const MirDefinedFailureEffects &definedFailureEffects,
     const MirProgram *retainingProgram, MirCarrierAnalysis *retainingAnalysis,
@@ -21351,10 +21433,23 @@ MirBody MirLowerer::lowerBody(
     const HirProgramInitializationPlan *programInitialization,
     MirProgramInitializationPlan *loweredProgramInitialization,
     bool compilerTrusted, const MirClassInstance *constructorOwner,
-    const HirDestructorInstance *destructor) {
+    const HirDestructorInstance *destructor) const {
+  // The module also writes the program initialization plan; always rebuild it.
+  std::vector<mir_detail::FailureInput> *inputs = nullptr;
+  if (rounds && !loweredProgramInitialization && kind != MirBodyKind::Module) {
+    if (auto *previous =
+            rounds->reusable({kind, owner}, definedFailureEffects)) {
+      verification->recordRoundBody(true);
+      return std::move(*previous);
+    }
+    verification->recordRoundBody(false);
+    inputs = &rounds->dependencies[{kind, owner}];
+    inputs->clear();
+  }
+  mir_detail::BodyFailureInputs effectInputs(definedFailureEffects, inputs);
   const auto lowerWith = [&](bool shareExitCleanup) {
     auto lowerer = std::make_unique<MirBodyLowerer>(
-        program, failureMetadata, body, kind, returnType, definedFailureEffects,
+        program, failureMetadata, body, kind, returnType, effectInputs,
         implicitZeroReturn, function, constructor, lambda,
         programInitialization, loweredProgramInitialization, constructorOwner,
         destructor);
@@ -21362,6 +21457,7 @@ MirBody MirLowerer::lowerBody(
     lowerer->retainingProgram = retainingProgram;
     lowerer->retainingAnalysis = retainingAnalysis;
     lowerer->shareExitCleanupEnabled = shareExitCleanup;
+    lowerer->verificationSession = verification;
     // Loan liveness is a MIR analysis: lower once without deciding loan
     // ends, derive them from that pass's loans and CFG uses, then lower with
     // those ends materialized as EndBorrow.
@@ -21370,14 +21466,15 @@ MirBody MirLowerer::lowerBody(
       (void)lowerer->lower(prologueValues, initializers);
       std::optional<MirDerivedLoanEnds> ends = std::move(lowerer->mirEnds);
       lowerer = std::make_unique<MirBodyLowerer>(
-          program, failureMetadata, body, kind, returnType,
-          definedFailureEffects, implicitZeroReturn, function, constructor,
-          lambda, programInitialization, loweredProgramInitialization,
-          constructorOwner, destructor);
+          program, failureMetadata, body, kind, returnType, effectInputs,
+          implicitZeroReturn, function, constructor, lambda,
+          programInitialization, loweredProgramInitialization, constructorOwner,
+          destructor);
       lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
       lowerer->retainingProgram = retainingProgram;
       lowerer->retainingAnalysis = retainingAnalysis;
       lowerer->shareExitCleanupEnabled = shareExitCleanup;
+      lowerer->verificationSession = verification;
       if (ends)
         lowerer->applyLoanEnds(std::move(*ends));
     }

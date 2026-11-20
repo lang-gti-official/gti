@@ -1,0 +1,10 @@
+// A static lifetime does not make a runtime array readable during constant evaluation.
+import std.span;
+
+uint8_t payload[2] = {7, 11};
+constexpr bool read() {
+  auto view = payload.as_span();  //~ ERROR GTI-S2057
+  return view[1] == 11;
+}
+static_assert(read());
+int main() { return 0; }

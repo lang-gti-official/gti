@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "consumer"
+version = "1.0.0"
+[dependencies]
+util = { path = "../dependency" }
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

@@ -1582,7 +1582,8 @@ struct RawReferenceAssertionInfo {
 // transported like a by-value argument; `test`, `output` and `residual` are
 // ordinary calls of the selected conformance block's has_value, take_value
 // and take_residual functions. The residual initializes the enclosing
-// callable's return type through `returnConstruction`, or is that type itself.
+// callable's return type through `returnConstruction` or `returnConversion`,
+// or is that type itself.
 struct ResolvedTryablePropagationInfo {
   SemanticType operandType = SemanticType::Unknown;
   SemanticType resultType = SemanticType::Unknown;
@@ -1595,6 +1596,7 @@ struct ResolvedTryablePropagationInfo {
   ResolvedCallInfo output;
   ResolvedCallInfo residual;
   std::optional<ResolvedConstructionInfo> returnConstruction;
+  std::optional<ResolvedCallInfo> returnConversion;
 };
 
 // A concept with a body, as an associated type projection of it prints:
@@ -2659,6 +2661,9 @@ public:
   [[nodiscard]] const BindingInfo *
   findBinding(const VariableDecl &declaration) const;
 
+  [[nodiscard]] std::optional<ProgramInitializationStep>
+  findConstantProgramStorage(SymbolId symbol) const;
+
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const;
 
@@ -2736,6 +2741,15 @@ public:
   findFunction(const FunctionDecl &declaration) const;
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const;
+  // Declaration records owned by this analysis layer. Inherited preamble
+  // records belong to other source files and require no traversal here.
+  struct RegisteredSignatures {
+    std::vector<const FunctionInfo *> functions;
+    std::vector<const TypeAliasInfo *> aliases;
+    std::vector<const EnumTypeInfo *> enums;
+  };
+  [[nodiscard]] RegisteredSignatures
+  registeredSignatures(SourceUnitId unit) const;
 
   [[nodiscard]] std::vector<const FunctionInfo *> testFunctions() const {
     std::vector<const FunctionInfo *> result =
@@ -3079,6 +3093,7 @@ private:
                        const SemanticFullExpression &expression);
 
   void recordFullExpression(const Stmt &statement, const ExprPtr &root);
+  void recordFullExpression(const Stmt &statement, const Expr &root);
 
   void recordFullExpression(const ConstructorInitializer &initializer);
 

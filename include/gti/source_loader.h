@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -48,6 +49,11 @@ public:
        ConfigurationFlags configurationFlags = {},
        ConfigurationFlags declaredConfigurationFlags = {});
 
+  // A virtual import can materialize its text only when the graph reaches it.
+  void deferSource(std::string canonicalPath,
+                   std::function<std::string()> read) {
+    deferredSources.emplace(std::move(canonicalPath), std::move(read));
+  }
   void setErrorLimit(std::size_t limit) { errorLimit = limit; }
   [[nodiscard]] bool hadError() const;
 
@@ -105,6 +111,8 @@ private:
                                int braceDepth, int conditionalDepth,
                                bool reexport);
 
+  void loadEmbeddedFiles();
+
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000");
 
@@ -119,6 +127,7 @@ private:
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   std::vector<std::filesystem::path> standardLibraryRoots;
   std::shared_ptr<const SourceOwnerRegistry> sourceOwners;
+  std::unordered_map<std::string, std::function<std::string()>> deferredSources;
   bool entrySourceConsumed = false;
   std::optional<std::size_t> completionOffset;
   TargetInfo targetInfo = TargetInfo::host();

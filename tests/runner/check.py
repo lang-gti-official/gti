@@ -87,6 +87,11 @@ def admission_evidence_test(runner):
             result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
             expect(result.returncode == 0, "admission evidence capture succeeds",
                    result.stdout + result.stderr)
+            manifest = json.loads((output / "manifest.json").read_text())
+            for entry in manifest["cases"].values():
+                artifact = output / entry["directory"] / "module.o"
+                expect(artifact.is_file() and artifact.stat().st_size > 0,
+                       "admitted evidence contains native object bytes", str(artifact))
         examples = root / "examples"
         examples.mkdir()
         (examples / "unnumbered.gti").write_text("int main() { return 0; }\n")

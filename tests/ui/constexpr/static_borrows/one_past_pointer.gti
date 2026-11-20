@@ -1,0 +1,11 @@
+// A constexpr raw pointer can retain its one-past position and move back into the immutable array.
+//@ run-pass
+constexpr int data[3] = {2, 17, 6};
+constexpr const int* end = unsafe { &data[0] + 3 };
+
+constexpr int read_previous() {
+  unsafe { return *(end - 2); }
+}
+
+static_assert(read_previous() == 17);
+int main() { return read_previous() - 17; }

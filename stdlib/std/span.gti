@@ -16,38 +16,54 @@ public:
   }
 };
 
-class span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
-  std::detail::prefix_owner<T>& data;
+// Keep the source's checked dependency even when the view has no address.
+class span_owner<lifetime source> {
+  std::erased_object&<source> witness;
+
+public:
+  constexpr span_owner<Owner>(Owner&<source> owner)
+      : witness(std::erase_ref(owner)) {}
+
+  constexpr std::erased_object&<source> referent() { return this.witness; }
+};
+
+// Borrow-free arrays may have any owner. A range of borrowed elements is
+// constructed from a typed prefix owner, which supplies the stored loans.
+unsafe constexpr T&<source> borrow_span_element<T, lifetime source>(
+    const T* address, size_t position, std::erased_object&<source> owner) {
+  unsafe {
+    if constexpr (std::storage_element<T>) {
+      return std::assume_ref(address + position, owner);
+    } else {
+      return std::borrow_owned_at(address + position, owner);
+    }
+  }
+}
+
+class span_iterator<std::layout_queryable T, uint64_t Reverse, lifetime source> {
+  span_owner<source> owner;
+  const T* address = nullptr;
   mut size_t current_position;
   size_t first_position;
   size_t final_position;
 
 public:
-  constexpr span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
-      : data(source), current_position(position), first_position(position), final_position(end) {
-    if (position > end) { gti_internal::index_bounds_check(position, end); }
-    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
-  }
+  constexpr span_iterator(span_owner<source> owner, const T* address, size_t begin,
+                          size_t position, size_t end)
+      : owner(owner), address(address), current_position(position),
+        first_position(begin), final_position(end) {}
 
-  constexpr span_iterator(std::detail::prefix_owner<T>& source, size_t begin,
-                size_t position, size_t end)
-      : data(source), current_position(position), first_position(begin), final_position(end) {
-    if (begin > position) { gti_internal::index_bounds_check(begin, position); }
-    if (position > end) { gti_internal::index_bounds_check(position, end); }
-    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
-  }
-
-  constexpr T& operator*() {
+  constexpr T&<source> operator*() {
     mut size_t position = this.current_position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, this.first_position,
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return this.data.read_unchecked(position); }
+    unsafe { return detail::borrow_span_element(this.address, position, this.owner.referent()); }
   }
 
-  constexpr T& operator->() { return *this; }
+  constexpr T&<source> operator->() { return *this; }
 
   constexpr void operator++() mut {
     this.current_position = detail::checked_iterator_step<Reverse>(
@@ -69,7 +85,7 @@ public:
         this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
   }
 
-  constexpr T& operator[](ptrdiff_t offset) {
+  constexpr T&<source> operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -77,7 +93,7 @@ public:
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return this.data.read_unchecked(position); }
+    unsafe { return detail::borrow_span_element(this.address, position, this.owner.referent()); }
   }
 
   constexpr ptrdiff_t operator-(span_sentinel sentinel) {
@@ -106,6 +122,15 @@ public:
     return this.current_position == other.current_position;
   }
 };
+
+constexpr span_iterator<T, Reverse, source>
+make_prefix_span_iterator<std::layout_queryable T, uint64_t Reverse, lifetime source>(
+    prefix_owner<T>&<source> prefix, size_t begin, size_t position, size_t end) {
+  unsafe {
+    return span_iterator<T, Reverse, source>(span_owner<source>(prefix),
+                                            prefix.address(), begin, position, end);
+  }
+}
 
 class mutable_span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
@@ -207,7 +232,8 @@ public:
 
 /// A checked read-only view over one source-defined contiguous owner.
 export class span<std::layout_queryable T, lifetime source> {
-  std::detail::prefix_owner<T>&<source> data;
+  detail::span_owner<source> owner;
+  const T* address = nullptr;
   size_t first_position;
   size_t element_count;
 
@@ -222,18 +248,14 @@ export class span<std::layout_queryable T, lifetime source> {
   }
 
 public:
-  using const_iterator = detail::span_iterator<T>;
-  using const_reverse_iterator = detail::span_iterator<T, 1>;
+  using const_iterator = detail::span_iterator<T, 0, source>;
+  using const_reverse_iterator = detail::span_iterator<T, 1, source>;
   using sentinel = detail::span_sentinel;
 
-  // The source owner, not a raw address, retains the checked dependency.
-  // Public containers provide as_span() factories over this same contract.
-  constexpr span(std::detail::prefix_owner<T>&<source> source, size_t offset, size_t count)
-      : data(source), first_position(offset), element_count(count) {
-    if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
-    size_t remaining = source.length() - offset;
-    if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
-  }
+  // Trusted source factories and subviews supply a validated range within
+  // the borrow. Only the library can construct the opaque owner witness.
+  constexpr span(detail::span_owner<source> owner, const T* address, size_t offset, size_t count)
+      : owner(owner), address(address), first_position(offset), element_count(count) {}
 
   /// Returns the number of elements in this view.
   constexpr size_t size() {
@@ -245,11 +267,11 @@ public:
     return this.element_count == 0;
   }
 
-  constexpr T& front() {
+  constexpr T&<source> front() {
     return this.at(size_t(0));
   }
 
-  constexpr T& back() {
+  constexpr T&<source> back() {
     mut size_t index = size_t(0);
     if (this.element_count > 0) {
       index = this.element_count - 1;
@@ -257,64 +279,96 @@ public:
     return this.at(index);
   }
 
-  constexpr T& at(size_t index) {
+  constexpr T&<source> at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
 
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe constexpr T& get_unchecked(size_t index) {
+  unsafe constexpr T&<source> get_unchecked(size_t index) {
     unsafe {
-      return this.data.read_unchecked(
-          gti_internal::integer_wrapping_add(this.first_position, index));
+      size_t position = gti_internal::integer_wrapping_add(this.first_position, index);
+      return detail::borrow_span_element(this.address, position, this.owner.referent());
     }
   }
 
-  constexpr T& operator[](size_t index) {
+  constexpr T&<source> operator[](size_t index) {
     return this.at(index);
   }
 
   constexpr span<T, source> first(size_t count) {
     this.validate_subspan(size_t(0), count);
-    return span<T>(this.data, this.first_position, count);
+    return span<T, source>(this.owner, this.address, this.first_position, count);
   }
 
   constexpr span<T, source> last(size_t count) {
     this.validate_subspan(size_t(0), count);
-    return span<T>(this.data,
-                   this.first_position + (this.element_count - count), count);
+    return span<T, source>(this.owner, this.address,
+                          this.first_position + (this.element_count - count), count);
   }
 
   constexpr span<T, source> subspan(size_t offset, size_t count) {
     this.validate_subspan(offset, count);
-    return span<T>(this.data, this.first_position + offset, count);
+    return span<T, source>(this.owner, this.address, this.first_position + offset, count);
   }
 
-  constexpr detail::span_iterator<T> begin() {
-    return detail::span_iterator<T>(this.data, this.first_position,
-                                    this.first_position + this.element_count);
+  constexpr const_iterator begin() {
+    return const_iterator(this.owner, this.address, this.first_position,
+                          this.first_position, this.first_position + this.element_count);
   }
 
   constexpr detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }
 
-  constexpr detail::span_iterator<T> end_iterator() {
+  constexpr const_iterator end_iterator() {
     size_t end = this.first_position + this.element_count;
-    return detail::span_iterator<T>(this.data, this.first_position, end, end);
+    return const_iterator(this.owner, this.address, this.first_position, end, end);
   }
 
-  constexpr detail::span_iterator<T> cbegin() { return this.begin(); }
+  constexpr const_iterator cbegin() { return this.begin(); }
   constexpr detail::span_sentinel cend() { return this.end(); }
 
   constexpr const_reverse_iterator rbegin() {
     size_t end = this.first_position + this.element_count;
-    return const_reverse_iterator(this.data, this.first_position, end, end);
+    return const_reverse_iterator(this.owner, this.address, this.first_position, end, end);
   }
   constexpr detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
   constexpr const_reverse_iterator crbegin() { return this.rbegin(); }
   constexpr detail::span_sentinel crend() { return this.rend(); }
 };
+
+}
+
+export namespace gti_internal {
+// The caller supplies an initialized contiguous range covered by the owner
+// loan. A null address is valid for an empty range.
+constexpr std::span<T, source> make_span<std::storage_element T, Owner, lifetime source>(
+    Owner&<source> owner, const T* address, std::size_t offset, std::size_t count) {
+  return std::span<T, source>(std::detail::span_owner<source>(owner), address, offset, count);
+}
+
+// A borrowed element is read through its exact typed storage owner.
+constexpr std::span<T, source> make_prefix_span<std::layout_queryable T, lifetime source>(
+    std::detail::prefix_owner<T>&<source> owner, std::size_t offset, std::size_t count) {
+  unsafe {
+    return std::span<T, source>(std::detail::span_owner<source>(owner), owner.address(), offset, count);
+  }
+}
+
+/// Views the entire fixed array while retaining its read-only owner borrow.
+constexpr std::span<T, source> array_as_span<std::storage_element T, uint64_t N, lifetime source>(
+    T[N]&<source> values) {
+  if constexpr (N == 0) {
+    const T* address = nullptr;
+    unsafe { return make_span(values, address, std::size_t(0), std::size_t(0)); }
+  } else {
+    unsafe { return make_span(values, &values[0], std::size_t(0), std::size_t(N)); }
+  }
+}
+}
+
+namespace std {
 
 /// An exclusive, move-only view of initialized contiguous elements.
 /// Reborrowing a subspan suspends access through its parent until the child ends.
@@ -334,7 +388,7 @@ export class mutable_span<std::layout_queryable T> {
 
 public:
   using iterator = detail::mutable_span_iterator<T>;
-  using const_iterator = detail::span_iterator<T>;
+  using const_iterator = detail::span_iterator<T, 0>;
   using reverse_iterator = detail::mutable_span_iterator<T, 1>;
   using const_reverse_iterator = detail::span_iterator<T, 1>;
   using sentinel = detail::span_sentinel;
@@ -399,11 +453,14 @@ public:
     return mutable_span<T>(this.data, this.first_position + (this.element_count - count), count);
   }
   constexpr span<T> as_span() {
-    return span<T>(this.data, this.first_position, this.element_count);
+    unsafe {
+      return gti_internal::make_prefix_span(this.data,
+                                     this.first_position, this.element_count);
+    }
   }
-  constexpr detail::span_iterator<T> begin() {
-    return detail::span_iterator<T>(this.data, this.first_position,
-                                    this.first_position + this.element_count);
+  constexpr const_iterator begin() {
+    return detail::make_prefix_span_iterator<T, 0>(this.data, this.first_position,
+        this.first_position, this.first_position + this.element_count);
   }
   constexpr detail::mutable_span_iterator<T> begin_mut() mut {
     return detail::mutable_span_iterator<T>(this.data, this.first_position,
@@ -412,19 +469,19 @@ public:
   constexpr detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }
-  constexpr detail::span_iterator<T> end_iterator() {
+  constexpr const_iterator end_iterator() {
     size_t end = this.first_position + this.element_count;
-    return detail::span_iterator<T>(this.data, this.first_position, end, end);
+    return detail::make_prefix_span_iterator<T, 0>(this.data, this.first_position, end, end);
   }
   constexpr detail::mutable_span_iterator<T> end_mut() mut {
     size_t end = this.first_position + this.element_count;
     return detail::mutable_span_iterator<T>(this.data, this.first_position, end, end);
   }
-  constexpr detail::span_iterator<T> cbegin() { return this.begin(); }
+  constexpr const_iterator cbegin() { return this.begin(); }
   constexpr detail::span_sentinel cend() { return this.end(); }
   constexpr const_reverse_iterator rbegin() {
     size_t end = this.first_position + this.element_count;
-    return const_reverse_iterator(this.data, this.first_position, end, end);
+    return detail::make_prefix_span_iterator<T, 1>(this.data, this.first_position, end, end);
   }
   constexpr detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
   constexpr const_reverse_iterator crbegin() { return this.rbegin(); }

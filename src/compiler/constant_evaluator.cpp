@@ -8,6 +8,50 @@
 #include <variant>
 
 namespace lang {
+namespace {
+
+void appendAddressDependencies(const ConstantValue &value,
+                               std::vector<std::size_t> &dependencies) {
+  const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+  if (!aggregate || !aggregate->value)
+    return;
+  const auto &node = *aggregate->value;
+  if (node.staticAddress)
+    dependencies.push_back(node.staticAddress->symbol);
+  for (const auto &element : node.elements)
+    appendAddressDependencies(element, dependencies);
+  for (const auto &field : node.fields)
+    appendAddressDependencies(field.value, dependencies);
+}
+
+} // namespace
+
+bool isReadOnlyConstantAddressType(const SemanticType &type) {
+  return type.arguments.size() == 1 &&
+         ((type.kind == SemanticType::Reference &&
+           type.referenceAccess == AccessMode::ReadOnly) ||
+          (type.kind == SemanticType::RawPointer &&
+           type.pointerAccess == AccessMode::ReadOnly));
+}
+
+std::vector<std::size_t>
+constantAddressDependencies(const ConstantValue &value) {
+  std::vector<std::size_t> result;
+  appendAddressDependencies(value, result);
+  return result;
+}
+
+bool isStaticAddressConstant(const ConstantAggregate &value,
+                             const SemanticType &type) {
+  return value.kind == ConstantAggregateKind::StaticAddress &&
+         isReadOnlyConstantAddressType(type) && value.exactType &&
+         *value.exactType == type && value.staticAddress &&
+         value.staticAddress->symbol != 0 && value.identity == 0 &&
+         value.variant == 0 && value.elements.empty() && value.fields.empty() &&
+         !value.packedBytes &&
+         (!value.staticAddress->arrayOffset ||
+          type.kind == SemanticType::RawPointer);
+}
 
 ConstantEvaluation convertConstantToType(const ConstantValue &value,
                                          const SemanticType &target) {
@@ -22,6 +66,19 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
     if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
         *aggregate->value->exactType != target) {
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (aggregate->value->staticAddress ||
+        aggregate->value->kind == ConstantAggregateKind::StaticAddress) {
+      return isStaticAddressConstant(*aggregate->value, target)
+                 ? ConstantEvaluation{.value = value}
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::UnsupportedType};
+    }
+    if (aggregate->value->packedBytes) {
+      return aggregate->value->packedBytesMatch(target)
+                 ? ConstantEvaluation{.value = value}
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::UnsupportedType};
     }
     if (target.kind == SemanticType::Enum && target.enumId != 0 &&
         aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
@@ -68,7 +125,9 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
        std::holds_alternative<CharacterLiteral>(value)) ||
       (target == SemanticType::StringView &&
        std::holds_alternative<std::string>(value)) ||
-      (target == SemanticType::NullPtr &&
+      ((target == SemanticType::NullPtr ||
+        (target.kind == SemanticType::RawPointer &&
+         isReadOnlyConstantAddressType(target))) &&
        std::holds_alternative<NullConstant>(value))) {
     return {.value = value};
   }
@@ -104,6 +163,23 @@ ConstantEvaluation evaluateConstantTextIndex(const ConstantValue &text,
               static_cast<unsigned char>((*bytes)[*offset]))}};
 }
 
+ConstantValue ConstantAggregate::elementAt(std::size_t index) const {
+  if (!packedBytes)
+    return elements[index];
+  return makeConstantInteger(
+      {.magnitude = static_cast<unsigned char>((*packedBytes)[index])},
+      {.width = 8, .signedValue = false});
+}
+
+bool ConstantAggregate::packedBytesMatch(const SemanticType &type) const {
+  return packedBytes && kind == ConstantAggregateKind::Array && identity == 0 &&
+         variant == 0 && elements.empty() && fields.empty() &&
+         type.kind == SemanticType::Array && type.arrayLengthParameterId == 0 &&
+         type.arguments.size() == 1 &&
+         type.arguments.front() == SemanticType::UInt8 &&
+         type.arrayLength == packedBytes->size();
+}
+
 bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
   const bool sameType =
       left.exactType == right.exactType ||
@@ -111,7 +187,13 @@ bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
        *left.exactType == *right.exactType);
   return sameType && left.kind == right.kind &&
          left.identity == right.identity && left.elements == right.elements &&
-         left.fields == right.fields && left.variant == right.variant;
+         left.fields == right.fields && left.variant == right.variant &&
+         (left.staticAddress == right.staticAddress ||
+          (left.staticAddress && right.staticAddress &&
+           *left.staticAddress == *right.staticAddress)) &&
+         (left.packedBytes == right.packedBytes ||
+          (left.packedBytes && right.packedBytes &&
+           *left.packedBytes == *right.packedBytes));
 }
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,

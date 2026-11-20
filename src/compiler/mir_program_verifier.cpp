@@ -2289,8 +2289,19 @@ mirFieldTypeThroughBases(const MirProgram &program,
             functionTarget->returnBorrowFields.size() == 1 &&
             functionTarget->returnBorrowFields.front().origin ==
                 BorrowOriginKind::Receiver &&
-            functionTarget->returnBorrowFields.front().sourceFields.size() ==
-                1 &&
+            [&] {
+              if (ownerClass == nullptr)
+                return false;
+              const auto paths =
+                  findStoredCarrierReferences(program, ownerClass->type);
+              const auto &mapping = functionTarget->returnBorrowFields.front();
+              return std::any_of(paths.begin(), paths.end(),
+                                 [&](const MirStoredCarrierReference &path) {
+                                   return path.fields == mapping.sourceFields &&
+                                          path.conditions ==
+                                              mapping.sourceConditions;
+                                 });
+            }() &&
             functionTarget->returnBorrowFields.front().resultFields.empty() ==
                 (functionTarget->returnType.kind == SemanticType::Reference) &&
             functionTarget->returnBorrowFields.front()
@@ -2838,6 +2849,31 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
+[[nodiscard]] MirCarriedLoans
+liveSharedResultContents(const MirBody &body, MirInstructionId instruction,
+                         const MirCarrierFlow &flow) {
+  const auto contents = flow.resultSourceContents.find(instruction);
+  const auto expired = flow.unavailableResultSourceContents.find(instruction);
+  if (!flow.effectsComplete || contents == flow.resultSourceContents.end() ||
+      !contents->second ||
+      expired == flow.unavailableResultSourceContents.end() ||
+      !expired->second || !expired->second->empty())
+    return std::nullopt;
+  for (const auto id : *contents->second) {
+    const auto *held = body.findLoan(id);
+    if (!held || held->kind != MirLoanKind::Stored ||
+        held->access != AccessMode::ReadOnly || held->parent ||
+        held->storedDependency || held->lifecycleBound || held->escapes ||
+        !std::all_of(held->additionalDependencies.begin(),
+                     held->additionalDependencies.end(), [](const auto &part) {
+                       return !part.parent &&
+                              part.access == AccessMode::ReadOnly;
+                     }))
+      return std::nullopt;
+  }
+  return contents->second;
+}
+
 // Reconstruct the contents observed by an opaque owner-aware accessor at
 // this invocation, rather than unioning every historical carrier attachment.
 // The primitive contract proves the source relation; flow proves its contents.
@@ -2902,26 +2938,8 @@ ownedCallResultContents(const MirProgram &program, const MirBody &body,
                               callee->parameterBindings[call.borrowArgument]) &&
                mir_detail::ownedContentEntry(callee->body, entry, &program);
       });
-  const auto contents = flow.resultSourceContents.find(call.id);
-  const auto expired = flow.unavailableResultSourceContents.find(call.id);
-  if (!contract || contents == flow.resultSourceContents.end() ||
-      !contents->second ||
-      expired == flow.unavailableResultSourceContents.end() ||
-      !expired->second || !expired->second->empty())
-    return std::nullopt;
-  for (const auto id : *contents->second) {
-    const auto *held = body.findLoan(id);
-    if (!held || held->kind != MirLoanKind::Stored ||
-        held->access != AccessMode::ReadOnly || held->parent ||
-        held->storedDependency || held->lifecycleBound || held->escapes ||
-        !std::all_of(held->additionalDependencies.begin(),
-                     held->additionalDependencies.end(), [](const auto &part) {
-                       return !part.parent &&
-                              part.access == AccessMode::ReadOnly;
-                     }))
-      return std::nullopt;
-  }
-  return contents->second;
+  return contract ? liveSharedResultContents(body, call.id, flow)
+                  : std::nullopt;
 }
 
 [[nodiscard]] bool
@@ -3293,6 +3311,21 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     }
     if (loan != nullptr) {
       const auto *selected = source ? body.findPlace(*source) : nullptr;
+      // A formal's entry loan protects the whole referent, but a reference
+      // argument can select one of its owned fields. The field's exact
+      // address supplies the mapping, as it does for complete-set flow.
+      if (fields &&
+          (operand.kind == MirOperandKind::BorrowRead ||
+           operand.kind == MirOperandKind::BorrowWrite) &&
+          selected && selected->projections.size() > 1 &&
+          !selected->traits.containsBorrowedState &&
+          loan->additionalDependencies.empty() &&
+          mir_detail::referenceParameterContainsPlace(body, *loan,
+                                                      selected->id))
+        return {{.source = selected->id,
+                 .access = operand.kind == MirOperandKind::BorrowWrite
+                               ? AccessMode::Mutable
+                               : AccessMode::ReadOnly}};
       const bool rangeStorage =
           selected != nullptr && selected->root == MirPlaceRootKind::Binding &&
           selected->projections.empty() &&
@@ -5703,6 +5736,33 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               loan->storedDependency ==
                   (contents->size() == 1 ? contents->front() : MirLoanId{0}))
             return true;
+          // A class-region result can name the retained storage behind a
+          // stored receiver reference. Its selected source was verified
+          // above. Read that storage's live contents, not the receiver shell's
+          // loan. Multiple groups have no single storedDependency; each group
+          // must nevertheless be present and completely checked by carrier
+          // flow.
+          if (exactFieldSource && exactSource && source &&
+              source->root == MirPlaceRootKind::Binding &&
+              source->projections.empty() &&
+              source->type.kind != SemanticType::Reference &&
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.dispatch == CallDispatch::Static && target &&
+              target->definitionKind == MirDefinitionKind::Source &&
+              instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+              instruction.borrowFields.size() == 1 &&
+              instruction.borrowFields.front().origin ==
+                  BorrowOriginKind::Receiver &&
+              instruction.borrowFields.front().resultFields.empty() &&
+              target->returnBorrowFields == instruction.borrowFields &&
+              loan->kind == MirLoanKind::CallResult &&
+              loan->access == AccessMode::ReadOnly && !loan->parent &&
+              !loan->storedDependency) {
+            if (const auto contents = liveSharedResultContents(
+                    body, instruction.id, *carriedValues);
+                contents && contents->size() > 1)
+              return true;
+          }
           const bool receiverOrigin =
               instruction.borrowOrigin == BorrowOriginKind::Receiver;
           if (loan->storedDependency || !source ||
@@ -7850,7 +7910,9 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return storage != nullptr &&
          (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
           step->storageKind == ProgramStorageKind::StaticField) &&
-         storage->access == AccessMode::ReadOnly;
+         storage->access == AccessMode::ReadOnly &&
+         (!storage->traits.containsBorrowedState ||
+          findMirConstantStorage(program, place.symbol));
 }
 
 // RFC 0004: a declared `static` reference result with no exact summarized
@@ -17904,6 +17966,21 @@ public:
                 "evidence for every reachable normal return"));
       }
     }
+    if (function && !function->completeReturnBorrow &&
+        function->returnBorrowOrigin == BorrowOriginKind::Global &&
+        !function->returnBorrowPlace &&
+        (function->returnType.kind == SemanticType::Class ||
+         function->returnType.kind == SemanticType::Enum)) {
+      // A static carrier has no input dependency contract. Its body can
+      // nevertheless prove that every normal return selects an alternative
+      // without references (for example, a source-defined error adapter).
+      // Propagate only that independently reconstructed empty set, never an
+      // absent contract, an unknown body, or a vacuous non-returning proof.
+      auto observed = reconstruct(*function);
+      if (observed && observed->dependencies.empty() &&
+          wellFormed(*function, *observed))
+        summaries[id - 1] = std::move(*observed);
+    }
     states[id - 1] = State::Complete;
     return summaries[id - 1] ? &*summaries[id - 1] : nullptr;
   }
@@ -24453,8 +24530,10 @@ verifyMirProgramContracts(const MirProgram &program,
   return result;
 }
 
-MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
-    const MirProgram &program, const MirProgram *verifiedInput) {
+MirVerificationResult
+mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
+                                               const MirProgram *verifiedInput,
+                                               VerificationSession *reuse) {
   MirVerificationResult result;
   // Prove inline sum containment finite before any recursive lifecycle query.
   // Type arguments alone are not storage edges: follow exact variant fields,
@@ -24515,11 +24594,13 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
     }
   }
 
-  // A published constant is immutable data, never an executor-local owner or
-  // a loan. Validate every aggregate layer against the sealed type catalog;
-  // body-local verification alone cannot know a record's exact field layout.
+  // A published constant is immutable data. Its address fields name only
+  // immutable program storage. Validate every layer against the sealed type
+  // inventory before checking the exact value and its address projections.
   const auto passiveConstantType = [&](const auto &self,
                                        const SemanticType &type) -> bool {
+    if (isReadOnlyConstantAddressType(type))
+      return true;
     if (type.kind == SemanticType::Array)
       return type.arguments.size() == 1 && self(self, type.arguments.front());
     if (type.kind == SemanticType::Class) {
@@ -24527,10 +24608,14 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
           program.classInstances().begin(), program.classInstances().end(),
           [&](const auto &candidate) { return candidate.type == type; });
       if (owner == program.classInstances().end() ||
-          owner->requiresActiveCleanup || owner->traits.containsBorrowedState ||
-          owner->polymorphic || owner->kind == ClassKind::Union ||
+          owner->requiresActiveCleanup || owner->polymorphic ||
+          owner->kind == ClassKind::Union ||
           owner->kind == ClassKind::Interface ||
           !owner->structuralBases.empty())
+        return false;
+      // A borrowed aggregate must have a concrete stored reference path.
+      if (owner->traits.containsBorrowedState &&
+          findStoredCarrierReferences(program, type).empty())
         return false;
       return std::all_of(
           owner->declaredFields.begin(), owner->declaredFields.end(),
@@ -24825,8 +24910,8 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
     const MirBody *verifiedBody =
         verifiedInput ? findMirBody(*verifiedInput, address) : nullptr;
     if (!verifiedBody || *verifiedBody != *body)
-      appendVerification(result,
-                         verifyMirBody(*body, address.owner, carrierAnalysis));
+      appendVerification(
+          result, verifyMirBody(*body, address.owner, carrierAnalysis, reuse));
     else
       // Body-local structure is unchanged, but carrier flow also depends on
       // callees in this program. Recheck loans with the current call effects.
@@ -25268,7 +25353,8 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
 }
 
 MirVerificationResult verifyMirProgram(const MirProgram &program,
-                                       MirVerificationComponents components) {
+                                       MirVerificationComponents components,
+                                       mir_detail::VerificationSession *reuse) {
   if (components != requiredMirVerificationComponents) {
     MirVerificationResult result;
     result.errors.push_back(
@@ -25276,6 +25362,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
          .message = "MIR verification component set is incomplete or invalid"});
     return result;
   }
+  if (reuse)
+    return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr,
+                                                          reuse);
   // Reuse only an exactly equal program, including all callee contracts.
   struct Verified {
     MirProgram program;

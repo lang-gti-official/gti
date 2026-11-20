@@ -8,7 +8,7 @@ namespace std {
 /// Erasure does not make an object transferable or concurrently shareable.
 export using erased_object = gti_internal::erased_object;
 
-export erased_object& erase_ref<T>(T& object) {
+export constexpr erased_object& erase_ref<T>(T& object) {
   return gti_internal::erase_reference(object);
 }
 export mut erased_object& erase_mut<T>(mut T& object) {
@@ -16,7 +16,7 @@ export mut erased_object& erase_mut<T>(mut T& object) {
 }
 /// The caller must restore precisely the original referent type. Lifetime
 /// and shared/exclusive access remain checked even inside unsafe.
-export unsafe T& restore_ref<T>(erased_object& object) {
+export unsafe constexpr T& restore_ref<T>(erased_object& object) {
   unsafe { return gti_internal::restore_reference<T>(object); }
 }
 export unsafe mut T& restore_mut<T>(mut erased_object& object) {

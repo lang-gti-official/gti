@@ -12,6 +12,7 @@
 
 #include "frontend_snapshot_state.h"
 
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/Support/JSON.h>
 #include <llvm/Support/thread.h>
 
@@ -28,6 +29,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -1857,7 +1859,15 @@ struct PendingSemanticRequest {
   SemanticRequestKind kind = SemanticRequestKind::Hover;
 };
 
+struct CheckedDeclarations {
+  std::vector<lang::HoverInfo> hovers;
+  std::unordered_map<std::string, std::uint64_t> dependencies;
+  std::unordered_map<std::string, std::uint64_t> documentGenerations;
+  lang::lsp::FrontendSourceSnapshot inputs;
+};
+
 struct DocumentAnalysis {
+  std::vector<lang::HoverInfo> declarationHovers;
   std::shared_ptr<const lang::EditorBodyDiagnostics> bodyContext;
   std::vector<LspDiagnostic> diagnostics;
   // Every loaded dependency's URI and the digest of the exact text read.
@@ -1877,6 +1887,14 @@ struct DocumentAnalysis {
   unsigned frontendPasses = 0;
   std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
       sourceIdentities;
+};
+
+// Request-local state transferred between two crash-isolated compiler stages.
+// No editor query can observe or mutate this program.
+struct ParsedDocument {
+  std::unique_ptr<lang::FrontendResult> frontend;
+  lang::FrontendWorkMetrics metrics;
+  std::uint64_t elapsed = 0;
 };
 
 struct AnalysisSnapshot {
@@ -2213,6 +2231,8 @@ private:
 
   JsonValue initializeResult(const JsonValue *params) {
     if (const JsonValue *options = member(params, "initializationOptions")) {
+      progressiveOpenDiagnostics =
+          boolMember(options, "openFileDiagnostics", false);
       updateProjectProfile(member(options, "profile"));
     }
     markdownHover = supportsHoverFormat(params, "markdown");
@@ -2431,6 +2451,7 @@ private:
   }
 
   void didClose(const JsonValue *params) {
+    std::unique_lock publicationLock(analysisPublicationMutex);
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     if (clientUri.empty()) {
@@ -2498,6 +2519,7 @@ private:
     rejectPendingSemanticRequests(uri, -32801, "Content modified");
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
     publish(std::move(publications));
+    publicationLock.unlock();
     scheduleAnalyses(std::move(requests));
     analysisCondition.notify_all();
   }
@@ -2738,12 +2760,17 @@ private:
       return;
     }
 
-    std::string value = markdownHover ? "```gti\n" + info->signature + "\n```"
-                                      : info->signature;
-    if (info->documentationMarkdown) {
-      value += "\n\n" + *info->documentationMarkdown;
+    sendHover(id, source, *info);
+  }
+
+  void sendHover(const JsonValue *id, const std::string &source,
+                 const lang::HoverInfo &hover) {
+    std::string value = markdownHover ? "```gti\n" + hover.signature + "\n```"
+                                      : hover.signature;
+    if (hover.documentationMarkdown) {
+      value += "\n\n" + *hover.documentationMarkdown;
     }
-    for (const std::string &note : info->notes) {
+    for (const std::string &note : hover.notes) {
       value += markdownHover ? "\n\n*" + note + "*" : "\n\n" + note;
     }
 
@@ -2752,14 +2779,43 @@ private:
                 {"contents",
                  JsonObject{{"kind", markdownHover ? "markdown" : "plaintext"},
                             {"value", value}}},
-                {"range", rangeJson(source, info->range.start,
-                                    info->range.end - info->range.start)}}));
+                {"range", rangeJson(source, hover.range.start,
+                                    hover.range.end - hover.range.start)}}));
   }
 
   // Shared snapshot acquisition for semantic requests: answer from the
   // current-generation snapshot, or queue the request until analysis
   // publishes one for the document's current generation.
+  std::optional<lang::HoverInfo>
+  checkedHoverLocked(const std::string &uri, const JsonValue *params,
+                     const std::string &source) const {
+    const auto found = checkedDeclarations.find(uri);
+    if (found == checkedDeclarations.end())
+      return std::nullopt;
+    const auto position = positionMember(member(params, "position"));
+    if (!position)
+      return std::nullopt;
+    const auto offset = SourcePositionIndex(source).byteOffset(*position);
+    if (!offset)
+      return std::nullopt;
+    const auto &checked = found->second;
+    const auto after =
+        std::upper_bound(checked.hovers.begin(), checked.hovers.end(), *offset,
+                         [](std::size_t at, const lang::HoverInfo &hover) {
+                           return at < hover.range.start;
+                         });
+    if (after == checked.hovers.begin())
+      return std::nullopt;
+    const auto &hover = *std::prev(after);
+    if (*offset >= hover.range.end ||
+        !sourceInputsCurrentLocked(checked.dependencies,
+                                   checked.documentGenerations, checked.inputs))
+      return std::nullopt;
+    return hover;
+  }
+
   struct SnapshotAccess {
+    std::optional<lang::HoverInfo> earlyHover;
     std::string source;
     AnalysisSnapshot snapshot;
     bool current = false;
@@ -2786,6 +2842,13 @@ private:
         access.current = true;
       } else if (id != nullptr && document != documents.end() &&
                  generation != analysisGenerations.end()) {
+        if (kind == SemanticRequestKind::Hover) {
+          access.earlyHover = checkedHoverLocked(uri, params, document->second);
+          if (access.earlyHover) {
+            access.source = document->second;
+            return access;
+          }
+        }
         pendingSemanticRequests.push_back({.id = *id,
                                            .params = params != nullptr
                                                          ? JsonValue(*params)
@@ -2815,6 +2878,10 @@ private:
     }
     const SnapshotAccess access =
         acquireSnapshotOrQueue(id, params, uri, SemanticRequestKind::Hover);
+    if (access.earlyHover) {
+      sendHover(id, access.source, *access.earlyHover);
+      return;
+    }
     if (!access.current) {
       if (!access.queued) {
         sendJson(response(id, nullptr));
@@ -3339,21 +3406,38 @@ private:
       const auto document = documents.find(uri);
       const auto generation = analysisGenerations.find(uri);
       const auto snapshot = analysisSnapshots.find(uri);
-      const bool current = document != documents.end() &&
-                           generation != analysisGenerations.end() &&
-                           snapshot != analysisSnapshots.end() &&
-                           snapshot->second.generation == generation->second &&
-                           snapshot->second.frontend != nullptr;
-      if (current) {
+      const bool fullCurrent =
+          generation != analysisGenerations.end() &&
+          snapshot != analysisSnapshots.end() &&
+          snapshot->second.generation == generation->second &&
+          snapshot->second.frontend != nullptr;
+      const auto syntax = syntaxRepairInputs.find(uri);
+      const bool syntaxCurrent =
+          syntax != syntaxRepairInputs.end() &&
+          sourceInputsCurrentLocked(syntax->second.dependencies,
+                                    syntax->second.documentGenerations,
+                                    syntax->second.sources);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          (fullCurrent || syntaxCurrent)) {
         std::unordered_set<std::string> seen;
         for (const auto &[root, diagnostics] : diagnosticsByRoot) {
           const auto owner = analysisSnapshots.find(root);
           const auto ownerGeneration = analysisGenerations.find(root);
-          if (owner == analysisSnapshots.end() || !owner->second.frontend ||
-              ownerGeneration == analysisGenerations.end() ||
-              owner->second.generation != ownerGeneration->second)
+          const bool fullOwner =
+              fullCurrent && owner != analysisSnapshots.end() &&
+              owner->second.frontend &&
+              ownerGeneration != analysisGenerations.end() &&
+              owner->second.generation == ownerGeneration->second;
+          if (!fullOwner && !(syntaxCurrent && root == uri))
             continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
+            // Only the parse fixes published for this exact root generation
+            // are actionable before its complete snapshot is available.
+            if (!fullOwner &&
+                diagnostic.repairSnapshot !=
+                    root + ":" + std::to_string(generation->second))
+              continue;
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
@@ -3464,33 +3548,15 @@ private:
     sendJson(response(id, JsonValue(std::move(edits))));
   }
 
-  DocumentAnalysis analyzeDocument(const AnalysisRequest &request,
-                                   const ProjectAnalysisInputs &project) const {
-    const std::string &uri = request.uri;
-    const std::string &source = request.source;
-    DocumentAnalysis result;
-    const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
-    if (!filePath) {
-      lang::SourceManager sources;
-      sources.set("", source);
-      const lang::Diagnostic diagnostic = lang::makeDiagnostic(
-          "GTI-D0001", lang::DiagnosticPhase::Driver,
-          lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
-          "GTI source dependencies require a file URI.");
-      result.diagnostics.push_back(
-          convertDiagnostic(diagnostic, sources, "", uri, source));
-      return result;
-    }
-
-    const std::string rootPath = canonicalPath(*filePath).string();
-    result.rootPath = rootPath;
+  static lang::FrontendOptions
+  documentOptions(const AnalysisRequest &request,
+                  const ProjectAnalysisInputs &project,
+                  lang::FrontendWorkMetrics &metrics) {
     lang::FrontendOptions frontendOptions;
     // The raw-pointer audit multiplies analysis time by well over an order of
     // magnitude (41 s against 0.6 s for an eight-include file), so the
     // edit-path analysis never runs it. A separate background audit of the
     // published generation carries the profile's mode; see `runAuditWorker`.
-    result.auditAvailable =
-        project.rawPointerAudit != lang::RawPointerAuditMode::Off;
     frontendOptions.rawPointerAudit = request.audit
                                           ? project.rawPointerAudit
                                           : lang::RawPointerAuditMode::Off;
@@ -3527,11 +3593,13 @@ private:
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
     frontendOptions.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
-    frontendOptions.workMetrics = &result.workMetrics;
+    frontendOptions.workMetrics = &metrics;
     frontendOptions.cache = request.frontendSources.cache;
     // Library-only concrete instance analyses are reused across snapshots;
     // see InstanceAnalysisCache.
     frontendOptions.instanceCache = request.frontendSources.instanceCache;
+    frontendOptions.mirVerificationCache =
+        request.frontendSources.mirVerificationCache;
     // The standard-library prefix is analysed once per include graph and
     // adopted by every later snapshot; see SemanticPreambleCache.
     frontendOptions.preambleCache = request.frontendSources.preambleCache;
@@ -3550,6 +3618,65 @@ private:
     frontendOptions.includeDiscoveryCache =
         request.frontendSources.includeDiscoveryCache;
     frontendOptions.limits = project.compileLimits;
+    return frontendOptions;
+  }
+
+  lang::FrontendResult
+  analyzeSource(const std::filesystem::path &path,
+                const AnalysisRequest &request,
+                const ProjectAnalysisInputs &project,
+                const lang::FrontendOptions &options) const {
+    return lang::Frontend(options).analyze(
+        path, request.source, {standardLibrary.prelude},
+        request.sourceOverrides, {standardLibrary.root},
+        project.packageSourceRoots);
+  }
+
+  DocumentAnalysis parseDocument(const std::filesystem::path &path,
+                                 const AnalysisRequest &request,
+                                 const ProjectAnalysisInputs &project,
+                                 ParsedDocument &parsed) const {
+    DocumentAnalysis syntax;
+    syntax.rootPath = canonicalPath(path).string();
+    auto options = documentOptions(request, project, parsed.metrics);
+    options.stopAfter = lang::FrontendPhase::Parsing;
+    auto start = SteadyClock::now();
+    parsed.frontend = std::make_unique<lang::FrontendResult>(
+        analyzeSource(path, request, project, options));
+    parsed.elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                         SteadyClock::now() - start)
+                         .count();
+    collectDocumentDiagnostics(syntax, *parsed.frontend, project, request,
+                               parsed.frontend->diagnostics);
+    return syntax;
+  }
+
+  DocumentAnalysis analyzeDocument(
+      const AnalysisRequest &request, const ProjectAnalysisInputs &project,
+      ParsedDocument *resume,
+      const lang::Frontend::DiagnosticCheckpoint &observer = {}) const {
+    const std::string &uri = request.uri;
+    const std::string &source = request.source;
+    DocumentAnalysis result;
+    const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
+    if (!filePath) {
+      lang::SourceManager sources;
+      sources.set("", source);
+      const lang::Diagnostic diagnostic = lang::makeDiagnostic(
+          "GTI-D0001", lang::DiagnosticPhase::Driver,
+          lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
+          "GTI source dependencies require a file URI.");
+      result.diagnostics.push_back(
+          convertDiagnostic(diagnostic, sources, "", uri, source));
+      return result;
+    }
+
+    const std::string rootPath = canonicalPath(*filePath).string();
+    result.rootPath = rootPath;
+    result.auditAvailable =
+        project.rawPointerAudit != lang::RawPointerAuditMode::Off;
+    auto frontendOptions =
+        documentOptions(request, project, result.workMetrics);
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
@@ -3562,28 +3689,21 @@ private:
       return result;
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
+    frontendOptions.confirmSignatureOnlyMir =
+        !frontendOptions.lowerLibraryOnlyInstanceBodies;
     const auto analyze = [&] {
       ++result.frontendPasses;
-      return lang::Frontend(frontendOptions)
-          .analyze(*filePath, source, {standardLibrary.prelude},
-                   request.sourceOverrides, {standardLibrary.root},
-                   project.packageSourceRoots);
+      return analyzeSource(*filePath, request, project, frontendOptions);
     };
-    lang::FrontendResult frontend = analyze();
-    // MIR still verifies some calls and its interprocedural summaries
-    // (defined-failure effects, persistent-storage access, text relays) only
-    // against lowered callee bodies. Confirm a rejection from scoped MIR
-    // with the full bodies before publishing it.
-    const auto needsCompleteMir = [&](const lang::FrontendResult &candidate) {
-      return !candidate.cancelled && candidate.sourceValid &&
-             candidate.syntaxValid &&
-             (candidate.semanticValid || candidate.mirBorrowRejected) &&
-             candidate.hirValid && candidate.failureMetadataValid &&
-             !candidate.mirValid &&
-             result.workMetrics.hirOmittedInstanceBodies != 0 &&
-             (request.cancellation == nullptr ||
-              !request.cancellation->load(std::memory_order_relaxed));
-    };
+    if (resume) {
+      result.workMetrics = std::move(resume->metrics);
+      ++result.frontendPasses;
+    }
+    lang::FrontendResult frontend =
+        resume ? lang::Frontend(frontendOptions)
+                     .analyzeParsed(*filePath, std::move(*resume->frontend),
+                                    observer)
+               : analyze();
     // Remember only a choice of lowering order. Always check the current
     // source. Periodically probe again so a changed program can recover the
     // cheaper path. An early semantic error does not use up a MIR attempt.
@@ -3600,7 +3720,10 @@ private:
         frontendOptions.lowerLibraryOnlyInstanceBodies = false;
         auto completeMetrics = std::move(result.workMetrics);
         auto scoped = analyze();
-        if (needsCompleteMir(scoped)) {
+        if (scoped.needsLibraryBodyConfirmation(
+                result.workMetrics.hirOmittedInstanceBodies) &&
+            !(request.cancellation &&
+              request.cancellation->load(std::memory_order_relaxed))) {
           frontendOptions.lowerLibraryOnlyInstanceBodies = true;
           result.workMetrics = std::move(completeMetrics);
           result.remainingCompleteMirEdits = 0;
@@ -3609,10 +3732,8 @@ private:
           frontend = std::move(scoped);
         }
       }
-    } else if (needsCompleteMir(frontend)) {
+    } else if (frontend.confirmedWithLibraryBodies) {
       result.mirSignatureOnlyFallback = true;
-      frontendOptions.lowerLibraryOnlyInstanceBodies = true;
-      frontend = analyze();
       if (frontend.mirValid && frontend.diagnostics.empty())
         result.remainingCompleteMirEdits = completeMirWindow;
     }
@@ -3620,6 +3741,8 @@ private:
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
+    if (resume)
+      result.frontendElapsedMicroseconds += resume->elapsed;
     if (frontend.deferredPreambleBuild)
       schedulePreambleBuild(std::move(frontend.deferredPreambleBuild), uri,
                             request.generation);
@@ -3642,7 +3765,16 @@ private:
     result.frontend = std::move(snapshot);
     if (result.frontend->cancelled)
       return result;
-    const lang::FrontendResult &analysis = *result.frontend;
+    collectDocumentDiagnostics(result, *result.frontend, project, request,
+                               result.frontend->diagnostics);
+    return result;
+  }
+
+  static void collectDocumentDiagnostics(
+      DocumentAnalysis &result, const lang::FrontendResult &analysis,
+      const ProjectAnalysisInputs &project, const AnalysisRequest &request,
+      std::span<const lang::Diagnostic> diagnostics) {
+    const auto &rootPath = result.rootPath;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
       const auto generation =
@@ -3661,6 +3793,14 @@ private:
             fileUriFromPath(std::filesystem::path(loadedSource)),
             unit.sourceDigest);
       }
+      for (const auto &file : unit.embeddedFiles) {
+        if (!file.path.empty())
+          result.dependencies.try_emplace(fileUriFromPath(file.path),
+                                          file.digest);
+        if (!file.lookupPath.empty())
+          result.dependencies.try_emplace(
+              authoredFileUriFromPath(file.lookupPath), 0);
+      }
     }
     for (const auto &import : analysis.sourceGraph.imports()) {
       if (import.lookupPath && import.lookupPath->string() != rootPath)
@@ -3670,16 +3810,15 @@ private:
         result.dependencies.try_emplace(
             authoredFileUriFromPath(*import.authoredLookupPath), 0);
     }
-    for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+    for (const lang::Diagnostic &diagnostic : diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic,
                                              analysis.sourceGraph)) {
         continue;
       }
       result.diagnostics.push_back(convertDiagnostic(
-          diagnostic, analysis.sources, rootPath, uri, source));
+          diagnostic, analysis.sources, rootPath, request.uri, request.source));
     }
-    return result;
   }
 
   AnalysisRequest makeAnalysisRequestLocked(const std::string &uri,
@@ -4132,13 +4271,17 @@ private:
     if (bodyBaseline)
       retireSnapshotLocked(std::move(bodyBaseline));
     cancelBodyQueryLocked();
+    bodyRecovery.reset();
     lastBodyDiagnostics.clear();
+    lastBodyBorrowProof = false;
   }
 
   void runBodyWorker() {
     while (true) {
       BodyEdit request;
       std::shared_ptr<const BodyBaseline> baseline;
+      std::shared_ptr<const BodyRecovery> recovery;
+      bool checkBorrows = false;
       {
         std::unique_lock lock(stateMutex);
         bodyCondition.wait(
@@ -4148,6 +4291,9 @@ private:
         request = std::move(*pendingBodyQuery);
         pendingBodyQuery.reset();
         baseline = bodyBaseline;
+        recovery = bodyRecovery;
+        checkBorrows =
+            !recovery && (lastBodyDiagnostics.empty() || lastBodyBorrowProof);
         if (!baseline || !sourceInputsCurrentLocked(
                              baseline->dependencies,
                              baseline->documentGenerations, baseline->inputs))
@@ -4156,9 +4302,20 @@ private:
       // The full frontend is scheduled independently, even if the foreground
       // query cannot answer, is superseded, or reaches a compiler limit.
       std::optional<std::vector<lang::Diagnostic>> answer;
+      const bool verified = baseline->context->matchesSource(request.source);
+      bool reproduced = false;
+      bool borrowProof = false;
       try {
-        answer = baseline->context->check(request.source,
-                                          request.cancellation.get());
+        answer =
+            baseline->context->check(request.source, request.cancellation.get(),
+                                     checkBorrows ? &borrowProof : nullptr);
+        // A recovery pass may diagnose both a missing expression and the
+        // resulting incomplete function. Only retire its published set if
+        // the same isolated checker can account for every diagnostic.
+        if (answer && recovery && !verified)
+          reproduced = baseline->context->reproducesRecovery(
+              recovery->source, recovery->diagnostics,
+              request.cancellation.get());
       } catch (const std::exception &error) {
         std::cerr << "Body diagnostic query failed: " << error.what() << '\n';
       } catch (...) {
@@ -4183,12 +4340,22 @@ private:
         // Include advice or a full pass may have supplied other diagnostics in
         // the meantime. Never replace another provider's result.
         const auto previous = diagnosticsByRoot.find(request.uri);
-        if (previous == diagnosticsByRoot.end() ||
+        if (previous == diagnosticsByRoot.end())
+          continue;
+        const bool ownsRecovery =
+            reproduced && recovery == bodyRecovery &&
+            std::ranges::all_of(previous->second,
+                                [&](const LspDiagnostic &d) {
+                                  return d.source == recovery->source;
+                                }) &&
+            std::ranges::equal(previous->second, recovery->diagnostics, {},
+                               &LspDiagnostic::diagnostic);
+        if (!verified && !ownsRecovery &&
             !std::ranges::equal(previous->second, lastBodyDiagnostics, {},
                                 &LspDiagnostic::diagnostic))
           continue;
         // An empty partial result can retract only this provider's own error.
-        if (answer->empty() && lastBodyDiagnostics.empty())
+        if (answer->empty() && previous->second.empty())
           continue;
         std::vector<LspDiagnostic> current;
         lang::SourceManager source;
@@ -4196,11 +4363,18 @@ private:
         for (const auto &d : *answer)
           current.push_back(convertDiagnostic(d, source, baseline->path,
                                               request.uri, request.source));
+        std::unordered_set<std::string> affected{request.uri};
+        for (const auto &d : previous->second)
+          affected.insert(d.uri);
+        bodyRecovery.reset();
+        lastBodyBorrowProof = borrowProof;
         lastBodyDiagnostics = std::move(*answer);
         diagnosticsByRoot[request.uri] = std::move(current);
-        publications = publicationsForLocked({request.uri});
+        publications = publicationsForLocked(affected);
       }
-      publish(std::move(publications));
+      publish(std::move(publications), borrowProof && progressiveOpenDiagnostics
+                                           ? "borrowChecking"
+                                           : "");
     }
   }
 
@@ -4373,7 +4547,8 @@ private:
               guarded.analysis->frontend != nullptr &&
                   guarded.analysis->frontend->includeSuggestionsRequested,
               {}, guarded.analysis->mirSignatureOnlyFallback,
-              guarded.analysis->frontendPasses);
+              guarded.analysis->frontendPasses,
+              guarded.analysis->frontend.get());
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -4472,20 +4647,126 @@ private:
     std::string failure;
   };
 
-  // Runs only the compiler work under the crash guard. This is the narrow
-  // boundary docs/architecture/lsp.md requires: the callback touches no
-  // shared LSP state and holds no lock, so a signal-recovery stack restore
-  // cannot leave `stateMutex` owned, and it catches its own exceptions so
-  // none crosses LLVM's no-exception frame. Publication happens afterwards
-  // on the normal path, where unwinding and locking behave normally.
-  [[nodiscard]] GuardedAnalysis
-  runIsolatedAnalysis(const AnalysisRequest &request,
-                      const ProjectAnalysisInputs &project) const {
+  GuardedAnalysis runIsolatedAnalysis(const AnalysisRequest &request,
+                                      const ProjectAnalysisInputs &project) {
+    const auto path = filePathFromUri(request.uri);
+    const bool opening = request.trigger == AnalysisTrigger::Opened;
+    if (request.audit ||
+        (!opening && request.trigger != AnalysisTrigger::DocumentChanged) ||
+        !path || !project.configurationValid)
+      return isolatedStep(
+          [&] { return analyzeDocument(request, project, nullptr); });
+
+    ParsedDocument parsed;
+    auto syntax = isolatedStep(
+        [&] { return parseDocument(*path, request, project, parsed); });
+    if (syntax.status != GuardedAnalysisStatus::Completed)
+      return syntax;
+    if (!opening || progressiveOpenDiagnostics)
+      publishSyntax(request, *syntax.analysis);
+
+    // The compiler keeps running on its stack-sized worker. Only a finished,
+    // independently owned hover or diagnostic packet crosses its crash
+    // boundary. The publisher is bounded by the number of active open-file
+    // analyses.
+    std::atomic<bool> registrationReady{false};
+    std::unique_ptr<DocumentAnalysis> registered;
+    std::atomic<bool> ready{false};
+    std::unique_ptr<DocumentAnalysis> checkpoint;
+    std::string_view stageName;
+    std::future<void> publisher;
+    try {
+      publisher = std::async(std::launch::async, [&] {
+        registrationReady.wait(false, std::memory_order_acquire);
+        if (registered)
+          publishOpenFile(request, *registered, std::nullopt);
+        ready.wait(false, std::memory_order_acquire);
+        if (checkpoint)
+          publishOpenFile(request, *checkpoint, stageName);
+      });
+    } catch (const std::system_error &) {
+      return isolatedStep(
+          [&] { return analyzeDocument(request, project, &parsed); });
+    }
+    const auto signalRegistration = [&] {
+      registrationReady.store(true, std::memory_order_release);
+      registrationReady.notify_one();
+    };
+    const auto signal = [&] {
+      signalRegistration();
+      ready.store(true, std::memory_order_release);
+      ready.notify_one();
+    };
+    llvm::scope_exit wakeOnFailure(signal);
+    auto full = isolatedStep([&] {
+      return analyzeDocument(
+          request, project, &parsed,
+          [&](lang::Frontend::DiagnosticStage stage,
+              const lang::FrontendResult &checked,
+              const lang::SemanticModel &model,
+              std::span<const lang::Diagnostic> diagnostics) {
+            if (stage == lang::Frontend::DiagnosticStage::Registered) {
+              if (opening &&
+                  !registrationReady.load(std::memory_order_acquire)) {
+                auto packet = std::make_unique<DocumentAnalysis>();
+                packet->declarationHovers =
+                    lang::LanguageQueries().registeredDeclarationHovers(checked,
+                                                                        model);
+                if (!packet->declarationHovers.empty()) {
+                  packet->dependencies = syntax.analysis->dependencies;
+                  registered = std::move(packet);
+                }
+              }
+              signalRegistration();
+              return;
+            }
+            if (checkpoint ||
+                (stage == lang::Frontend::DiagnosticStage::Declaration &&
+                 (!opening || !progressiveOpenDiagnostics)))
+              return;
+            auto packet = std::make_unique<DocumentAnalysis>();
+            packet->rootPath = syntax.analysis->rootPath;
+            collectDocumentDiagnostics(*packet, checked, project, request,
+                                       diagnostics);
+            const bool declaration =
+                stage == lang::Frontend::DiagnosticStage::Declaration;
+            if (declaration &&
+                !std::ranges::any_of(
+                    packet->diagnostics, [&](const LspDiagnostic &d) {
+                      return d.uri == request.uri &&
+                             d.diagnostic.severity ==
+                                 lang::DiagnosticSeverity::Error;
+                    }))
+              return;
+            if (!declaration && checked.semanticValid) {
+              packet->declarationHovers =
+                  lang::LanguageQueries().declarationHovers(checked, model);
+            }
+            stageName = declaration ? "declaration" : "typeChecking";
+            checkpoint = std::move(packet);
+            signal();
+          });
+    });
+    // Terminal parse/semantic limits, cancellation and crash recovery can
+    // bypass the checkpoint. Join before the final publication or any retry.
+    signal();
+    wakeOnFailure.release();
+    try {
+      publisher.get();
+    } catch (const std::exception &error) {
+      std::cerr << "Open-file diagnostic publication failed: " << error.what()
+                << '\n';
+    }
+    return full;
+  }
+
+  // A recovered signal abandons the compiler frame. Publication and server
+  // locks belong between these steps, outside that frame.
+  template <class Work> static GuardedAnalysis isolatedStep(Work work) {
     GuardedAnalysis result;
     const bool completed = lang::runGuarded([&] {
       try {
-        result.analysis = std::make_unique<DocumentAnalysis>(
-            analyzeDocument(request, project));
+        result.analysis = std::make_unique<DocumentAnalysis>(work());
         result.status = GuardedAnalysisStatus::Completed;
       } catch (const std::exception &error) {
         result.status = GuardedAnalysisStatus::Failed;
@@ -4590,6 +4871,115 @@ private:
     publish(std::move(publications));
   }
 
+  // LSP diagnostics replace the whole list for a URI. Only withdraw
+  // diagnostics this compiler stage can recompute. A later stage might
+  // still have a borrow error, and its old range cannot be sent for new text.
+  void publishSyntax(const AnalysisRequest &request,
+                     const DocumentAnalysis &syntax) {
+    const std::lock_guard publicationLock(analysisPublicationMutex);
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto generation = analysisGenerations.find(request.uri);
+      if (generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri) ||
+          !sourceInputsCurrentLocked(syntax.dependencies,
+                                     request.documentGenerations,
+                                     request.frontendSources))
+        return;
+      auto &previous = diagnosticsByRoot[request.uri];
+      const auto syntaxOwned = [](const LspDiagnostic &d) {
+        auto phase = d.diagnostic.phase;
+        return phase == lang::DiagnosticPhase::Lexing ||
+               phase == lang::DiagnosticPhase::Parsing ||
+               phase == lang::DiagnosticPhase::SourceLoading;
+      };
+      const auto localSyntax = [&](const LspDiagnostic &d) {
+        return d.uri == request.uri && syntaxOwned(d);
+      };
+      if ((!std::ranges::any_of(previous, localSyntax) &&
+           !std::ranges::any_of(syntax.diagnostics, localSyntax)) ||
+          std::ranges::any_of(previous, [&](const LspDiagnostic &d) {
+            return d.uri == request.uri && !syntaxOwned(d) &&
+                   d.source != request.source;
+          }))
+        return;
+      std::erase_if(previous, localSyntax);
+      bool hasRepairs = false;
+      for (const auto &diagnostic : syntax.diagnostics) {
+        if (!localSyntax(diagnostic))
+          continue;
+        auto &published = previous.emplace_back(diagnostic);
+        if (!published.fixes.empty()) {
+          hasRepairs = true;
+          published.repairSnapshot =
+              request.uri + ":" + std::to_string(request.generation);
+        }
+      }
+      if (hasRepairs)
+        syntaxRepairInputs.insert_or_assign(
+            request.uri,
+            SyntaxRepairInputs{syntax.dependencies, request.documentGenerations,
+                               request.frontendSources});
+      publications = publicationsForLocked({request.uri});
+    }
+    publish(std::move(publications),
+            request.trigger == AnalysisTrigger::Opened ? "syntax" : "");
+  }
+
+  void publishOpenFile(const AnalysisRequest &request,
+                       DocumentAnalysis &checked,
+                       std::optional<std::string_view> diagnosticStage) {
+    const std::lock_guard publicationLock(analysisPublicationMutex);
+    std::vector<DiagnosticPublication> publications;
+    std::vector<std::pair<JsonValue, lang::HoverInfo>> replies;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto generation = analysisGenerations.find(request.uri);
+      if (stoppingAnalysis || generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri) ||
+          !sourceInputsCurrentLocked(checked.dependencies,
+                                     request.documentGenerations,
+                                     request.frontendSources))
+        return;
+      if (!checked.declarationHovers.empty()) {
+        checkedDeclarations[request.uri] = {
+            std::move(checked.declarationHovers), checked.dependencies,
+            request.documentGenerations, request.frontendSources};
+        for (auto it = pendingSemanticRequests.begin();
+             it != pendingSemanticRequests.end();) {
+          if (it->uri == request.uri && it->generation == request.generation &&
+              it->kind == SemanticRequestKind::Hover) {
+            if (auto hover = checkedHoverLocked(request.uri, &it->params,
+                                                request.source)) {
+              replies.emplace_back(it->id, std::move(*hover));
+              it = pendingSemanticRequests.erase(it);
+              continue;
+            }
+          }
+          ++it;
+        }
+      }
+      if (diagnosticStage && request.trigger == AnalysisTrigger::Opened &&
+          progressiveOpenDiagnostics &&
+          !analysisSnapshots.contains(request.uri)) {
+        auto &previous = diagnosticsByRoot[request.uri];
+        if (previous.empty()) {
+          for (const auto &diagnostic : checked.diagnostics)
+            if (diagnostic.uri == request.uri)
+              previous.push_back(diagnostic);
+          publications = publicationsForLocked({request.uri});
+        }
+      }
+    }
+    if (diagnosticStage)
+      publish(std::move(publications), *diagnosticStage);
+    for (const auto &[id, hover] : replies)
+      sendHover(&id, request.source, hover);
+  }
+
   void publishAnalysis(const AnalysisRequest &request,
                        DocumentAnalysis analysis) {
     std::vector<DiagnosticPublication> publications;
@@ -4625,6 +5015,7 @@ private:
             advanceAnalysisGenerationLocked(request.uri),
             AnalysisTrigger::DependencyChanged);
       } else {
+        checkedDeclarations.erase(request.uri);
         for (const auto &[path, identity] : analysis.sourceIdentities) {
           frontendSnapshots.publish(path, identity);
         }
@@ -4648,12 +5039,33 @@ private:
               request.uri, analysis.rootPath, std::move(analysis.bodyContext),
               analysis.dependencies, request.documentGenerations,
               request.frontendSources});
-        } else if (bodyBaseline && bodyBaseline->uri == request.uri &&
-                   !std::ranges::equal(analysis.diagnostics,
-                                       lastBodyDiagnostics, {},
-                                       &LspDiagnostic::diagnostic)) {
-          forgetBodyBaselineLocked();
+        } else if (bodyBaseline && bodyBaseline->uri == request.uri) {
+          bodyRecovery.reset();
+          if (!std::ranges::equal(analysis.diagnostics, lastBodyDiagnostics, {},
+                                  &LspDiagnostic::diagnostic)) {
+            lastBodyDiagnostics.clear();
+            lastBodyBorrowProof = false;
+            if (analysis.frontend && analysis.frontend->sourceValid &&
+                !analysis.frontend->syntaxValid &&
+                !analysis.frontend->mirValid &&
+                !analysis.frontend->mirBorrowRejected &&
+                std::ranges::any_of(analysis.diagnostics,
+                                    [](const auto &d) {
+                                      return d.diagnostic.phase ==
+                                             lang::DiagnosticPhase::Parsing;
+                                    }) &&
+                std::ranges::all_of(analysis.diagnostics, [&](const auto &d) {
+                  return d.uri == request.uri;
+                })) {
+              BodyRecovery recovery{request.source, {}};
+              for (const auto &diagnostic : analysis.diagnostics)
+                recovery.diagnostics.push_back(diagnostic.diagnostic);
+              bodyRecovery =
+                  std::make_shared<const BodyRecovery>(std::move(recovery));
+            }
+          }
         }
+        syntaxRepairInputs.erase(request.uri);
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
         // Recovery keeps one last-valid graph for unchanged root text, never
@@ -4956,6 +5368,7 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    syntaxRepairInputs.erase(uri);
     for (const auto &[id, active] : activeCompletionRequests) {
       if (active.uri == uri)
         active.cancellation->store(true, std::memory_order_relaxed);
@@ -4968,6 +5381,7 @@ private:
         snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
       retireSnapshotLocked(std::move(snapshot->second.frontend));
     }
+    checkedDeclarations.erase(uri);
     return ++analysisGenerations[uri];
   }
 
@@ -5200,7 +5614,8 @@ private:
     return publications;
   }
 
-  void publish(std::vector<DiagnosticPublication> publications) const {
+  void publish(std::vector<DiagnosticPublication> publications,
+               std::string_view stage = {}) const {
     for (const DiagnosticPublication &publication : publications) {
       JsonArray diagnostics;
       diagnostics.reserve(publication.diagnostics.size());
@@ -5212,7 +5627,7 @@ private:
         appendMacroBodyCompanions(diagnostics, publication.uri, diagnostic);
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
-                         publication.version);
+                         publication.version, stage);
     }
   }
 
@@ -5257,8 +5672,11 @@ private:
 
   static void
   publishDiagnostics(const std::string &uri, JsonArray diagnostics,
-                     std::optional<std::int64_t> version = std::nullopt) {
+                     std::optional<std::int64_t> version = std::nullopt,
+                     std::string_view stage = {}) {
     JsonObject params{{"uri", uri}, {"diagnostics", std::move(diagnostics)}};
+    if (!stage.empty())
+      params["gtiDiagnosticStage"] = std::string(stage);
     if (version) {
       params["version"] = *version;
     }
@@ -5275,8 +5693,8 @@ private:
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
       bool includeSuggestionsRequested = false, std::string_view requestId = {},
-      bool mirSignatureOnlyFallback = false,
-      unsigned frontendPasses = 0) const {
+      bool mirSignatureOnlyFallback = false, unsigned frontendPasses = 0,
+      const lang::FrontendResult *frontend = nullptr) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5333,6 +5751,16 @@ private:
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
         {"mirMicroseconds", static_cast<std::int64_t>(metrics.mirMicroseconds)},
+        {"mirRoundBodyLowerings",
+         static_cast<std::int64_t>(metrics.mirRoundBodyLowerings)},
+        {"mirRoundBodyReuses",
+         static_cast<std::int64_t>(metrics.mirRoundBodyReuses)},
+        {"mirDominanceReuses",
+         static_cast<std::int64_t>(metrics.mirDominanceReuses)},
+        {"mirBoundaryQueries",
+         static_cast<std::int64_t>(metrics.mirBoundaryQueries)},
+        {"mirBoundaryReuses",
+         static_cast<std::int64_t>(metrics.mirBoundaryReuses)},
         {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},
@@ -5412,6 +5840,11 @@ private:
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(
              instanceStats.limits.maximumEstimatedBytes)}};
+    if (frontend) {
+      record["mirVerified"] = frontend->mirValid;
+      record["frontendDiagnosticCount"] =
+          static_cast<std::int64_t>(frontend->diagnostics.size());
+    }
     if (retainedFrontends) {
       record["retainedFrontends"] =
           static_cast<std::int64_t>(*retainedFrontends);
@@ -5523,6 +5956,14 @@ private:
     lang::lsp::FrontendSourceSnapshot inputs;
   };
   std::shared_ptr<const BodyBaseline> bodyBaseline;
+  // At most one failed source and its published diagnostics. No second
+  // semantic snapshot is retained for checking ownership on a later edit.
+  struct BodyRecovery {
+    std::string source;
+    std::vector<lang::Diagnostic> diagnostics;
+  };
+  std::shared_ptr<const BodyRecovery> bodyRecovery;
+  bool lastBodyBorrowProof = false;
   std::vector<lang::Diagnostic> lastBodyDiagnostics;
   struct BodyEdit {
     std::string uri;
@@ -5545,6 +5986,14 @@ private:
   std::unordered_map<std::string, std::optional<std::uint64_t>>
       savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
+  struct SyntaxRepairInputs {
+    std::unordered_map<std::string, std::uint64_t> dependencies;
+    std::unordered_map<std::string, std::uint64_t> documentGenerations;
+    lang::lsp::FrontendSourceSnapshot sources;
+  };
+  // Exists only from publication of a parse fix until this parse is superseded
+  // or the full analysis publishes. It never authorizes semantic requests.
+  std::unordered_map<std::string, SyntaxRepairInputs> syntaxRepairInputs;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,
                      std::unordered_map<std::string, std::uint64_t>>
@@ -5587,6 +6036,7 @@ private:
   bool stoppingAudit = false;
   bool auditRunning = false;
   std::deque<CompletionRequest> completionRequests;
+  std::unordered_map<std::string, CheckedDeclarations> checkedDeclarations;
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_map<std::string, ActiveCompletionRequest>
       activeCompletionRequests;
@@ -5624,6 +6074,7 @@ private:
   bool semanticTokenRefreshSupport = false;
   bool workspaceDocumentChanges = false;
   bool watchedFilesDynamicRegistration = false;
+  bool progressiveOpenDiagnostics = false;
   bool diagnosticRelatedInformation = false;
   bool diagnosticData = false;
   bool diagnosticUnnecessaryTag = false;

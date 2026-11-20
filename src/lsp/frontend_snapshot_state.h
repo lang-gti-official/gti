@@ -3,6 +3,7 @@
 #include "gti/frontend_cache.h"
 #include "gti/include_suggestions.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/mir_verification_cache.h"
 #include "gti/semantic_preamble.h"
 
 #include <cstdint>
@@ -34,6 +35,7 @@ struct FrontendSourceIdentity {
 struct FrontendSourceSnapshot {
   std::shared_ptr<FrontendCache> cache;
   std::shared_ptr<InstanceAnalysisCache> instanceCache;
+  std::shared_ptr<MirVerificationCache> mirVerificationCache;
   std::shared_ptr<SemanticPreambleCache> preambleCache;
   std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
   std::unordered_map<std::string, std::uint64_t> generations;
@@ -89,6 +91,7 @@ private:
   // identities, so source invalidation needs no explicit eviction here: a
   // changed library unit or project shape simply selects another generation.
   std::shared_ptr<InstanceAnalysisCache> sharedInstanceCache;
+  std::shared_ptr<MirVerificationCache> sharedMirVerificationCache;
   // Candidate interface scans for missing-import discovery. Rows compare the
   // source text they read before reuse; invalidation reclaims them early.
   std::shared_ptr<IncludeDiscoveryCache> sharedIncludeDiscoveryCache;

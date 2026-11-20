@@ -1,0 +1,1 @@
+- Add compile-time binary embedding with embed_bytes("relative/path"), returning a constexpr-readable, immutable static byte span. Project builds track changes to embedded input bytes.

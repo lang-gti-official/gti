@@ -16,7 +16,8 @@ namespace lang::mir_detail {
 // is rechecked against the current program because callee effects may change.
 [[nodiscard]] MirVerificationResult
 verifyMirProgramWithVerifiedBodies(const MirProgram &program,
-                                   const MirProgram *verifiedInput);
+                                   const MirProgram *verifiedInput,
+                                   VerificationSession *reuse = nullptr);
 
 // Whole-program verification depends only on program content, and callers
 // often hold a program they have just verified. These entry points skip only

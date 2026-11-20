@@ -158,7 +158,7 @@ namespace std {
   namespace detail {
     // Empty strings borrow a process-lifetime, immutable NUL without a heap
     // allocation. The counted view still records its string owner witness.
-    char empty_string_terminator = '\0';
+    constexpr char empty_string_terminator = '\0';
 
     // Source-owned termination policy on the same prefix owner used by vector
     // and span. The initialized physical prefix includes exactly one final
@@ -334,19 +334,19 @@ namespace std {
       }
     };
 
-    class storage_iterator<std::storage_element T, uint64_t Reverse = 0> {
-      prefix_owner<T>& data;
+    class storage_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+      prefix_owner<T>&<owner> data;
       mut size_t current_position;
       size_t final_position;
 
     public:
-      storage_iterator(prefix_owner<T>& source, size_t position, size_t end)
+      storage_iterator(prefix_owner<T>&<owner> source, size_t position, size_t end)
           : data(source), current_position(position), final_position(end) {
         if (position > end) { gti_internal::index_bounds_check(position, end); }
         if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
       }
 
-      T& operator*() {
+      T&<owner> operator*() {
         mut size_t position = this.current_position;
         if constexpr (Reverse != 0) {
           position = detail::checked_iterator_position(position, size_t(0),
@@ -356,7 +356,7 @@ namespace std {
         unsafe { return this.data.read_unchecked(position); }
       }
 
-      T& operator->() { return *this; }
+      T&<owner> operator->() { return *this; }
 
       void operator++() mut {
         this.current_position = detail::checked_iterator_step<Reverse>(
@@ -378,7 +378,7 @@ namespace std {
             this.current_position, size_t(0), this.final_position, offset, Reverse == 0);
       }
 
-      T& operator[](ptrdiff_t offset) {
+      T&<owner> operator[](ptrdiff_t offset) {
         mut size_t position = detail::checked_iterator_position(
             this.current_position, size_t(0), this.final_position, offset, Reverse != 0);
         if constexpr (Reverse != 0) {
@@ -896,7 +896,9 @@ namespace std {
 
     /// Returns a checked read-only character view tied to this string.
     span<char> as_span() {
-      return span<char>(this.data.prefix(), size_t(0), this.data.length());
+      unsafe {
+        return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+      }
     }
 
     /// Exclusively borrows characters without changing the string's length.
@@ -1580,9 +1582,65 @@ export #macro(proc) std::syntax::expr concat(std::syntax::tokens input) {
 }
 }
 
-// A counted text view has no source class body. Semantic analysis binds its
-// addition operator to these source functions by trusted declaration identity.
+// Semantic analysis forwards counted-view operations to these functions by
+// trusted declaration identity. Borrowing an owning operand uses its existing view.
 namespace gti_internal {
+  export constexpr std::size_t text_owned_find(std::string_view text, std::string& needle, std::size_t position) {
+    return text_view_find(text, needle.view(), position);
+  }
+
+  export constexpr std::size_t text_owned_find(std::string_view text, std::string& needle) {
+    return text_view_find(text, needle.view());
+  }
+
+  export constexpr std::size_t text_owned_rfind(std::string_view text, std::string& needle, std::size_t position) {
+    return text_view_rfind(text, needle.view(), position);
+  }
+
+  export constexpr std::size_t text_owned_rfind(std::string_view text, std::string& needle) {
+    return text_view_rfind(text, needle.view());
+  }
+
+  export constexpr bool text_owned_contains(std::string_view text, std::string& needle) {
+    return text_view_contains(text, needle.view());
+  }
+
+  export constexpr bool text_owned_starts_with(std::string_view text, std::string& needle) {
+    return text_view_starts_with(text, needle.view());
+  }
+
+  export constexpr bool text_owned_ends_with(std::string_view text, std::string& needle) {
+    return text_view_ends_with(text, needle.view());
+  }
+
+  export constexpr int text_owned_compare(std::string_view text, std::string& needle) {
+    return text_view_compare(text, needle.view());
+  }
+
+  export constexpr bool text_compare_owned_equal(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) == 0;
+  }
+
+  export constexpr bool text_compare_owned_not_equal(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) != 0;
+  }
+
+  export constexpr bool text_compare_owned_less(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) < 0;
+  }
+
+  export constexpr bool text_compare_owned_less_equal(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) <= 0;
+  }
+
+  export constexpr bool text_compare_owned_greater(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) > 0;
+  }
+
+  export constexpr bool text_compare_owned_greater_equal(std::string_view left, std::string& right) {
+    return text_view_compare(left, right.view()) >= 0;
+  }
+
   export std::string text_view_concat(std::string_view left, std::string_view right) {
     mut std::string result{};
     require_container_argument(right.size() <= std::string::npos - left.size());

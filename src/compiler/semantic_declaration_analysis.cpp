@@ -665,7 +665,7 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
         Symbol published = symbol;
         if (published.type == SemanticType::Function &&
             sourceGraph != nullptr) {
-          std::erase_if(published.overloads,
+          std::erase_if(published.overloads.edit(),
                         [&](const CallableCandidate &overload) {
                           return overload.declaration != nullptr &&
                                  !sourceGraph->isDeclarationVisible(
@@ -678,7 +678,7 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
         }
         if (!isCompilerTrustedUnit(consumer) &&
             published.type == SemanticType::Function) {
-          std::erase_if(published.overloads,
+          std::erase_if(published.overloads.edit(),
                         [](const CallableCandidate &overload) {
                           return overload.compilerPrivate;
                         });
@@ -718,7 +718,7 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
                                        candidate.record().externalSymbol;
                           });
           if (!sameNativeBinding)
-            existing->second.overloads.push_back(candidate);
+            existing->second.overloads.edit().push_back(candidate);
         }
         existing->second.compilerPrivate =
             !existing->second.overloads.empty() &&
@@ -5508,7 +5508,7 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
         .ownerClass = owner.id,
         .receiverMutability = definition->receiverMutability()};
     if (member != owner.members.end()) {
-      for (auto &candidate : member->second.symbol.overloads) {
+      for (auto &candidate : member->second.symbol.overloads.edit()) {
         if (candidate.ownerClass == owner.id &&
             sameFunctionSignature(candidate, signature)) {
           if (selected != nullptr) {
@@ -5694,8 +5694,8 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
       if (bindNamespaceFunctionDefinition(*function, symbol, scope))
         continue;
       if (!symbol.overloads.empty()) {
-        publishCallableDeclaration(*function, symbol.overloads.front(), scope,
-                                   0);
+        publishCallableDeclaration(*function, symbol.overloads.edit().front(),
+                                   scope, 0);
       }
       declareNamespaceSymbol(scope, function->name(), std::move(symbol));
     } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
@@ -6053,14 +6053,14 @@ auto SemanticVisitor::Impl::mergeInheritedMember(ClassInfo &owner,
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
-  for (CallableCandidate &candidate : incoming.symbol.overloads) {
+  for (CallableCandidate &candidate : incoming.symbol.overloads.edit()) {
     const bool duplicateIdentity = std::any_of(
         existing.symbol.overloads.begin(), existing.symbol.overloads.end(),
         [&](const CallableCandidate &previous) {
           return previous.id != 0 && previous.id == candidate.id;
         });
     if (!duplicateIdentity) {
-      existing.symbol.overloads.emplace_back(std::move(candidate));
+      existing.symbol.overloads.edit().emplace_back(std::move(candidate));
     }
   }
   refreshOverloadPrivacy(existing.symbol);
@@ -6109,7 +6109,7 @@ auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
     return;
   }
 
-  for (CallableCandidate &candidate : local.symbol.overloads) {
+  for (CallableCandidate &candidate : local.symbol.overloads.edit()) {
     std::vector<std::size_t> matches;
     for (std::size_t index = 0; index < inherited.symbol.overloads.size();
          ++index) {
@@ -6125,8 +6125,8 @@ auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
                "with the same exact signature.",
                "GTI-S2042");
       }
-      inherited.symbol.overloads.emplace_back(std::move(candidate));
-      refreshFunctionPolymorphism(inherited.symbol.overloads.back());
+      inherited.symbol.overloads.edit().emplace_back(std::move(candidate));
+      refreshFunctionPolymorphism(inherited.symbol.overloads.edit().back());
       continue;
     }
 
@@ -6196,12 +6196,12 @@ auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
       candidate.virtualRoots = std::move(roots);
     }
 
-    std::erase_if(inherited.symbol.overloads,
+    std::erase_if(inherited.symbol.overloads.edit(),
                   [&](const CallableCandidate &base) {
                     return sameFunctionSignature(base, candidate);
                   });
-    inherited.symbol.overloads.emplace_back(std::move(candidate));
-    refreshFunctionPolymorphism(inherited.symbol.overloads.back());
+    inherited.symbol.overloads.edit().emplace_back(std::move(candidate));
+    refreshFunctionPolymorphism(inherited.symbol.overloads.edit().back());
   }
   inherited.symbol.declaration = local.symbol.declaration;
   inherited.symbol.ownerClass = owner.id;
@@ -8037,7 +8037,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
 
 auto SemanticVisitor::Impl::indexFunctionCandidateBorrowSummaries(
     Symbol &symbol, BorrowSummaryCandidateIndex &index) -> void {
-  for (CallableCandidate &candidate : symbol.overloads) {
+  for (CallableCandidate &candidate : symbol.overloads.edit()) {
     index[candidate.id].emplace_back(&candidate);
     if (workMetrics != nullptr) {
       ++workMetrics->semanticBorrowSummaryCandidateInspections;
@@ -10632,7 +10632,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                "GTI-S2039");
       }
     }
-    for (CallableCandidate &overload : symbol.overloads) {
+    for (CallableCandidate &overload : symbol.overloads.edit()) {
       overload.ownerClass = owner.id;
       overload.dispatchOwner = openClassType(owner.id);
       overload.compilerPrivate =
@@ -10661,7 +10661,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       applyFunctionReturnBorrowSummary(overload);
     }
     if (function != nullptr && !symbol.overloads.empty()) {
-      publishCallableDeclaration(*function, symbol.overloads.front(),
+      publishCallableDeclaration(*function, symbol.overloads.edit().front(),
                                  owner.namespaceScope, owner.id);
     }
     if (const auto alias = owner.typeAliases.find(name->lexeme);
