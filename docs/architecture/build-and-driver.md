@@ -3086,7 +3086,10 @@ All integers are unsigned 32-bit little endian. A blob is its byte length follow
 by exactly those bytes; there is no padding, compression, timestamp, platform
 permission, host-width integer or native structure dump. The complete layout is:
 
-1. Eight bytes `GTILIB\r\n`, container version `2` (native only) or `3` (native plus optimization MIR), envelope schema `1`.
+1. Eight bytes `GTILIB\r\n`, followed by the container version and envelope schema.
+   Native libraries use version `2`, schema `1`. Native libraries with optimization
+   MIR use version `3`, schema `1`. Installed generic modules use version `2`,
+   schema `2` and store their declaration interface and dependent bodies in field 3.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
 3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
@@ -3105,8 +3108,9 @@ and the complete dependency set, independent of the caller's dependency order.
 A checksum detects damage, not malicious replacement or an untrusted producer.
 Registry/package trust and native object admission remain separate obligations.
 
-Each dependency and object list is limited to 4096 entries. At least one nonempty
-object is required. Objects are limited to 64 MiB each and the entire serialized
+Each dependency and object list is limited to 4096 entries. A native envelope
+requires at least one nonempty object. A generic envelope has zero objects.
+Objects are limited to 64 MiB each and the entire serialized
 bundle to 256 MiB. Names are lowercase ASCII letters/digits/underscore/hyphen
 followed by `.o`, at most 255 bytes, with reserved Windows device basenames
 rejected. They are logical keys, never filesystem paths. The writer sorts without
@@ -3386,8 +3390,8 @@ complete bytes before the source loader can resolve its imports. The full
 artifact digest also participates in the consumer's build identity.
 
 Ordinary single-threaded, hosted LLVM project checks and builds select the
-development or release object when an import or re-export reaches the
-module. An executable can link the installed object alongside inferred or
+development or release bundle when an import or re-export reaches the
+module. An executable can link installed native objects alongside inferred or
 explicit project libraries. Each project library producer still compiles its
 own standard-library implementation dependencies from source. A producer can
 use the installed-module configuration identity only
@@ -3401,12 +3405,12 @@ not invalidate that object. The shared source companion supplies `constexpr std:
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.
 
-Staging builds these objects using its final compiler and runtime, then checks
-and runs an independent project with the implementation source removed. A
-source-only toolchain repack rebuilds the objects from the replacement library.
-Bundle compatibility and object admission apply before executable cache reuse;
+Staging builds these bundles using its final compiler and runtime, then checks
+and runs an independent project with the implementation sources removed. A
+source-only toolchain repack rebuilds the bundles from the replacement library.
+Bundle compatibility and the checks for each envelope apply before executable cache reuse;
 the names and digests of the reached bundles participate in the cache key in
-name order. An executable importing both modules shares one compiler/runtime
+name order. An executable importing multiple installed modules shares one compiler/runtime
 compatibility check. Unused bundles are never opened. Both paths hash the full
 compiler and runtime files with the same SHA-256 routine used by the build
 cache. Unsupported configurations use source.
