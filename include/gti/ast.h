@@ -2928,9 +2928,7 @@ struct SwitchLabel {
   ExprPtr value;
   Token colon;
 
-  [[nodiscard]] bool isDefault() const {
-    return keyword.kind == TokenKind::DEFAULT;
-  }
+  [[nodiscard]] bool isDefault() const { return !value; }
 };
 
 struct SwitchArm {

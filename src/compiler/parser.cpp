@@ -3833,15 +3833,16 @@ private:
       const Token equal =
           consume(TokenKind::EQUAL, "Expect '=' after if case pattern.");
       ExprPtr subject = expression();
-      consume(TokenKind::RIGHT_PAREN, "Expect ')' after if case subject.");
+      const Token close =
+          consume(TokenKind::RIGHT_PAREN, "Expect ')' after if case subject.");
       std::vector<SwitchArm> arms(2);
       arms.front().labels.push_back({caseToken, std::move(pattern), equal});
       arms.front().statements.push_back(statement());
       // Both outcomes exist even when the mismatch branch is empty.
-      const Token fallback =
-          generatedToken(TokenKind::DEFAULT, "default", caseToken);
-      arms.back().labels.push_back({fallback, nullptr, fallback});
-      if (match({TokenKind::ELSE}))
+      const bool hasElse = match({TokenKind::ELSE});
+      arms.back().labels.push_back(
+          {hasElse ? previous() : close, nullptr, close});
+      if (hasElse)
         arms.back().statements.push_back(statement());
       return std::make_shared<SwitchStmt>(keyword, std::move(subject),
                                           std::move(arms), previous());

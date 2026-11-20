@@ -16320,7 +16320,8 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     ConstexprStatementEvaluation result =
         executeConstexprStatements(selected->statements, context);
     context.scopes.pop_back();
-    return result.control == ConstexprControlFlow::Break
+    return !switchStatement->isIfCase() &&
+                   result.control == ConstexprControlFlow::Break
                ? ConstexprStatementEvaluation{}
                : result;
   }
