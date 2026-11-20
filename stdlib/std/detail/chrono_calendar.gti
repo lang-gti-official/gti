@@ -27,7 +27,7 @@ constexpr int32_t days_in_month(int32_t year, int32_t month) {
 // Gregorian era decomposition; all callers validate civil year/month/day first.
 constexpr int64_t civil_days(int32_t year, int32_t month, int32_t day) {
   int64_t y = int64_t(year) - (month <= 2 ? 1i64 : 0i64);
-  int64_t era = y / 400i64;
+  int64_t era = y >= 0i64 ? y / 400i64 : (y - 399i64) / 400i64;
   int64_t yoe = y - era * 400i64;
   int64_t m = int64_t(month) + (month > 2 ? -3i64 : 9i64);
   int64_t doy = (153i64 * m + 2i64) / 5i64 + int64_t(day) - 1i64;

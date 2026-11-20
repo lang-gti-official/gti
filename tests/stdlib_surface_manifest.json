@@ -3898,7 +3898,8 @@
       ],
       "evidence": [
         "tests/ui/chrono/calendar_cycle.gti",
-        "tests/ui/chrono/calendar_duration_arithmetic.gti"
+        "tests/ui/chrono/calendar_duration_arithmetic.gti",
+        "tests/ui/chrono/calendar_bounds.gti"
       ]
     },
     {
@@ -4002,7 +4003,9 @@
       "source": "stdlib/std/detail/chrono_format.gti",
       "status": "executable",
       "operations": [
+        "std::chrono::error",
         "std::chrono::format",
+        "std::chrono::format_error",
         "std::chrono::format_to",
         "std::chrono::prepare_time_pattern",
         "std::chrono::prepared_time_pattern",
@@ -4040,7 +4043,8 @@
         "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
       ],
       "evidence": [
-        "tests/ui/stdlib/chrono_calendar/zones_malformed.gti"
+        "tests/slow/stdlib/chrono_calendar/zones_malformed.gti",
+        "tests/slow/stdlib/chrono_calendar/zones_database.gti"
       ]
     },
     {
@@ -4060,7 +4064,9 @@
         "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
       ],
       "evidence": [
-        "tests/ui/stdlib/chrono_calendar/zones_named.gti"
+        "tests/slow/stdlib/chrono_calendar/zones_named.gti",
+        "tests/ui/stdlib/chrono_calendar/zones_name_escape.gti",
+        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti"
       ]
     },
     {

@@ -6,8 +6,18 @@ import std.chrono;
 import std.string;
 int main() {
   auto d = std::chrono::date::create(2024, 2, 29);
-  auto pattern = std::chrono::prepare_time_pattern<std::chrono::date>("%Y/%m/%d");
+  mut auto pattern = std::chrono::prepare_time_pattern<std::chrono::date>("%Y/%m/%d");
   if (pattern.format(d) != "2024/02/29") { return 1; }
+  {
+    auto owned = std::string("%d %B %Y");
+    pattern.assign(owned.view());
+  }
+  if (pattern.format(d) != "29 February 2024") { return 6; }
+  if (pattern.try_assign("%H")) { return 7; }
+  if (pattern.format(d) != "29 February 2024") { return 8; }
+  mut std::string prepared_output = std::string("date: ");
+  pattern.format_to(prepared_output, d);
+  if (prepared_output != "date: 29 February 2024") { return 9; }
   mut std::string out = std::string("prefix");
   auto result = std::chrono::try_runtime_format_to(out, d, "%H");
   if (result || result.error().position != 0 || out != "prefix") { return 2; }

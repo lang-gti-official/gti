@@ -1066,28 +1066,40 @@ process-wide synchronization obligations. Environment setters, enumeration,
 and child-local overrides are not part of this slice. See
 [the language contract](../language/process.md#environment-observation).
 
-## Clock Boundary
+## Clock, Calendar And Time-Zone Boundary
 
-`std.chrono` keeps duration and time-point policy in ordinary GTI. Its signed
-`nanoseconds`, nominally distinct `steady_time_point` and `system_time_point`,
-checked elapsed subtraction, comparison, and Unix decomposition contain no
-compiler or backend name recognition. Exact `std::checked_sub` supplies the
-recoverable duration-overflow decision.
-
-Passive duration/time-point constructors and pure observers are source-defined
-`constexpr` clients of staged canonical MIR. Clock reads and Expected-returning
-elapsed subtraction are not const-eligible. The adoption adds no evaluator
-opcode, native constexpr authority, or public-name recognition.
+`std.chrono` is a public facade over source-defined duration, calendar,
+timestamp, zone, discovery and formatting modules. Generic fixed durations,
+validated Gregorian arithmetic, Unix normalization and checked conversions use
+ordinary GTI constraints and constexpr operations; neither frontend nor backend
+recognizes public chrono type names. Calendar counts are nominally separate
+from fixed units. Existing clock `now`/`elapsed_since` contracts remain
+recoverable; new fallible APIs pair `try_` and direct panic forms.
 
 The two `gti_rt_chrono_*_now_v1` entries expose only a stable status and one
-`int64_t` output. The runtime converts host clock readings into a floor-based
-seconds plus normalized nanosecond remainder, proves the joined value fits,
-and leaves the output unchanged on failure. The steady epoch remains opaque;
-the system result is signed Unix time excluding leap seconds. No native
-`std::chrono` type crosses the ABI.
+`int64_t` output. The runtime converts host clock readings into floor-based
+seconds plus a normalized remainder, proves the joined nanosecond value fits,
+and leaves output unchanged on failure. The steady epoch remains opaque;
+the system result is signed Unix time excluding leap seconds. The new split
+`timestamp` can store a wider range, but its `try_now` bridge retains the existing
+clock ABI's acquisition range. No native calendar or zone type crosses the ABI.
 
-Generic ratio durations, sleep, calendars, formatting, parsing, time zones,
-and additional clocks remain outside this first observation slice.
+Source GTI parses bounded TZif records and their future-rule footers, owns
+immutable rule snapshots through explicit shared handles, and resolves local
+folds/gaps according to explicit policy. A pinned IANA bundle is embedded with
+`embed_bytes` from the installed stdlib at compilation; deployed binaries have
+no default runtime resource-path dependency. Explicit `tzdb::try_load(path)`
+loads replacement snapshots without mutating existing handles. Build packaging
+must install the resource alongside its source module. Local-zone discovery
+uses existing environment/filesystem capabilities; it never changes global
+`TZ` or infers zone identities from display abbreviations.
+
+Default formatting conformances use the existing `std::formatting` protocol.
+Custom temporal patterns have their own checked literal/runtime/prepared APIs,
+because the general `format_spec` does not carry arbitrary temporal patterns.
+The parser, English names, output limits and transactional append behavior are
+source library policy. No new clock ABI, lexer/parser syntax, evaluator opcode
+or chrono-specific compiler hook is introduced.
 
 ## Managed Concurrency Boundary
 

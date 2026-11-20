@@ -47,7 +47,7 @@ public:
   zoned_time(zoned_time&& other) = default;
   /// Internal validated construction also checks civil-range overflow.
   static expected<zoned_time, errc> try_from_rules(shared_ptr<detail::zone_rules> rules, timestamp point) {
-    if (!rules || rules->types.empty()) return unexpected(errc::invalid_data);
+    if (!rules || rules->types().empty()) return unexpected(errc::invalid_data);
     auto info = ?detail::rules_info(*rules, point.unix_seconds());
     auto added = std::checked_add(point.unix_seconds(), int64_t(info.offset));
     if (!added) return unexpected(errc::out_of_range);
@@ -64,8 +64,8 @@ public:
   int32_t offset_seconds() { return this.info.offset; }
   bool is_daylight_saving() { return this.info.daylight; }
   string_view abbreviation() { return this.info.abbreviation.view(); }
-  string_view zone_name() { return this.rules->name.view(); }
-  string_view database_version() { return this.rules->version.view(); }
+  string_view zone_name() { return this.rules->name().view(); }
+  string_view database_version() { return this.rules->version().view(); }
 };
 
 namespace detail {
@@ -87,14 +87,14 @@ bool covers_gap(int64_t local, int64_t transition, int32_t before, int32_t after
 expected<local_mapping, errc> map_local(zone_rules& rules, local_datetime local) {
   int64_t reading = local.unix_seconds();
   mut vector<int32_t> offsets{};
-  for (auto& type : rules.types) {
+  for (auto& type : rules.types()) {
     mut bool seen = false;
     for (auto offset : offsets) if (offset == type.offset) seen = true;
     if (!seen) offsets.push_back(type.offset);
   }
-  if (rules.footer.present) {
-    offsets.push_back(rules.footer.standard_offset);
-    if (rules.footer.daylight) offsets.push_back(rules.footer.daylight_offset);
+  if (rules.footer().present) {
+    offsets.push_back(rules.footer().standard_offset);
+    if (rules.footer().daylight) offsets.push_back(rules.footer().daylight_offset);
   }
   mut int32_t count = 0;
   mut int64_t earlier = 0;
@@ -114,30 +114,37 @@ expected<local_mapping, errc> map_local(zone_rules& rules, local_datetime local)
     } else return unexpected(errc::unsupported_data);
     count++;
   }
+  if (unsupported) return unexpected(errc::unsupported_coverage);
   if (count == 1) return local_mapping::unique(timestamp::create(earlier, int64_t(local.subsecond_nanoseconds())));
   if (count == 2) return local_mapping::ambiguous(
       timestamp::create(earlier, int64_t(local.subsecond_nanoseconds())),
       timestamp::create(later, int64_t(local.subsecond_nanoseconds())));
-  mut int32_t previous = rules.types[size_t(0)].offset;
-  for (auto& transition : rules.transitions) {
-    auto after = rules.types[size_t(transition.type)].offset;
-    if (covers_gap(reading, transition.second, previous, after)) {
+  mut int32_t previous = rules.types()[size_t(0)].offset;
+  mut uint8_t previous_kind = 0;
+  for (auto& transition : rules.transitions()) {
+    auto after = rules.types()[size_t(transition.type)].offset;
+    auto before_name = designation(rules, rules.types()[size_t(previous_kind)].designation);
+    auto after_name = designation(rules, rules.types()[size_t(transition.type)].designation);
+    bool known = bool(before_name) && bool(after_name) &&
+        (rules.footer().present || transition.second != rules.transitions().back().second);
+    if (known && covers_gap(reading, transition.second, previous, after)) {
       return local_mapping::nonexistent(?make_gap(transition.second, previous, after));
     }
     previous = after;
+    previous_kind = transition.type;
   }
-  if (rules.footer.present && rules.footer.daylight) {
+  if (rules.footer().present && rules.footer().daylight) {
     for (mut int32_t year = local.year() - 1; year <= local.year() + 1; year++) {
-      if (year < 1 || year > 9999) continue;
-      auto start = rule_second(year, rules.footer.start, rules.footer.standard_offset);
-      auto end = rule_second(year, rules.footer.end, rules.footer.daylight_offset);
-      if ((rules.transitions.empty() || start > rules.transitions.back().second) &&
-          covers_gap(reading, start, rules.footer.standard_offset, rules.footer.daylight_offset)) {
-        return local_mapping::nonexistent(?make_gap(start, rules.footer.standard_offset, rules.footer.daylight_offset));
+      if (year < 0 || year > 10000) continue;
+      auto start = rule_second(year, rules.footer().start, rules.footer().standard_offset);
+      auto end = rule_second(year, rules.footer().end, rules.footer().daylight_offset);
+      if ((rules.transitions().empty() || start > rules.transitions().back().second) &&
+          covers_gap(reading, start, rules.footer().standard_offset, rules.footer().daylight_offset)) {
+        return local_mapping::nonexistent(?make_gap(start, rules.footer().standard_offset, rules.footer().daylight_offset));
       }
-      if ((rules.transitions.empty() || end > rules.transitions.back().second) &&
-          covers_gap(reading, end, rules.footer.daylight_offset, rules.footer.standard_offset)) {
-        return local_mapping::nonexistent(?make_gap(end, rules.footer.daylight_offset, rules.footer.standard_offset));
+      if ((rules.transitions().empty() || end > rules.transitions().back().second) &&
+          covers_gap(reading, end, rules.footer().daylight_offset, rules.footer().standard_offset)) {
+        return local_mapping::nonexistent(?make_gap(end, rules.footer().daylight_offset, rules.footer().standard_offset));
       }
     }
   }
@@ -153,8 +160,8 @@ public:
   time_zone(time_zone& other) = delete;
   time_zone(time_zone&& other) = default;
   time_zone clone() { return time_zone(this.rules.clone()); }
-  string_view name() { return this.rules->name.view(); }
-  string_view database_version() { return this.rules->version.view(); }
+  string_view name() { return this.rules->name().view(); }
+  string_view database_version() { return this.rules->version().view(); }
   static expected<time_zone, errc> try_from_tzif(std::span<uint8_t>& bytes, string_view name, string_view version = "custom") {
     auto rules = ?detail::parse_tzif(bytes, name, version);
     return time_zone(std::make_shared<detail::zone_rules>(std::move(rules)));
@@ -163,21 +170,7 @@ public:
     return time_zone::try_from_tzif(bytes, name, version).expect("Invalid time-zone data");
   }
   static expected<time_zone, errc> try_fixed(int32_t offset) {
-    if (offset == (-2147483647 - 1)) return unexpected(errc::out_of_range);
-    mut detail::zone_rules rules{};
-    mut string name = "UTC";
-    if (offset != 0) {
-      name.push_back(offset < 0 ? '-' : '+');
-      int64_t absolute = offset < 0 ? -int64_t(offset) : int64_t(offset);
-      auto count = std::format("{}", absolute);
-      name.append(count.view());
-      name.push_back('s');
-    }
-    rules.name = name.clone();
-    rules.version = string("fixed");
-    rules.designations = std::move(name);
-    rules.designations.push_back(char(0));
-    rules.types.push_back(detail::tz_type(offset, false, uint8_t(0)));
+    auto rules = ?detail::zone_rules::try_fixed(offset);
     return time_zone(std::make_shared<detail::zone_rules>(std::move(rules)));
   }
   static time_zone fixed(int32_t offset) { return time_zone::try_fixed(offset).expect("Invalid time-zone offset"); }

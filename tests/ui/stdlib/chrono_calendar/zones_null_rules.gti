@@ -1,0 +1,17 @@
+// The internal owning factory reports an empty rules handle before dereferencing it.
+//@ run-pass
+//@ stdlib-overlay: std/chrono_rules_probe.gti
+// --- main.gti
+import std.chrono_rules_probe;
+int main() { return check_empty_rules(); }
+// --- std/chrono_rules_probe.gti
+export module chrono_rules_probe;
+import "detail/chrono_zones.gti";
+import "detail/chrono_tzif.gti";
+import "detail/chrono_calendar.gti";
+import std.memory;
+export int check_empty_rules() {
+  std::shared_ptr<std::chrono::detail::zone_rules> empty{};
+  auto result = std::chrono::zoned_time::try_from_rules(std::move(empty), std::chrono::timestamp(0i64));
+  return !result && result.error() == std::chrono::errc::invalid_data ? 0 : 1;
+}
