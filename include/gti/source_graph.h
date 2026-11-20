@@ -157,6 +157,8 @@ struct SourceUnit {
   // Driver-supplied, validated scalar metadata projected into declarations.
   // This admits no trusted capabilities and never comes from source syntax.
   bool compiledScalarInterface = false;
+  // Sorted function-name byte offsets in the admitted, generated facade.
+  std::vector<std::size_t> noAmbientStorageDeclarations;
   std::vector<EmbeddedFile> embeddedFiles;
   std::shared_ptr<const CompiledTemplateModule> compiledTemplate;
 };
@@ -195,7 +197,9 @@ public:
                                 std::size_t nameOffset) const;
   [[nodiscard]] std::vector<SourceUnitId> compilationOrder() const;
 
-  void markCompiledScalarInterface(SourceUnitId id);
+  void
+  markCompiledScalarInterface(SourceUnitId id,
+                              std::vector<std::size_t> noAmbientStorage = {});
   void attachCompiledTemplate(SourceUnitId,
                               std::shared_ptr<const CompiledTemplateModule>);
 

@@ -1,0 +1,3 @@
+import "api.gti";
+mut int counter = 40;
+int main() { return api::observe(counter, 0); }

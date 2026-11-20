@@ -189,7 +189,11 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
   auto sorted = signatures;
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
-  std::string out = "gti.callable-interface.4\n", previous;
+  const bool hasStorageContracts =
+      std::ranges::any_of(sorted, &CompiledScalarSignature::noAmbientStorage);
+  std::string out = hasStorageContracts ? "gti.callable-interface.5\n"
+                                        : "gti.callable-interface.4\n";
+  std::string previous;
   for (const auto &signature : sorted) {
     if (signature.key == previous)
       throw std::invalid_argument("duplicate callable interface declaration");
@@ -209,6 +213,8 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
                    ? "hint"
                    : "never");
     field(out, signature.codegenAttributes.cold ? "1" : "0");
+    if (hasStorageContracts)
+      field(out, signature.noAmbientStorage ? "none" : "unknown");
     out += '\n';
     if (out.size() > 1024U * 1024U)
       throw std::invalid_argument("callable interface exceeds metadata limit");
@@ -231,7 +237,11 @@ std::string_view takeField(std::string_view &bytes) {
   return result;
 }
 std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
-  constexpr std::string_view header = "gti.callable-interface.4\n";
+  const bool hasStorageContracts =
+      bytes.starts_with("gti.callable-interface.5\n");
+  const std::string_view header = hasStorageContracts
+                                      ? "gti.callable-interface.5\n"
+                                      : "gti.callable-interface.4\n";
   if (bytes.size() > 1024U * 1024U || !bytes.starts_with(header))
     throw std::invalid_argument("unsupported compiled interface profile");
   auto rest = bytes.substr(header.size());
@@ -274,6 +284,13 @@ std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
     if (cold != "0" && cold != "1")
       throw std::invalid_argument("invalid compiled cold policy");
     signature.codegenAttributes.cold = cold == "1";
+    if (hasStorageContracts) {
+      const auto storage = takeField(rest);
+      if (storage != "none" && storage != "unknown")
+        throw std::invalid_argument(
+            "invalid compiled persistent storage contract");
+      signature.noAmbientStorage = storage == "none";
+    }
     if (rest.empty() || rest.front() != '\n')
       throw std::invalid_argument("malformed callable interface");
     rest.remove_prefix(1);
@@ -824,6 +841,7 @@ struct LibraryFacade {
   std::string source;
   std::vector<CompiledScalarSignature> signatures;
   std::shared_ptr<const CompiledTemplateModule> recipe;
+  std::vector<std::size_t> noAmbientStorage;
 };
 struct AdmittedLibraries {
   std::vector<PackageSourceRoot> packageSources;
@@ -844,7 +862,8 @@ struct AdmittedLibraries {
         graph.attachCompiledTemplate(unit, std::move(facade.recipe));
         continue;
       }
-      graph.markCompiledScalarInterface(unit);
+      graph.markCompiledScalarInterface(unit,
+                                        std::move(facade.noAmbientStorage));
       for (auto &signature : facade.signatures) {
         auto found = optimizationBodies.find(compiledScalarSymbol(signature));
         inputs.imports.push_back(
@@ -1154,9 +1173,11 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
         }
       for (const auto &dependency : typePaths)
         source += "import " + importPath(group.path, dependency) + ";\n";
-      source += compiledInterfaceSource(group.signatures);
+      std::vector<std::size_t> noAmbientStorage;
+      appendCompiledInterfaceSource(source, group.signatures, noAmbientStorage);
       facades.push_back({group.path.string(), std::move(source),
-                         std::move(group.signatures)});
+                         std::move(group.signatures), nullptr,
+                         std::move(noAmbientStorage)});
       for (auto &owner : sources)
         if (registered(group.path, name) &&
             owners.ownerForPath(group.path)->identity == owner.identity)
