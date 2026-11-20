@@ -7,9 +7,20 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace lang {
+
+[[nodiscard]] bool mirPlainSharedDependency(const MirLoan *loan,
+                                            bool allowLifecycleBound = false);
+
+// Text copied through a reference mapped to a stored receiver field keeps
+// the owning storage loan as well as the independently tracked text owners.
+[[nodiscard]] const MirLoan *
+mappedTextStorageLoan(const MirBody &body, const MirLoan &access,
+                      const ExpressionInfo &info, BorrowOriginKind origin,
+                      std::span<const BorrowedFieldOrigin> fields);
 
 // Type-level capacity to carry dependencies, not a claim that this value
 // currently has any. Expression-local ownerless facts may predate a store.

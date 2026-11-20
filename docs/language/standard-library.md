@@ -1586,9 +1586,10 @@ invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
 A span requires a complete object layout. Built-in array views require
 `std::storage_element<T>`, and vector views also accept the shared borrowed
-elements supported by the vector. A copy through a span or its cursor retains
-the physical container borrow through the copy's last use. Generic span relays
-can use `requires std::layout_queryable<T>` from `std.memory`.
+elements supported by the vector. Copying an element with live borrowed
+dependencies through a span or a read-only cursor retains those dependencies
+and the physical container borrow through the copy's last use. Generic span
+relays can use `requires std::layout_queryable<T>` from `std.memory`.
 
 The same module provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable

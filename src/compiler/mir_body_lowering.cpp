@@ -1642,17 +1642,7 @@ private:
 
   [[nodiscard]] bool
   plainSharedDependency(MirLoanId id, bool allowLifecycleBound = false) const {
-    const auto *loan = output.findLoan(id);
-    return loan && loan->kind == MirLoanKind::Stored &&
-           loan->access == AccessMode::ReadOnly && !loan->entry &&
-           !loan->escapes && !loan->parent && !loan->storedDependency &&
-           (allowLifecycleBound || !loan->lifecycleBound) && !loan->twoPhase &&
-           std::all_of(loan->additionalDependencies.begin(),
-                       loan->additionalDependencies.end(),
-                       [](const auto &dependency) {
-                         return dependency.parent == 0 &&
-                                dependency.access == AccessMode::ReadOnly;
-                       });
+    return mirPlainSharedDependency(output.findLoan(id), allowLifecycleBound);
   }
 
   // Joining local value dependencies does not create a new borrow. Keep
@@ -9790,11 +9780,24 @@ private:
         // is rooted at the receiver's own place below (issue #331). A view
         // carrier's mutable group does name the result's storage.
         const MirLoan *receiverLoan = output.findLoan(loanForValue(*receiver));
+        const auto *receiverInfo = findValue(*receiver);
+        // A compact receiver result that stores a reference to opaque owning
+        // storage borrows the physical receiver. A single element dependency
+        // must not substitute its referent for that storage.
+        const bool borrowsOwningReceiver =
+            receiverInfo &&
+            receiverInfo->info.type.kind == SemanticType::Class &&
+            !receiverInfo->info.traits.containsBorrowedState &&
+            value.info.category == ValueCategory::Value &&
+            value.info.type.kind == SemanticType::Class &&
+            value.info.traits.containsBorrowedState &&
+            value.borrowFields.empty();
         const bool heldStoredGroup =
             receiverLoan != nullptr &&
             receiverLoan->kind == MirLoanKind::Stored &&
             receiverLoan->access == AccessMode::ReadOnly &&
-            value.borrowAccess == AccessMode::Mutable &&
+            (value.borrowAccess == AccessMode::Mutable ||
+             borrowsOwningReceiver) &&
             call.receiver->place != 0;
         if (const MirPlaceId source =
                 heldStoredGroup ? 0 : borrowedSourcePlace(*receiver);
@@ -14768,6 +14771,23 @@ private:
           contents.groups.insert(id);
           continue;
         }
+        if (producer)
+          if (const auto *storage = mappedTextStorageLoan(
+                  output, *loan, producer->info, producer->borrowOrigin,
+                  producer->borrowFields)) {
+            const auto *source = output.findPlace(storage->source);
+            const auto held = bindingLoans.find(source->binding);
+            if (held != bindingLoans.end() && !held->second.groups.empty() &&
+                std::all_of(held->second.groups.begin(),
+                            held->second.groups.end(), [this](auto group) {
+                              return plainSharedDependency(group);
+                            })) {
+              contents.groups.insert(storage->id);
+              contents.groups.insert(held->second.groups.begin(),
+                                     held->second.groups.end());
+              continue;
+            }
+          }
       }
       // Copying a checked referent copies its contents, not its address. The
       // read still uses the physical loan, while the destination retains the

@@ -22,6 +22,46 @@ bool mirTypeMayHoldDependencies(const SemanticType &type,
          type.kind == SemanticType::Array || type.kind == SemanticType::Lambda;
 }
 
+bool mirPlainSharedDependency(const MirLoan *loan, bool allowLifecycleBound) {
+  return loan && loan->kind == MirLoanKind::Stored &&
+         loan->access == AccessMode::ReadOnly && !loan->entry &&
+         !loan->escapes && !loan->parent && !loan->storedDependency &&
+         (allowLifecycleBound || !loan->lifecycleBound) && !loan->twoPhase &&
+         std::all_of(loan->additionalDependencies.begin(),
+                     loan->additionalDependencies.end(),
+                     [](const auto &dependency) {
+                       return dependency.parent == 0 &&
+                              dependency.access == AccessMode::ReadOnly;
+                     });
+}
+
+const MirLoan *
+mappedTextStorageLoan(const MirBody &body, const MirLoan &access,
+                      const ExpressionInfo &info, BorrowOriginKind origin,
+                      std::span<const BorrowedFieldOrigin> fields) {
+  if (access.kind != MirLoanKind::CallResult ||
+      access.access != AccessMode::ReadOnly ||
+      info.category != ValueCategory::Place ||
+      (info.type.kind != SemanticType::StringView &&
+       info.type.kind != SemanticType::CString) ||
+      origin != BorrowOriginKind::Receiver || fields.size() != 1 ||
+      fields.front().origin != BorrowOriginKind::Receiver ||
+      fields.front().access != AccessMode::ReadOnly ||
+      fields.front().sourceFields.empty() ||
+      !fields.front().resultFields.empty() ||
+      !fields.front().sourceConditions.empty() ||
+      !fields.front().resultConditions.empty())
+    return nullptr;
+  const auto *owner = body.findPlace(access.source);
+  const auto *parent = body.findLoan(access.parent);
+  if (!owner || owner->root != MirPlaceRootKind::Binding ||
+      !owner->projections.empty() || owner->type.kind != SemanticType::Class ||
+      owner->traits.copyable || !mirPlainSharedDependency(parent) ||
+      parent->source != access.source)
+    return nullptr;
+  return parent;
+}
+
 std::optional<std::size_t> mirRetainingParameterIndex(
     const MirBody &body, const std::vector<SemanticType> &parameterTypes,
     const std::vector<HirBindingId> &parameterBindings, MirCarrierRoot root) {
@@ -1007,20 +1047,25 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
   // A copy through a named receiver field keeps the physical storage loan
   // alongside the owner's contents. Derive this from the selected reference
   // call, even if the scoped body no longer has the original HIR binding.
-  std::set<MirLoanId> mappedReferenceLoans;
+  std::map<MirLoanId, MirLoanId> mappedCopyStorageLoans;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions)
       if (!instruction.tombstone &&
-          instruction.kind == MirInstructionKind::Call && instruction.loan &&
-          instruction.info.category == ValueCategory::Place &&
-          instruction.info.traits.containsBorrowedState &&
-          instruction.borrowOrigin == BorrowOriginKind::Receiver &&
-          instruction.borrowFields.size() == 1 &&
-          instruction.borrowFields.front().resultFields.empty() &&
-          !instruction.borrowFields.front().sourceFields.empty())
+          instruction.kind == MirInstructionKind::Call && instruction.loan)
         if (const auto *loan = body.findLoan(*instruction.loan);
-            loan && loan->kind == MirLoanKind::CallResult)
-          mappedReferenceLoans.insert(loan->id);
+            loan && loan->kind == MirLoanKind::CallResult) {
+          if (instruction.info.category == ValueCategory::Place &&
+              instruction.info.traits.containsBorrowedState &&
+              instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+              instruction.borrowFields.size() == 1 &&
+              instruction.borrowFields.front().resultFields.empty() &&
+              !instruction.borrowFields.front().sourceFields.empty())
+            mappedCopyStorageLoans.emplace(loan->id, loan->id);
+          else if (const auto *owner = mappedTextStorageLoan(
+                       body, *loan, instruction.info, instruction.borrowOrigin,
+                       instruction.borrowFields))
+            mappedCopyStorageLoans.emplace(loan->id, owner->id);
+        }
 
   const auto transfer = [&](const MirBlock &current, State state) {
     const auto *block = &current;
@@ -1062,16 +1107,24 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         const Fact held = operandFact(body, state, operand);
         join(producedInputs, held);
         join(expiredInputs, operandFact(body, state, operand, true));
-        if (!mappedReferenceLoans.empty() &&
+        if (!mappedCopyStorageLoans.empty() &&
             operand.kind == MirOperandKind::Copy) {
           const auto *place = body.findPlace(operand.place);
           if (place && place->root == MirPlaceRootKind::Loan &&
-              place->projections.empty() &&
-              mappedReferenceLoans.contains(place->loan)) {
-            const Fact physical{std::vector<MirLoanId>{place->loan}};
-            join(producedInputs, physical);
-            if (state.unavailable.contains(place->loan))
-              join(expiredInputs, physical);
+              place->projections.empty()) {
+            const auto storage = mappedCopyStorageLoans.find(place->loan);
+            if (storage != mappedCopyStorageLoans.end() &&
+                (storage->second == place->loan ||
+                 (held && !held->empty() &&
+                  std::all_of(held->begin(), held->end(), [&](MirLoanId id) {
+                    return mirPlainSharedDependency(body.findLoan(id));
+                  })))) {
+              const MirLoanId retained = storage->second;
+              const Fact physical{std::vector<MirLoanId>{retained}};
+              join(producedInputs, physical);
+              if (state.unavailable.contains(retained))
+                join(expiredInputs, physical);
+            }
           }
         }
         join(expiredRead, operandRead(body, state, operand, true));
