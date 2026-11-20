@@ -3407,7 +3407,7 @@ still participate in the consumer build's cache key. The compiler reads the
 checked callable signatures and links the target object. The distributed
 macOS arm64 object uses macOS 11.0, the first arm64 deployment target, for both
 native code generation and bundle compatibility. An OS update therefore does
-not invalidate that object. The shared source companion supplies `constexpr std::abs` and
+not invalidate that object. The shared declarations module supplies `constexpr std::abs` and
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.
 

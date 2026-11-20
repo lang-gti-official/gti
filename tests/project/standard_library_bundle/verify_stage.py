@@ -202,7 +202,9 @@ int main() {
                         random_bundle, executable], check=True)
 
         # One executable can import its own compiled library and the installed
-        # standard library in the same source graph.
+        # standard library in the same source graph. Building its inferred
+        # project library uses the source prelude, which imports std.meta.
+        shutil.copyfile(stage / "share/gti/stdlib/std/meta.gti", stdlib / "std/meta.gti")
         mixed = root / "mixed"
         (mixed / "src").mkdir(parents=True)
         (mixed / "gti.toml").write_text(
