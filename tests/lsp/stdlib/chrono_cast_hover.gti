@@ -1,0 +1,8 @@
+// Hover retains the source-defined duration conversion declaration.
+//@ hover @member: try_cast
+import std.chrono;
+int main() {
+  std::chrono::milliseconds value{1500i64};
+  auto converted = value./*@member*/try_cast<std::chrono::seconds>();
+  return converted ? 0 : 1;
+}

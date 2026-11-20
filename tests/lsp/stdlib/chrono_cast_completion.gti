@@ -1,0 +1,8 @@
+// Duration aliases expose both conversion methods through ordinary member completion.
+//@ completion @member: try_cast cast count checked_add checked_sub
+import std.chrono;
+int main() {
+  std::chrono::milliseconds value{1500i64};
+  value./*@member*/;  //~ ERROR GTI-P0001
+  return 0;
+}
