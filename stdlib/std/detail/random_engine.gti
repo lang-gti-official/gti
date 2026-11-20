@@ -27,4 +27,22 @@ export random_engine_state seed_random_engine(mut uint64_t seed) {
   state.s3 = splitmix64(seed);
   return state;
 }
+
+uint64_t rotate_left(uint64_t x, uint64_t k) {
+  return (x << (k & uint64_t(63))) | (x >> ((uint64_t(64) - k) & uint64_t(63)));
+}
+
+// One xoshiro256++ transition on the four words owned by this generator.
+export uint64_t next_random(mut random_engine_state& state) {
+  uint64_t sum = std::wrapping_add(state.s0, state.s3);
+  uint64_t result = std::wrapping_add(rotate_left(sum, uint64_t(23)), state.s0);
+  uint64_t t = state.s1 << uint64_t(17);
+  state.s2 = state.s2 ^ state.s0;
+  state.s3 = state.s3 ^ state.s1;
+  state.s1 = state.s1 ^ state.s2;
+  state.s0 = state.s0 ^ state.s3;
+  state.s2 = state.s2 ^ t;
+  state.s3 = rotate_left(state.s3, uint64_t(45));
+  return result;
+}
 }

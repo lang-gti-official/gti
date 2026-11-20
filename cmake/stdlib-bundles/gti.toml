@@ -18,4 +18,4 @@ functions = [
 [targets.random]
 kind = "gti-library"
 root = "stdlib/std/detail/random_engine.gti"
-functions = ["std::detail::seed_random_engine"]
+functions = ["std::detail::seed_random_engine", "std::detail::next_random"]

@@ -1,0 +1,1 @@
+Optimized builds can inline eligible functions from precompiled GTI libraries that ship MIR alongside native code, including numeric helpers that update borrowed state. Checked failures retain their original producer diagnostics. The packaged random engine ships its draw routine with reusable MIR, and module registration now shares one inventory across compiler and packaging.
