@@ -1133,8 +1133,9 @@ restoreTemplateBodies(std::span<const StmtPtr> declarations,
 std::string encodeTemplateModule(const CompiledTemplateModule &module) {
   Output out{std::string(compiledTemplateMagic)};
   if (!module.installedSourceDigest.empty()) {
-    if (module.installedSourceDigest.size()!=64 ||
-        module.installedSourceDigest.find_first_not_of("0123456789abcdef")!=std::string::npos)
+    if (module.installedSourceDigest.size() != 64 ||
+        module.installedSourceDigest.find_first_not_of("0123456789abcdef") !=
+            std::string::npos)
       invalid("invalid installed source identity");
     out.bytes = "gti.template-unit.3\n";
     out.text(module.installedSourceDigest);
@@ -1169,17 +1170,19 @@ compiledTemplateLifetimeNames(const CompiledTemplateModule &module,
 CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
   constexpr std::string_view installedMagic = "gti.template-unit.3\n";
   const bool installed = bytes.starts_with(installedMagic);
-  if (bytes.size() > byteLimit || (!installed && !bytes.starts_with(compiledTemplateMagic)))
+  if (bytes.size() > byteLimit ||
+      (!installed && !bytes.starts_with(compiledTemplateMagic)))
     invalid("unsupported module recipe");
   Input in{bytes.substr(compiledTemplateMagic.size()), {}};
   std::string digest;
   if (installed) {
     digest = in.text();
-    if (digest.size()!=64 || digest.find_first_not_of("0123456789abcdef")!=std::string::npos)
+    if (digest.size() != 64 ||
+        digest.find_first_not_of("0123456789abcdef") != std::string::npos)
       invalid("invalid installed source identity");
   }
   CompiledTemplateModule module{std::string(in.text()), {}};
-  module.installedSourceDigest=std::move(digest);
+  module.installedSourceDigest = std::move(digest);
   for (unsigned n = in.count(); n; --n) {
     auto pos = in.number();
     auto body = in.text();

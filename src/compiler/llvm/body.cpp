@@ -3248,9 +3248,12 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     const auto shared = storage.find(step.symbol);
     auto *global = new llvm::GlobalVariable(
         session.module(), layout.storage, false,
-        shared == storage.end() ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::WeakODRLinkage,
+        shared == storage.end() ? llvm::GlobalValue::InternalLinkage
+                                : llvm::GlobalValue::WeakODRLinkage,
         llvm::Constant::getNullValue(layout.storage),
-        shared == storage.end() ? "__gti_native_v1_g" + std::to_string(step.symbol) : shared->second);
+        shared == storage.end()
+            ? "__gti_native_v1_g" + std::to_string(step.symbol)
+            : shared->second);
     global->setAlignment(llvm::Align(layout.alignment));
     globals.emplace(step.symbol, global);
   }
@@ -3289,8 +3292,20 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     for (const auto &block :
          findMirBody(session.program().mir(), address)->blocks)
       for (const auto &stage : block.instructions)
-        if (!stage.tombstone && stage.nativeCallbackAdapter)
-          callbacks.push_back(*stage.nativeCallbackAdapter);
+        if (!stage.tombstone) {
+          // A private body's address can escape the object. Keep these bodies
+          // source-backed until native and recipe code share a code identity.
+          if (session.program().compiledModuleProducer() &&
+              (stage.functionPointerFunctionTarget ||
+               stage.functionPointerLambdaTarget ||
+               stage.nativeCallbackAdapter ||
+               stage.dispatch == CallDispatch::Virtual))
+            throw BackendUnsupportedError(
+                "native module closure requires shared function-address or "
+                "virtual dispatch identity");
+          if (stage.nativeCallbackAdapter)
+            callbacks.push_back(*stage.nativeCallbackAdapter);
+        }
   emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);

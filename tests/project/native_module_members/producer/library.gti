@@ -14,6 +14,7 @@ export class Meter {
 
 public:
   Meter(int initial) : value(initial) {}
+  expected<int, error> take(int delta) mut { return this.value + delta; }
   expected<int, error> take(bool valid) mut {
     if (!valid) { return unexpected(error::negative); }
     return this.advance();

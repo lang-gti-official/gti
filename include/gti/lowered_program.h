@@ -885,15 +885,22 @@ public:
   compiledInterfaceUnits() const {
     return compiledInterfaceUnits_;
   }
-  [[nodiscard]] const auto &compiledModuleStorage() const { return compiledModuleStorage_; }
-  [[nodiscard]] const auto &compiledModuleBindings() const { return compiledModuleBindings_; }
-  [[nodiscard]] const CompiledModuleBinding *compiledModuleBinding(LoweredFunctionInstanceId id) const {
+  [[nodiscard]] const auto &compiledModuleStorage() const {
+    return compiledModuleStorage_;
+  }
+  [[nodiscard]] const auto &compiledModuleBindings() const {
+    return compiledModuleBindings_;
+  }
+  [[nodiscard]] const CompiledModuleBinding *
+  compiledModuleBinding(LoweredFunctionInstanceId id) const {
     for (const auto &entry : compiledModuleBindings_)
-      if (entry.function == id) return &entry;
+      if (entry.function == id)
+        return &entry;
     return nullptr;
   }
   [[nodiscard]] bool compiledModuleProducer() const {
-    return !compiledModuleBindings_.empty() && !compiledModuleBindings_.front().imported;
+    return !compiledModuleBindings_.empty() &&
+           !compiledModuleBindings_.front().imported;
   }
   [[nodiscard]] bool compiledNativeProducer() const {
     return compiledScalarProducer() || compiledModuleProducer();
@@ -990,7 +997,7 @@ public:
 
 private:
   LoweredProgram() = default;
-  std::map<SymbolId,std::string> compiledModuleStorage_;
+  std::map<SymbolId, std::string> compiledModuleStorage_;
   std::vector<CompiledModuleBinding> compiledModuleBindings_;
   bool compiledScalarProducer_ = false;
   std::vector<CompiledScalarBinding> compiledScalarBindings_;

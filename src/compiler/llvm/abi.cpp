@@ -299,7 +299,8 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
   const auto *compiled = session.program().compiledScalarBinding(id);
   const auto *module = session.program().compiledModuleBinding(id);
   const bool importedBody = module && module->imported;
-  const auto name = module ? module->symbol : compiled && compiled->imported ? compiled->symbol
+  const auto name = module                           ? module->symbol
+                    : compiled && compiled->imported ? compiled->symbol
                     : native
                         ? function->externalSymbol
                         : privatePrefix + std::to_string(executionAbiVersion) +

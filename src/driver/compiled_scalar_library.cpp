@@ -2,10 +2,10 @@
 #include "compilation_pipeline.h"
 #include "compiled_scalar_support.h"
 #include "file_digest.h"
+#include "gti/compiled_interface_names.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
 #include "gti/compiled_template_body.h"
-#include "gti/compiled_interface_names.h"
 #include "gti/driver/project.h"
 #include "gti/persistent_declaration.h"
 #include "gti/project_template.h"
@@ -395,13 +395,15 @@ public:
         selection(std::move(selection)), mirOutput(mirOutput) {}
   ScalarBackend(std::vector<CompiledScalarImport> imports, Backend &backend)
       : imports(std::move(imports)), backend(backend) {}
-  void selectModule(std::string identity, std::string rootPath, std::map<std::string,std::string> dependencies) {
+  void selectModule(std::string identity, std::string rootPath,
+                    std::map<std::string, std::string> dependencies) {
     moduleDependencies_ = std::move(dependencies);
     moduleIdentity = std::move(identity);
     stdlibRoot = std::move(rootPath);
   }
   const auto &selectedModuleData() const { return moduleData; }
-  void importModuleEntries(std::vector<CompiledModuleImport> entries,std::string rootPath) {
+  void importModuleEntries(std::vector<CompiledModuleImport> entries,
+                           std::string rootPath) {
     moduleImports = std::move(entries);
     stdlibRoot = std::move(rootPath);
   }
@@ -415,12 +417,17 @@ public:
     std::optional<LoweredProgram> bound;
     try {
       if (!moduleIdentity.empty()) {
-        moduleEntries = CompiledScalarUnitBuilder().selectModuleEntries(program,root,selection->functions,moduleIdentity);
+        moduleEntries = CompiledScalarUnitBuilder().selectModuleEntries(
+            program, root, selection->functions, moduleIdentity);
         std::vector<CompiledModuleImport> scoped;
-        auto scope = std::make_shared<CompiledModuleScope>(CompiledModuleScope{moduleIdentity,{},moduleDependencies_});
-        for (const auto &entry : moduleEntries) scoped.push_back({root,entry,scope});
-        bound = CompiledScalarUnitBuilder().bindModuleEntries(std::move(program),scoped,true,stdlibRoot);
-        for (const auto &[id,symbol] : bound->compiledModuleStorage()) moduleData.push_back(symbol);
+        auto scope = std::make_shared<CompiledModuleScope>(
+            CompiledModuleScope{moduleIdentity, {}, moduleDependencies_});
+        for (const auto &entry : moduleEntries)
+          scoped.push_back({root, entry, scope});
+        bound = CompiledScalarUnitBuilder().bindModuleEntries(
+            std::move(program), scoped, true, stdlibRoot);
+        for (const auto &[id, symbol] : bound->compiledModuleStorage())
+          moduleData.push_back(symbol);
         std::ranges::sort(moduleData);
       } else if (producer) {
         std::vector<CompiledScalarImport> exports;
@@ -470,7 +477,8 @@ public:
       } else {
         bound = CompiledScalarUnitBuilder().bindImports(std::move(program),
                                                         imports);
-        bound = CompiledScalarUnitBuilder().bindModuleEntries(std::move(*bound),moduleImports,false,stdlibRoot);
+        bound = CompiledScalarUnitBuilder().bindModuleEntries(
+            std::move(*bound), moduleImports, false, stdlibRoot);
       }
     } catch (const std::invalid_argument &error) {
       throw BackendUnsupportedError(error.what());
@@ -487,7 +495,7 @@ private:
   Backend &backend;
   std::optional<ScalarSelection> selection;
   CompiledMirBodies *mirOutput = nullptr;
-  std::map<std::string,std::string> moduleDependencies_;
+  std::map<std::string, std::string> moduleDependencies_;
   std::string moduleIdentity;
   std::string stdlibRoot;
   std::vector<std::string> moduleData;
@@ -502,65 +510,88 @@ std::string templateLibraryIdentity(const CompiledLibraryTarget &target) {
 }
 
 constexpr std::string_view nativeModuleMagic = "gti.module-native.1\n";
-using ModuleDependencies = std::map<std::string,std::string>;
+using ModuleDependencies = std::map<std::string, std::string>;
 std::string dependencyFields(const ModuleDependencies &dependencies) {
   std::string bytes;
-  for (const auto &[path,digest] : dependencies) { field(bytes,path); field(bytes,digest); }
+  for (const auto &[path, digest] : dependencies) {
+    field(bytes, path);
+    field(bytes, digest);
+  }
   return bytes;
 }
-ModuleDependencies moduleDependencies(const FrontendResult &frontend, const std::filesystem::path &root) {
+ModuleDependencies moduleDependencies(const FrontendResult &frontend,
+                                      const std::filesystem::path &root) {
   ModuleDependencies dependencies;
   for (const auto &unit : frontend.sourceGraph.sourceUnits()) {
-    if (unit.id==frontend.sourceGraph.entryUnit() && unit.role!=SourceUnitRole::StandardLibrary) continue;
+    if (unit.id == frontend.sourceGraph.entryUnit() &&
+        unit.role != SourceUnitRole::StandardLibrary)
+      continue;
     auto path = unit.path.lexically_relative(root);
     const auto *source = frontend.sources.find(unit.path.string());
-    if (path.empty() || path.is_absolute() || *path.begin()==".." || !source ||
-        std::ranges::any_of(unit.configurationTokens, [](const auto &t) { return t.kind==ConfigurationTokenKind::Flag; }))
-      throw std::invalid_argument("native module requires a self-contained, flag-independent toolchain dependency");
-    dependencies.emplace(path.generic_string(),hash(*source));
+    if (path.empty() || path.is_absolute() || *path.begin() == ".." ||
+        !source ||
+        std::ranges::any_of(unit.configurationTokens, [](const auto &t) {
+          return t.kind == ConfigurationTokenKind::Flag;
+        }))
+      throw std::invalid_argument("native module requires a self-contained, "
+                                  "flag-independent toolchain dependency");
+    dependencies.emplace(path.generic_string(), hash(*source));
   }
   return dependencies;
 }
-void validateModuleDependencies(const CompiledLibraryInputs &inputs,const std::filesystem::path &root) {
-  if (!inputs.compilation.succeeded() || inputs.moduleImports.empty()) return;
+void validateModuleDependencies(const CompiledLibraryInputs &inputs,
+                                const std::filesystem::path &root) {
+  if (!inputs.compilation.succeeded() || inputs.moduleImports.empty())
+    return;
   std::set<const CompiledModuleScope *> checked;
-  std::map<std::string,std::string> observed;
+  std::map<std::string, std::string> observed;
   for (const auto &binding : inputs.moduleImports) {
-    if (!checked.insert(binding.scope.get()).second) continue;
-    for (const auto &[name,digest] : binding.scope->dependencies) {
-      auto [it,fresh] = observed.try_emplace(name);
+    if (!checked.insert(binding.scope.get()).second)
+      continue;
+    for (const auto &[name, digest] : binding.scope->dependencies) {
+      auto [it, fresh] = observed.try_emplace(name);
       if (fresh) {
-        const auto path=(root/name).string();
-        const auto &graph=inputs.compilation.sourceGraph;
-        const auto *unit=graph.findUnit(graph.sourceUnitForPath(path));
-        if (unit && unit->compiledTemplate) it->second=unit->compiledTemplate->installedSourceDigest;
+        const auto path = (root / name).string();
+        const auto &graph = inputs.compilation.sourceGraph;
+        const auto *unit = graph.findUnit(graph.sourceUnitForPath(path));
+        if (unit && unit->compiledTemplate)
+          it->second = unit->compiledTemplate->installedSourceDigest;
         else if (unit) {
-          if (auto source=inputs.compilation.sources.find(path)) it->second=hash(*source);
+          if (auto source = inputs.compilation.sources.find(path))
+            it->second = hash(*source);
         }
       }
-      if (it->second!=digest) throw std::invalid_argument("native module dependency differs from producer: "+name);
+      if (it->second != digest)
+        throw std::invalid_argument(
+            "native module dependency differs from producer: " + name);
     }
   }
 }
-std::string nativeModuleIdentity(const LibraryBundleIdentity &id, std::string_view recipe,const ModuleDependencies &deps) {
+std::string nativeModuleIdentity(const LibraryBundleIdentity &id,
+                                 std::string_view recipe,
+                                 const ModuleDependencies &deps) {
   std::string identity;
-  field(identity,id.library);
-  field(identity,id.sources);
-  field(identity,hash(recipe));
-  field(identity,dependencyFields(deps));
+  field(identity, id.library);
+  field(identity, id.sources);
+  field(identity, hash(recipe));
+  field(identity, dependencyFields(deps));
   return hash(identity);
 }
-std::string nativeModuleInterface(std::string_view recipe, std::span<const CompiledModuleEntry> entries,std::span<const std::string> data,const ModuleDependencies &deps) {
+std::string nativeModuleInterface(std::string_view recipe,
+                                  std::span<const CompiledModuleEntry> entries,
+                                  std::span<const std::string> data,
+                                  const ModuleDependencies &deps) {
   std::string out(nativeModuleMagic);
-  field(out,recipe);
-  field(out,dependencyFields(deps));
+  field(out, recipe);
+  field(out, dependencyFields(deps));
   std::string storage;
-  for (const auto &symbol : data) field(storage,symbol);
-  field(out,storage);
+  for (const auto &symbol : data)
+    field(storage, symbol);
+  field(out, storage);
   for (const auto &entry : entries) {
-    field(out,entry.name);
-    field(out,std::to_string(entry.offset));
-    field(out,entry.mayFail ? "status" : "value");
+    field(out, entry.name);
+    field(out, std::to_string(entry.offset));
+    field(out, entry.mayFail ? "status" : "value");
   }
   return out;
 }
@@ -574,7 +605,7 @@ NativeModule readNativeModule(const LibraryBundle &bundle) {
   auto bytes = std::string_view(bundle.interfaceMetadata);
   if (!bytes.starts_with(nativeModuleMagic) || bundle.templateOnly ||
       !bundle.optimizationBodies.empty() || !bundle.dependencies.empty() ||
-      bundle.objects.size()!=1 || bundle.objects.front().name!="unit.o")
+      bundle.objects.size() != 1 || bundle.objects.front().name != "unit.o")
     throw std::invalid_argument("invalid native module envelope");
   bytes.remove_prefix(nativeModuleMagic.size());
   NativeModule module{takeField(bytes)};
@@ -584,57 +615,82 @@ NativeModule readNativeModule(const LibraryBundle &bundle) {
     auto path = takeField(deps);
     auto digest = takeField(deps);
     const std::filesystem::path relative(path);
-    if (path.empty() || relative.is_absolute() || relative.lexically_normal()!=relative ||
-        *relative.begin()==".." || relative.extension()!=".gti" || path.find_first_of("\\:")!=path.npos ||
-        digest.size()!=64 || digest.find_first_not_of("0123456789abcdef")!=digest.npos ||
-        scope->dependencies.size()>=256 || !scope->dependencies.emplace(path,digest).second)
+    if (path.empty() || relative.is_absolute() ||
+        relative.lexically_normal() != relative || *relative.begin() == ".." ||
+        relative.extension() != ".gti" ||
+        path.find_first_of("\\:") != path.npos || digest.size() != 64 ||
+        digest.find_first_not_of("0123456789abcdef") != digest.npos ||
+        scope->dependencies.size() >= 256 ||
+        !scope->dependencies.emplace(path, digest).second)
       throw std::invalid_argument("invalid native module dependency identity");
   }
-  const auto identity = nativeModuleIdentity(bundle.identity,module.recipe,scope->dependencies);
-  scope->identity=identity;
+  const auto identity =
+      nativeModuleIdentity(bundle.identity, module.recipe, scope->dependencies);
+  scope->identity = identity;
   auto storage = takeField(bytes);
   while (!storage.empty()) {
     auto symbol = takeField(storage);
-    constexpr std::string_view prefix = "__gtilib_module_v1_";
-    if (scope->dataSymbols.size()>=256 || !symbol.starts_with(prefix) || symbol.size()!=prefix.size()+64 ||
-        symbol.substr(prefix.size()).find_first_not_of("0123456789abcdef")!=symbol.npos ||
-        (!scope->dataSymbols.empty() && symbol<=scope->dataSymbols.back()))
+    constexpr auto prefix = compiledModuleDataPrefix;
+    if (scope->dataSymbols.size() >= 256 || !symbol.starts_with(prefix) ||
+        symbol.size() != prefix.size() + 64 ||
+        symbol.substr(prefix.size()).find_first_not_of("0123456789abcdef") !=
+            symbol.npos ||
+        (!scope->dataSymbols.empty() && symbol <= scope->dataSymbols.back()))
       throw std::invalid_argument("invalid native module storage symbol");
     scope->dataSymbols.emplace_back(symbol);
     module.symbols.emplace_back(symbol);
   }
-  module.scope=std::move(scope);
+  module.scope = std::move(scope);
   while (!bytes.empty()) {
     auto name = takeField(bytes);
     auto number = takeField(bytes);
     auto failure = takeField(bytes);
     std::size_t offset = 0;
-    auto [end,ec] = std::from_chars(number.data(),number.data()+number.size(),offset);
-    if (!isCompiledInterfaceName(name) || ec!=std::errc{} || end!=number.data()+number.size() ||
-        (!module.entries.empty() && offset<=module.entries.back().offset) ||
-        (failure!="status" && failure!="value") || module.entries.size()>=256)
+    auto [end, ec] =
+        std::from_chars(number.data(), number.data() + number.size(), offset);
+    if (!isCompiledInterfaceName(name) || ec != std::errc{} ||
+        end != number.data() + number.size() ||
+        (!module.entries.empty() && offset <= module.entries.back().offset) ||
+        (failure != "status" && failure != "value") ||
+        module.entries.size() >= 256)
       throw std::invalid_argument("invalid native module entry");
-    auto symbol = compiledModuleSymbol(identity,name,offset,failure=="status");
+    auto symbol =
+        compiledModuleSymbol(identity, name, offset, failure == "status");
     module.symbols.push_back(symbol);
-    module.entries.push_back({std::string(name),offset,failure=="status",std::move(symbol)});
+    module.entries.push_back(
+        {std::string(name), offset, failure == "status", std::move(symbol)});
   }
-  if (module.entries.empty() || nativeModuleInterface(module.recipe,module.entries,module.scope->dataSymbols,module.scope->dependencies)!=bundle.interfaceMetadata)
+  if (module.entries.empty() ||
+      nativeModuleInterface(
+          module.recipe, module.entries, module.scope->dataSymbols,
+          module.scope->dependencies) != bundle.interfaceMetadata)
     throw std::invalid_argument("noncanonical native module interface");
   return module;
 }
-bool requestsNativeModule(const FrontendResult &frontend,const CompiledLibraryTarget *target) {
-  if (!target || target->functions.empty() || !frontend.canGenerateCode()) return false;
+bool requestsNativeModule(const FrontendResult &frontend,
+                          const CompiledLibraryTarget *target) {
+  if (!target || target->functions.empty() || !frontend.canGenerateCode())
+    return false;
   const auto needsRecipe = [&](const SemanticType &type) {
-    const auto &value = type.kind==SemanticType::Reference && type.arguments.size()==1 ? type.arguments.front() : type;
-    if (!isCompiledScalarResultType(value)) return true;
-    if (value.kind!=SemanticType::Class) return false;
+    const auto &value =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? type.arguments.front()
+            : type;
+    if (!isCompiledScalarResultType(value))
+      return true;
+    if (value.kind != SemanticType::Class)
+      return false;
     const auto *owner = frontend.semantics.findClassType(value.classId);
-    return owner && (owner->traits.drop!=DropKind::Trivial || !owner->traits.copyable);
+    return owner &&
+           (owner->traits.drop != DropKind::Trivial || !owner->traits.copyable);
   };
   for (const auto &f : frontend.mir.functionInstances()) {
     const auto *decl = frontend.semantics.findFunction(f.declaration);
-    if (decl && decl->sourceUnit==frontend.sourceGraph.entryUnit() && std::ranges::find(target->functions,decl->qualifiedName)!=target->functions.end() &&
-        (f.owner || needsRecipe(f.returnType) || std::ranges::any_of(f.parameterTypes,needsRecipe)))
+    if (decl && decl->sourceUnit == frontend.sourceGraph.entryUnit() &&
+        std::ranges::find(target->functions, decl->qualifiedName) !=
+            target->functions.end() &&
+        (f.owner || needsRecipe(f.returnType) ||
+         std::ranges::any_of(f.parameterTypes, needsRecipe)))
       return true;
   }
   return false;
@@ -658,11 +714,11 @@ bool exportsGeneric(std::span<const StmtPtr> declarations,
   return false;
 }
 
-std::optional<std::string>
-projectModuleMetadata(const FrontendResult &frontend,
-                      const CompiledLibraryTarget *target,
-                      LibraryProfile profile, bool compiledDependencies, bool native = false) {
-  if (!target || (!native && !target->functions.empty()) || !frontend.canGenerateCode())
+std::optional<std::string> projectModuleMetadata(
+    const FrontendResult &frontend, const CompiledLibraryTarget *target,
+    LibraryProfile profile, bool compiledDependencies, bool native = false) {
+  if (!target || (!native && !target->functions.empty()) ||
+      !frontend.canGenerateCode())
     return {};
   const auto &graph = frontend.sourceGraph;
   const auto *entry = graph.findUnit(graph.entryUnit());
@@ -671,7 +727,8 @@ projectModuleMetadata(const FrontendResult &frontend,
   auto declarations =
       std::span(frontend.program.declarations())
           .subspan(entry->declarationStart, entry->declarationCount);
-  if (profile == LibraryProfile::Project && !native && !exportsGeneric(declarations))
+  if (profile == LibraryProfile::Project && !native &&
+      !exportsGeneric(declarations))
     return {};
   if (!entry->moduleDeclaration)
     throw std::invalid_argument(
@@ -695,7 +752,7 @@ projectModuleMetadata(const FrontendResult &frontend,
     recipe.installedSourceDigest = hash(*source);
     return encodeTemplateModule(recipe);
   }
-  return encodeProjectTemplate(recipe,*source);
+  return encodeProjectTemplate(recipe, *source);
 }
 
 std::optional<ScalarSelection>
@@ -826,9 +883,12 @@ CompiledScalarLibraryResult buildScalarLibrary(
   const auto producerRequest = request.withApplicationBodies();
   auto frontend =
       detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
-  const bool nativeModule = requestsNativeModule(frontend,target);
-  auto deps = nativeModule ? moduleDependencies(frontend,request.standardLibrary().root) : ModuleDependencies{};
-  auto projected = projectModuleMetadata(frontend,target,profile,!prepared.dependencies.empty(),nativeModule);
+  const bool nativeModule = requestsNativeModule(frontend, target);
+  auto deps = nativeModule
+                  ? moduleDependencies(frontend, request.standardLibrary().root)
+                  : ModuleDependencies{};
+  auto projected = projectModuleMetadata(
+      frontend, target, profile, !prepared.dependencies.empty(), nativeModule);
   if (projected && !nativeModule) {
     const auto &graph = frontend.sourceGraph;
     auto metadata = std::move(*projected);
@@ -867,17 +927,23 @@ CompiledScalarLibraryResult buildScalarLibrary(
   result.sourceFiles = producerImplementations(frontend.sourceGraph);
   if (nativeModule) {
     id.library = templateLibraryIdentity(*target);
-    backend.selectModule(nativeModuleIdentity(id,*projected,deps),request.standardLibrary().root.string(),deps);
+    backend.selectModule(nativeModuleIdentity(id, *projected, deps),
+                         request.standardLibrary().root.string(), deps);
   }
   result.compilation = detail::generateArtifact(
       producerRequest, std::move(frontend), backend, nullptr);
   result.interfaceNeedsSource = backend.interfaceNeedsSource();
   if (result.compilation.succeeded()) {
-    auto metadata = nativeModule ? nativeModuleInterface(*projected,backend.selectedModuleEntries(),backend.selectedModuleData(),deps)
-                                 : interface(backend.selectedSignatures());
-    if (!nativeModule) id.library = libraryIdentity(backend.selectedSignatures());
+    auto metadata =
+        nativeModule
+            ? nativeModuleInterface(*projected, backend.selectedModuleEntries(),
+                                    backend.selectedModuleData(), deps)
+            : interface(backend.selectedSignatures());
+    if (!nativeModule)
+      id.library = libraryIdentity(backend.selectedSignatures());
     std::vector<std::string> symbols = backend.selectedModuleData();
-    for (const auto &entry : backend.selectedModuleEntries()) symbols.push_back(entry.symbol);
+    for (const auto &entry : backend.selectedModuleEntries())
+      symbols.push_back(entry.symbol);
     for (const auto &key : backend.selectedSignatures())
       symbols.push_back(compiledScalarSymbol(key));
     allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
@@ -1018,7 +1084,9 @@ struct AdmittedLibraries {
       if (!unit)
         continue;
       if (facade.recipe) {
-        for (auto &entry : facade.moduleEntries) inputs.moduleImports.push_back({unit,std::move(entry),facade.scope});
+        for (auto &entry : facade.moduleEntries)
+          inputs.moduleImports.push_back(
+              {unit, std::move(entry), facade.scope});
         graph.attachCompiledTemplate(unit, std::move(facade.recipe));
         continue;
       }
@@ -1068,7 +1136,8 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
   std::size_t declarationCount = 0;
   CompiledMirBodies optimizationBodies;
   for (auto &input : bundles) {
-    const bool nativeModule = input.bundle.interfaceMetadata.starts_with(nativeModuleMagic);
+    const bool nativeModule =
+        input.bundle.interfaceMetadata.starts_with(nativeModuleMagic);
     if (input.bundle.templateOnly || nativeModule) {
       if (!input.selected || !input.bundle.dependencies.empty())
         throw std::invalid_argument(
@@ -1082,8 +1151,10 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
       expected.sources = input.bundle.identity.sources;
       requireLibraryBundleCompatibility(input.bundle, expected, {});
       NativeModule module{input.bundle.interfaceMetadata};
-      if (nativeModule) module = readNativeModule(input.bundle);
-      auto recipe = std::make_shared<CompiledTemplateModule>(decodeProjectTemplate(module.recipe));
+      if (nativeModule)
+        module = readNativeModule(input.bundle);
+      auto recipe = std::make_shared<CompiledTemplateModule>(
+          decodeProjectTemplate(module.recipe));
       auto name = projectTemplateModuleName(recipe->declarations);
       if (!selection.moduleName.empty() && name != selection.moduleName)
         throw std::invalid_argument(
@@ -1096,7 +1167,9 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
            {},
            std::move(identity),
            {selection.package, selection.target, std::move(name), ""},
-           std::move(recipe),std::move(module.entries),module.scope});
+           std::move(recipe),
+           std::move(module.entries),
+           module.scope});
       admitted.back().symbols = std::move(module.symbols);
       continue;
     }
@@ -1279,12 +1352,17 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
                              "\n// compiled project template " + input.digest +
                              "\n",
                          {},
-                         metadata.recipe,metadata.moduleEntries,metadata.scope});
+                         metadata.recipe,
+                         metadata.moduleEntries,
+                         metadata.scope});
       if (!metadata.moduleEntries.empty()) {
-        verifyCompiledScalarObject(bundle.objects.front().bytes,request.target(),metadata.symbols,allowedSymbols);
+        verifyCompiledScalarObject(bundle.objects.front().bytes,
+                                   request.target(), metadata.symbols,
+                                   allowedSymbols);
         objects.push_back(std::move(bundle.objects.front()));
         if (input.selected->directDependency)
-          directSymbols.insert(directSymbols.end(),metadata.symbols.begin(),metadata.symbols.end());
+          directSymbols.insert(directSymbols.end(), metadata.symbols.begin(),
+                               metadata.symbols.end());
       }
       if (input.selected->directDependency)
         direct.push_back({metadata.library, input.digest});
@@ -1385,8 +1463,9 @@ CompiledLibraryInputs prepareScalarConsumer(
   CompiledLibraryInputs inputs{std::move(loaded.compilation)};
   std::move(admitted).bind(inputs);
   std::ranges::move(loaded.imports, std::back_inserter(inputs.imports));
-  std::ranges::move(loaded.moduleImports, std::back_inserter(inputs.moduleImports));
-  validateModuleDependencies(inputs,request.standardLibrary().root);
+  std::ranges::move(loaded.moduleImports,
+                    std::back_inserter(inputs.moduleImports));
+  validateModuleDependencies(inputs, request.standardLibrary().root);
   std::ranges::move(loaded.objects, std::back_inserter(inputs.objects));
   // A private module may also be imported directly by the consumer. One
   // live definition must own its storage in both the cold and warm build.
@@ -1536,7 +1615,8 @@ loadExecutableInputs(const CompilationRequest &request,
           throw std::invalid_argument(
               "installed generic library receipt mismatch");
         auto bundle = decodeLibraryBundle(bytes);
-        const bool mixed = bundle.interfaceMetadata.starts_with(nativeModuleMagic);
+        const bool mixed =
+            bundle.interfaceMetadata.starts_with(nativeModuleMagic);
         if (!bundle.templateOnly && !mixed)
           throw std::invalid_argument("expected generic library envelope");
         if (!system)
@@ -1550,12 +1630,18 @@ loadExecutableInputs(const CompilationRequest &request,
         AdmittedLibraries admitted;
         if (mixed) {
           module = readNativeModule(bundle);
-          verifyCompiledScalarObject(bundle.objects.front().bytes,request.target(),module.symbols,system->runtimeSymbols);
+          verifyCompiledScalarObject(bundle.objects.front().bytes,
+                                     request.target(), module.symbols,
+                                     system->runtimeSymbols);
           admitted.objects = std::move(bundle.objects);
           admitted.symbols = std::move(module.symbols);
         }
-        auto templateModule = std::make_shared<const CompiledTemplateModule>(decodeTemplateModule(module.recipe));
-        loaded.emplace(name,LoadedModule{templateDigest,std::move(admitted),entry,templateModule,std::move(module.entries),module.scope});
+        auto templateModule = std::make_shared<const CompiledTemplateModule>(
+            decodeTemplateModule(module.recipe));
+        loaded.emplace(name,
+                       LoadedModule{templateDigest, std::move(admitted), entry,
+                                    templateModule, std::move(module.entries),
+                                    module.scope});
         return templateModule->declarations + "\n// compiled template " +
                templateDigest + "\n";
       });
@@ -1606,13 +1692,15 @@ loadExecutableInputs(const CompilationRequest &request,
       if (module.templateModule) {
         auto &graph = inputs.compilation.sourceGraph;
         auto unit = graph.sourceUnitForPath(module.entry.string());
-        graph.attachCompiledTemplate(unit,std::move(module.templateModule));
-        for (auto &entry : module.nativeEntries) inputs.moduleImports.push_back({unit,std::move(entry),module.scope});
+        graph.attachCompiledTemplate(unit, std::move(module.templateModule));
+        for (auto &entry : module.nativeEntries)
+          inputs.moduleImports.push_back(
+              {unit, std::move(entry), module.scope});
       }
       std::move(module.admitted).bind(inputs);
     }
     inputs.compilation.standardLibraryBundleDigest = hash(receipts);
-    validateModuleDependencies(inputs,root);
+    validateModuleDependencies(inputs, root);
   }
   return inputs;
 }
@@ -1628,10 +1716,12 @@ loadStandardLibraryInputs(const CompilationRequest &request,
 
 CompilationResult compileWithLibraryImports(
     const CompilationRequest &request, CompilationInputs inputs,
-    std::vector<CompiledScalarImport> imports, ProgressObserver *progress, std::vector<CompiledModuleImport> moduleImports) {
+    std::vector<CompiledScalarImport> imports, ProgressObserver *progress,
+    std::vector<CompiledModuleImport> moduleImports) {
   LlvmBackend native(llvmBackendOptions(request));
   ScalarBackend backend(std::move(imports), native);
-  backend.importModuleEntries(std::move(moduleImports),request.standardLibrary().root.string());
+  backend.importModuleEntries(std::move(moduleImports),
+                              request.standardLibrary().root.string());
   return compileWithBackend(request.withDefinitionClosure(), std::move(inputs),
                             backend, progress);
 }
@@ -1684,7 +1774,8 @@ CompiledScalarConsumerResult compileCompiledScalarConsumer(
                             StandardLibraryInput::Installed);
   LlvmBackend native(llvmBackendOptions(request));
   ScalarBackend backend(std::move(prepared.imports), native);
-  backend.importModuleEntries(std::move(prepared.moduleImports),request.standardLibrary().root.string());
+  backend.importModuleEntries(std::move(prepared.moduleImports),
+                              request.standardLibrary().root.string());
   CompiledScalarConsumerResult result;
   result.compilation = compileWithBackend(
       request.forExecutable(), std::move(prepared.compilation), backend);
@@ -1701,7 +1792,8 @@ compileCompiledScalarConsumer(const CompilationRequest &request,
                                         StandardLibraryInput::Installed);
   LlvmBackend native(llvmBackendOptions(request));
   ScalarBackend backend(std::move(prepared.imports), native);
-  backend.importModuleEntries(std::move(prepared.moduleImports),request.standardLibrary().root.string());
+  backend.importModuleEntries(std::move(prepared.moduleImports),
+                              request.standardLibrary().root.string());
   CompiledScalarConsumerResult result;
   result.compilation = compileWithBackend(
       request.forExecutable(), std::move(prepared.compilation), backend);
@@ -1721,7 +1813,8 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
     auto bundle = decodeLibraryBundle(*bytes);
     const bool mixed = bundle.interfaceMetadata.starts_with(nativeModuleMagic);
     if (bundle.templateOnly || mixed) {
-      if (!imports.empty() || (mixed ? target.functions.empty() : !target.functions.empty()))
+      if (!imports.empty() ||
+          (mixed ? target.functions.empty() : !target.functions.empty()))
         return {};
       auto inputs = loadCompilationInputs(request);
       if (!inputs.succeeded())
@@ -1734,7 +1827,9 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
       NativeModule module{bundle.interfaceMetadata};
       if (mixed) {
         module = readNativeModule(bundle);
-        verifyCompiledScalarObject(bundle.objects.front().bytes,request.target(),module.symbols,runtimeImports(runtime,request.target(),expected.runtime));
+        verifyCompiledScalarObject(
+            bundle.objects.front().bytes, request.target(), module.symbols,
+            runtimeImports(runtime, request.target(), expected.runtime));
       }
       if (profile == LibraryProfile::Project)
         (void)decodeProjectTemplate(module.recipe);
@@ -1831,12 +1926,14 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
       auto &inputs = prepared.compilation;
       const auto profile = producerProfile(inputs.sourceGraph, &*producer);
       auto id = environment(request, toolchain.runtimeLibrary, profile);
-      id.sources = producerSources(inputs,&*producer);
+      id.sources = producerSources(inputs, &*producer);
       const auto producerRequest = request.withApplicationBodies();
       auto frontend = detail::analyzeForArtifact(producerRequest,
                                                  std::move(inputs), progress);
-      const bool nativeModule = requestsNativeModule(frontend,&*producer);
-      auto projected = projectModuleMetadata(frontend,&*producer,profile,!prepared.dependencies.empty(),nativeModule);
+      const bool nativeModule = requestsNativeModule(frontend, &*producer);
+      auto projected =
+          projectModuleMetadata(frontend, &*producer, profile,
+                                !prepared.dependencies.empty(), nativeModule);
       if (projected && !nativeModule) {
         CheckResult checked;
         checked.status = CheckStatus::Success;
@@ -1849,8 +1946,10 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
                             std::move(selection), std::move(prepared.imports));
       if (nativeModule) {
         id.library = templateLibraryIdentity(*producer);
-        auto deps = moduleDependencies(frontend,request.standardLibrary().root);
-        backend.selectModule(nativeModuleIdentity(id,*projected,deps),request.standardLibrary().root.string(),deps);
+        auto deps =
+            moduleDependencies(frontend, request.standardLibrary().root);
+        backend.selectModule(nativeModuleIdentity(id, *projected, deps),
+                             request.standardLibrary().root.string(), deps);
       }
       return compiledScalarCheckResult(detail::generateArtifact(
           producerRequest, std::move(frontend), backend, progress));
@@ -1862,7 +1961,8 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
     // not keep them alive while analyzing the consumer.
     prepared.objects.clear();
     ScalarBackend backend(std::move(prepared.imports), sink);
-    backend.importModuleEntries(std::move(prepared.moduleImports),request.standardLibrary().root.string());
+    backend.importModuleEntries(std::move(prepared.moduleImports),
+                                request.standardLibrary().root.string());
     return compiledScalarCheckResult(
         compileWithBackend(request.forExecutable(),
                            std::move(prepared.compilation), backend, progress));

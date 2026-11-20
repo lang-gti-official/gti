@@ -1,5 +1,6 @@
 #include "gti/llvm_backend.h"
 
+#include "gti/compiled_scalar_unit.h"
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/native_header.h"
@@ -151,10 +152,26 @@ void verifyCompiledScalarObject(std::string_view bytes,
             name->str());
       continue;
     }
-    if ((*flags & llvm::object::SymbolRef::SF_Global) &&
-        !expected.erase(name->str()))
+    if (!(*flags & llvm::object::SymbolRef::SF_Global))
+      continue;
+    if (!expected.erase(name->str()))
       throw std::invalid_argument(
           "unexpected compiled scalar external definition: " + name->str());
+    auto canonical = *name;
+    if (object.isMachO())
+      canonical.consume_front("_");
+    const bool data = canonical.starts_with(compiledModuleDataPrefix);
+    if (data || canonical.starts_with(compiledModuleFunctionPrefix)) {
+      auto section = symbol.getSection();
+      if (!section)
+        throw std::invalid_argument("invalid native library symbol section: " +
+                                    llvm::toString(section.takeError()));
+      const bool weak = (*flags & llvm::object::SymbolRef::SF_Weak) != 0;
+      if (*section == object.section_end() || (**section).isText() == data ||
+          weak != data)
+        throw std::invalid_argument(
+            "native library code or storage linkage mismatch: " + name->str());
+    }
   }
   if (!expected.empty())
     throw std::invalid_argument(

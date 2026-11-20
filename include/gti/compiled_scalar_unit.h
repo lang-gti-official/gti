@@ -5,6 +5,10 @@
 #include <span>
 namespace lang {
 struct PersistentDeclarationOwner;
+inline constexpr std::string_view compiledModuleFunctionPrefix =
+    "__gtilib_module_v1_";
+inline constexpr std::string_view compiledModuleDataPrefix =
+    "__gtilib_data_v1_";
 // A recipe retains the exact source declaration and its verified body. Its
 // byte offset distinguishes overloads within that immutable module snapshot.
 struct CompiledModuleEntry {
@@ -16,15 +20,16 @@ struct CompiledModuleEntry {
 struct CompiledModuleScope {
   std::string identity;
   std::vector<std::string> dataSymbols;
-  std::map<std::string,std::string> dependencies;
+  std::map<std::string, std::string> dependencies;
 };
 struct CompiledModuleImport {
   SourceUnitId sourceUnit = 0;
   CompiledModuleEntry entry;
   std::shared_ptr<const CompiledModuleScope> scope;
 };
-std::string compiledModuleSymbol(std::string_view identity, std::string_view name,
-                                 std::size_t offset, bool mayFail);
+std::string compiledModuleSymbol(std::string_view identity,
+                                 std::string_view name, std::size_t offset,
+                                 bool mayFail);
 // Source IDs belong to this compilation only and never enter wire metadata.
 struct CompiledScalarImport {
   CompiledScalarSignature signature;
@@ -34,11 +39,13 @@ struct CompiledScalarImport {
 // Imported calls conservatively retain the normal GTI failure channel.
 class CompiledScalarUnitBuilder final {
 public:
-  [[nodiscard]] std::vector<CompiledModuleEntry> selectModuleEntries(
-      const LoweredProgram &, SourceUnitId, std::span<const std::string>,
-      std::string_view identity) const;
-  [[nodiscard]] LoweredProgram bindModuleEntries(
-      LoweredProgram, std::span<const CompiledModuleImport>, bool producer, std::string_view stdlibRoot) const;
+  [[nodiscard]] std::vector<CompiledModuleEntry>
+  selectModuleEntries(const LoweredProgram &, SourceUnitId,
+                      std::span<const std::string>,
+                      std::string_view identity) const;
+  [[nodiscard]] LoweredProgram
+  bindModuleEntries(LoweredProgram, std::span<const CompiledModuleImport>,
+                    bool producer, std::string_view stdlibRoot) const;
   [[nodiscard]] std::vector<CompiledScalarSignature> selectExports(
       const LoweredProgram &, SourceUnitId, const PersistentDeclarationOwner &,
       std::span<const std::string> functions,

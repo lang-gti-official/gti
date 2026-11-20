@@ -3164,7 +3164,9 @@ the native definitions. Unselected bodies remain available for specialization
 and inlining. The callable identity covers the module, exact declaration offset,
 failure ABI and dependencies. Passive library storage referenced on both sides
 has one linker identity. Active global initialization and TLS require additional
-lifecycle support. The profile accepts standard-library dependencies with an
+lifecycle support. Native closures that take function addresses, create native
+callback adapters or perform virtual dispatch require shared code identity and
+are rejected. The profile accepts standard-library dependencies with an
 exact source digest; a mismatched dependency prevents admission. A project
 recipe is checked as ordinary project input. Installed recipes use the
 toolchain's existing authenticated library catalog.
