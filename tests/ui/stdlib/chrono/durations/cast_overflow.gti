@@ -1,0 +1,16 @@
+// An overflowing cast preserves cleanup and reports the duration failure.
+//@ run-fail
+//@ stderr-contains: Duration cast out of range
+//@ stdout: dropped
+import std.chrono;
+import std.format;
+struct Guard {
+  Guard() {}
+  ~Guard() { std::println("dropped"); }
+};
+int main() {
+  Guard guard{};
+  std::chrono::hours value{9223372036854775807i64};
+  auto result = value.cast<std::chrono::nanoseconds>();
+  return 0;
+}

@@ -1,0 +1,8 @@
+// A structural lookalike cannot introduce an unsupported scale into the closed unit family.
+import std.chrono;
+struct AlmostUnit {
+  constexpr AlmostUnit() {}
+  constexpr int64_t tick_nanoseconds() { return 7i64; }
+};
+using invalid = std::chrono::duration<AlmostUnit>;  //~ ERROR GTI-S2029
+int main() { return 0; }
