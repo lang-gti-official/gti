@@ -1,0 +1,3 @@
+export module cmath;
+export import "detail/cmath_declarations.gti";
+export import "../.gti-compiled-cmath.gti";

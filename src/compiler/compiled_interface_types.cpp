@@ -1,5 +1,6 @@
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_interface_names.h"
+#include "gti/compiled_mir.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/lowered_program.h"
 #include <algorithm>
@@ -604,6 +605,27 @@ projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
   (void)compiledInterfaceTypeSource(
       bytes); // Also verify closure, recipes and cycles.
   return bytes;
+}
+std::vector<CompiledMirField>
+compiledMirInterfaceFields(std::string_view bytes,
+                           std::span<const SemanticType> parameters) {
+  for (const auto &parameter : parameters) {
+    if (parameter.kind != SemanticType::Reference ||
+        parameter.arguments.size() != 1 ||
+        parameter.arguments.front().kind != SemanticType::Class)
+      continue;
+    const auto value = decode(bytes);
+    auto registry = synthetic(value);
+    auto id = parameter.arguments.front().classId;
+    if (!id || id > value.types.size() || value.types[id - 1].enumeration)
+      invalid("unknown MIR reference record");
+    std::vector<CompiledMirField> fields;
+    for (const auto &field : value.types[id - 1].fields)
+      fields.push_back(
+          {readPersistentType(field.type, registry), field.mutableBinding});
+    return fields;
+  }
+  return {};
 }
 PersistentTypeRegistry
 compiledInterfaceSyntheticRegistry(std::string_view bytes) {

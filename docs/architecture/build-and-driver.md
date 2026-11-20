@@ -3080,20 +3080,21 @@ There is no new CLI flag or manifest mode. Ordinary source stays `.gti`;
 metadata artifact exists yet. The existing engine embedding library mode is a
 different C ABI contract and retains its current behavior.
 
-### Provisional wire format version 2
+### Provisional wire format versions 2 and 3
 
 All integers are unsigned 32-bit little endian. A blob is its byte length followed
 by exactly those bytes; there is no padding, compression, timestamp, platform
 permission, host-width integer or native structure dump. The complete layout is:
 
-1. Eight bytes `GTILIB\r\n`, container version `2`, envelope schema `1`.
+1. Eight bytes `GTILIB\r\n`, container version `2` (native only) or `3` (native plus optimization MIR), envelope schema `1`.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
 3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
 4. Dependency count, then pairs of logical library SHA-256 and complete dependency
    bundle SHA-256, sorted strictly by logical library identity.
 5. Object count, then name/data blob pairs sorted strictly by name.
-6. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
+6. Version 3 adds a nonempty, length-prefixed optimization MIR section, limited to 8 MiB.
+7. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
 
 Hash fields are exactly 64 lowercase hexadecimal bytes. The target is a
 caller-normalized ASCII triple (at most 255 bytes); the codec checks its bounded
@@ -3222,8 +3223,8 @@ supplies the LLVM declaration's policy; the producer applies the same mapping to
 its implementation and external wrapper. The binding is sealed and its symbol
 digest includes both policies, so a rechecksummed interface with changed hints
 cannot match an old object. This is integrity/consistency validation, not a
-cryptographic signature or a stable ABI. No body serialization, LTO, or forced
-inlining is added. Unsupported library callable shapes remain unsupported.
+cryptographic signature or a stable ABI. Eligible definitions can carry the
+separate optimization MIR section described below. Unsupported library callable shapes remain unsupported.
 
 Dependency-owned declarations retain their original identity when used as function
 parameters/results or nested fields. The consumer requires the defining artifact
@@ -3338,14 +3339,38 @@ RSS, build latency and object/bundle/executable size. The latter includes a
 by-value Point record. These allocation-free operations do not claim parity with
 whole-program inlining or complete F5 performance acceptance.
 
+### Cross-library optimization MIR
+
+Compiled libraries keep the native definition of every exported overload.
+The producer can also save the executable operations of a small concrete MIR
+body under that overload's full ABI symbol. The optional section uses dense
+body-local value slots and parameter ordinals. Consumers validate types, operand
+order, result and policy against the imported interface, including unused rows.
+The native-only encoding remains byte-for-byte compatible.
+
+Optimized LLVM builds can specialize and inline these bodies at direct calls
+without access to the producer's sources. Builds at `-O0` use the native path. Cold functions, noinline functions
+and calls through function pointers also keep their native calls.
+The existing debug-info and instrumentation restrictions on compiled artifacts
+still apply. The profile covers straight-line arithmetic at every fixed integer width, including
+wrapping, saturating and overflow predicates, as well as floating-point operations,
+local bindings, bounded private scalar helper calls and one borrowed scalar or
+plain record with directly addressed numeric fields. Field ordinals are checked
+against the interface and resolved against the consumer's own record layout.
+Reads see the latest assigned value. Stores become visible on the normal return.
+A failed check calls the original native definition with the original state,
+which preserves earlier observable writes and the producer's exact failure
+report. Branching or looping bodies, arbitrary calls, multiple references,
+ownership and custom cleanup currently use their native definitions.
+
 ### Precompiled standard library
 
 The native Linux x64 and macOS arm64 toolchains ship two libraries in
 `share/gti/precompiled-stdlib/<target>/<profile>/`. `cmath.gtilib` contains
-the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64 seed expansion
-for `std::random_engine`. It returns the four-word state by value. The public
-class keeps the xoshiro256++ transition in source so an optimized draw loop
-can carry that state in registers.
+the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64
+seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
+The release artifact supplies the draw's MIR, so a caller can keep state in
+registers across iterations after the engine implementation source is removed.
 `std::random_device` retains its source implementation and OS entropy backend.
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release object when an import or re-export reaches the
@@ -3371,8 +3396,16 @@ the names and digests of the reached bundles participate in the cache key in
 name order. An executable importing both modules shares one compiler/runtime
 compatibility check. Unused bundles are never opened. Both paths hash the full
 compiler and runtime files with the same SHA-256 routine used by the build
-cache. Unsupported configurations
-use source. Serialized generic bodies and MIR are outside this first module.
+cache. Unsupported configurations use source.
+
+To ship another module, declare its library target and exports in
+`cmake/stdlib-bundles/gti.toml` and place its source facade in
+`cmake/stdlib-bundles/facades/<target>.gti`. The compiler embeds that catalog
+at build time. Staging and release packaging use the same target inventory.
+The facade re-exports the compiled interface and any source companion needed
+for early constants or generic instantiation. Add a consumer that imports the
+public module with the implementation source removed. For a hot function,
+also check optimized code generation or compare source and packaged execution.
 
 ### Compiled-library project requests
 

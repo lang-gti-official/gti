@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build target-specific stdlib objects with the staged compiler and runtime."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -9,7 +10,38 @@ import tempfile
 import tomllib
 
 
-def build(stage, source):
+def catalog(source):
+    directory = source / "cmake/stdlib-bundles"
+    with (directory / "gti.toml").open("rb") as manifest:
+        targets = tomllib.load(manifest)["targets"]
+    facades = {path.stem for path in (directory / "facades").glob("*.gti")}
+    if not targets or targets.keys() != facades:
+        raise ValueError("each installed library target needs exactly one matching source facade")
+    modules = {}
+    for name, target in targets.items():
+        entry = Path(target["root"]).relative_to("stdlib")
+        if target["kind"] != "gti-library" or ".." in entry.parts or entry in modules.values():
+            raise ValueError(f"invalid or duplicate installed library entry for {name}")
+        modules[name] = entry
+    return modules
+
+
+def write_registry(source, modules, output):
+    # The compiler embeds only this reviewed toolchain catalog. Consumer
+    # projects cannot supply module overlays or require a runtime manifest read.
+    lines = []
+    for name, entry in modules.items():
+        facade = (source / "cmake/stdlib-bundles/facades" / f"{name}.gti").read_text()
+        fields = ", ".join(json.dumps(value, ensure_ascii=False)
+                           for value in (name, entry.as_posix(), facade))
+        lines.append("    {" + fields + "},")
+    contents = "\n".join(lines) + "\n"
+    if not output.exists() or output.read_text() != contents:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(contents)
+
+
+def build(stage, source, modules):
     stage = stage.resolve()
     data = stage / "share/gti"
     # A library producer's entry must be in its package. Use a private package
@@ -22,11 +54,9 @@ def build(stage, source):
         env = dict(os.environ, GTI_STDLIB_PATH=str(package / "stdlib"),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
-        with (package / "gti.toml").open("rb") as manifest:
-            targets = tomllib.load(manifest)["targets"]
         outputs = []
         for profile in ("dev", "release"):
-            for name in targets:
+            for name in modules:
                 command = [str(stage / "bin/gti"), "build", name, "--offline"]
                 if profile == "release":
                     command.append("--release")
@@ -42,8 +72,8 @@ def build(stage, source):
         # Only the scratch copy of the implementation is removed. The source
         # companion still provides constexpr and the ordinary toolchain
         # retains sources for editors and unsupported configurations.
-        for target in targets.values():
-            (package / target["root"]).unlink()
+        for entry in modules.values():
+            (package / "stdlib" / entry).unlink()
         consumer = package / "consumer"
         shutil.copytree(source / "tests/project/standard_library_bundle", consumer)
         compiler = str(stage / "bin/gti")
@@ -66,6 +96,16 @@ def build(stage, source):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", type=Path, required=True)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--stage", type=Path)
+    action.add_argument("--write-registry", type=Path)
+    action.add_argument("--list-targets", action="store_true")
     args = parser.parse_args()
-    build(args.stage, Path(__file__).resolve().parents[1])
+    source = Path(__file__).resolve().parents[1]
+    modules = catalog(source)
+    if args.stage:
+        build(args.stage, source, modules)
+    elif args.write_registry:
+        write_registry(source, modules, args.write_registry)
+    else:
+        print(";".join(modules))

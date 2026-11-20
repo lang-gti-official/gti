@@ -92,7 +92,7 @@ GTI_UNIT_TEST(library_bundle) {
   }
   for (auto offset : {8U, 12U}) {
     auto bad = bytes;
-    put(bad, offset, 3);
+    put(bad, offset, 99);
     seal(bad);
     rejects([&] { (void)decodeLibraryBundle(bad); }, K::UnsupportedVersion);
   }
@@ -137,6 +137,19 @@ GTI_UNIT_TEST(library_bundle) {
   put(bad, depOffset + 4 + 2 * 136, 0xffffffffU);
   seal(bad);
   rejects([&] { (void)decodeLibraryBundle(bad); }, K::ResourceLimit);
+  auto withBodies = b;
+  withBodies.optimizationBodies = std::string("mir\0fixture", 11);
+  const auto withMirBytes = encodeLibraryBundle(withBodies);
+  const auto withMir = decodeLibraryBundle(withMirBytes);
+  expect(withMir.optimizationBodies == withBodies.optimizationBodies &&
+             withMir.objects == decoded.objects && withMirBytes != bytes &&
+             encodeLibraryBundle(withMir) == withMirBytes,
+         "optional MIR round trips independently of native members");
+  auto torn = withMirBytes;
+  torn[torn.size() - 65] ^= 1;
+  rejects([&] { (void)decodeLibraryBundle(torn); }, K::Integrity);
+  withBodies.optimizationBodies.resize(libraryBundleMirLimit + 1);
+  rejects([&] { (void)encodeLibraryBundle(withBodies); }, K::ResourceLimit);
   auto metadataBundle = b;
   metadataBundle.interfaceMetadata = "gti.scalar-interface.test\n";
   expect(decodeLibraryBundle(encodeLibraryBundle(metadataBundle))
