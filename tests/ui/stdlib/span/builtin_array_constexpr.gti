@@ -1,0 +1,20 @@
+// Built-in arrays with a deduced extent support checked span traversal in constexpr code.
+import std.memory;
+import std.span;
+
+constexpr std::span<T, source> view_of<std::storage_element T, uint64_t N, lifetime source>(
+    T[N]&<source> values) {
+  return values.as_span();
+}
+
+constexpr int sum() {
+  int values[4] = {2, 3, 5, 7};
+  auto view = view_of(values);
+  auto middle = view.subspan(1, 2);
+  mut int result = 0;
+  for (int value : middle) { result += value; }
+  return result;
+}
+
+static_assert(sum() == 8);
+int main() { return 0; }

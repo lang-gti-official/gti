@@ -2154,10 +2154,14 @@ Two general facilities support this ordinary source wrapper:
   storage live as long as the carrier's external owners. The trusted operation
   uses the same input/result lifetime application as ordinary checked calls;
   it does not give ordinary unrelated types an opaque-view conversion.
+  Read-only `std::erase_ref` also works during constant evaluation for
+  supported values, with the same dependency on the original object.
 - `std::restore_ref<T>(erased)` and `std::restore_mut<T>(erased)` require
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime
   dependencies; `unsafe` does not make them disappear.
+  During constant evaluation, `std::restore_ref<T>` checks the original
+  referent type before yielding the same read-only borrow.
   For an inferred output region `a`, restoration requires `outlives<T, a>`
   independently of the opaque reference's storage lifetime. A generic helper
   with only an erased input declares that requirement explicitly; a typed

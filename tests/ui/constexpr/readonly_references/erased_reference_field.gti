@@ -1,0 +1,22 @@
+// A copied constexpr borrow carrier retains its erased owner's designator.
+//@ run-pass
+import std.memory;
+
+class Inspection {
+  std::erased_object& object;
+public:
+  constexpr Inspection(int& object) : object(std::erase_ref(object)) {}
+  constexpr int read() {
+    unsafe { return std::restore_ref<int>(this.object); }
+  }
+};
+
+constexpr int inspect() {
+  int owner = 17;
+  Inspection retained = Inspection(owner);
+  Inspection copy = retained;
+  return copy.read();
+}
+
+static_assert(inspect() == 17);
+int main() { return inspect() == 17 ? 0 : 1; }

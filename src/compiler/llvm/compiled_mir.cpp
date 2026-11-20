@@ -17,7 +17,8 @@ Literal literal(const CompiledMirStep &step) {
 }
 
 void emit(Session &session, const CompiledScalarBinding &binding,
-          llvm::Function &native, std::span<llvm::CallBase *const> uses) {
+          llvm::Function &native, std::span<llvm::CallBase *const> uses,
+          const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   const auto &fn =
       *session.program().mir().findFunctionInstance(binding.function);
   const auto abi = session.abi().gti(fn.returnType, fn.parameterTypes, true);
@@ -53,7 +54,8 @@ void emit(Session &session, const CompiledScalarBinding &binding,
   };
   llvm::BasicBlock *fallback = nullptr;
   Scalars scalars(
-      session, ir, [&](llvm::Value *invalid, DefinedFailureOutcome) {
+      session, ir,
+      [&](llvm::Value *invalid, DefinedFailureOutcome) {
         // Replaying from the original inputs preserves the failure record,
         // source location and failure ABI. The successful path stays entirely
         // in MIR.
@@ -62,7 +64,8 @@ void emit(Session &session, const CompiledScalarBinding &binding,
         auto *success = llvm::BasicBlock::Create(context, "ok", copy);
         ir.CreateCondBr(invalid, fallback, success);
         ir.SetInsertPoint(success);
-      });
+      },
+      globals);
   for (const auto &step : binding.optimizationBody->steps) {
     if (step.loadedCell) {
       values.push_back(ir.CreateLoad(session.layouts().get(step.type).value,
@@ -107,7 +110,9 @@ void emit(Session &session, const CompiledScalarBinding &binding,
 }
 } // namespace
 
-void emitCompiledMir(Session &session) {
+void emitCompiledMir(
+    Session &session,
+    const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   const auto options = session.options();
   if (options.optimization == LlvmCodegenOptimization::None ||
       options.debugInfo ||
@@ -125,7 +130,7 @@ void emitCompiledMir(Session &session) {
           call && call->getCalledFunction() == native)
         calls.push_back(call);
     if (!calls.empty())
-      emit(session, binding, *native, calls);
+      emit(session, binding, *native, calls, globals);
   }
 }
 } // namespace lang::native_llvm

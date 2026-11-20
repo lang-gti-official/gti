@@ -1,0 +1,10 @@
+// Application code cannot attach an unchecked pointer and length to an unrelated span owner.
+import std.array;
+import std.span;
+
+int main() {
+  std::array<int, 1> owner{};
+  auto invalid = gti_internal::make_span(  //~ ERROR GTI-S2058
+      owner, &owner[std::size_t(0)], std::size_t(0), std::size_t(2));
+  return invalid.empty() ? 0 : 1;
+}

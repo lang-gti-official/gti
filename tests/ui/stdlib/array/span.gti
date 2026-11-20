@@ -1,0 +1,37 @@
+// The same read-only span API traverses vector and fixed-array storage during constant evaluation and at run time.
+//@ run-pass
+import std.array;
+import std.span;
+import std.vector;
+
+constexpr int inspect(std::span<int>& whole) {
+  auto slice = whole.subspan(std::size_t(1), std::size_t(2));
+  auto begin = slice.cbegin();
+  mut auto end = slice.end_iterator();
+  if (end != slice.cend() || end - begin != std::ptrdiff_t(2)) { return -1; }
+  --end;
+  if (*end != 5 || end - whole.begin() != std::ptrdiff_t(2)) { return -2; }
+  auto reverse = slice.crbegin();
+  if (*reverse != 5 || reverse[std::ptrdiff_t(1)] != 3) { return -3; }
+  if (slice.front() != 3 || slice.back() != 5 || whole.last(std::size_t(1))[0] != 7) { return -4; }
+  mut int total = 0;
+  for (int value : slice) { total += value; }
+  return total;
+}
+
+constexpr bool check() {
+  std::array<int, 4> array = std::array<int, 4>({2, 3, 5, 7});
+  mut std::vector<int> vector{};
+  for (int value : array) { vector.push_back(value); }
+  std::span<int> from_array = array.as_span();
+  std::span<int> from_vector = vector.as_span();
+  std::array<int, 0> empty{};
+  auto empty_span = empty.as_span();
+  auto end_slice = from_array.subspan(from_array.size(), std::size_t(0));
+  return inspect(from_array) == 8 && inspect(from_vector) == 8 &&
+         empty_span.empty() && empty_span.begin() == empty_span.end() &&
+         end_slice.empty() && end_slice.rbegin() == end_slice.rend();
+}
+
+static_assert(check());
+int main() { return check() ? 0 : 1; }

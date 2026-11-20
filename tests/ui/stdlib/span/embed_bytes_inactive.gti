@@ -1,0 +1,18 @@
+// An embed in a discarded source or constexpr branch does not require the file.
+import std.span;
+
+#define ENABLED
+#if !defined(ENABLED)
+void unselected() {
+  auto view = embed_bytes("missing-source-branch.bin");
+}
+#endif
+
+constexpr int select() {
+  if constexpr (false) {
+    return int(embed_bytes("missing-constexpr-branch.bin").size());
+  }
+  return 7;
+}
+
+static_assert(select() == 7);

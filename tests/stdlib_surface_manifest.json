@@ -3603,6 +3603,7 @@
       "status": "executable",
       "operations": [
         "std::array::array",
+        "std::array::as_span",
         "std::array::at",
         "std::array::back",
         "std::array::begin",
@@ -3646,6 +3647,9 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_array.gti",
+        "tests/ui/stdlib/array/span.gti",
+        "tests/ui/stdlib/array/empty_span_borrow.gti",
+        "tests/ui/stdlib/array/empty_subspan_borrow.gti",
         "tests/ui/stdlib/array/comparison",
         "tests/fixtures/algorithm_search.gti",
         "tests/fixtures/algorithm_mutation.gti",
@@ -7598,6 +7602,10 @@
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
+        "tests/ui/stdlib/array/span.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr_static.gti",
+        "tests/ui/stdlib/paired_span/iterators/subspan_erased_owners.gti",
         "stdlib/std/span.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
       ]
@@ -7831,6 +7839,7 @@
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)",
         "owning string elements in source-protocol-hashed pair keys",
+        "read-only character spans and subviews of counted string storage",
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
@@ -8664,6 +8673,7 @@
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
+        "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
         "tests/fixtures/stdlib_surface_vector.gti",
         "tests/fixtures/generic_clone.gti",
         "tests/fixtures/vector_construction_only.gti",

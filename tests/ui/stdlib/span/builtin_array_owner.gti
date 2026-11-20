@@ -1,0 +1,9 @@
+// A span over a built-in array retains the original storage loan.
+import std.span;
+
+int main() {
+  mut int values[2] = {1, 2};
+  auto view = values.as_span();
+  values[0] = 3;  //~ ERROR GTI-S2017
+  return view[0];
+}

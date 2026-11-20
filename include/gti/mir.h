@@ -2204,6 +2204,23 @@ private:
 // HostedStartup uses the exact nonzero entry function instance.
 [[nodiscard]] std::vector<MirBodyAddress>
 enumerateMirBodyAddresses(const MirProgram &program);
+// Resolve a published constant address using the same program storage and
+// concrete types for verification, constexpr replay, and LLVM emission.
+struct MirConstantAddress {
+  const MirPlace *storage = nullptr;
+  // The root type followed by the type after each place projection.
+  std::vector<const SemanticType *> types;
+  const SemanticType *referent = nullptr;
+  bool erased = false;
+};
+
+[[nodiscard]] const MirPlace *findMirConstantStorage(const MirProgram &program,
+                                                     SymbolId symbol);
+[[nodiscard]] std::optional<MirConstantAddress>
+resolveMirConstantAddress(const MirProgram &program,
+                          const ConstantStorageAddress &address,
+                          const SemanticType &type);
+
 [[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);

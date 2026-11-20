@@ -19,9 +19,13 @@ ThreadLocals::ThreadLocals(Session &session, Failures &failures,
 void ThreadLocals::allocate(
     std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   llvm::IRBuilder<> ir(session.context());
-  Scalars scalars(session, ir, [](llvm::Value *, DefinedFailureOutcome) {
-    throw std::logic_error("LLVM passive TLS cannot perform runtime checking");
-  });
+  Scalars scalars(
+      session, ir,
+      [](llvm::Value *, DefinedFailureOutcome) {
+        throw std::logic_error(
+            "LLVM passive TLS cannot perform runtime checking");
+      },
+      globals);
   for (const auto &storage : session.program().mir().threadLocalStorage()) {
     const auto datum = [&](llvm::Type *type, llvm::Constant *initial,
                            const char *suffix) {

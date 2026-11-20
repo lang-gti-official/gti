@@ -298,6 +298,11 @@ public members without exposing that type's name as a namespace candidate.
 Dirty interface overlays invalidate consumers through the existing dependency
 generation machinery, and closing an overlay restores the on-disk surface.
 Registered implementation files are retained source dependencies as well.
+The analysis also retains the authored and resolved paths of embedded binary
+inputs for file-change notifications. It reads their saved bytes for each
+new source analysis and uses the frontend's resolved static byte-span type
+for hover. An edited body containing an embed takes the full source-load
+path so changes to the argument or its origin cannot reuse an older input.
 Project resolution also supplies the default discovered module map. Saved `.gti`
 creation, removal and header changes refresh project snapshots even when no
 previous import edge named that file. A normal `textDocument/didSave` also
@@ -594,8 +599,9 @@ contain a default expression. The placeholder deliberately avoids reprinting
 source expressions while exposing optionality consistently in hover, outline,
 and signature help; the protocol layer does not infer defaults from arity.
 
-Builtin counted-view members implemented by trusted source factories preserve
-one compiler-selected call identity. `ResolvedCallInfo::argumentReceiver`
+Built-in array and counted-view members implemented by trusted source
+factories preserve one compiler-selected call identity.
+`ResolvedCallInfo::argumentReceiver`
 normalizes the written receiver into argument zero for semantic effects and
 HIR's ordinary ordered source call; it does not duplicate the receiver or
 invent a backend member operation. The compiler's shared argument-access

@@ -246,7 +246,8 @@ private:
     case ExprKind::ArrayInitializer: {
       const auto &node = static_cast<const ArrayInitializer &>(expression);
       return std::make_unique<ArrayInitializer>(
-          tok(node.brace()), exprs(node.elements()), tok(node.closingBrace()));
+          tok(node.brace()), exprs(node.elements()), tok(node.closingBrace()),
+          node.packedBytes());
     }
     case ExprKind::Binary: {
       const auto &node = static_cast<const Binary &>(expression);

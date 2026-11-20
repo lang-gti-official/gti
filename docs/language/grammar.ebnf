@@ -1848,6 +1848,7 @@ increment-suffix       = "++" | "--" ;
 primary-expression     = literal
                        | numeric-conversion
                        | layout-query-expression
+                       | embed-bytes-expression
                        | member-requirement
                        | qualified-name
                        | lambda-expression
@@ -1858,6 +1859,8 @@ primary-expression     = literal
                        | pack-fold-expression
                        | unsafe-expression
                        | "(" expression ")" ;
+
+embed-bytes-expression = "embed_bytes" "(" STRING_LITERAL ")" ;
 
 unsafe-expression      = "unsafe" "{" expression "}" ;
 

@@ -896,7 +896,9 @@ namespace std {
 
     /// Returns a checked read-only character view tied to this string.
     span<char> as_span() {
-      return span<char>(this.data.prefix(), size_t(0), this.data.length());
+      unsafe {
+        return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+      }
     }
 
     /// Exclusively borrows characters without changing the string's length.

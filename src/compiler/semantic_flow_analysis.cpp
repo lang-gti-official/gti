@@ -6634,6 +6634,20 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "size",
          .detail = "uint64_t size()",
          .scopeDistance = 0});
+    if (const auto *factory = arraySpanFactory()) {
+      CallableCandidate selected;
+      std::vector<SemanticType> typeArguments;
+      std::vector<CompileTimeValue> valueArguments;
+      if (tryInstantiateFunction(*factory, {}, {}, {objectType}, {}, selected,
+                                 typeArguments, valueArguments)) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Method,
+             .name = "as_span",
+             .qualifiedName = "as_span",
+             .detail = typeSpelling(selected.returnType) + " as_span()",
+             .scopeDistance = 0});
+      }
+    }
   } else if (objectType.kind == SemanticType::StringView) {
     context.candidates.push_back(
         {.kind = SemanticCompletionCandidateKind::Method,
