@@ -43,8 +43,6 @@ def verify(stage):
                         target = b"arm64-apple-macosx11.0.0"
                         if stream.read(4 + len(target)) != struct.pack("<I", len(target)) + target:
                             raise RuntimeError(f"{bundle} must target the macOS arm64 baseline across OS updates")
-        for entry in entries:
-            (stdlib / entry).unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
@@ -52,7 +50,6 @@ def verify(stage):
         source = project / "src/main.gti"
         source.parent.mkdir(parents=True)
         shutil.copyfile(fixture / "gti.toml", project / "gti.toml")
-        shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
 
         def run(*arguments, rejection=None, cwd=project, environment=env):
             result = subprocess.run([str(stage / "bin/gti"), *arguments, "--offline"],
@@ -64,6 +61,35 @@ def verify(stage):
             elif result.returncode == 0 or rejection not in output:
                 raise RuntimeError(f"expected {rejection!r} from {arguments}\n{output}")
 
+        # Keep all logical and physical paths fixed, cold-build both ways, and
+        # exercise an input-dependent destructor in the generic vector body.
+        shutil.copyfile(fixture.parents[1] / "ui/stdlib/vector/construction_only/element_failure.gti", source)
+
+        def cleanup_program(profile):
+            shutil.rmtree(project / "build", ignore_errors=True)
+            run("build", *(["--release"] if profile == "release" else []))
+            executable, = (project / "build/gti" / profile).glob("*/app")
+            observations = []
+            for args, status in (([], 0), (["fail"], 70), (["fail", "fail"], 70)):
+                result = subprocess.run([executable, *args], cwd=project, capture_output=True)
+                if result.returncode != status:
+                    raise RuntimeError(f"cleanup program {args} exited {result.returncode}, expected {status}")
+                observations.append((result.stdout, result.stderr))
+            return executable.read_bytes(), observations
+
+        hidden = bundles.rename(root / "saved-bundles")
+        source_builds = {profile: cleanup_program(profile) for profile in ("dev", "release")}
+        for entry in entries:
+            (stdlib / entry).unlink()
+        hidden.rename(bundles)
+        for profile, (executable, observations) in source_builds.items():
+            packaged, output = cleanup_program(profile)
+            if executable != packaged:
+                raise RuntimeError(f"{profile}: vector recipe changed the executable bytes")
+            if observations != output:
+                raise RuntimeError(f"{profile}: vector recipe changed cleanup output or diagnostics")
+
+        shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)

@@ -3436,10 +3436,11 @@ units, compiled dependency closures and configuration directives require
 additional packaging support. Explicit native function targets keep their
 native interface.
 
-For project imports the artifact carries the lexical tokens erased from the
-interface alongside the serialized body recipe. The ordinary parser reads
-these tokens in the consumer, retaining its usual lifetime bindings. The
-compiler compares that parse with the recipe before using it. The virtual
+For project imports the artifact carries the source spelling erased from the
+interface alongside the serialized body recipe. This includes comments and
+whitespace that a macro can observe in its arguments. The ordinary parser
+reads the reconstructed spelling in the consumer and retains its lifetime
+bindings. The compiler compares that parse with the recipe before using it. The virtual
 interface has application provenance and receives the same type, visibility
 and borrow checks as application source. The installed toolchain can instead
 restore its independently authenticated recipes directly. Neither route

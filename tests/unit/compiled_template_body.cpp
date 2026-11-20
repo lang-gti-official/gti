@@ -93,7 +93,12 @@ int total<T>(T& values, int offset) {
               unit.declarations.find("exact trivia") == std::string::npos,
           "body leaked into declarations");
   auto program = parse(unit.declarations, "installed.gti");
-  lang::restoreTemplateBodies(program.declarations(), unit, "installed.gti");
+  auto spelling = lang::restoreTemplateBodies(program.declarations(), unit,
+                                              "installed.gti");
+  const std::string argument = "(answer /* exact trivia */ + offset)";
+  require(spelling && spelling->substr(source.find(argument),
+                                       argument.size()) == argument,
+          "installed expression-text query would read a blank body");
   auto fn =
       lang::stmtAs<lang::FunctionDecl>(program.declarations().front().get());
   auto &statements = fn->body()->statements();

@@ -2,7 +2,7 @@
 #include "gti/compiled_template_body.h"
 namespace lang {
 // Ordinary packages never inherit the sysroot's trust. Their recipe is paired
-// with the erased lexical tokens so the normal parser can validate its shape.
+// with the erased source spelling so the normal parser can validate its shape.
 std::string encodeProjectTemplate(const CompiledTemplateModule &,
                                   std::string_view source);
 CompiledTemplateModule decodeProjectTemplate(std::string_view bytes);

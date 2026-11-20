@@ -12,6 +12,10 @@ $ gti check --release
 $ gti run --release
 $ test ! -e public.gti
 $ cp main.gti saved.gti
+$ cp ../assertion.gti main.gti
+$ gti run --release
+? 70
+stderr: Assertion failed: n /* requested capacity */ == N
 $ cp ../escape.gti main.gti
 $ gti check --release
 ? 65

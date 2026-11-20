@@ -90,14 +90,21 @@ std::string encodeProjectTemplate(const CompiledTemplateModule &module,
   (void)projectTemplateModuleName(source);
   std::string out(magic);
   appendText(out, encodeTemplateModule(module));
-  for (const auto &t : tokens(source)) {
-    if (!erased(t, module.declarations))
+  if (source.size() != module.declarations.size())
+    reject("declaration and source extents differ");
+  // A macro can observe comments and tabs between tokens in its arguments.
+  // Restore the exact erased bytes before asking the ordinary parser to attest
+  // the recipe. The declaration skeleton already contains spaces and newlines.
+  for (std::size_t i = 0; i < source.size();) {
+    if (source[i] == module.declarations[i]) {
+      ++i;
       continue;
-    if (t.position > source.size() ||
-        source.substr(t.position, t.lexeme.size()) != t.lexeme)
-      reject("unrepresentable body token");
-    appendNumber(out, t.position);
-    appendText(out, t.lexeme);
+    }
+    const auto begin = i;
+    while (i < source.size() && source[i] != module.declarations[i])
+      ++i;
+    appendNumber(out, begin);
+    appendText(out, source.substr(begin, i - begin));
   }
   return out;
 }
@@ -114,11 +121,11 @@ CompiledTemplateModule decodeProjectTemplate(std::string_view bytes) {
     auto spelling = takeText(bytes);
     if (spelling.empty() || position < end || position > text.size() ||
         spelling.size() > text.size() - position)
-      reject("invalid lexical token extent");
+      reject("invalid lexical extent");
     for (std::size_t i = 0; i < spelling.size(); ++i)
       if (text[position + i] != ' ' &&
           !(text[position + i] == '\n' && spelling[i] == '\n'))
-        reject("body token overlaps declaration");
+        reject("body spelling overlaps declaration");
     text.replace(position, spelling.size(), spelling);
     end = position + spelling.size();
   }

@@ -1,1 +1,1 @@
-Compiled libraries can carry generic project containers for source-free consumers, and the toolchain packages more standard-library declarations and bodies.
+Compiled libraries can carry generic project containers for source-free consumers, including the original expression text used in macro diagnostics. The toolchain packages more standard-library declarations and bodies.

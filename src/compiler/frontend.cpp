@@ -1236,12 +1236,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
         if (recipe && !parser.hadError()) {
-          if (recipe->projectSyntax)
+          if (recipe->projectSyntax) {
             verifyProjectTemplate(*recipe, unitDeclarations,
                                   parser.lifetimeNames());
-          else
-            restoreTemplateBodies(unitDeclarations, *recipe,
-                                  unit->path.string());
+            result.sources.set(unit->path.string(), *recipe->projectSyntax);
+          } else if (auto spelling = restoreTemplateBodies(
+                         unitDeclarations, *recipe, unit->path.string())) {
+            result.sources.set(unit->path.string(), std::move(*spelling));
+          }
         }
         if (recipe && !recipe->projectSyntax && !parser.hadError()) {
           auto names =

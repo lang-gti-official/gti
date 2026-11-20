@@ -30,12 +30,22 @@ struct Output {
     bytes.append(s);
   }
 };
+struct MacroSource {
+  const std::string &declarations;
+  std::optional<std::string> spelling;
+  void restore(std::size_t start, std::string_view text) {
+    if (!spelling)
+      spelling = declarations;
+    spelling->replace(start, text.size(), text);
+  }
+};
 struct Input {
   std::string_view bytes;
   std::string path;
   std::size_t extent = byteLimit;
   unsigned nodes = 0;
   unsigned depth = 0;
+  MacroSource *macroSource = nullptr;
   unsigned number() {
     if (bytes.size() < 4)
       invalid("truncated field");
@@ -413,6 +423,8 @@ void readMacroCapture(Input &in, Call &call) {
   auto capture = lexicalCapture(text, start, static_cast<int>(line), in.path);
   if (capture.tokens.back().position != call.paren().position)
     invalid("invalid macro closing parenthesis");
+  if (in.macroSource)
+    in.macroSource->restore(start, text);
   call.setCapturedArguments(
       std::make_shared<SyntaxCapture>(std::move(capture)));
   call.setMacroBang(std::move(*bang));
@@ -1089,11 +1101,13 @@ compileTemplateModule(std::span<const StmtPtr> declarations,
   forEachBody(declarations, save);
   return module;
 }
-void restoreTemplateBodies(std::span<const StmtPtr> declarations,
-                           const CompiledTemplateModule &module,
-                           std::string_view path) {
+std::optional<std::string>
+restoreTemplateBodies(std::span<const StmtPtr> declarations,
+                      const CompiledTemplateModule &module,
+                      std::string_view path) {
   std::set<const void *> visited;
   std::set<std::size_t> locations;
+  MacroSource source{module.declarations, std::nullopt};
   auto load = [&](auto &body, const SourceSpan *extent,
                   const StmtList &original) {
     if (!visited.insert(&body).second)
@@ -1105,6 +1119,7 @@ void restoreTemplateBodies(std::span<const StmtPtr> declarations,
     if (found == module.bodies.end())
       invalid("missing method recipe");
     Input in{found->second, std::string(path), module.declarations.size()};
+    in.macroSource = &source;
     auto statements = get<StmtList>(in);
     if (!in.bytes.empty())
       invalid("trailing method data");
@@ -1113,6 +1128,7 @@ void restoreTemplateBodies(std::span<const StmtPtr> declarations,
   forEachBody(declarations, load);
   if (locations.size() != module.bodies.size())
     invalid("template declaration mismatch");
+  return std::move(source.spelling);
 }
 std::string encodeTemplateModule(const CompiledTemplateModule &module) {
   Output out{std::string(compiledTemplateMagic)};
