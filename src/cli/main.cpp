@@ -56,6 +56,12 @@ std::optional<std::string> runtimeColorOverride;
 lang::cli::ProgressMode progressMode = lang::cli::ProgressMode::Auto;
 bool progressSelected = false;
 
+lang::driver::ToolchainLayout cliToolchainLayout(const char *driver) {
+  auto layout = lang::driver::discoverToolchainLayout(driver);
+  layout.standardLibrary.useInstalledBundles = true;
+  return layout;
+}
+
 volatile std::sig_atomic_t testInterruptSignal = 0;
 void recordTestInterrupt(int signal) { testInterruptSignal = signal; }
 class TestInterruptScope {
@@ -2710,8 +2716,7 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
 }
 
 int runDirect(const Options &options, const char *driver) {
-  const lang::driver::ToolchainLayout toolchain =
-      lang::driver::discoverToolchainLayout(driver);
+  const auto toolchain = cliToolchainLayout(driver);
   const lang::driver::AnalysisConfiguration configuration(
       lang::TargetInfo::host(), options.executionProfile,
       lang::driver::RuntimeProfile::Hosted, options.configurationFlags);
@@ -3681,8 +3686,7 @@ int runProjectAttempt(
       return bindgenStatus;
     }
   }
-  const lang::driver::ToolchainLayout toolchain =
-      lang::driver::discoverToolchainLayout(driver);
+  const auto toolchain = cliToolchainLayout(driver);
 
   if (options.command == ProjectCommand::Build && options.emitMir) {
     lang::cli::BuildProgress progress(
@@ -3962,8 +3966,7 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
       return bindgenStatus;
     }
   }
-  const lang::driver::ToolchainLayout toolchain =
-      lang::driver::discoverToolchainLayout(driver);
+  const auto toolchain = cliToolchainLayout(driver);
   std::optional<lang::driver::BuildProvenance> rebuilt;
   const int status = buildProjectPlan(plan, options, toolchain,
                                       &resolution.sources, driver, &rebuilt);
@@ -4061,8 +4064,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
       return failure(bindgenStatus, "test binding generation failed");
     }
   }
-  const lang::driver::ToolchainLayout toolchain =
-      lang::driver::discoverToolchainLayout(driver);
+  const auto toolchain = cliToolchainLayout(driver);
   DiagnosticSummary diagnosticSummary;
   std::vector<lang::driver::TestSuiteCommand> suites;
   for (const auto &plan : resolution.plans) {

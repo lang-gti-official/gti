@@ -696,6 +696,7 @@ add_library(
   "src/compiler/compiled_mir.cpp"
   "src/compiler/compiled_scalar_unit.cpp"
   "src/compiler/compiled_template_body.cpp"
+  "src/compiler/project_template.cpp"
   "src/compiler/compiled_interface_types.cpp"
   "src/compiler/semantic_instance_reuse.cpp"
   "src/compiler/semantic_preamble.cpp"

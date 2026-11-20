@@ -52,7 +52,8 @@ def write_registry(modules, output):
         output.write_text(contents)
 
 
-def build(stage, source, modules):
+def build(stage, source):
+    modules = catalog(source)
     stage = stage.resolve()
     data = stage / "share/gti"
     # A library producer's entry must be in its package. Use a private package
@@ -98,10 +99,13 @@ def build(stage, source, modules):
                                cwd=consumer, env=env, check=True)
         # Compile and execute a consumer-owned substitution after its producer
         # root has been removed from the toolchain used by the application.
-        shutil.copyfile(consumer / "array_consumer.gti", consumer / "src/main.gti")
-        for profile in ([], ["--release"]):
-            subprocess.run([compiler, "run", "--offline", *profile],
-                           cwd=consumer, env=env, check=True)
+        cases = (consumer / "array_consumer.gti",
+                 source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
+                 source / "tests/ui/callables/borrowing_captures/borrowing_captures_19.gti")
+        for case in cases:
+            shutil.copyfile(case, consumer / "src/main.gti")
+            for profile in ([], ["--release"]):
+                subprocess.run([compiler, "run", "--offline", *profile], cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:
@@ -124,12 +128,13 @@ if __name__ == "__main__":
     action.add_argument("--list-template-targets", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
-    modules = catalog(source)
     if args.stage:
-        build(args.stage, source, modules)
-    elif args.write_registry:
-        write_registry(modules, args.write_registry)
-    elif args.list_template_targets:
-        print(";".join(name for name, module in modules.items() if module.facade is None))
+        build(args.stage, source)
     else:
-        print(";".join(modules))
+        modules = catalog(source)
+        if args.write_registry:
+            write_registry(modules, args.write_registry)
+        elif args.list_template_targets:
+            print(";".join(name for name, module in modules.items() if module.facade is None))
+        else:
+            print(";".join(modules))

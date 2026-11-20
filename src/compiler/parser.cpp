@@ -15,6 +15,151 @@ namespace lang {
 
 using ParseDiagnostic = Diagnostic;
 
+namespace {
+[[nodiscard]] Token generatedToken(TokenKind kind, std::string lexeme,
+                                   const Token &anchor) {
+  return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+               anchor.line, anchor.source, false, true);
+}
+
+[[nodiscard]] ExprPtr generatedVariable(const Token &name) {
+  return std::make_unique<Variable>(name);
+}
+
+[[nodiscard]] ExprPtr generatedMemberCall(const Token &receiver,
+                                          std::string member,
+                                          const Token &anchor) {
+  Token dot = generatedToken(TokenKind::DOT, ".", anchor);
+  Token memberName =
+      generatedToken(TokenKind::IDENTIFIER, std::move(member), anchor);
+  Token paren = generatedToken(TokenKind::RIGHT_PAREN, ")", anchor);
+  return std::make_unique<Call>(
+      std::make_unique<Get>(generatedVariable(receiver), std::move(dot),
+                            std::move(memberName)),
+      std::vector<TypeRef>{}, std::move(paren), ExprList{});
+}
+
+} // namespace
+
+StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword,
+                           Mutability bindingMutability, TypeRef bindingType,
+                           Token bindingName, Token colon, ExprPtr range,
+                           StmtPtr body, StmtPtr initializer) {
+  const Stmt *sourceBody = body.get();
+  const bool mutableElementLoan =
+      bindingMutability == Mutability::Mutable && bindingType.reference;
+  const std::string suffix = std::to_string(ordinal);
+  Token ownerName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_owner_" + suffix, colon);
+  Token rangeName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_range_" + suffix, colon);
+  Token iteratorName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_iterator_" + suffix, colon);
+  Token sentinelName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_sentinel_" + suffix, colon);
+
+  TypeRef ownerType(generatedToken(TokenKind::AUTO, "auto", colon));
+  TypeRef rangeType(generatedToken(TokenKind::AUTO, "auto", colon));
+  rangeType.reference = generatedToken(TokenKind::AMPERSAND, "&", colon);
+
+  TypeRef iteratorType(generatedToken(TokenKind::AUTO, "auto", colon));
+  TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
+
+  StmtList loopBody;
+  ExprPtr elementAccess = std::make_unique<Unary>(
+      generatedToken(TokenKind::STAR, "*", colon),
+      generatedVariable(iteratorName), generatedVariable(rangeName));
+  const VariableDecl *elementOwnerBindingPointer = nullptr;
+  if (!mutableElementLoan && bindingType.reference) {
+    Token elementOwnerName = generatedToken(
+        TokenKind::IDENTIFIER, "__gti_element_owner_" + suffix, colon);
+    auto elementOwner = std::make_shared<VariableDecl>(
+        Mutability::Immutable,
+        TypeRef(generatedToken(TokenKind::AUTO, "auto", colon)),
+        elementOwnerName, std::move(elementAccess), std::nullopt, false,
+        std::nullopt, false, false, std::nullopt, true);
+    elementOwnerBindingPointer = elementOwner.get();
+    loopBody.emplace_back(std::move(elementOwner));
+    elementAccess = generatedVariable(elementOwnerName);
+  }
+  auto elementBinding = std::make_shared<VariableDecl>(
+      bindingMutability, bindingType, bindingName, std::move(elementAccess),
+      std::nullopt, true);
+  const VariableDecl *elementBindingPointer = elementBinding.get();
+  loopBody.emplace_back(std::move(elementBinding));
+  loopBody.emplace_back(std::move(body));
+
+  auto coreLoop = std::make_shared<ForStmt>(
+      std::make_shared<EmptyStmt>(
+          generatedToken(TokenKind::SEMICOLON, ";", colon)),
+      std::make_unique<Binary>(
+          generatedVariable(iteratorName),
+          generatedToken(TokenKind::BANG_EQUAL, "!=", colon),
+          generatedVariable(sentinelName)),
+      std::make_unique<Unary>(generatedToken(TokenKind::PLUS_PLUS, "++", colon),
+                              generatedVariable(iteratorName)),
+      std::make_unique<BlockStmt>(std::move(loopBody)));
+  const ForStmt *coreLoopPointer = coreLoop.get();
+
+  StmtList lowered;
+  auto ownerBinding = std::make_shared<VariableDecl>(
+      mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
+      std::move(ownerType), ownerName, std::move(range), std::nullopt, false,
+      std::nullopt, true);
+  const VariableDecl *ownerBindingPointer = ownerBinding.get();
+  lowered.emplace_back(std::move(ownerBinding));
+  auto rangeBinding = std::make_shared<VariableDecl>(
+      mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
+      std::move(rangeType), rangeName, generatedVariable(ownerName),
+      std::nullopt, true);
+  const VariableDecl *rangeBindingPointer = rangeBinding.get();
+  lowered.emplace_back(std::move(rangeBinding));
+  auto iteratorBinding = std::make_shared<VariableDecl>(
+      Mutability::Mutable, std::move(iteratorType), iteratorName,
+      generatedMemberCall(rangeName, mutableElementLoan ? "begin_mut" : "begin",
+                          colon),
+      std::nullopt, false, std::nullopt, false, true);
+  const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
+  lowered.emplace_back(std::move(iteratorBinding));
+  auto sentinelBinding = std::make_shared<VariableDecl>(
+      Mutability::Immutable, std::move(sentinelType), sentinelName,
+      generatedMemberCall(rangeName, "end", colon));
+  const VariableDecl *sentinelBindingPointer = sentinelBinding.get();
+  lowered.emplace_back(std::move(sentinelBinding));
+  lowered.emplace_back(std::move(coreLoop));
+
+  return std::make_shared<RangeForStmt>(
+      std::move(keyword), bindingMutability, std::move(bindingType),
+      std::move(bindingName), std::move(colon),
+      std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
+      rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
+      elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer,
+      sourceBody, std::move(initializer), ordinal);
+}
+
+StmtPtr makeParsedConstexprFor(Token constexprKeyword, Token keyword,
+                               Mutability mutability, TypeRef bindingType,
+                               Token name, Token colon, ExprPtr sequence,
+                               StmtPtr body) {
+  auto initializer = std::make_unique<Call>(
+      generatedVariable(generatedToken(TokenKind::IDENTIFIER,
+                                       "__constexpr_for_element", name)),
+      std::vector<TypeRef>{}, generatedToken(TokenKind::RIGHT_PAREN, ")", name),
+      ExprList{});
+  const Call *initializerPointer = initializer.get();
+  auto elementBinding = std::make_shared<VariableDecl>(
+      mutability, bindingType, name, std::move(initializer), std::nullopt,
+      false, std::nullopt, false, false,
+      mutability == Mutability::Mutable
+          ? std::optional<Token>{generatedToken(TokenKind::MUT, "mut", name)}
+          : std::nullopt);
+  return std::make_shared<ConstexprForStmt>(
+      std::move(constexprKeyword), std::move(keyword), mutability,
+      std::move(bindingType), std::move(name), std::move(colon),
+      std::move(sequence), std::move(body), std::move(elementBinding),
+      initializerPointer);
+}
+
 class Parser::Impl {
 private:
   class ParseError {};
@@ -76,7 +221,10 @@ public:
             sourceUnitImport();
             continue;
           }
-          declarations.emplace_back(declaration());
+          interfaceLambdaCount = 0;
+          auto topLevel = declaration();
+          topLevel->setInterfaceLambdaCount(interfaceLambdaCount);
+          declarations.emplace_back(std::move(topLevel));
         } catch (const ParseError &) {
           synchronize(false, false, true);
         }
@@ -3177,6 +3325,7 @@ private:
 
   std::unique_ptr<BlockStmt>
   functionBody(std::string_view message = "Expect '{' before function body.") {
+    NestingGuard namedBody(namedBodyDepth);
     const Token opening = consume(TokenKind::LEFT_BRACE, message);
     auto body = std::make_unique<BlockStmt>(blockItems());
     body->setExtent({opening.source, opening.position,
@@ -3777,23 +3926,10 @@ private:
     consume(TokenKind::RIGHT_PAREN,
             "Expect ')' after the 'constexpr for' sequence.");
     StmtPtr body = statement();
-    auto initializer = std::make_unique<Call>(
-        generatedVariable(generatedToken(TokenKind::IDENTIFIER,
-                                         "__constexpr_for_element", name)),
-        std::vector<TypeRef>{},
-        generatedToken(TokenKind::RIGHT_PAREN, ")", name), ExprList{});
-    const Call *initializerPointer = initializer.get();
-    auto elementBinding = std::make_shared<VariableDecl>(
-        mutability, bindingType, name, std::move(initializer), std::nullopt,
-        false, std::nullopt, false, false,
-        mutability == Mutability::Mutable
-            ? std::optional<Token>{generatedToken(TokenKind::MUT, "mut", name)}
-            : std::nullopt);
-    return std::make_shared<ConstexprForStmt>(
+    return makeParsedConstexprFor(
         std::move(constexprKeyword), std::move(keyword), mutability,
         std::move(bindingType), std::move(name), std::move(colon),
-        std::move(sequence), std::move(body), std::move(elementBinding),
-        initializerPointer);
+        std::move(sequence), std::move(body));
   }
 
   StmtPtr forStatement() {
@@ -3911,124 +4047,14 @@ private:
     return nullptr;
   }
 
-  [[nodiscard]] Token generatedToken(TokenKind kind, std::string lexeme,
-                                     const Token &anchor) const {
-    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
-                 anchor.line, anchor.source, false, true);
-  }
-
-  [[nodiscard]] ExprPtr generatedVariable(const Token &name) const {
-    return std::make_unique<Variable>(name);
-  }
-
-  [[nodiscard]] ExprPtr generatedMemberCall(const Token &receiver,
-                                            std::string member,
-                                            const Token &anchor) const {
-    Token dot = generatedToken(TokenKind::DOT, ".", anchor);
-    Token memberName =
-        generatedToken(TokenKind::IDENTIFIER, std::move(member), anchor);
-    Token paren = generatedToken(TokenKind::RIGHT_PAREN, ")", anchor);
-    return std::make_unique<Call>(
-        std::make_unique<Get>(generatedVariable(receiver), std::move(dot),
-                              std::move(memberName)),
-        std::vector<TypeRef>{}, std::move(paren), ExprList{});
-  }
-
   StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body,
                                 StmtPtr initializer = nullptr) {
-    const Stmt *sourceBody = body.get();
-    const bool mutableElementLoan =
-        bindingMutability == Mutability::Mutable && bindingType.reference;
-    const std::string suffix = std::to_string(++generatedNameCounter);
-    Token ownerName =
-        generatedToken(TokenKind::IDENTIFIER, "__gti_owner_" + suffix, colon);
-    Token rangeName =
-        generatedToken(TokenKind::IDENTIFIER, "__gti_range_" + suffix, colon);
-    Token iteratorName = generatedToken(TokenKind::IDENTIFIER,
-                                        "__gti_iterator_" + suffix, colon);
-    Token sentinelName = generatedToken(TokenKind::IDENTIFIER,
-                                        "__gti_sentinel_" + suffix, colon);
-
-    TypeRef ownerType(generatedToken(TokenKind::AUTO, "auto", colon));
-    TypeRef rangeType(generatedToken(TokenKind::AUTO, "auto", colon));
-    rangeType.reference = generatedToken(TokenKind::AMPERSAND, "&", colon);
-
-    TypeRef iteratorType(generatedToken(TokenKind::AUTO, "auto", colon));
-    TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
-
-    StmtList loopBody;
-    ExprPtr elementAccess = std::make_unique<Unary>(
-        generatedToken(TokenKind::STAR, "*", colon),
-        generatedVariable(iteratorName), generatedVariable(rangeName));
-    const VariableDecl *elementOwnerBindingPointer = nullptr;
-    if (!mutableElementLoan && bindingType.reference) {
-      Token elementOwnerName = generatedToken(
-          TokenKind::IDENTIFIER, "__gti_element_owner_" + suffix, colon);
-      auto elementOwner = std::make_shared<VariableDecl>(
-          Mutability::Immutable,
-          TypeRef(generatedToken(TokenKind::AUTO, "auto", colon)),
-          elementOwnerName, std::move(elementAccess), std::nullopt, false,
-          std::nullopt, false, false, std::nullopt, true);
-      elementOwnerBindingPointer = elementOwner.get();
-      loopBody.emplace_back(std::move(elementOwner));
-      elementAccess = generatedVariable(elementOwnerName);
-    }
-    auto elementBinding = std::make_shared<VariableDecl>(
-        bindingMutability, bindingType, bindingName, std::move(elementAccess),
-        std::nullopt, true);
-    const VariableDecl *elementBindingPointer = elementBinding.get();
-    loopBody.emplace_back(std::move(elementBinding));
-    loopBody.emplace_back(std::move(body));
-
-    auto coreLoop = std::make_shared<ForStmt>(
-        std::make_shared<EmptyStmt>(
-            generatedToken(TokenKind::SEMICOLON, ";", colon)),
-        std::make_unique<Binary>(
-            generatedVariable(iteratorName),
-            generatedToken(TokenKind::BANG_EQUAL, "!=", colon),
-            generatedVariable(sentinelName)),
-        std::make_unique<Unary>(
-            generatedToken(TokenKind::PLUS_PLUS, "++", colon),
-            generatedVariable(iteratorName)),
-        std::make_unique<BlockStmt>(std::move(loopBody)));
-    const ForStmt *coreLoopPointer = coreLoop.get();
-
-    StmtList lowered;
-    auto ownerBinding = std::make_shared<VariableDecl>(
-        mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
-        std::move(ownerType), ownerName, std::move(range), std::nullopt, false,
-        std::nullopt, true);
-    const VariableDecl *ownerBindingPointer = ownerBinding.get();
-    lowered.emplace_back(std::move(ownerBinding));
-    auto rangeBinding = std::make_shared<VariableDecl>(
-        mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
-        std::move(rangeType), rangeName, generatedVariable(ownerName),
-        std::nullopt, true);
-    const VariableDecl *rangeBindingPointer = rangeBinding.get();
-    lowered.emplace_back(std::move(rangeBinding));
-    auto iteratorBinding = std::make_shared<VariableDecl>(
-        Mutability::Mutable, std::move(iteratorType), iteratorName,
-        generatedMemberCall(rangeName,
-                            mutableElementLoan ? "begin_mut" : "begin", colon),
-        std::nullopt, false, std::nullopt, false, true);
-    const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
-    lowered.emplace_back(std::move(iteratorBinding));
-    auto sentinelBinding = std::make_shared<VariableDecl>(
-        Mutability::Immutable, std::move(sentinelType), sentinelName,
-        generatedMemberCall(rangeName, "end", colon));
-    const VariableDecl *sentinelBindingPointer = sentinelBinding.get();
-    lowered.emplace_back(std::move(sentinelBinding));
-    lowered.emplace_back(std::move(coreLoop));
-
-    return std::make_shared<RangeForStmt>(
-        std::move(keyword), bindingMutability, std::move(bindingType),
-        std::move(bindingName), std::move(colon),
-        std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
-        rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
-        elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer,
-        sourceBody, std::move(initializer));
+    return makeParsedRangeFor(
+        ++generatedNameCounter, std::move(keyword), bindingMutability,
+        std::move(bindingType), std::move(bindingName), std::move(colon),
+        std::move(range), std::move(body), std::move(initializer));
   }
 
   StmtPtr switchStatement() {
@@ -4946,6 +4972,9 @@ private:
   }
 
   ExprPtr lambdaExpression(Token bracket) {
+    const bool interfaceLambda = !namedBodyDepth;
+    if (interfaceLambda)
+      ++interfaceLambdaCount;
     std::vector<LambdaCapture> captures;
     if (!check(TokenKind::RIGHT_BRACKET)) {
       do {
@@ -5001,10 +5030,19 @@ private:
       resultAccess = previous();
     TypeRef returnType = parseType();
     returnType.referenceMutability = std::move(resultAccess);
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
-    return std::make_unique<Lambda>(std::move(bracket), std::move(captures),
-                                    std::move(parameters), std::move(arrow),
-                                    std::move(returnType), blockItems());
+    const Token open =
+        consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
+    // Nested lambdas in these statements belong to this body's recipe.
+    NestingGuard inBody(namedBodyDepth);
+    auto lambda = std::make_unique<Lambda>(
+        std::move(bracket), std::move(captures), std::move(parameters),
+        std::move(arrow), std::move(returnType), blockItems());
+    if (interfaceLambda)
+      lambda->setInterfaceBodySpan(std::make_shared<const SourceSpan>(
+          SourceSpan{open.source, open.position,
+                     previous().position + previous().lexeme.size(),
+                     open.line}));
+    return lambda;
   }
 
   [[nodiscard]] static bool isIdentifierUseToken(TokenKind kind) {
@@ -5825,6 +5863,8 @@ private:
   // the conditional parser. A stray directive must instead be advanced past.
   std::size_t conditionalDepth = 0;
   std::size_t generatedNameCounter = 0;
+  std::size_t namedBodyDepth = 0;
+  std::size_t interfaceLambdaCount = 0;
   std::optional<Token> currentClassName;
   std::optional<ClassKind> currentClassKind;
   bool consumedCompletion = false;

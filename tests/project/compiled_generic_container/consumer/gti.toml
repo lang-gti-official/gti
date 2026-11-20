@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "instrument-board"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "sample-rack"
+target = "sample-rack"
+path = "rack.gtilib"
+interface = "public.gti"
