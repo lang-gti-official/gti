@@ -6,3 +6,8 @@ version = "1.0.0"
 kind = "gti-library"
 root = "library.gti"
 functions = ["Meter::take", "checked_number", "label"]
+
+[targets.scalar]
+kind = "gti-library"
+root = "plain.gti"
+functions = ["seed"]

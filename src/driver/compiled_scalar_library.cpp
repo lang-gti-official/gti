@@ -680,9 +680,13 @@ bool requestsNativeModule(const FrontendResult &frontend,
       return true;
     if (value.kind != SemanticType::Class)
       return false;
-    const auto *owner = frontend.semantics.findClassType(value.classId);
-    return owner &&
-           (owner->traits.drop != DropKind::Trivial || !owner->traits.copyable);
+    const auto &classes = frontend.mir.classInstances();
+    const auto owner =
+        std::ranges::find(classes, value, &MirClassInstance::type);
+    return owner != classes.end() &&
+           (owner->requiresActiveCleanup ||
+            owner->copyConstructor != SpecialMemberStatus::Generated ||
+            owner->destructorStatus != SpecialMemberStatus::Generated);
   };
   for (const auto &f : frontend.mir.functionInstances()) {
     const auto *decl = frontend.semantics.findFunction(f.declaration);
