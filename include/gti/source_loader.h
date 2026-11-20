@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -58,8 +59,10 @@ public:
   // project interfaces and editor overlays never establish toolchain ownership.
   void deferInstalledModule(std::string canonicalPath,
                             std::function<std::string()> read) {
-    installedProviders.insert(canonicalPath);
-    deferSource(std::move(canonicalPath), std::move(read));
+    if (!deferredSources.try_emplace(canonicalPath, std::move(read)).second)
+      throw std::invalid_argument(
+          "installed module overlaps an existing source provider");
+    installedProviders.insert(std::move(canonicalPath));
   }
   void setErrorLimit(std::size_t limit) { errorLimit = limit; }
   [[nodiscard]] bool hadError() const;

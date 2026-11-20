@@ -2,7 +2,6 @@
 GTI_TEMPLATE_EXPR(Assign, &Assign::path, &Assign::oper, &Assign::value)
 GTI_TEMPLATE_EXPR(ArrayInitializer, &ArrayInitializer::brace, &ArrayInitializer::elements, &ArrayInitializer::closingBrace)
 GTI_TEMPLATE_EXPR(Binary, &Binary::left, &Binary::oper, &Binary::right)
-GTI_TEMPLATE_EXPR(Call, &Call::callee, &Call::typeArguments, &Call::paren, &Call::arguments)
 GTI_TEMPLATE_EXPR(ConditionalExpr, &ConditionalExpr::condition, &ConditionalExpr::question, &ConditionalExpr::thenExpression, &ConditionalExpr::colon, &ConditionalExpr::elseExpression)
 GTI_TEMPLATE_EXPR(Conversion, &Conversion::targetType, &Conversion::paren, &Conversion::value)
 GTI_TEMPLATE_EXPR(DirectInitializer, &DirectInitializer::brace, &DirectInitializer::arguments, &DirectInitializer::closingBrace, &DirectInitializer::designators)

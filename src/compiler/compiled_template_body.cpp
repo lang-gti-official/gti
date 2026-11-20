@@ -1,7 +1,7 @@
 #include "gti/compiled_template_body.h"
 #include "gti/lexer.h"
 #include <algorithm>
-#include <limits>
+#include <climits>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -269,6 +269,12 @@ void writeExpr(Output &out, const Expr &e) {
     return Shape<N, __VA_ARGS__>::write(out, static_cast<const N &>(e));
 #include "compiled_template_nodes.def"
 #undef GTI_TEMPLATE_EXPR
+  case ExprKind::Call: {
+    const auto &call = static_cast<const Call &>(e);
+    fields(out, call.callee(), call.typeArguments(), call.paren(),
+           call.arguments(), call.leftParen(), call.argumentCommas());
+    return;
+  }
   case ExprKind::LiteralExpr:
     return put(out, static_cast<const LiteralExpr &>(e).token());
   default:
@@ -287,6 +293,18 @@ ExprPtr readExpr(Input &in) {
     break;
 #include "compiled_template_nodes.def"
 #undef GTI_TEMPLATE_EXPR
+  case static_cast<unsigned>(ExprKind::Call): {
+    auto call = Shape<Call, &Call::callee, &Call::typeArguments, &Call::paren,
+                      &Call::arguments>::read(in);
+    auto open = get<std::optional<Token>>(in);
+    auto commas = get<std::vector<Token>>(in);
+    if ((!open && !commas.empty()) || commas.size() > call->arguments().size())
+      invalid("invalid call geometry");
+    if (open)
+      call->setArgumentGeometry(std::move(*open), std::move(commas));
+    expr = std::move(call);
+    break;
+  }
   case static_cast<unsigned>(ExprKind::LiteralExpr): {
     auto tok = get<Token>(in);
     Literal value = tok.literal;
@@ -304,6 +322,10 @@ ExprPtr readExpr(Input &in) {
   default:
     invalid("unknown expression opcode");
   }
+  if (auto *init = exprAs<DirectInitializer>(expr.get());
+      init && !init->designators().empty() &&
+      init->designators().size() != init->arguments().size())
+    invalid("invalid designated initializer");
   if (span)
     expr->setWrittenOrigin(std::move(*span));
   return expr;

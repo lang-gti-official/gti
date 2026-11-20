@@ -1,4 +1,4 @@
-"""Exercise the shipped math and random libraries in a private copy of its resource tree."""
+"""Exercise native, MIR, and generic libraries in a private copy of the installed toolchain resources."""
 import argparse
 import hashlib
 import os
@@ -77,6 +77,18 @@ def verify(stage):
         digest = hashlib.sha256(array_bundle.read_bytes()).hexdigest()
         if array_receipt.read_text() != digest + "\n":
             raise RuntimeError("installed array receipt does not identify its artifact")
+        # Select a second nominal type and extent from the *finished* artifact:
+        # the producer cannot enumerate this application in advance.
+        element = "ApplicationPacket_" + digest[:12]
+        extent = 11 + int(digest[:2], 16) % 17
+        values = ", ".join(f"{element}({i})" for i in range(extent))
+        source.write_text(
+            "import std.array;\n"
+            f"struct {element} {{ uint64_t serial; {element}(uint64_t n) : serial(n) {{}} }};\n"
+            f"int main() {{ auto packets = std::array<{element}, {extent}>({{{values}}});\n"
+            f"return packets.size() == {extent} && packets.back().serial == {extent-1} ? 0 : 1; }}\n")
+        for profile in ([], ["--release"]):
+            run("run", *profile)
         # Exercise different substitutions of the same independently built bytes,
         # early evaluation, a private helper, and the empty array.
         array_cases = fixture.parents[1] / "ui/stdlib/array/comparison"
