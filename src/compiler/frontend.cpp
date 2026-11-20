@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
-#include "diagnostic_registry.h"
 #include "gti/ast_clone.h"
+
+#include "diagnostic_registry.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
