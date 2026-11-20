@@ -1,4 +1,4 @@
-"""Exercise the shipped math and random libraries in a private copy of its resource tree."""
+"""Exercise native, MIR, and generic libraries in a private copy of the installed toolchain resources."""
 import argparse
 import hashlib
 import os
@@ -33,8 +33,9 @@ def verify(stage):
                 bundle, = bundles.glob(f"*/{profile}/{name}.gtilib")
                 with bundle.open("rb") as stream:
                     header = stream.read(20)
-                    if header not in {b"GTILIB\r\n" + struct.pack("<III", version, 1, len(compiler_digest))
-                                      for version in (2, 3)}:
+                    versions = [(2, 2)] if not targets[name].get("functions") else [(2, 1), (3, 1)]
+                    if header not in {b"GTILIB\r\n" + struct.pack("<III", version, envelope, len(compiler_digest))
+                                      for version, envelope in versions}:
                         raise RuntimeError(f"invalid compiled standard library envelope in {bundle}")
                     if stream.read(len(compiler_digest)) != compiler_digest:
                         raise RuntimeError(f"compiler SHA-256 in {bundle} differs from the staged executable")
@@ -66,6 +67,75 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
+        # The producer was staged before this application's type existed.
+        shutil.copyfile(fixture / "array_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("check", *profile)
+            run("run", *profile)
+        array_bundle, = bundles.glob("*/release/array.gtilib")
+        array_receipt = array_bundle.with_suffix(".gtilib.sha256")
+        digest = hashlib.sha256(array_bundle.read_bytes()).hexdigest()
+        if array_receipt.read_text() != digest + "\n":
+            raise RuntimeError("installed array receipt does not identify its artifact")
+        # Select a second nominal type and extent from the *finished* artifact:
+        # the producer cannot enumerate this application in advance.
+        element = "ApplicationPacket_" + digest[:12]
+        extent = 11 + int(digest[:2], 16) % 17
+        values = ", ".join(f"{element}({i})" for i in range(extent))
+        source.write_text(
+            "import std.array;\n"
+            f"struct {element} {{ uint64_t serial; {element}(uint64_t n) : serial(n) {{}} }};\n"
+            f"int main() {{ auto packets = std::array<{element}, {extent}>({{{values}}});\n"
+            f"return packets.size() == {extent} && packets.back().serial == {extent-1} ? 0 : 1; }}\n")
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+        # Exercise different substitutions of the same independently built bytes,
+        # early evaluation, a private helper, and the empty array.
+        array_cases = fixture.parents[1] / "ui/stdlib/array/comparison"
+        for example in ("constexpr_ordering.gti", "ordering.gti", "readonly_elements.gti"):
+            shutil.copyfile(array_cases / example, source)
+            run("run", "--release")
+        shutil.copyfile(array_cases / "equality_only.gti", source)
+        run("check", rejection="GTI-S2029")
+        source.write_text("import std.array;\nstd::array<int, 7>::iterator dangling() { "
+                          "mut std::array<int, 7> x{}; return x.begin_mut(); }\n"
+                          "int main() { return 0; }\n")
+        run("check", rejection="GTI-S2045")
+        if hashlib.sha256(array_bundle.read_bytes()).hexdigest() != digest:
+            raise RuntimeError("instantiating consumer types modified the installed library")
+        # Reaching the same module from a warm executable must still validate
+        # the installation receipt before restoring executable cache entries.
+        shutil.copyfile(fixture / "array_consumer.gti", source)
+        run("run", "--release")
+        array_receipt.write_text("0" * 64 + "\n")
+        run("build", "--release", rejection="installed generic library receipt mismatch")
+        array_receipt.write_text(digest + "\n")
+        # A same-length edit changes the body recipe without changing any
+        # declaration or source extent. Install that real producer output and
+        # rebuild the unchanged application with its existing cache.
+        producer = root / "array-producer"
+        shutil.copytree(stage / "share/gti/stdlib", producer / "stdlib")
+        shutil.copyfile(manifest, producer / "gti.toml")
+        impl = producer / "stdlib/std/array.gti"
+        implementation = impl.read_text()
+        old = "constexpr size_t size() {\n    return N;"
+        if implementation.count(old) != 1:
+            raise RuntimeError("missing array size method in producer fixture")
+        impl.write_text(implementation.replace(old, old.replace("return N;", "return 1;")))
+        run("build", "array", "--release", cwd=producer,
+            environment=dict(env, GTI_STDLIB_PATH=str(producer / "stdlib")))
+        alternate, = (producer / "build/gti/release").glob("*/array.gtilib")
+        original = array_bundle.read_bytes()
+        array_bundle.write_bytes(alternate.read_bytes())
+        array_receipt.write_text(hashlib.sha256(array_bundle.read_bytes()).hexdigest() + "\n")
+        run("build", "--release")
+        executable = project / "build/gti/release" / array_bundle.parents[1].name / "app"
+        if subprocess.run([str(executable)]).returncode != 1:
+            raise RuntimeError("unchanged application retained the old array size method")
+        array_bundle.write_bytes(original)
+        array_receipt.write_text(digest + "\n")
+        run("run", "--release")
+
         # Check the reference sequences, independent state and entropy-device
         # API through the public module with the engine implementation absent.
         shutil.copyfile(fixture.parents[1] / "ui/stdlib/random/engine.gti", source)

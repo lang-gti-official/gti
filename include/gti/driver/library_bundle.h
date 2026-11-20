@@ -45,10 +45,12 @@ struct LibraryBundle {
   LibraryBundleIdentity identity;
   std::vector<LibraryBundleDependency> dependencies;
   std::vector<LibraryBundleMember> objects;
-  std::string interfaceMetadata; // Versioned compiler metadata; opaque to the
-                                 // container.
-  // Optional, versioned compiler-owned bodies. Never passed to the linker.
-  std::string optimizationBodies;
+  std::string interfaceMetadata;  // Versioned compiler metadata; opaque to the
+                                  // container.
+  std::string optimizationBodies; // Optional verified concrete MIR for native
+                                  // functions.
+  bool templateOnly =
+      false; // Generic declaration and dependent bodies, no concrete object.
   friend bool operator==(const LibraryBundle &,
                          const LibraryBundle &) = default;
 };

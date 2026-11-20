@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -53,6 +54,15 @@ public:
   void deferSource(std::string canonicalPath,
                    std::function<std::string()> read) {
     deferredSources.emplace(std::move(canonicalPath), std::move(read));
+  }
+  // Only installed artifact admission registers this provider. Ordinary virtual
+  // project interfaces and editor overlays never establish toolchain ownership.
+  void deferInstalledModule(std::string canonicalPath,
+                            std::function<std::string()> read) {
+    if (!deferredSources.try_emplace(canonicalPath, std::move(read)).second)
+      throw std::invalid_argument(
+          "installed module overlaps an existing source provider");
+    installedProviders.insert(std::move(canonicalPath));
   }
   void setErrorLimit(std::size_t limit) { errorLimit = limit; }
   [[nodiscard]] bool hadError() const;
@@ -126,6 +136,7 @@ private:
   std::vector<std::filesystem::path> standardLibraryRoots;
   std::shared_ptr<const SourceOwnerRegistry> sourceOwners;
   std::unordered_map<std::string, std::function<std::string()>> deferredSources;
+  std::unordered_set<std::string> installedProviders;
   bool entrySourceConsumed = false;
   std::optional<std::size_t> completionOffset;
   TargetInfo targetInfo = TargetInfo::host();

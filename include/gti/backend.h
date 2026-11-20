@@ -30,6 +30,7 @@ parseBackendKind(std::string_view name);
 enum class BackendArtifactKind {
   Source,
   Object,
+  CompiledInterface,
 };
 
 struct EmbeddingCompanion {

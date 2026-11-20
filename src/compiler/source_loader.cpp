@@ -621,7 +621,8 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
       continue;
     }
     error.clear();
-    if (!std::filesystem::is_regular_file(path, error)) {
+    if (!installedProviders.contains(path.string()) &&
+        !std::filesystem::is_regular_file(path, error)) {
       continue;
     }
 
@@ -704,7 +705,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     std::string deferredText;
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
-    if (isEntry && entrySource && !entrySourceConsumed) {
+    if (installedProviders.contains(key)) {
+      deferredText = deferredSources.at(key)();
+      exactSource = deferredText;
+    } else if (isEntry && entrySource && !entrySourceConsumed) {
       entrySourceConsumed = true;
       exactSource = *entrySource;
       unitCompletionOffset = completionOffset;

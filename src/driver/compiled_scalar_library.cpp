@@ -4,6 +4,7 @@
 #include "file_digest.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
+#include "gti/compiled_template_body.h"
 #include "gti/driver/project.h"
 #include "gti/persistent_declaration.h"
 #include "gti/source_loader.h"
@@ -295,6 +296,14 @@ libraryIdentity(const std::vector<CompiledScalarSignature> &signatures) {
   field(identity, owner.target);
   return hash(identity);
 }
+struct InstalledModule {
+  std::string_view target;
+  std::string_view entry;
+  std::string_view facade;
+};
+constexpr InstalledModule installedModules[] = {
+#include "gti/installed_stdlib_modules.inc"
+};
 enum class LibraryProfile { Project, InstalledStdlib };
 LibraryProfile producerProfile(const SourceGraph &graph,
                                const CompiledLibraryTarget *target) {
@@ -457,6 +466,13 @@ private:
   std::optional<ScalarSelection> selection;
   CompiledMirBodies *mirOutput = nullptr;
 };
+std::string templateLibraryIdentity(const CompiledLibraryTarget &target) {
+  std::string identity = "gti.generic-library.1";
+  field(identity, target.package);
+  field(identity, target.target);
+  return hash(identity);
+}
+
 std::optional<ScalarSelection>
 producerSelection(const FrontendResult &frontend,
                   const CompiledLibraryTarget *target, LibraryProfile profile) {
@@ -585,6 +601,47 @@ CompiledScalarLibraryResult buildScalarLibrary(
   const auto producerRequest = request.withApplicationBodies();
   auto frontend =
       detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
+  if (target && profile == LibraryProfile::InstalledStdlib &&
+      target->functions.empty() &&
+      std::ranges::any_of(installedModules,
+                          [&](const auto &module) {
+                            return module.target == target->target &&
+                                   module.facade.empty();
+                          }) &&
+      frontend.canGenerateCode()) {
+    // Only the staged toolchain can export a trusted generic module. Projects
+    // continue to import data through the checked, unprivileged interface.
+    const auto &graph = std::as_const(frontend.sourceGraph);
+    const auto *entry = graph.findUnit(graph.entryUnit());
+    if (!entry || !entry->moduleDeclaration || !prepared.dependencies.empty())
+      throw std::invalid_argument("invalid installed generic library root");
+    auto declarations =
+        std::span(frontend.program.declarations())
+            .subspan(entry->declarationStart, entry->declarationCount);
+    const auto *source = frontend.sources.find(entry->path.string());
+    if (!source)
+      throw std::invalid_argument("missing generic library source snapshot");
+    auto recipe = compileTemplateModule(declarations, *source);
+    auto metadata = encodeTemplateModule(recipe);
+    id.library = templateLibraryIdentity(*target);
+    auto current = loadCompilationInputs(request);
+    if (!current.succeeded() ||
+        producerSources(current, target) != id.sources ||
+        hashFile(runtime) != id.runtime)
+      throw std::invalid_argument(
+          "generic library inputs changed during compilation");
+    CompiledScalarLibraryResult result;
+    result.sourceFiles = producerImplementations(graph);
+    result.bundle = encodeLibraryBundle(
+        {.identity = id, .interfaceMetadata = metadata, .templateOnly = true});
+    result.compilation.status = CompilationStatus::Success;
+    result.compilation.sources = std::move(frontend.sources);
+    result.compilation.diagnostics = std::move(frontend.diagnostics);
+    result.compilation.artifact =
+        BackendArtifact{.kind = BackendArtifactKind::CompiledInterface,
+                        .contents = std::move(metadata)};
+    return result;
+  }
   auto selection = producerSelection(frontend, target, profile);
   const auto options = libraryBackendOptions(request, profile);
   LlvmBackend native(options);
@@ -1150,25 +1207,59 @@ loadExecutableInputs(const CompilationRequest &request,
   if (!std::filesystem::is_directory(directory))
     return source();
 
-  struct InstalledModule {
-    std::string_view target;
-    std::string_view entry;
-    std::string_view facade;
-  };
-  static constexpr InstalledModule modules[] = {
-#include "gti/installed_stdlib_modules.inc"
-  };
   std::optional<AdmissionEnvironment> system;
   struct LoadedModule {
     std::string digest;
     AdmittedLibraries admitted;
+    std::filesystem::path entry;
+    std::shared_ptr<const CompiledTemplateModule> templateModule;
   };
   std::map<std::string, LoadedModule> loaded;
   std::size_t totalBytes = 0;
   std::size_t declarations = 0;
   SourceLoader loader;
-  for (const auto &module : modules) {
+  // Recipe modules expose their own declaration and import skeleton at their
+  // public path. The ordinary source loader still resolves its dependencies.
+  for (const auto &module : installedModules) {
     const std::string name(module.target);
+    if (module.facade.empty()) {
+      const auto entry = root / module.entry;
+      if (overlays.contains(entry.string()))
+        throw std::invalid_argument(
+            "project interface overlaps the installed standard library");
+      loader.deferInstalledModule(entry.string(), [&, name, entry] {
+        const auto artifact = directory / (name + ".gtilib");
+        const auto bytes = readCompiledLibraryFileBounded(
+            artifact, libraryBundleByteLimit - totalBytes);
+        totalBytes += bytes.size();
+        const auto templateDigest = hash(bytes);
+        // This is executable compiler input belonging to the installed sysroot.
+        // Require the installer's independent receipt before reading
+        // declarations, including imports and trusted standard-library
+        // operations.
+        if (readCompiledLibraryFileBounded(artifact.string() + ".sha256", 65) !=
+            templateDigest + "\n")
+          throw std::invalid_argument(
+              "installed generic library receipt mismatch");
+        const auto bundle = decodeLibraryBundle(bytes);
+        if (!bundle.templateOnly)
+          throw std::invalid_argument("expected generic library envelope");
+        if (!system)
+          system = admissionEnvironment(request, runtime,
+                                        LibraryProfile::InstalledStdlib);
+        auto expected = system->identity;
+        expected.library = templateLibraryIdentity({"gti-std", name, {}});
+        expected.sources = bundle.identity.sources;
+        requireLibraryBundleCompatibility(bundle, expected, {});
+        auto templateModule = std::make_shared<const CompiledTemplateModule>(
+            decodeTemplateModule(bundle.interfaceMetadata));
+        loaded.emplace(name,
+                       LoadedModule{templateDigest, {}, entry, templateModule});
+        return templateModule->declarations + "\n// compiled template " +
+               templateDigest + "\n";
+      });
+      continue;
+    }
     const auto path = root / (".gti-compiled-" + name + ".gti");
     if (overlays.contains(path.string()) ||
         !overlays.emplace((root / module.entry).string(), module.facade).second)
@@ -1211,7 +1302,14 @@ loadExecutableInputs(const CompilationRequest &request,
     for (auto &[name, module] : loaded) {
       field(receipts, name);
       field(receipts, module.digest);
-      std::move(module.admitted).bind(inputs);
+      if (module.templateModule) {
+        auto &graph = inputs.compilation.sourceGraph;
+        graph.attachCompiledTemplate(
+            graph.sourceUnitForPath(module.entry.string()),
+            std::move(module.templateModule));
+      } else {
+        std::move(module.admitted).bind(inputs);
+      }
     }
     inputs.compilation.standardLibraryBundleDigest = hash(receipts);
   }
@@ -1317,6 +1415,23 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
     auto bytes =
         std::make_shared<const std::string>(readCompiledLibraryFile(artifact));
     auto bundle = decodeLibraryBundle(*bytes);
+    if (bundle.templateOnly) {
+      if (!imports.empty() || !target.functions.empty())
+        return {};
+      auto inputs = loadCompilationInputs(request);
+      if (!inputs.succeeded() || producerProfile(inputs.sourceGraph, &target) !=
+                                     LibraryProfile::InstalledStdlib)
+        return {};
+      auto expected =
+          environment(request, runtime, LibraryProfile::InstalledStdlib);
+      expected.library = templateLibraryIdentity(target);
+      expected.sources = producerSources(inputs, &target);
+      requireLibraryBundleCompatibility(bundle, expected, {});
+      (void)decodeTemplateModule(bundle.interfaceMetadata);
+      if (sourceFiles)
+        *sourceFiles = producerImplementations(inputs.sourceGraph);
+      return bytes;
+    }
     auto signatures = readInterface(bundle.interfaceMetadata);
     (void)checkedOptimizationBodies(bundle, signatures);
     const auto owner = decodedKey(signatures.front()).owner;

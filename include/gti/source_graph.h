@@ -23,6 +23,7 @@
 namespace lang {
 
 class SourceOwnerRegistry;
+struct CompiledTemplateModule;
 
 using SourceUnitId = std::size_t;
 using ModuleId = std::size_t;
@@ -141,6 +142,7 @@ struct SourceUnit {
   // Driver-supplied, validated scalar metadata projected into declarations.
   // This admits no trusted capabilities and never comes from source syntax.
   bool compiledScalarInterface = false;
+  std::shared_ptr<const CompiledTemplateModule> compiledTemplate;
 };
 
 // Loading provenance, not a dependency or visibility edge. An interface may
@@ -178,6 +180,8 @@ public:
   [[nodiscard]] std::vector<SourceUnitId> compilationOrder() const;
 
   void markCompiledScalarInterface(SourceUnitId id);
+  void attachCompiledTemplate(SourceUnitId,
+                              std::shared_ptr<const CompiledTemplateModule>);
 
 private:
   friend class Frontend;

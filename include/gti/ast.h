@@ -1925,6 +1925,9 @@ public:
   }
 
   [[nodiscard]] const StmtList &statements() const { return statements_; }
+  void restoreCompiledStatements(StmtList statements) {
+    statements_ = std::move(statements);
+  }
   [[nodiscard]] bool isUnsafe() const { return unsafeKeyword_.has_value(); }
   [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
     return unsafeKeyword_;

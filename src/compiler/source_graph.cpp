@@ -7,6 +7,13 @@
 #include <utility>
 
 namespace lang {
+void SourceGraph::attachCompiledTemplate(
+    SourceUnitId id, std::shared_ptr<const CompiledTemplateModule> module) {
+  auto *unit = findUnit(id);
+  if (!unit || unit->role != SourceUnitRole::StandardLibrary || !module)
+    throw std::invalid_argument("invalid installed template unit");
+  unit->compiledTemplate = std::move(module);
+}
 void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
