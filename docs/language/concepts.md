@@ -476,6 +476,13 @@ when it passes each read-only reference parameter exactly once, in declaration
 order, and states an exact owned, non-borrowing result. A matching call in the
 generic body, including a nested lambda, borrows named places of those same
 types.
+An exact concrete owned result promised by a free-function or member
+requirement may itself supply a temporary read-only argument, such as
+`combine(describe(error), describe(error))`. The promised result must be
+self-contained: this does not infer owners for reference or borrowed-state
+results. Concrete instantiation rechecks the selected producer and consumer
+before materializing the temporary; a requirement alone is not an executable
+lifetime proof.
 The concrete instance selects the overload in the requirement's declaration
 scope with ordinary overload resolution. The body must be able to see that
 same declaration and uses it through the ordinary argument and safety checks.

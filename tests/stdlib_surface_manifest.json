@@ -4286,6 +4286,7 @@
       "source": "stdlib/std/detail/memory_capabilities.gti",
       "status": "executable",
       "operations": [
+        "gti_internal::runtime::gti_rt_realloc_v1",
         "gti_internal::shared_owner",
         "gti_internal::uninitialized_storage",
         "gti_internal::unique_owner"
@@ -4300,7 +4301,8 @@
         "tests/llvm_memory_execution_test.py",
         "tests/stdlib_module_boundaries_test.py",
         "tests/fixtures/constexpr_owned_storage.gti",
-        "tests/ui/borrow/retained-storage"
+        "tests/ui/borrow/retained-storage",
+        "tests/unit/resource_memory_runtime_tests.cpp"
       ],
       "required_instantiations": [
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
@@ -4331,12 +4333,14 @@
         "tests/stdlib_module_boundaries_test.py",
         "tests/fixtures/constexpr_owned_storage.gti",
         "tests/ui/borrow/retained-storage",
-        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ],
       "required_instantiations": [
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
         "checked borrowed payloads retain their external dependencies across owner-backed storage operations",
-        "shared element references remain tied to the retained owner after cursor movement or destruction"
+        "shared element references remain tied to the retained owner after cursor movement or destruction",
+        "eligible process-region resizing preserves initialized prefix; unsupported allocation layouts retain owner-aware relocation"
       ]
     },
     {
@@ -8683,7 +8687,8 @@
         "std::vector<std::optional<std::string>>",
         "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
-        "checked borrowed payloads retain their external dependencies across owner-backed storage operations"
+        "checked borrowed payloads retain their external dependencies across owner-backed storage operations",
+        "repeated scalar and user-record growth, owning-element fallback, reserve/no-op/shrink and constexpr growth"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -8697,7 +8702,9 @@
         "tests/fixtures/source_prefix_complete_elements.gti",
         "tests/ui/memory/source_prefix",
         "tests/fixtures/constexpr_owned_storage.gti",
-        "tests/ui/borrow/retained-storage"
+        "tests/ui/borrow/retained-storage",
+        "tests/slow/stdlib/vector/growth_o0.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ]
     },
     {

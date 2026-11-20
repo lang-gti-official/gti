@@ -1,0 +1,16 @@
+// A cold generic edit reports its scoped lookup before full verification and the corrected source still verifies.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int convert(int value) { return value; }\nint read<T>(T value) requires std::integral<T> {\n  auto f = [](int x) -> int { return convert(x); };\n  return f(int(value));\n}\nint main() { return read(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int convert(int value) { return value; }\nint read<T>(T value) requires std::integral<T> {\n  auto f = [](int x) -> int { return convert(x); };\n  return f(int(value));\n}\nint main() { return read(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int convert(int value) { return value; }\nint read<T>(T value) requires std::integral<T> {\n  auto f = [](int x) -> int { return onvert(x); };\n  return f(int(value));\n}\nint main() { return read(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001", "range": {"start": {"line": 2, "character": 37}}}], "gtiDiagnosticStage": "nameLookup"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "int convert(int value) { return value; }\nint read<T>(T value) requires std::integral<T> {\n  auto f = [](int x) -> int { return convert(x); };\n  return f(int(value));\n}\nint main() { return read(1); }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 7}}
+{"expect": {"id": 7, "result": {}}}
+{"analysisTrace": {"generation": 3, "mirVerified": true}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

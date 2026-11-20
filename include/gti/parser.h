@@ -25,6 +25,17 @@ struct SyntaxCompletionContext {
   std::optional<ClassKind> ownerKind;
 };
 
+// Rebuild parser-owned range bindings from their written operands. Both fresh
+// parsing and imported bodies use the same lowering and binding identities.
+StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword,
+                           Mutability bindingMutability, TypeRef bindingType,
+                           Token bindingName, Token colon, ExprPtr range,
+                           StmtPtr body, StmtPtr initializer);
+StmtPtr makeParsedConstexprFor(Token constexprKeyword, Token keyword,
+                               Mutability mutability, TypeRef bindingType,
+                               Token name, Token colon, ExprPtr sequence,
+                               StmtPtr body);
+
 class Parser {
 public:
   // `source` is the scanned unit's text. It is optional and only lets a

@@ -8662,6 +8662,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   if (const auto *call = exprAs<Call>(producer)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    // An open-body requirement can promise a concrete, self-contained owned
+    // result before its producer has a target. The type/borrow gates above
+    // still apply. Concrete reanalysis must establish the ordinary producer
+    // and consumer contracts; this signature is never executable evidence.
+    if (resolved != nullptr && resolved->provisionalRequirement &&
+        resolved->function == 0 && resolved->declaration == nullptr &&
+        resolved->intrinsic == IntrinsicKind::None &&
+        resolved->returnType == info->type &&
+        !containsOpenTypeParameter(info->type) &&
+        resolved->borrowOrigin == BorrowOriginKind::None) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
     const FunctionInfo *target =
         resolved == nullptr || resolved->function == 0
             ? nullptr

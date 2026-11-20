@@ -1702,7 +1702,8 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
     // Provisional type information only. The concrete body uses the ordinary
     // call resolver and records a real target before HIR is constructed.
     semanticModel.record(
-        call, ResolvedCallInfo{.returnType = proof->arguments.back(),
+        call, ResolvedCallInfo{.provisionalRequirement = true,
+                               .returnType = proof->arguments.back(),
                                .parameterTypes = {proof->arguments.begin(),
                                                   proof->arguments.end() - 1}});
     currentType = callExpressionType(proof->arguments.back());

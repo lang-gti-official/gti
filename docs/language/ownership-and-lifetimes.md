@@ -842,6 +842,15 @@ borrow dependencies, or a callable result that can retain this argument loan.
 A result whose complete origin excludes this temporary parameter may retain a
 different caller-owned argument.
 
+In an open generic body, a guaranteed free-function or member requirement with
+an exact concrete, self-contained owned result permits the same temporary
+read borrow. For example, a requirement returning an owning string allows
+`format("{}: {}", message(first), message(second))` without named intermediate
+strings. Each concrete instance must resolve and validate the actual calls,
+including producer dependencies and the consumer's non-escaping loan. The
+temporary lifetime, evaluation order, cleanup and mutable-reference exclusions
+remain those of ordinary calls above.
+
 A concrete payload-enum construction with copyable, movable, trivial-drop
 value traits and no stored borrows supports the same ordinary call-only
 read borrow. Its selected alternative remains in the existing temporary

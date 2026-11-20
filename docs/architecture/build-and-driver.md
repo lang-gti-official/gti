@@ -3091,8 +3091,9 @@ permission, host-width integer or native structure dump. The complete layout is:
 
 1. Eight bytes `GTILIB\r\n`, followed by the container version and envelope schema.
    Native libraries use version `2`, schema `1`. Native libraries with optimization
-   MIR use version `3`, schema `1`. Installed generic modules use version `2`,
-   schema `2` and store their declaration interface and dependent bodies in field 3.
+   MIR use version `3`, schema `1`. Generic modules use version `2`, schema `2`. Field 3 contains the declaration
+   interface, dependent bodies and lifetime bindings. The project variant also
+   carries the lexical evidence checked by the consumer.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
 3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
@@ -3378,23 +3379,31 @@ the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64
 seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
 The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
-`std::random_device` retains its source implementation and OS entropy backend.
-The installed `array.gtilib` carries the declarations of `std.array` and its
-dependent method bodies. The producer encodes the parsed statements and
+`std::random_device` uses the OS entropy backend. The public random module ships
+its GTI definitions in `std_random.gtilib`.
+The catalog packages 68 standard-library modules per target and profile.
+Alongside the two native libraries, 66 bundles carry parsed declarations
+and bodies, including the private dependencies of public modules. `std.assert`
+is loaded from source so the application's `NDEBUG` setting controls its debug
+assertions. The prelude and top-level re-export interface also load from source.
+The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,
 constant evaluation, MIR borrow checking and LLVM code generation paths then
 handle each requested substitution. Private helpers and iterator types defined
-in the array module travel with it. Imports of other modules retain their
+in the same module travel with it. Imports of other modules retain their
 ordinary source and visibility rules. The template envelope has no native
-object or producer-side concrete substitution. Only the toolchain's installed
-module provider can admit it; an independent packaging receipt covers its
+object or producer-side concrete substitution. The installed module provider
+checks an independent packaging receipt covering its
 complete bytes before the source loader can resolve its imports. The full
 artifact digest also participates in the consumer's build identity.
 
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release bundle when an import or re-export reaches the
-module. An executable can link installed native objects alongside inferred or
+module. The CLI selects bundles stamped for its executable. Applications that
+embed the driver use the installed sources by default. An embedding host can
+set `StandardLibraryLayout::useInstalledBundles` for bundles it produced;
+the same identity and receipt checks apply. An executable can link installed native objects alongside inferred or
 explicit project libraries. Each project library producer still compiles its
 own standard-library implementation dependencies from source. A producer can
 use the installed-module configuration identity only
@@ -3404,7 +3413,7 @@ still participate in the consumer build's cache key. The compiler reads the
 checked callable signatures and links the target object. The distributed
 macOS arm64 object uses macOS 11.0, the first arm64 deployment target, for both
 native code generation and bundle compatibility. An OS update therefore does
-not invalidate that object. The shared source companion supplies `constexpr std::abs` and
+not invalidate that object. The shared declarations module supplies `constexpr std::abs` and
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.
 
@@ -3430,6 +3439,23 @@ public module with the implementation source removed. For a hot function,
 also check optimized code generation or compare source and packaged execution.
 
 ### Compiled-library project requests
+
+A project library whose root exports a generic class or function can supply its
+interface and dependent bodies in the `.gtilib`. Its root declares an exported
+module and can import named standard-library modules. Other project source
+units, compiled dependency closures and configuration directives require
+additional packaging support. Explicit native function targets keep their
+native interface.
+
+For project imports the artifact carries the source spelling erased from the
+interface alongside the serialized body recipe. This includes comments and
+whitespace that a macro can observe in its arguments. The ordinary parser
+reads the reconstructed spelling in the consumer and retains its lifetime
+bindings. The compiler compares that parse with the recipe before using it. The virtual
+interface has application provenance and receives the same type, visibility
+and borrow checks as application source. The installed toolchain can instead
+restore its independently authenticated recipes directly. Neither route
+requires the library’s implementation files or a list of future element types.
 
 A registered interface at `<source-root>/lib.gti` supplies the default GTI
 library. The target takes the package name, or the package name with a

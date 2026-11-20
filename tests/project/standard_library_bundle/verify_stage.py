@@ -22,6 +22,9 @@ def verify(stage):
         root = Path(temporary)
         stdlib = root / "stdlib"
         shutil.copytree(stage / "share/gti/stdlib", stdlib)
+        roots = {p.relative_to(stdlib) for p in (stdlib / "std").rglob("*.gti")}
+        if set(entries) != roots - {Path("std/assert.gti")} or Path("std/assert.gti") not in roots:
+            raise RuntimeError("the installed catalog must cover all std modules except the source-based std.assert")
         bundles = root / "precompiled-stdlib"
         shutil.copytree(stage / "share/gti/precompiled-stdlib", bundles)
         # The identity envelope begins with the SHA-256 of the exact compiler
@@ -43,8 +46,6 @@ def verify(stage):
                         target = b"arm64-apple-macosx11.0.0"
                         if stream.read(4 + len(target)) != struct.pack("<I", len(target)) + target:
                             raise RuntimeError(f"{bundle} must target the macOS arm64 baseline across OS updates")
-        for entry in entries:
-            (stdlib / entry).unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
@@ -52,7 +53,6 @@ def verify(stage):
         source = project / "src/main.gti"
         source.parent.mkdir(parents=True)
         shutil.copyfile(fixture / "gti.toml", project / "gti.toml")
-        shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
 
         def run(*arguments, rejection=None, cwd=project, environment=env):
             result = subprocess.run([str(stage / "bin/gti"), *arguments, "--offline"],
@@ -64,6 +64,53 @@ def verify(stage):
             elif result.returncode == 0 or rejection not in output:
                 raise RuntimeError(f"expected {rejection!r} from {arguments}\n{output}")
 
+        # Keep all logical and physical paths fixed, cold-build both ways, and
+        # exercise an input-dependent destructor in the generic vector body.
+        shutil.copyfile(fixture.parents[1] / "ui/stdlib/vector/construction_only/element_failure.gti", source)
+
+        def cleanup_program(profile):
+            shutil.rmtree(project / "build", ignore_errors=True)
+            run("build", *(["--release"] if profile == "release" else []))
+            executable, = (project / "build/gti" / profile).glob("*/app")
+            observations = []
+            for args, status in (([], 0), (["fail"], 70), (["fail", "fail"], 70)):
+                result = subprocess.run([executable, *args], cwd=project, capture_output=True)
+                if result.returncode != status:
+                    raise RuntimeError(f"cleanup program {args} exited {result.returncode}, expected {status}")
+                observations.append((result.stdout, result.stderr))
+            return executable.read_bytes(), observations
+
+        hidden = bundles.rename(root / "saved-bundles")
+        source_builds = {profile: cleanup_program(profile) for profile in ("dev", "release")}
+        for entry in entries:
+            (stdlib / entry).unlink()
+        hidden.rename(bundles)
+        for profile, (executable, observations) in source_builds.items():
+            packaged, output = cleanup_program(profile)
+            if executable != packaged:
+                raise RuntimeError(f"{profile}: vector recipe changed the executable bytes")
+            if observations != output:
+                raise RuntimeError(f"{profile}: vector recipe changed cleanup output or diagnostics")
+
+        # The public imports reach the private module implementations through
+        # their normal dependencies. Only std.assert still has a source body.
+        imports = [f"import {'.'.join(entry.with_suffix('').parts)};"
+                   for entry in sorted(roots) if entry.parts[1] != "detail"]
+        source.write_text("\n".join(imports) + """
+int main() {
+  mut int evaluated = 0;
+  std::debug_assert!(++evaluated == 1);
+#ifdef NDEBUG
+  return evaluated;
+#else
+  return evaluated == 1 ? 0 : 1;
+#endif
+}
+""")
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
+        shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
@@ -72,6 +119,11 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
+        for case in ("ui/stdlib/vector/constexpr_range_for_views.gti",
+                     "ui/callables/borrowing_captures/borrowing_captures_23.gti"):
+            shutil.copyfile(fixture.parents[1] / case, source)
+            for profile in ([], ["--release"]):
+                run("run", *profile)
         array_bundle, = bundles.glob("*/release/array.gtilib")
         array_receipt = array_bundle.with_suffix(".gtilib.sha256")
         digest = hashlib.sha256(array_bundle.read_bytes()).hexdigest()
@@ -150,7 +202,9 @@ def verify(stage):
                         random_bundle, executable], check=True)
 
         # One executable can import its own compiled library and the installed
-        # standard library in the same source graph.
+        # standard library in the same source graph. Building its inferred
+        # project library uses the source prelude, which imports std.meta.
+        shutil.copyfile(stage / "share/gti/stdlib/std/meta.gti", stdlib / "std/meta.gti")
         mixed = root / "mixed"
         (mixed / "src").mkdir(parents=True)
         (mixed / "gti.toml").write_text(

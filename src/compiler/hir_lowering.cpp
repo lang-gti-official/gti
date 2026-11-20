@@ -6257,6 +6257,10 @@ private:
     const Expr *raw = &expression;
     if (const auto *call = exprAs<Call>(raw)) {
       const ResolvedCallInfo *resolved = model.findCall(*call);
+      if (resolved && resolved->provisionalRequirement) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
       if (resolved &&
           resolved->intrinsic == IntrinsicKind::SourceExpressionText) {
         const ExpressionInfo *info = model.findExpression(*raw);

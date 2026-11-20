@@ -1,0 +1,16 @@
+// A constrained static generic checks a lambda lookup early and fully verifies a later edit with overlapping reborrows.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "void keep(int& v) {}\nint resolve(int v) { return v; }\nclass Manager { public: static int checked<T>(T value) requires std::integral<T> {\n  auto f = [](int code) -> int { return resolve(code); };\n  return f(int(value));\n} };\nint main() { return Manager::checked(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "void keep(int& v) {}\nint resolve(int v) { return v; }\nclass Manager { public: static int checked<T>(T value) requires std::integral<T> {\n  auto f = [](int code) -> int { return resolve(code); };\n  return f(int(value));\n} };\nint main() { return Manager::checked(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "id": 7, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 7, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "void keep(int& v) {}\nint resolve(int v) { return v; }\nclass Manager { public: static int checked<T>(T value) requires std::integral<T> {\n  auto f = [](int code) -> int { return esolve(code); };\n  return f(int(value));\n} };\nint main() { return Manager::checked(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001", "range": {"start": {"line": 3, "character": 40}}}], "gtiDiagnosticStage": "bodyChecking"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "void keep(int& v) {}\nint resolve(int v) { return v; }\nclass Manager { public: static int checked<T>(T value) requires std::integral<T> {\n  auto f = [](int code) -> int { return resolve(code); };\n  mut int owner = 1; mut int& parent = owner; mut int& child = parent; keep(parent); keep(child); return f(int(value));\n} };\nint main() { return Manager::checked(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": {"$contains": [{"code": "GTI-S2017"}]}}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

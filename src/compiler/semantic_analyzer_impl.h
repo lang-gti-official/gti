@@ -566,8 +566,12 @@ public:
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
   std::optional<std::vector<Diagnostic>>
-  diagnoseEditedBody(const EditedFunctionBody &,
-                     const std::atomic<bool> *) const;
+  diagnoseRegisteredLookup(const Program &, const SourceManager &,
+                           const Token &, const FunctionDecl *,
+                           const std::atomic<bool> *cancellation) const;
+  std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &, const std::atomic<bool> *,
+                     const Token *lookup = nullptr) const;
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
   [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
@@ -5241,6 +5245,8 @@ private:
     ++constexprAvailabilityObservations();
   }
   void validateConformanceTypes(const ConformanceDecl &declaration);
+  std::optional<std::vector<Diagnostic>> lookupDiagnosticAt(const Token &,
+                                                            SourceUnitId);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
                    const std::vector<SemanticType> &arguments) const;

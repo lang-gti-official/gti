@@ -1,0 +1,31 @@
+// An independent application instantiates and mutates a user-written generic container after removing its producer.
+$ cd producer
+$ gti check --release
+$ gti build --release
+$ sh -c "cp build/gti/release/*/sample-rack.gtilib ../consumer/rack.gtilib"
+$ cd ../named
+$ gti run --release
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check --release
+$ gti run --release
+$ test ! -e public.gti
+$ cp main.gti saved.gti
+$ cp ../assertion.gti main.gti
+$ gti run --release
+? 70
+stderr: Assertion failed: n /* requested capacity */ == N
+$ cp ../escape.gti main.gti
+$ gti check --release
+? 65
+stderr: GTI-S2017
+stderr: Returned reference must derive from read-only parameter
+$ cp saved.gti main.gti
+$ cp rack.gtilib original.gtilib
+$ python3 ../mismatch.py
+$ gti build --release
+? 65
+stderr: body recipe does not match ordinary parsed syntax
+$ cp original.gtilib rack.gtilib
+$ gti run --release

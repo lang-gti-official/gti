@@ -23,3 +23,263 @@ functions = ["std::detail::seed_random_engine", "std::detail::next_random"]
 [targets.array]
 kind = "gti-library"
 root = "stdlib/std/array.gti"
+
+[targets.span]
+kind = "gti-library"
+root = "stdlib/std/span.gti"
+
+[targets.vector]
+kind = "gti-library"
+root = "stdlib/std/vector.gti"
+
+[targets.functional]
+kind = "gti-library"
+root = "stdlib/std/functional.gti"
+
+[targets.algorithm]
+kind = "gti-library"
+root = "stdlib/std/algorithm.gti"
+
+[targets.atomic]
+kind = "gti-library"
+root = "stdlib/std/atomic.gti"
+
+[targets.build]
+kind = "gti-library"
+root = "stdlib/std/build.gti"
+
+[targets.charconv]
+kind = "gti-library"
+root = "stdlib/std/charconv.gti"
+
+[targets.chrono]
+kind = "gti-library"
+root = "stdlib/std/chrono.gti"
+
+[targets.cstdio]
+kind = "gti-library"
+root = "stdlib/std/cstdio.gti"
+
+[targets.cthread]
+kind = "gti-library"
+root = "stdlib/std/cthread.gti"
+
+[targets.deque]
+kind = "gti-library"
+root = "stdlib/std/deque.gti"
+
+[targets.detail_charconv_parse]
+kind = "gti-library"
+root = "stdlib/std/detail/charconv_parse.gti"
+
+[targets.detail_charconv_types]
+kind = "gti-library"
+root = "stdlib/std/detail/charconv_types.gti"
+
+[targets.detail_cmath_declarations]
+kind = "gti-library"
+root = "stdlib/std/detail/cmath_declarations.gti"
+
+[targets.detail_function_pointer]
+kind = "gti-library"
+root = "stdlib/std/detail/function_pointer.gti"
+
+[targets.detail_iterator]
+kind = "gti-library"
+root = "stdlib/std/detail/iterator.gti"
+
+[targets.detail_key_removal]
+kind = "gti-library"
+root = "stdlib/std/detail/key_removal.gti"
+
+[targets.detail_map_entry]
+kind = "gti-library"
+root = "stdlib/std/detail/map_entry.gti"
+
+[targets.detail_map_iterators]
+kind = "gti-library"
+root = "stdlib/std/detail/map_iterators.gti"
+
+[targets.detail_memory_capabilities]
+kind = "gti-library"
+root = "stdlib/std/detail/memory_capabilities.gti"
+
+[targets.detail_memory_core]
+kind = "gti-library"
+root = "stdlib/std/detail/memory_core.gti"
+
+[targets.detail_memory_storage]
+kind = "gti-library"
+root = "stdlib/std/detail/memory_storage.gti"
+
+[targets.detail_panic]
+kind = "gti-library"
+root = "stdlib/std/detail/panic.gti"
+
+[targets.detail_resource_core]
+kind = "gti-library"
+root = "stdlib/std/detail/resource_core.gti"
+
+[targets.detail_resource_lease]
+kind = "gti-library"
+root = "stdlib/std/detail/resource_lease.gti"
+
+[targets.detail_sequence_removal]
+kind = "gti-library"
+root = "stdlib/std/detail/sequence_removal.gti"
+
+[targets.detail_unordered_map_iterators]
+kind = "gti-library"
+root = "stdlib/std/detail/unordered_map_iterators.gti"
+
+[targets.encoding]
+kind = "gti-library"
+root = "stdlib/std/encoding.gti"
+
+[targets.environment]
+kind = "gti-library"
+root = "stdlib/std/environment.gti"
+
+[targets.experimental_optional]
+kind = "gti-library"
+root = "stdlib/std/experimental/optional.gti"
+
+[targets.filesystem]
+kind = "gti-library"
+root = "stdlib/std/filesystem.gti"
+
+[targets.format]
+kind = "gti-library"
+root = "stdlib/std/format.gti"
+
+[targets.forward_list]
+kind = "gti-library"
+root = "stdlib/std/forward_list.gti"
+
+[targets.http]
+kind = "gti-library"
+root = "stdlib/std/http.gti"
+
+[targets.io]
+kind = "gti-library"
+root = "stdlib/std/io.gti"
+
+[targets.iterator]
+kind = "gti-library"
+root = "stdlib/std/iterator.gti"
+
+[targets.json]
+kind = "gti-library"
+root = "stdlib/std/json.gti"
+
+[targets.list]
+kind = "gti-library"
+root = "stdlib/std/list.gti"
+
+[targets.map]
+kind = "gti-library"
+root = "stdlib/std/map.gti"
+
+[targets.memory]
+kind = "gti-library"
+root = "stdlib/std/memory.gti"
+
+[targets.meta]
+kind = "gti-library"
+root = "stdlib/std/meta.gti"
+
+[targets.mutex]
+kind = "gti-library"
+root = "stdlib/std/mutex.gti"
+
+[targets.numeric]
+kind = "gti-library"
+root = "stdlib/std/numeric.gti"
+
+[targets.optional]
+kind = "gti-library"
+root = "stdlib/std/optional.gti"
+
+[targets.paired_span]
+kind = "gti-library"
+root = "stdlib/std/paired_span.gti"
+
+[targets.panic]
+kind = "gti-library"
+root = "stdlib/std/panic.gti"
+
+[targets.polymorphic]
+kind = "gti-library"
+root = "stdlib/std/polymorphic.gti"
+
+[targets.process]
+kind = "gti-library"
+root = "stdlib/std/process.gti"
+
+[targets.queue]
+kind = "gti-library"
+root = "stdlib/std/queue.gti"
+
+[targets.std_random]
+kind = "gti-library"
+root = "stdlib/std/random.gti"
+
+[targets.regex]
+kind = "gti-library"
+root = "stdlib/std/regex.gti"
+
+[targets.resource]
+kind = "gti-library"
+root = "stdlib/std/resource.gti"
+
+[targets.resource_vector]
+kind = "gti-library"
+root = "stdlib/std/resource_vector.gti"
+
+[targets.set]
+kind = "gti-library"
+root = "stdlib/std/set.gti"
+
+[targets.simd]
+kind = "gti-library"
+root = "stdlib/std/simd.gti"
+
+[targets.source_location]
+kind = "gti-library"
+root = "stdlib/std/source_location.gti"
+
+[targets.string]
+kind = "gti-library"
+root = "stdlib/std/string.gti"
+
+[targets.string_view]
+kind = "gti-library"
+root = "stdlib/std/string_view.gti"
+
+[targets.syntax]
+kind = "gti-library"
+root = "stdlib/std/syntax.gti"
+
+[targets.tcp]
+kind = "gti-library"
+root = "stdlib/std/tcp.gti"
+
+[targets.testing]
+kind = "gti-library"
+root = "stdlib/std/testing.gti"
+
+[targets.thread]
+kind = "gti-library"
+root = "stdlib/std/thread.gti"
+
+[targets.unordered_map]
+kind = "gti-library"
+root = "stdlib/std/unordered_map.gti"
+
+[targets.unordered_set]
+kind = "gti-library"
+root = "stdlib/std/unordered_set.gti"
+
+[targets.utility]
+kind = "gti-library"
+root = "stdlib/std/utility.gti"

@@ -1,0 +1,17 @@
+export module instruments.racks;
+import std.utility;
+import std.assert;
+
+namespace instruments {
+export class Rack<T, uint64_t N> {
+  mut T slots[N];
+
+public:
+  Rack(T initial[N]) : slots(std::move(initial)) {}
+  constexpr int stamp() { return 314159; }
+  constexpr uint64_t capacity() { return N; }
+  void require_capacity(uint64_t n) { std::assert!(n /* requested capacity */ == N); }
+  T& peek(uint64_t index) { return this.slots[index]; }
+  mut T& edit(uint64_t index) mut { return this.slots[index]; }
+};
+}

@@ -1,0 +1,6 @@
+manifest-version = 1
+[package]
+name = "reader"
+version = "1.0.0"
+[dependencies]
+catalog = { path = "../producer" }

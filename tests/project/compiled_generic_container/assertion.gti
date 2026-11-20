@@ -1,0 +1,8 @@
+// A macro in a packaged generic preserves the original spelling in its diagnostic.
+import "public.gti";
+
+int main() {
+  auto rack = instruments::Rack<int, 2>({3, 5});
+  rack.require_capacity(3);
+  return 0;
+}
