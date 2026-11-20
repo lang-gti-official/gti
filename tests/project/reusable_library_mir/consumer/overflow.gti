@@ -1,0 +1,12 @@
+import "api.gti";
+
+struct Witness {
+  mut int value = 0;
+  Witness() = default;
+  ~Witness() { std::print(this.value); }
+};
+
+int main() {
+  mut Witness witness{};
+  return commit_then_add(witness.value, 2147483647);
+}

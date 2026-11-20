@@ -4352,6 +4352,7 @@
       "source": "stdlib/std/detail/random_engine.gti",
       "status": "executable",
       "operations": [
+        "std::detail::next_random",
         "std::detail::seed_random_engine"
       ],
       "case_ids": [
@@ -6996,7 +6997,9 @@
       "case_ids": [
         "random"
       ],
-      "required_instantiations": [],
+      "required_instantiations": [
+        "independent seeded engines imported from the installed dev and release bundles"
+      ],
       "evidence": [
         "tests/fixtures/random_engine.gti",
         "tests/ui/stdlib/random/engine.gti",
