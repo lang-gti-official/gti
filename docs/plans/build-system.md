@@ -1738,6 +1738,12 @@ semantic and production-promotion goals remain open.
 | F4 reusable target graph / driver — package and same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
 | F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
 
+Concrete member and owning-result native calls now use the ordinary
+`gti-library` target. The source-free `native_module_members` project exercises
+an exported class, private helper, mutable receiver, owning `expected` and
+shared passive storage. Native publication of a standard-library module is a
+separate catalog decision, measured against its existing recipe.
+
 The installed standard library exercises this boundary with `std.cmath` and the
 deterministic seed and draw in `std.random`. Both dev and release consumers
 run from the installed artifacts with the two implementation files removed. An

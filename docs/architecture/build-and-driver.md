@@ -3151,6 +3151,24 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
+A library target can also select concrete methods or functions with owning
+GTI types by qualified name in `functions`. For this profile the bundle pairs
+the root module recipe with a target-specific object. For example, selecting
+`Meter::take` compiles the matching concrete overloads, their receivers,
+and the private helpers they call. Callers can receive an `expected<T, E>`
+and own, move or destroy its active alternative using the usual GTI rules.
+
+Consumers import the recipe and check source visibility, overload selection,
+borrows, layout, cleanup and defined failure before binding verified calls to
+the native definitions. Unselected bodies remain available for specialization
+and inlining. The callable identity covers the module, exact declaration offset,
+failure ABI and dependencies. Passive library storage referenced on both sides
+has one linker identity. Active global initialization and TLS require additional
+lifecycle support. The profile accepts standard-library dependencies with an
+exact source digest; a mismatched dependency prevents admission. A project
+recipe is checked as ordinary project input. Installed recipes use the
+toolchain's existing authenticated library catalog.
+
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
 explicitly selected root-module functions or the public declarations of the
 root and its re-exported modules, including their exported overloads. Names may be

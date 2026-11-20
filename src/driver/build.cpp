@@ -4189,6 +4189,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
   std::vector<CompiledScalarImport> standardImports;
+  std::vector<CompiledModuleImport> moduleImports;
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
@@ -4251,6 +4252,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           request.compilation(), request.toolchain().runtimeLibrary, progress);
       compilationInputs = std::move(prepared.compilation);
       standardImports = std::move(prepared.imports);
+      moduleImports = std::move(prepared.moduleImports);
       importedObjects = std::move(prepared.objects);
     } catch (const std::exception &error) {
       result.status = ExecutableBuildStatus::CompilationFailure;
@@ -4629,13 +4631,13 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   }
 
   if (!compiledLibrary && !compiledImport && !reusedObject) {
-    if (standardImports.empty())
+    if (standardImports.empty() && moduleImports.empty())
       result.compilation = compileToSelectedBackend(
           request.compilation(), std::move(compilationInputs), progress);
     else
       result.compilation = compileWithLibraryImports(
           request.compilation(), std::move(compilationInputs),
-          std::move(standardImports), progress);
+          std::move(standardImports), progress, std::move(moduleImports));
   }
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {

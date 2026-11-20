@@ -1149,7 +1149,7 @@ BackendArtifact Session::emitObject() {
     // callbacks/llvm.used; no escape summary, external linkage promise or
     // function attribute is invented.
     const auto &mir = program().mir();
-    if ((mir.hostedStartupPlan() || program().compiledScalarProducer()) &&
+    if ((mir.hostedStartupPlan() || program().compiledNativeProducer()) &&
         !program().embeddingPlan()) {
       std::set<HirFunctionInstanceId> retained;
       for (const auto &callback : mir.nativeCallbackAdapters())
@@ -1168,7 +1168,8 @@ BackendArtifact Session::emitObject() {
       }
       for (const auto &[id, function] : sourceDefinitions_) {
         const auto &source = *mir.findFunctionInstance(id);
-        if (source.linkage != LanguageLinkage::Gti ||
+        if (program().compiledModuleBinding(id) ||
+            source.linkage != LanguageLinkage::Gti ||
             !source.externalSymbol.empty() || source.virtualMethod ||
             retained.contains(id) ||
             source.entryKind != ProgramEntryKind::None ||

@@ -17,6 +17,7 @@ struct CompiledLibraryInputs {
   std::vector<LibraryBundleMember> objects;
   std::vector<LibraryBundleDependency> dependencies;
   std::vector<std::string> symbols;
+  std::vector<CompiledModuleImport> moduleImports;
 };
 
 // Select installed, compatible standard modules reached by this compilation.
@@ -27,7 +28,8 @@ loadStandardLibraryInputs(const CompilationRequest &,
 [[nodiscard]] CompilationResult
 compileWithLibraryImports(const CompilationRequest &, CompilationInputs,
                           std::vector<CompiledScalarImport>,
-                          ProgressObserver *progress = nullptr);
+                          ProgressObserver *progress = nullptr,
+                          std::vector<CompiledModuleImport> moduleImports = {});
 [[nodiscard]] CheckResult
 checkWithStandardLibraries(const CompilationRequest &,
                            const std::filesystem::path &runtime,

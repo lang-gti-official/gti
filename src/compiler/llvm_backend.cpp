@@ -229,7 +229,7 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
         "LLVM code generation unit count is outside 1–256");
   if (!options.textualIr && options.codegen.units > 1) {
     if (program.programKind() != ProgramKind::Executable ||
-        program.compiledScalarProducer() || program.embeddingPlan())
+        program.compiledNativeProducer() || program.embeddingPlan())
       throw BackendUnsupportedError(
           "multiple LLVM code generation units require a hosted executable");
     if (options.instrumentation != LlvmInstrumentationMode::None)

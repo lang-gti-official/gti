@@ -74,7 +74,8 @@ Reachability reachableProgram(const LoweredProgram &program) {
   auto body = [&](MirBodyAddress address) {
     if (address.kind == MirBodyKind::Function) {
       const auto *binding = program.compiledScalarBinding(address.owner);
-      if (binding && binding->imported)
+      const auto *module = program.compiledModuleBinding(address.owner);
+      if ((binding && binding->imported) || (module && module->imported))
         return;
     }
     if (program.findBody(address) && !result.contains(address))
@@ -146,6 +147,9 @@ Reachability reachableProgram(const LoweredProgram &program) {
     }
   };
   body({MirBodyKind::Module, 0});
+  for (const auto &binding : program.compiledModuleBindings())
+    if (!binding.imported)
+      body({MirBodyKind::Function, binding.function});
   for (const auto &binding : program.compiledScalarBindings())
     if (!binding.imported)
       body({MirBodyKind::Function, binding.function});
@@ -352,7 +356,7 @@ Reachability reachableProgram(const LoweredProgram &program) {
   // turn an otherwise bounded producer into a whole-module conservative root.
   // Truly rootless units and unmodeled dependencies still retain everything.
   if (!mir.hostedStartupPlan() && !program.embeddingPlan() &&
-      !program.compiledScalarProducer())
+      !program.compiledNativeProducer())
     result.conservative = true;
   if (result.conservative) {
     for (const auto &row : program.bodies())

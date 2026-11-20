@@ -1,0 +1,28 @@
+export module readings;
+import std.string;
+
+mut int calls;
+export enum class error { negative };
+
+export class Meter {
+  mut int value;
+
+  int advance() mut {
+    ++calls;
+    return ++this.value;
+  }
+
+public:
+  Meter(int initial) : value(initial) {}
+  expected<int, error> take(bool valid) mut {
+    if (!valid) { return unexpected(error::negative); }
+    return this.advance();
+  }
+};
+
+export expected<int, error> checked_number(int value) { return value; }
+export expected<std::string, error> label(bool valid) {
+  if (!valid) { return unexpected(error::negative); }
+  return std::string("a separately owned string large enough to allocate");
+}
+export int call_count() { return calls; }

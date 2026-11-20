@@ -225,7 +225,7 @@ llvm::Function *Failures::originator() {
   auto *destination = record(ir, channel);
   auto *identityAddress =
       ir.CreateStructGEP(session.abi().failureArtifact(), origin, 2);
-  if (session.program().compiledScalarProducer()) {
+  if (session.program().compiledNativeProducer()) {
     // This cold helper belongs to a self-contained object. Inline memory
     // intrinsics preserve the full fixed-size record without allowing target
     // optimization to introduce an unresolved memset/bzero/memcpy dependency.

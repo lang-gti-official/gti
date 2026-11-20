@@ -1,0 +1,8 @@
+manifest-version = 1
+[package]
+name = "readings"
+version = "1.0.0"
+[targets.readings]
+kind = "gti-library"
+root = "library.gti"
+functions = ["Meter::take", "checked_number", "label"]

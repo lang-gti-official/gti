@@ -1,0 +1,11 @@
+// A separately compiled member shares storage with inline code and transports both expected alternatives.
+$ cd producer
+$ gti check --release
+$ gti build --release
+$ sh -c "cp build/gti/release/*/readings.gtilib ../consumer/readings.gtilib"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check --release
+$ gti run --release
+$ test ! -e api.gti

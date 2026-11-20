@@ -850,7 +850,7 @@ private:
     // Retain the check whenever this frame can observe cleanup or contain a
     // worker emergency. The strict object gate still rejects such runtime
     // dependencies in the self-contained compiled-library profile.
-    if (!(session.program().compiledScalarProducer() && failureDestination &&
+    if (!(session.program().compiledNativeProducer() && failureDestination &&
           !cleanupToken && !failures.workerContainment()))
       failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
     abandonIfRequested();
@@ -3244,11 +3244,13 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (const auto &step : steps) {
     const auto layout =
         session.layouts().get(module->findPlace(step.storagePlace)->type);
+    const auto &storage = session.program().compiledModuleStorage();
+    const auto shared = storage.find(step.symbol);
     auto *global = new llvm::GlobalVariable(
         session.module(), layout.storage, false,
-        llvm::GlobalValue::InternalLinkage,
+        shared == storage.end() ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::WeakODRLinkage,
         llvm::Constant::getNullValue(layout.storage),
-        "__gti_native_v1_g" + std::to_string(step.symbol));
+        shared == storage.end() ? "__gti_native_v1_g" + std::to_string(step.symbol) : shared->second);
     global->setAlignment(llvm::Align(layout.alignment));
     globals.emplace(step.symbol, global);
   }
@@ -3271,7 +3273,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     // within byte-congruent storage. Opaque-pointer uses survive the swap.
     auto *replacement =
         new llvm::GlobalVariable(session.module(), initial->getType(), false,
-                                 llvm::GlobalValue::InternalLinkage, initial);
+                                 global->getLinkage(), initial);
     replacement->takeName(global);
     replacement->setAlignment(global->getAlign());
     global->replaceAllUsesWith(replacement);
