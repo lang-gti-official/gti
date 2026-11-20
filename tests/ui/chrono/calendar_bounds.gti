@@ -1,0 +1,23 @@
+// Calendar construction rejects invalid fields and checked arithmetic cannot wrap.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  if (c::date::try_create(1900, 2, 29)) { return 1; }
+  if (!c::date::try_create(2000, 2, 29)) { return 2; }
+  if (c::date::try_create(0, 1, 1)) { return 3; }
+  if (c::date::try_create(10000, 1, 1)) { return 4; }
+  if (c::date::try_create(2026, 0, 1)) { return 5; }
+  if (c::date::try_create(2026, 4, 31)) { return 6; }
+  auto first = c::date::create(1, 1, 1);
+  auto last = c::date::create(9999, 12, 31);
+  if (first.days_since_epoch() != -719162i64 || last.days_since_epoch() != 2932896i64) { return 7; }
+  if (first.try_add(c::calendar_days(-1i64)) || last.try_add(c::calendar_days(1i64))) { return 8; }
+  if (last.try_add(c::calendar_days(9223372036854775807i64))) { return 9; }
+  if (c::time_of_day::try_create(24, 0, 0)) { return 10; }
+  if (c::time_of_day::try_create(23, 59, 60)) { return 11; }
+  if (c::time_of_day::try_create(23, 59, 59, -1)) { return 12; }
+  if (c::time_of_day::try_create(23, 59, 59, 1000000000)) { return 13; }
+  if (c::local_datetime::try_from_unix_seconds(-9223372036854775807i64 - 1i64)) { return 14; }
+  return 0;
+}

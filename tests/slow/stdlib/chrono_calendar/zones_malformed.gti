@@ -1,0 +1,67 @@
+// TZif rejects malformed/leap-aware input and resolves signed cross-year footer rules.
+//@ run-pass
+//@ slow
+import std.chrono;
+import std.vector;
+namespace c = std::chrono;
+void u32(mut std::vector<uint8_t>& bytes, uint32_t n) {
+  bytes.push_back(uint8_t(n >> 24)); bytes.push_back(uint8_t(n >> 16));
+  bytes.push_back(uint8_t(n >> 8)); bytes.push_back(uint8_t(n));
+}
+void header(mut std::vector<uint8_t>& bytes) {
+  for (auto c : "TZif3") bytes.push_back(uint8_t(c));
+  for (mut int i = 0; i < 15; i++) bytes.push_back(0u8);
+  u32(bytes, 0u32); u32(bytes, 0u32); u32(bytes, 0u32);
+  u32(bytes, 0u32); u32(bytes, 1u32); u32(bytes, 4u32);
+  u32(bytes, 0u32); bytes.push_back(0u8); bytes.push_back(0u8);
+  for (auto c : "STD") bytes.push_back(uint8_t(c));
+  bytes.push_back(0u8);
+}
+std::vector<uint8_t> fixture(std::string_view footer) {
+  mut std::vector<uint8_t> bytes{};
+  header(bytes); header(bytes);
+  bytes.push_back(uint8_t('\n'));
+  for (auto c : footer) bytes.push_back(uint8_t(c));
+  bytes.push_back(uint8_t('\n'));
+  return std::move(bytes);
+}
+int main() {
+  auto bytes = fixture("STD0DST,J1/-2,J200/2");
+  auto view = bytes.as_span();
+  auto zone = c::time_zone::from_tzif(view, "Test/CrossYear");
+  auto before = zone.at(c::timestamp(c::local_datetime::create(2025, 12, 31, 21, 59, 59).unix_seconds()));
+  auto after = zone.at(c::timestamp(c::local_datetime::create(2025, 12, 31, 22, 0, 0).unix_seconds()));
+  if (before.offset_seconds() != 0 || after.offset_seconds() != 3600) return 1;
+  mut auto leap = fixture("STD0");
+  leap[31] = 1u8;
+  auto leap_view = leap.as_span();
+  auto unsupported = c::time_zone::try_from_tzif(leap_view, "Test/Leap");
+  if (unsupported || unsupported.error() != c::errc::unsupported_data) return 2;
+  mut auto bad = fixture("STD0");
+  bad[4] = uint8_t('1');
+  auto bad_view = bad.as_span();
+  if (c::time_zone::try_from_tzif(bad_view, "Test/Version")) return 3;
+  auto truncated = view.subspan(0, 43);
+  if (c::time_zone::try_from_tzif(truncated, "Test/Truncated")) return 4;
+  auto short_footer = fixture("STD0DST,M13.1.0,M11.1.0");
+  auto invalid_footer = short_footer.as_span();
+  if (c::time_zone::try_from_tzif(invalid_footer, "Test/BadRule")) return 5;
+  auto perpetual_bytes = fixture("XXX3EDT4,0/0,J365/23");
+  auto perpetual_view = perpetual_bytes.as_span();
+  auto perpetual = c::time_zone::from_tzif(perpetual_view, "Test/AlwaysDST");
+  auto boundary = perpetual.at(c::timestamp(c::local_datetime::create(2026, 1, 1, 3, 0, 0).unix_seconds()));
+  if (boundary.offset_seconds() != -14400 || !boundary.is_daylight_saving()) return 6;
+  mut auto truncated_bytes = fixture("");
+  truncated_bytes[89] = 1u8; // One 64-bit transition in the second header.
+  for (mut int i = 0; i < 9; i++) truncated_bytes.insert(size_t(98), 0u8);
+  auto truncated_view = truncated_bytes.as_span();
+  auto truncated_zone = c::time_zone::from_tzif(truncated_view, "Test/End");
+  if (!truncated_zone.try_at(c::timestamp(-1i64))) return 7;
+  auto end = truncated_zone.try_at(c::timestamp(0i64));
+  if (end || end.error() != c::errc::unsupported_coverage) return 8;
+  mut auto version2 = fixture("STD0DST,J1/-2,J200/2");
+  version2[4] = uint8_t('2'); version2[58] = uint8_t('2');
+  auto version2_view = version2.as_span();
+  if (c::time_zone::try_from_tzif(version2_view, "Test/V2Extended")) return 9;
+  return 0;
+}

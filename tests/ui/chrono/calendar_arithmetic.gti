@@ -1,0 +1,27 @@
+// Calendar month/year clamps are explicit and calendar-day addition preserves time.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  auto january = c::date::create(2027, 1, 31);
+  if (january.try_add(c::months(1i64))) { return 1; }
+  auto february = january.add(c::months(1i64), c::month_roll::clamp);
+  if (february.month() != 2 || february.day() != 28) { return 2; }
+  auto leap = c::date::create(2024, 2, 29);
+  if (leap.try_add(c::years(1i64))) { return 3; }
+  auto next_year = leap.add(c::years(1i64), c::month_roll::clamp);
+  if (next_year.year() != 2025 || next_year.day() != 28) { return 4; }
+  auto local = c::local_datetime::create(2026, 12, 31, 23, 59, 58, 123);
+  auto next = local.add(c::calendar_days(1i64));
+  if (next.year() != 2027 || next.month() != 1 || next.day() != 1) { return 5; }
+  if (next.hour() != 23 || next.minute() != 59 || next.second() != 58 || next.subsecond_nanoseconds() != 123) { return 6; }
+  auto previous = january.add(c::months(-1i64));
+  if (previous.year() != 2026 || previous.month() != 12 || previous.day() != 31) { return 7; }
+  if (january.try_add(c::years(9223372036854775807i64))) { return 8; }
+  auto reversed = next.sub(c::calendar_days(1i64));
+  if (!(reversed == local) || !(next > local)) { return 9; }
+  auto previous_year = leap.sub(c::years(1i64), c::month_roll::clamp);
+  if (previous_year.year() != 2023 || previous_year.day() != 28) { return 10; }
+  if (january.try_sub(c::months(-9223372036854775807i64 - 1i64))) { return 11; }
+  return 0;
+}

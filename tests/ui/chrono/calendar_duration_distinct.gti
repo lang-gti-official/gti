@@ -1,0 +1,7 @@
+// Calendar months cannot enter fixed elapsed timestamp arithmetic.
+import std.chrono;
+int main() {
+  auto point = std::chrono::timestamp(0i64);
+  auto result = point.add(std::chrono::months(1i64)); //~ ERROR GTI-S2029
+  return 0;
+}

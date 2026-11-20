@@ -1,0 +1,688 @@
+export module detail_chrono_calendar_impl;
+
+import "chrono_core.gti";
+import "panic.gti";
+import std.numeric;
+import std.format;
+import std.string;
+
+namespace std { namespace chrono {
+/// Recoverable calendar, timestamp, zone and temporal-format failures.
+export enum class errc {
+  invalid_date, invalid_time, out_of_range, unavailable, unknown_zone,
+  invalid_data, unsupported_data, unsupported_coverage, ambiguous_time,
+  nonexistent_time, invalid_pattern, resource_limit,
+};
+
+export enum class month_roll { reject, clamp };
+export namespace detail {
+constexpr bool is_leap_year(int32_t year) {
+  return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+constexpr int32_t days_in_month(int32_t year, int32_t month) {
+  if (month == 2) { return is_leap_year(year) ? 29 : 28; }
+  if (month == 4 || month == 6 || month == 9 || month == 11) { return 30; }
+  return 31;
+}
+// Gregorian era decomposition; all callers validate civil year/month/day first.
+constexpr int64_t civil_days(int32_t year, int32_t month, int32_t day) {
+  int64_t y = int64_t(year) - (month <= 2 ? 1i64 : 0i64);
+  int64_t era = y / 400i64;
+  int64_t yoe = y - era * 400i64;
+  int64_t m = int64_t(month) + (month > 2 ? -3i64 : 9i64);
+  int64_t doy = (153i64 * m + 2i64) / 5i64 + int64_t(day) - 1i64;
+  return era * 146097i64 + yoe * 365i64 + yoe / 4i64 - yoe / 100i64 + doy - 719468i64;
+}
+constexpr int64_t floor_days(int64_t seconds) {
+  int64_t result = seconds / 86400i64;
+  return seconds % 86400i64 < 0i64 ? result - 1i64 : result;
+}
+// Compute base +/- count * scale without overflowing an intermediate product
+// that would be cancelled by base. Normalize remainder toward the final sign.
+constexpr expected<int64_t, errc> scaled_seconds(int64_t base, int64_t count, int64_t scale, bool subtract) {
+  int64_t quotient = base / scale;
+  mut int64_t remainder = base % scale;
+  auto combined = subtract ? std::checked_sub(quotient, count) : std::checked_add(quotient, count);
+  if (!combined) { return unexpected(errc::out_of_range); }
+  mut int64_t q = combined.value();
+  if (q > 0i64 && remainder < 0i64) { q--; remainder += scale; }
+  else if (q < 0i64 && remainder > 0i64) { q++; remainder -= scale; }
+  auto product = std::checked_mul(q, scale);
+  if (!product) { return unexpected(errc::out_of_range); }
+  auto result = std::checked_add(product.value(), remainder);
+  if (!result) { return unexpected(errc::out_of_range); }
+  return result.value();
+}
+
+}
+
+/// A signed calendar count, not an elapsed duration.
+export class calendar_days {
+  int64_t value;
+public:
+  constexpr calendar_days() : value(0i64) {}
+  constexpr calendar_days(int64_t count) : value(count) {}
+  constexpr int64_t count() { return this.value; }
+  constexpr expected<calendar_days, errc> try_add(calendar_days& other) {
+    auto sum = std::checked_add(this.value, other.value);
+    if (!sum) { return unexpected(errc::out_of_range); }
+    return calendar_days(sum.value());
+  }
+  constexpr calendar_days add(calendar_days& other) {
+    auto result = this.try_add(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr expected<calendar_days, errc> try_sub(calendar_days& other) {
+    auto difference = std::checked_sub(this.value, other.value);
+    if (!difference) { return unexpected(errc::out_of_range); }
+    return calendar_days(difference.value());
+  }
+  constexpr calendar_days sub(calendar_days& other) {
+    auto result = this.try_sub(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr bool operator==(calendar_days& other) { return this.value == other.value; }
+  constexpr bool operator<(calendar_days& other) { return this.value < other.value; }
+  constexpr bool operator!=(calendar_days& other) { return this.value != other.value; }
+  constexpr bool operator<=(calendar_days& other) { return this.value <= other.value; }
+  constexpr bool operator>(calendar_days& other) { return this.value > other.value; }
+  constexpr bool operator>=(calendar_days& other) { return this.value >= other.value; }
+};
+
+/// A signed calendar count, not an elapsed duration.
+export class months {
+  int64_t value;
+public:
+  constexpr months() : value(0i64) {}
+  constexpr months(int64_t count) : value(count) {}
+  constexpr int64_t count() { return this.value; }
+  constexpr expected<months, errc> try_add(months& other) {
+    auto sum = std::checked_add(this.value, other.value);
+    if (!sum) { return unexpected(errc::out_of_range); }
+    return months(sum.value());
+  }
+  constexpr months add(months& other) {
+    auto result = this.try_add(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr expected<months, errc> try_sub(months& other) {
+    auto difference = std::checked_sub(this.value, other.value);
+    if (!difference) { return unexpected(errc::out_of_range); }
+    return months(difference.value());
+  }
+  constexpr months sub(months& other) {
+    auto result = this.try_sub(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr bool operator==(months& other) { return this.value == other.value; }
+  constexpr bool operator<(months& other) { return this.value < other.value; }
+  constexpr bool operator!=(months& other) { return this.value != other.value; }
+  constexpr bool operator<=(months& other) { return this.value <= other.value; }
+  constexpr bool operator>(months& other) { return this.value > other.value; }
+  constexpr bool operator>=(months& other) { return this.value >= other.value; }
+};
+
+/// A signed calendar count, not an elapsed duration.
+export class years {
+  int64_t value;
+public:
+  constexpr years() : value(0i64) {}
+  constexpr years(int64_t count) : value(count) {}
+  constexpr int64_t count() { return this.value; }
+  constexpr expected<years, errc> try_add(years& other) {
+    auto sum = std::checked_add(this.value, other.value);
+    if (!sum) { return unexpected(errc::out_of_range); }
+    return years(sum.value());
+  }
+  constexpr years add(years& other) {
+    auto result = this.try_add(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr expected<years, errc> try_sub(years& other) {
+    auto difference = std::checked_sub(this.value, other.value);
+    if (!difference) { return unexpected(errc::out_of_range); }
+    return years(difference.value());
+  }
+  constexpr years sub(years& other) {
+    auto result = this.try_sub(other);
+    if (!result) { std::detail::panic("Calendar count out of range"); }
+    return result.value();
+  }
+  constexpr bool operator==(years& other) { return this.value == other.value; }
+  constexpr bool operator<(years& other) { return this.value < other.value; }
+  constexpr bool operator!=(years& other) { return this.value != other.value; }
+  constexpr bool operator<=(years& other) { return this.value <= other.value; }
+  constexpr bool operator>(years& other) { return this.value > other.value; }
+  constexpr bool operator>=(years& other) { return this.value >= other.value; }
+};
+
+/// A valid proleptic Gregorian date in years 1 through 9999.
+export class date {
+  int32_t y;
+  int32_t m;
+  int32_t d;
+  constexpr date(int32_t year, int32_t month, int32_t day) : y(year), m(month), d(day) {}
+public:
+  constexpr date() : y(1970), m(1), d(1) {}
+  static constexpr expected<date, errc> try_create(int32_t year, int32_t month, int32_t day) {
+    if (year < 1 || year > 9999 || month < 1 || month > 12) { return unexpected(errc::invalid_date); }
+    if (day < 1 || day > detail::days_in_month(year, month)) { return unexpected(errc::invalid_date); }
+    return date(year, month, day);
+  }
+  static constexpr date create(int32_t year, int32_t month, int32_t day) {
+    auto result = date::try_create(year, month, day);
+    if (!result) { std::detail::panic("Invalid calendar date"); }
+    return result.value();
+  }
+  static constexpr expected<date, errc> try_from_days(int64_t days) {
+    if (days < -719162i64 || days > 2932896i64) { return unexpected(errc::out_of_range); }
+    int64_t z = days + 719468i64;
+    int64_t era = z / 146097i64;
+    int64_t doe = z - era * 146097i64;
+    int64_t yoe = (doe - doe / 1460i64 + doe / 36524i64 - doe / 146096i64) / 365i64;
+    int64_t doy = doe - (365i64 * yoe + yoe / 4i64 - yoe / 100i64);
+    int64_t mp = (5i64 * doy + 2i64) / 153i64;
+    int32_t day = int32_t(doy - (153i64 * mp + 2i64) / 5i64 + 1i64);
+    int32_t month = int32_t(mp + (mp < 10i64 ? 3i64 : -9i64));
+    int32_t year = int32_t(yoe + era * 400i64 + (month <= 2 ? 1i64 : 0i64));
+    return date(year, month, day);
+  }
+  static constexpr date from_days(int64_t days) {
+    auto result = date::try_from_days(days);
+    if (!result) { std::detail::panic("Calendar date out of range"); }
+    return result.value();
+  }
+  constexpr int32_t year() { return this.y; }
+  constexpr int32_t month() { return this.m; }
+  constexpr int32_t day() { return this.d; }
+  constexpr int64_t days_since_epoch() { return detail::civil_days(this.y, this.m, this.d); }
+  /// Sunday is zero and Saturday is six.
+  constexpr int32_t weekday() {
+    int64_t n = (this.days_since_epoch() + 4i64) % 7i64;
+    return int32_t(n < 0i64 ? n + 7i64 : n);
+  }
+  constexpr int32_t day_of_year() {
+    return int32_t(this.days_since_epoch() - detail::civil_days(this.y, 1, 1) + 1i64);
+  }
+  constexpr bool operator==(date& other) { return this.y == other.y && this.m == other.m && this.d == other.d; }
+  constexpr bool operator<(date& other) { return this.days_since_epoch() < other.days_since_epoch(); }
+  constexpr bool operator!=(date& other) { return !(this == other); }
+  constexpr bool operator<=(date& other) { return !(other < this); }
+  constexpr bool operator>(date& other) { return other < this; }
+  constexpr bool operator>=(date& other) { return !(this < other); }
+  constexpr expected<date, errc> try_add(calendar_days amount) {
+    auto sum = std::checked_add(this.days_since_epoch(), amount.count());
+    if (!sum) { return unexpected(errc::out_of_range); }
+    return date::try_from_days(sum.value());
+  }
+  constexpr expected<date, errc> try_add(months amount, month_roll roll = month_roll::reject) {
+    int64_t index = int64_t(this.y - 1) * 12i64 + int64_t(this.m - 1);
+    auto sum = std::checked_add(index, amount.count());
+    if (!sum) { return unexpected(errc::out_of_range); }
+    int64_t target = sum.value();
+    if (target < 0i64 || target >= 119988i64) { return unexpected(errc::out_of_range); }
+    int32_t year = int32_t(target / 12i64) + 1;
+    int32_t month = int32_t(target % 12i64) + 1;
+    int32_t last = detail::days_in_month(year, month);
+    if (this.d > last) {
+      if (roll == month_roll::reject) { return unexpected(errc::invalid_date); }
+      return date(year, month, last);
+    }
+    return date(year, month, this.d);
+  }
+  constexpr expected<date, errc> try_add(years amount, month_roll roll = month_roll::reject) {
+    auto scaled = std::checked_mul(amount.count(), 12i64);
+    if (!scaled) { return unexpected(errc::out_of_range); }
+    return this.try_add(months(scaled.value()), roll);
+  }
+  constexpr date add(calendar_days amount) {
+    auto result = this.try_add(amount);
+    if (!result) { std::detail::panic("Calendar addition failed"); }
+    return result.value();
+  }
+  constexpr date add(months amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_add(amount, roll);
+    if (!result) { std::detail::panic("Calendar addition failed"); }
+    return result.value();
+  }
+  constexpr date add(years amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_add(amount, roll);
+    if (!result) { std::detail::panic("Calendar addition failed"); }
+    return result.value();
+  }
+  constexpr expected<date, errc> try_sub(calendar_days amount) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(calendar_days(negative.value()));
+  }
+  constexpr date sub(calendar_days amount) {
+    auto result = this.try_sub(amount);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+  constexpr expected<date, errc> try_sub(months amount, month_roll roll = month_roll::reject) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(months(negative.value()), roll);
+  }
+  constexpr date sub(months amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_sub(amount, roll);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+  constexpr expected<date, errc> try_sub(years amount, month_roll roll = month_roll::reject) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(years(negative.value()), roll);
+  }
+  constexpr date sub(years amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_sub(amount, roll);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+};
+
+/// A valid civil clock reading, excluding leap seconds and 24:00.
+export class time_of_day {
+  int32_t h;
+  int32_t m;
+  int32_t s;
+  int32_t ns;
+  constexpr time_of_day(int32_t hour, int32_t minute, int32_t second, int32_t nano)
+      : h(hour), m(minute), s(second), ns(nano) {}
+public:
+  constexpr time_of_day() : h(0), m(0), s(0), ns(0) {}
+  static constexpr expected<time_of_day, errc> try_create(int32_t hour, int32_t minute, int32_t second, int32_t nano = 0) {
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 || nano < 0 || nano >= 1000000000) {
+      return unexpected(errc::invalid_time);
+    }
+    return time_of_day(hour, minute, second, nano);
+  }
+  static constexpr time_of_day create(int32_t hour, int32_t minute, int32_t second, int32_t nano = 0) {
+    auto result = time_of_day::try_create(hour, minute, second, nano);
+    if (!result) { std::detail::panic("Invalid time of day"); }
+    return result.value();
+  }
+  constexpr int32_t hour() { return this.h; }
+  constexpr int32_t minute() { return this.m; }
+  constexpr int32_t second() { return this.s; }
+  constexpr int32_t subsecond_nanoseconds() { return this.ns; }
+  constexpr bool operator==(time_of_day& other) { return this.seconds_since_midnight() == other.seconds_since_midnight() && this.subsecond_nanoseconds() == other.subsecond_nanoseconds(); }
+  constexpr bool operator<(time_of_day& other) { return this.seconds_since_midnight() < other.seconds_since_midnight() || (this.seconds_since_midnight() == other.seconds_since_midnight() && this.subsecond_nanoseconds() < other.subsecond_nanoseconds()); }
+  constexpr bool operator!=(time_of_day& other) { return !(this == other); }
+  constexpr bool operator<=(time_of_day& other) { return !(other < this); }
+  constexpr bool operator>(time_of_day& other) { return other < this; }
+  constexpr bool operator>=(time_of_day& other) { return !(this < other); }
+  constexpr int32_t seconds_since_midnight() { return this.h * 3600 + this.m * 60 + this.s; }
+};
+
+/// A date and clock reading with no implied time zone.
+export class local_datetime {
+  date civil_date;
+  time_of_day civil_time;
+public:
+  constexpr local_datetime() : civil_date(date()), civil_time(time_of_day()) {}
+  constexpr local_datetime(date day, time_of_day time) : civil_date(day), civil_time(time) {}
+  static constexpr expected<local_datetime, errc> try_create(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, int32_t nano = 0) {
+    auto d = ?date::try_create(year, month, day);
+    auto t = ?time_of_day::try_create(hour, minute, second, nano);
+    return local_datetime(d, t);
+  }
+  static constexpr local_datetime create(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, int32_t nano = 0) {
+    auto result = local_datetime::try_create(year, month, day, hour, minute, second, nano);
+    if (!result) { std::detail::panic("Invalid local date and time"); }
+    return result.value();
+  }
+  static constexpr expected<local_datetime, errc> try_from_unix_seconds(int64_t value, int32_t nano = 0) {
+    if (nano < 0 || nano >= 1000000000) { return unexpected(errc::invalid_time); }
+    int64_t days = detail::floor_days(value);
+    auto d = ?date::try_from_days(days);
+    // Remainder avoids overflow in days * 86400 at INT64_MIN.
+    mut int64_t rem = value % 86400i64;
+    if (rem < 0i64) { rem += 86400i64; }
+    auto t = time_of_day::create(int32_t(rem / 3600i64), int32_t(rem / 60i64 % 60i64), int32_t(rem % 60i64), nano);
+    return local_datetime(d, t);
+  }
+  static constexpr local_datetime from_unix_seconds(int64_t value, int32_t nano = 0) {
+    auto result = local_datetime::try_from_unix_seconds(value, nano);
+    if (!result) { std::detail::panic("Local date and time out of range"); }
+    return result.value();
+  }
+  constexpr date calendar_date() { return this.civil_date; }
+  constexpr time_of_day time() { return this.civil_time; }
+  constexpr int32_t year() { return this.civil_date.year(); }
+  constexpr int32_t month() { return this.civil_date.month(); }
+  constexpr int32_t day() { return this.civil_date.day(); }
+  constexpr int32_t hour() { return this.civil_time.hour(); }
+  constexpr int32_t minute() { return this.civil_time.minute(); }
+  constexpr int32_t second() { return this.civil_time.second(); }
+  constexpr int32_t subsecond_nanoseconds() { return this.civil_time.subsecond_nanoseconds(); }
+  constexpr bool operator==(local_datetime& other) { return this.unix_seconds() == other.unix_seconds() && this.subsecond_nanoseconds() == other.subsecond_nanoseconds(); }
+  constexpr bool operator<(local_datetime& other) { return this.unix_seconds() < other.unix_seconds() || (this.unix_seconds() == other.unix_seconds() && this.subsecond_nanoseconds() < other.subsecond_nanoseconds()); }
+  constexpr bool operator!=(local_datetime& other) { return !(this == other); }
+  constexpr bool operator<=(local_datetime& other) { return !(other < this); }
+  constexpr bool operator>(local_datetime& other) { return other < this; }
+  constexpr bool operator>=(local_datetime& other) { return !(this < other); }
+  constexpr int64_t unix_seconds() { return this.civil_date.days_since_epoch() * 86400i64 + int64_t(this.civil_time.seconds_since_midnight()); }
+  constexpr expected<local_datetime, errc> try_add(calendar_days amount) {
+    auto d = ?this.civil_date.try_add(amount);
+    return local_datetime(d, this.civil_time);
+  }
+  constexpr local_datetime add(calendar_days amount) {
+    auto result = this.try_add(amount);
+    if (!result) { std::detail::panic("Local calendar addition failed"); }
+    return result.value();
+  }
+  constexpr expected<local_datetime, errc> try_add(months amount, month_roll roll = month_roll::reject) {
+    auto d = ?this.civil_date.try_add(amount, roll);
+    return local_datetime(d, this.civil_time);
+  }
+  constexpr local_datetime add(months amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_add(amount, roll);
+    if (!result) { std::detail::panic("Local calendar addition failed"); }
+    return result.value();
+  }
+  constexpr expected<local_datetime, errc> try_add(years amount, month_roll roll = month_roll::reject) {
+    auto d = ?this.civil_date.try_add(amount, roll);
+    return local_datetime(d, this.civil_time);
+  }
+  constexpr local_datetime add(years amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_add(amount, roll);
+    if (!result) { std::detail::panic("Local calendar addition failed"); }
+    return result.value();
+  }
+  constexpr expected<local_datetime, errc> try_sub(calendar_days amount) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(calendar_days(negative.value()));
+  }
+  constexpr local_datetime sub(calendar_days amount) {
+    auto result = this.try_sub(amount);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+  constexpr expected<local_datetime, errc> try_sub(months amount, month_roll roll = month_roll::reject) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(months(negative.value()), roll);
+  }
+  constexpr local_datetime sub(months amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_sub(amount, roll);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+  constexpr expected<local_datetime, errc> try_sub(years amount, month_roll roll = month_roll::reject) {
+    auto negative = std::checked_sub(0i64, amount.count());
+    if (!negative) { return unexpected(errc::out_of_range); }
+    return this.try_add(years(negative.value()), roll);
+  }
+  constexpr local_datetime sub(years amount, month_roll roll = month_roll::reject) {
+    auto result = this.try_sub(amount, roll);
+    if (!result) { std::detail::panic("Calendar subtraction failed"); }
+    return result.value();
+  }
+};
+
+/// Unix seconds plus normalized fractional nanoseconds, excluding leap seconds.
+export class timestamp {
+  int64_t seconds_value;
+  int32_t nanos_value;
+  constexpr timestamp(int64_t seconds, int32_t nanos) : seconds_value(seconds), nanos_value(nanos) {}
+public:
+  constexpr timestamp() : seconds_value(0i64), nanos_value(0) {}
+  constexpr timestamp(int64_t seconds) : seconds_value(seconds), nanos_value(0) {}
+  static constexpr expected<timestamp, errc> try_create(int64_t seconds, int64_t nanos = 0i64) {
+    int64_t whole = nanos / 1000000000i64;
+    mut int64_t fraction = nanos % 1000000000i64;
+    auto sum = std::checked_add(seconds, whole);
+    if (!sum) { return unexpected(errc::out_of_range); }
+    mut int64_t normalized = sum.value();
+    if (fraction < 0i64) {
+      auto previous = std::checked_sub(normalized, 1i64);
+      if (!previous) { return unexpected(errc::out_of_range); }
+      normalized = previous.value();
+      fraction += 1000000000i64;
+    }
+    return timestamp(normalized, int32_t(fraction));
+  }
+  static constexpr timestamp create(int64_t seconds, int64_t nanos = 0i64) {
+    auto result = timestamp::try_create(seconds, nanos);
+    if (!result) { std::detail::panic("Timestamp out of range"); }
+    return result.value();
+  }
+  constexpr int64_t unix_seconds() { return this.seconds_value; }
+  constexpr int32_t subsecond_nanoseconds() { return this.nanos_value; }
+  static constexpr timestamp from_system_time_point(system_time_point& point) {
+    return timestamp(point.unix_seconds(), point.subsecond_nanoseconds());
+  }
+  constexpr expected<system_time_point, errc> try_to_system_time_point() {
+    // Use the exact nanosecond endpoints, including the negative fractional edge.
+    if (this.seconds_value < -9223372037i64 || this.seconds_value > 9223372036i64) { return unexpected(errc::out_of_range); }
+    if (this.seconds_value == -9223372037i64) {
+      if (this.nanos_value < 145224192) { return unexpected(errc::out_of_range); }
+      return system_time_point(nanoseconds((-9223372036854775807i64 - 1i64) + int64_t(this.nanos_value - 145224192)));
+    }
+    if (this.seconds_value == 9223372036i64 && this.nanos_value > 854775807) { return unexpected(errc::out_of_range); }
+    return system_time_point(nanoseconds(this.seconds_value * 1000000000i64 + int64_t(this.nanos_value)));
+  }
+  constexpr system_time_point to_system_time_point() {
+    auto result = this.try_to_system_time_point();
+    if (!result) { std::detail::panic("System time point out of range"); }
+    return result.value();
+  }
+  static expected<timestamp, errc> try_now() {
+    auto reading = system_clock::now();
+    if (!reading) {
+      if (reading.error() == clock_errc::unavailable) { return unexpected(errc::unavailable); }
+      return unexpected(errc::out_of_range);
+    }
+    auto point = reading.value();
+    return timestamp::from_system_time_point(point);
+  }
+  static timestamp now() {
+    auto result = timestamp::try_now();
+    if (!result) { std::detail::panic("System clock unavailable"); }
+    return result.value();
+  }
+  constexpr bool operator==(timestamp& other) { return this.seconds_value == other.seconds_value && this.nanos_value == other.nanos_value; }
+  constexpr bool operator<(timestamp& other) { return this.seconds_value < other.seconds_value || (this.seconds_value == other.seconds_value && this.nanos_value < other.nanos_value); }
+  constexpr bool operator!=(timestamp& other) { return !(this == other); }
+  constexpr bool operator<=(timestamp& other) { return !(other < this); }
+  constexpr bool operator>(timestamp& other) { return other < this; }
+  constexpr bool operator>=(timestamp& other) { return !(this < other); }
+  constexpr bool before(timestamp& other) { return this < other; }
+  constexpr bool after(timestamp& other) { return other < this; }
+  constexpr bool equals(timestamp& other) { return this == other; }
+  constexpr expected<timestamp, errc> try_add_seconds(int64_t seconds) {
+    auto sum = std::checked_add(this.seconds_value, seconds);
+    if (!sum) { return unexpected(errc::out_of_range); }
+    return timestamp(sum.value(), this.nanos_value);
+  }
+  constexpr timestamp add_seconds(int64_t seconds) {
+    auto result = this.try_add_seconds(seconds);
+    if (!result) { std::detail::panic("Timestamp addition out of range"); }
+    return result.value();
+  }
+  constexpr expected<timestamp, errc> try_sub_seconds(int64_t seconds) {
+    auto difference = std::checked_sub(this.seconds_value, seconds);
+    if (!difference) { return unexpected(errc::out_of_range); }
+    return timestamp(difference.value(), this.nanos_value);
+  }
+  constexpr timestamp sub_seconds(int64_t seconds) {
+    auto result = this.try_sub_seconds(seconds);
+    if (!result) { std::detail::panic("Timestamp subtraction out of range"); }
+    return result.value();
+  }
+  constexpr expected<timestamp, errc> try_add<duration_type D>(D amount) {
+    int64_t count = amount.count();
+    int64_t tick = amount.tick_nanoseconds();
+    if (tick >= 1000000000i64) {
+      int64_t seconds = ?detail::scaled_seconds(this.seconds_value, count, tick / 1000000000i64, false);
+      return timestamp(seconds, this.nanos_value);
+    }
+    int64_t ticks_per_second = 1000000000i64 / tick;
+    auto whole = std::checked_add(this.seconds_value, count / ticks_per_second);
+    if (!whole) { return unexpected(errc::out_of_range); }
+    return timestamp::try_create(whole.value(), int64_t(this.nanos_value) + (count % ticks_per_second) * tick);
+  }
+  constexpr timestamp add<duration_type D>(D amount) {
+    auto result = this.try_add(amount);
+    if (!result) { std::detail::panic("Timestamp arithmetic out of range"); }
+    return result.value();
+  }
+  constexpr expected<timestamp, errc> try_sub<duration_type D>(D amount) {
+    int64_t count = amount.count();
+    int64_t tick = amount.tick_nanoseconds();
+    if (tick >= 1000000000i64) {
+      int64_t seconds = ?detail::scaled_seconds(this.seconds_value, count, tick / 1000000000i64, true);
+      return timestamp(seconds, this.nanos_value);
+    }
+    int64_t ticks_per_second = 1000000000i64 / tick;
+    auto whole = std::checked_sub(this.seconds_value, count / ticks_per_second);
+    if (!whole) { return unexpected(errc::out_of_range); }
+    return timestamp::try_create(whole.value(), int64_t(this.nanos_value) - (count % ticks_per_second) * tick);
+  }
+  constexpr timestamp sub<duration_type D>(D amount) {
+    auto result = this.try_sub(amount);
+    if (!result) { std::detail::panic("Timestamp arithmetic out of range"); }
+    return result.value();
+  }
+  /// Difference in a chosen fixed unit, truncated toward zero.
+  constexpr expected<To, errc> try_elapsed_since_as<duration_type To>(timestamp& earlier) {
+    bool negative = this < earlier;
+    int64_t high_seconds = negative ? earlier.seconds_value : this.seconds_value;
+    int64_t low_seconds = negative ? this.seconds_value : earlier.seconds_value;
+    int32_t high_nanos = negative ? earlier.nanos_value : this.nanos_value;
+    int32_t low_nanos = negative ? this.nanos_value : earlier.nanos_value;
+    mut uint64_t whole = 0u64;
+    if (high_seconds >= 0i64 && low_seconds < 0i64) {
+      whole = uint64_t(high_seconds) + uint64_t(-(low_seconds + 1i64)) + 1u64;
+    } else {
+      whole = uint64_t(high_seconds - low_seconds);
+    }
+    mut int64_t fraction = int64_t(high_nanos) - int64_t(low_nanos);
+    if (fraction < 0i64) { whole--; fraction += 1000000000i64; }
+    int64_t zero = 0i64;
+    auto target = To(zero);
+    int64_t tick = target.tick_nanoseconds();
+    mut uint64_t magnitude = 0u64;
+    if (tick >= 1000000000i64) {
+      magnitude = whole / uint64_t(tick / 1000000000i64);
+    } else {
+      auto scaled = std::checked_mul(whole, uint64_t(1000000000i64 / tick));
+      if (!scaled) { return unexpected(errc::out_of_range); }
+      auto sum = std::checked_add(scaled.value(), uint64_t(fraction / tick));
+      if (!sum) { return unexpected(errc::out_of_range); }
+      magnitude = sum.value();
+    }
+    uint64_t limit = negative ? 9223372036854775808u64 : 9223372036854775807u64;
+    if (magnitude > limit) { return unexpected(errc::out_of_range); }
+    if (negative && magnitude == 9223372036854775808u64) {
+      int64_t minimum = -9223372036854775807i64 - 1i64;
+      return To(minimum);
+    }
+    int64_t count = int64_t(magnitude);
+    int64_t signed_count = negative ? -count : count;
+    return To(signed_count);
+  }
+  constexpr To elapsed_since_as<duration_type To>(timestamp& earlier) {
+    auto result = this.try_elapsed_since_as<To>(earlier);
+    if (!result) { std::detail::panic("Timestamp difference out of range"); }
+    return result.value();
+  }
+  constexpr expected<nanoseconds, errc> try_elapsed_since(timestamp& earlier) {
+    return this.try_elapsed_since_as<nanoseconds>(earlier);
+  }
+  constexpr nanoseconds elapsed_since(timestamp& earlier) {
+    return this.elapsed_since_as<nanoseconds>(earlier);
+  }
+
+};
+
+} }
+
+namespace std::chrono {
+export namespace detail {
+void append_calendar_digits(mut std::string& output, int32_t value, int32_t width) {
+  mut int32_t divisor = 1;
+  for (mut int32_t i = 1; i < width; i++) { divisor *= 10; }
+  std::string_view digits = "0123456789";
+  while (divisor > 0) {
+    output.push_back(digits[std::size_t(value / divisor % 10)]);
+    divisor /= 10;
+  }
+}
+std::string calendar_iso(date& value) {
+  mut std::string output{};
+  append_calendar_digits(output, value.year(), 4);
+  output.push_back('-');
+  append_calendar_digits(output, value.month(), 2);
+  output.push_back('-');
+  append_calendar_digits(output, value.day(), 2);
+  return output;
+}
+std::string calendar_iso(time_of_day& value) {
+  mut std::string output{};
+  append_calendar_digits(output, value.hour(), 2);
+  output.push_back(':');
+  append_calendar_digits(output, value.minute(), 2);
+  output.push_back(':');
+  append_calendar_digits(output, value.second(), 2);
+  if (value.subsecond_nanoseconds() != 0) {
+    output.push_back('.');
+    append_calendar_digits(output, value.subsecond_nanoseconds(), 9);
+  }
+  return output;
+}
+std::string calendar_iso(local_datetime& value) {
+  auto date = value.calendar_date();
+  auto time = value.time();
+  mut std::string output = calendar_iso(date);
+  output.push_back('T');
+  auto suffix = calendar_iso(time);
+  output.append(suffix.view());
+  return output;
+}
+}
+}
+
+for concept std::formatting<std::chrono::date> {
+  expected<void, std::format_errc> format(std::chrono::date& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto text = std::chrono::detail::calendar_iso(value);
+    return std::formatting<std::string>::format(text, output, spec);
+  }
+};
+
+for concept std::formatting<std::chrono::time_of_day> {
+  expected<void, std::format_errc> format(std::chrono::time_of_day& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto text = std::chrono::detail::calendar_iso(value);
+    return std::formatting<std::string>::format(text, output, spec);
+  }
+};
+
+for concept std::formatting<std::chrono::local_datetime> {
+  expected<void, std::format_errc> format(std::chrono::local_datetime& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto text = std::chrono::detail::calendar_iso(value);
+    return std::formatting<std::string>::format(text, output, spec);
+  }
+};
+
+for concept std::formatting<std::chrono::timestamp> {
+  expected<void, std::format_errc> format(std::chrono::timestamp& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto local = std::chrono::local_datetime::try_from_unix_seconds(value.unix_seconds(), value.subsecond_nanoseconds());
+    if (!local) { return unexpected(std::format_errc::invalid_format); }
+    auto civil = local.value();
+    mut std::string text = std::chrono::detail::calendar_iso(civil);
+    text.push_back('Z');
+    return std::formatting<std::string>::format(text, output, spec);
+  }
+};

@@ -1,0 +1,52 @@
+export module detail_chrono_discovery_impl;
+import "chrono_calendar.gti";
+import std.environment;
+import std.filesystem;
+import std.string;
+import "panic.gti";
+
+namespace std::chrono {
+namespace detail {
+// Only identifiers are accepted; POSIX rule strings and arbitrary paths are
+// deliberately not treated as IANA names. Lookup in an explicit db is separate.
+bool zone_identifier(std::string_view value) {
+  if (value.empty() || value[0] == '/' || value.contains("..")) { return false; }
+  for (auto c : value) {
+    if (!((uint8_t(c) >= uint8_t('A') && uint8_t(c) <= uint8_t('Z')) || (uint8_t(c) >= uint8_t('a') && uint8_t(c) <= uint8_t('z')) ||
+          (uint8_t(c) >= uint8_t('0') && uint8_t(c) <= uint8_t('9')) || c == '_' || c == '-' || c == '+' || c == '/')) {
+      return false;
+    }
+  }
+  return true;
+}
+}
+/// Observes an explicit TZ identifier or the host's localtime zoneinfo link.
+/// Never changes process state or guesses an identifier from an abbreviation.
+export expected<std::string, errc> try_current_zone_id() {
+  auto setting = std::environment::get("TZ");
+  if (!setting) { return unexpected(errc::unavailable); }
+  auto optional = std::move(setting).value();
+  if (optional.has_value()) {
+    auto& text = optional.value();
+    mut std::size_t start = 0;
+    if (!text.empty() && text[0] == ':') { start = 1; }
+    auto name = text.view().substr(start);
+    if (!detail::zone_identifier(name)) { return unexpected(errc::unknown_zone); }
+    return std::string(name);
+  }
+  auto resolved = std::filesystem::canonical("/etc/localtime");
+  if (!resolved) { return unexpected(errc::unavailable); }
+  auto path = std::move(resolved).value();
+  auto name = path.string();
+  std::size_t position = name.find("/zoneinfo/");
+  if (position == std::string::npos) { return unexpected(errc::unknown_zone); }
+  auto suffix = name.view().substr(position + 10);
+  if (!detail::zone_identifier(suffix)) { return unexpected(errc::unknown_zone); }
+  return std::string(suffix);
+}
+export std::string current_zone_id() {
+  auto result = try_current_zone_id();
+  if (!result) { std::detail::panic("Cannot discover local time-zone identifier"); }
+  return std::move(result).value();
+}
+}
