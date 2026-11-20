@@ -1,0 +1,2 @@
+export module detail.random_engine;
+export import "../../.gti-compiled-random.gti";

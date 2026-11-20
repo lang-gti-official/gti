@@ -1,4 +1,5 @@
 #pragma once
+#include "gti/compiled_mir.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/lowered_program.h"
 #include <span>
@@ -8,6 +9,7 @@ struct PersistentDeclarationOwner;
 struct CompiledScalarImport {
   CompiledScalarSignature signature;
   SourceUnitId sourceUnit = 0;
+  std::shared_ptr<const CompiledMirBody> optimizationBody;
 };
 // Imported calls conservatively retain the normal GTI failure channel.
 class CompiledScalarUnitBuilder final {

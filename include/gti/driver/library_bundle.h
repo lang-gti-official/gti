@@ -45,10 +45,12 @@ struct LibraryBundle {
   LibraryBundleIdentity identity;
   std::vector<LibraryBundleDependency> dependencies;
   std::vector<LibraryBundleMember> objects;
-  std::string interfaceMetadata; // Versioned compiler metadata; opaque to the
-                                 // container.
+  std::string interfaceMetadata;  // Versioned compiler metadata; opaque to the
+                                  // container.
+  std::string optimizationBodies; // Optional verified concrete MIR for native
+                                  // functions.
   bool templateOnly =
-      false; // Declaration and dependent bodies, no concrete object yet.
+      false; // Generic declaration and dependent bodies, no concrete object.
   friend bool operator==(const LibraryBundle &,
                          const LibraryBundle &) = default;
 };
@@ -69,7 +71,8 @@ private:
   LibraryBundleErrorKind errorKind;
 };
 
-inline constexpr std::uint32_t libraryBundleFormatVersion = 2;
+inline constexpr std::uint32_t libraryBundleFormatVersion = 3;
+inline constexpr std::size_t libraryBundleMirLimit = 8U * 1024U * 1024U;
 inline constexpr std::size_t libraryBundleByteLimit = 256U * 1024U * 1024U;
 inline constexpr std::size_t libraryBundleObjectLimit = 64U * 1024U * 1024U;
 inline constexpr std::size_t libraryBundleEntryLimit = 4096;

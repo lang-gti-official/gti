@@ -28,9 +28,9 @@ parseBackendKind(std::string_view name);
 [[nodiscard]] BackendKind defaultBackend(const TargetInfo &target);
 
 enum class BackendArtifactKind {
-  CompiledInterface,
   Source,
   Object,
+  CompiledInterface,
 };
 
 struct EmbeddingCompanion {

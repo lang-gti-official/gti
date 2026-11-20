@@ -1738,9 +1738,16 @@ semantic and production-promotion goals remain open.
 | F4 reusable target graph / driver — package and same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
 | F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
 
-The installed standard library exercises this boundary with `std.cmath` and
-seed expansion for the deterministic engine in `std.random`. The latter returns
-four-word state by value at construction and keeps the draw loop in source. See the
+The installed standard library exercises this boundary with `std.cmath` and the
+deterministic seed and draw in `std.random`. Both dev and release consumers
+run from the installed artifacts with the two implementation files removed. An
+optimized public draw loop consumes shipped MIR; the seed remains native.
+Adding a native module uses the packaging catalog and its GTI facade. An
+installed class-template module supplies its own declarations and dependent
+methods. General project-library template imports and early constants beyond
+the installed array profile remain F3 work. F2 still
+needs ownership/cleanup and general control-flow bodies for cross-module
+optimization. See the
 [installed module contract](../architecture/build-and-driver.md#precompiled-standard-library).
 
 The installed array fixture compiles a previously unseen application-defined
