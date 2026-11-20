@@ -1,3 +1,6 @@
+//@ slow
+// Hosted Darwin run 44760264823 measured 7.773 CPU seconds against the
+// 6-second LSP budget after the public chrono facade expanded.
 // Hover retains the source-defined duration conversion declaration.
 //@ hover @member: try_cast
 import std.chrono;
