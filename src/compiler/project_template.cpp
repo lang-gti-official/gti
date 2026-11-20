@@ -1,5 +1,6 @@
 #include "gti/project_template.h"
 #include "gti/lexer.h"
+#include "gti/module_name.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -57,18 +58,15 @@ bool erased(const Token &token, std::string_view declarations) {
 
 std::string projectTemplateModuleName(std::string_view declarations) {
   auto input = tokens(declarations);
-  std::string name;
-  for (std::size_t i = 0; i < input.size(); ++i) {
+  const auto header = parseModuleHeader(input);
+  if (!header || !header->interface)
+    reject("expected an exported module");
+  for (std::size_t i = header->tokenEnd; i < input.size(); ++i) {
     const auto &t = input[i];
     if (t.kind >= TokenKind::HASH_IF && t.kind <= TokenKind::HASH_IFNDEF)
       reject("configuration or macro directives require their source closure");
-    if (t.kind == TokenKind::MODULE) {
-      if (i == 0 || input[i - 1].kind != TokenKind::EXPORT ||
-          i + 2 >= input.size() || input[i + 1].kind != TokenKind::IDENTIFIER ||
-          input[i + 2].kind != TokenKind::SEMICOLON || !name.empty())
-        reject("expected one exported module");
-      name = input[i + 1].lexeme;
-    }
+    if (t.kind == TokenKind::MODULE)
+      reject("unexpected second module declaration");
     if (t.kind == TokenKind::IMPORT) {
       // File and package imports require a separately bound dependency.
       // Reinterpreting a producer-relative path at the consumer is incorrect.
@@ -84,9 +82,7 @@ std::string projectTemplateModuleName(std::string_view declarations) {
         reject("invalid standard library import");
     }
   }
-  if (name.empty())
-    reject("missing exported module");
-  return name;
+  return header->declaration.lexeme;
 }
 
 std::string encodeProjectTemplate(const CompiledTemplateModule &module,

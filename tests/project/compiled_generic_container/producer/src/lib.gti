@@ -1,4 +1,4 @@
-export module racks;
+export module instruments.racks;
 import std.utility;
 
 namespace instruments {
