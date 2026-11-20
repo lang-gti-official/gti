@@ -438,10 +438,16 @@ public:
       return;
     }
 
-    mut std::detail::prefix_owner<T> replacement =
-        std::detail::prefix_owner<T>(requested);
-    unsafe { this.data.relocate_to_unchecked(replacement); }
-    this.data = std::move(replacement);
+    size_t live = this.data.length();
+    if (!this.data.grow_bytes_if_supported(requested)) {
+      mut std::detail::prefix_owner<T> replacement =
+          std::detail::prefix_owner<T>(requested);
+      unsafe { this.data.relocate_to_unchecked(replacement); }
+      this.data = std::move(replacement);
+    }
+    // Both capacity transitions preserve the same initialized prefix. Publish
+    // that contract after the native provider's opaque memory effects.
+    unsafe { this.data.set_initialized_length_unchecked(live); }
   }
 
   constexpr void resize(size_t requested) mut
