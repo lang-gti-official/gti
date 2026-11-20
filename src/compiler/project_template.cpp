@@ -7,8 +7,8 @@
 namespace lang {
 namespace {
 constexpr std::string_view magic = "gti.project-template.1\n";
-constexpr std::size_t limit = compiledTemplateArchiveLimit +
-                              2U * compiledTemplateSyntaxLimit;
+constexpr std::size_t limit =
+    compiledTemplateArchiveLimit + 2U * compiledTemplateSyntaxLimit;
 [[noreturn]] void reject(std::string_view reason) {
   throw std::invalid_argument("compiled project template: " +
                               std::string(reason));

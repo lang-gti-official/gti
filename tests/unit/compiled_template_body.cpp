@@ -196,24 +196,32 @@ void checkEmbeddedInputs() {
   std::vector<lang::EmbeddedFile> inputs;
   auto payload = std::make_shared<const std::string>(1024 * 1024 + 17, '\x07');
   for (const auto &token : tokens) {
-    if (token.kind != lang::TokenKind::EMBED_BYTES) continue;
+    if (token.kind != lang::TokenKind::EMBED_BYTES)
+      continue;
     lang::EmbeddedFile input;
     input.keyword = token;
-    input.storageOffset = inputs.empty() ? token.position : inputs[0].storageOffset;
+    input.storageOffset =
+        inputs.empty() ? token.position : inputs[0].storageOffset;
     input.spelling = "asset.bin";
     input.bytes = payload;
     inputs.push_back(std::move(input));
   }
-  auto original = lang::compileTemplateModule(parsed.declarations(), source, {}, inputs);
+  auto original =
+      lang::compileTemplateModule(parsed.declarations(), source, {}, inputs);
   auto encoded = lang::encodeTemplateModule(original);
   auto received = lang::decodeTemplateModule(encoded);
   require(received.embeddedFiles.size() == 2 &&
               *received.embeddedFiles[0].bytes == *payload &&
-              received.embeddedFiles[0].bytes == received.embeddedFiles[1].bytes,
+              received.embeddedFiles[0].bytes ==
+                  received.embeddedFiles[1].bytes,
           "embedded payload or shared storage lost");
   lang::verifyCompiledEmbeddedFiles(received, source);
   auto rejects = [](auto operation) {
-    try { operation(); } catch (const std::invalid_argument &) { return; }
+    try {
+      operation();
+    } catch (const std::invalid_argument &) {
+      return;
+    }
     throw std::runtime_error("invalid embedded metadata accepted");
   };
   auto broken = received;
@@ -223,17 +231,21 @@ void checkEmbeddedInputs() {
   ++broken.embeddedFiles[0].keyword.position;
   rejects([&] { lang::verifyCompiledEmbeddedFiles(broken, source); });
   broken = received;
-  broken.embeddedFiles[1].storageOffset = broken.embeddedFiles[1].keyword.position;
+  broken.embeddedFiles[1].storageOffset =
+      broken.embeddedFiles[1].keyword.position;
   rejects([&] { (void)lang::encodeTemplateModule(broken); });
   broken = received;
   broken.embeddedFiles[0].bytes.reset();
   rejects([&] { (void)lang::encodeTemplateModule(broken); });
   // Decoder must reject truncated payloads, malformed payload lengths and
   // trailing data even when an outer archive checksum has been recomputed.
-  rejects([&] { (void)lang::decodeTemplateModule(encoded.substr(0, encoded.size() - 1)); });
+  rejects([&] {
+    (void)lang::decodeTemplateModule(encoded.substr(0, encoded.size() - 1));
+  });
   rejects([&] { (void)lang::decodeTemplateModule(encoded + "x"); });
   const auto payloadAt = encoded.find(std::string(64, '\x07'));
-  require(payloadAt != std::string::npos && payloadAt >= 4, "missing embedded payload");
+  require(payloadAt != std::string::npos && payloadAt >= 4,
+          "missing embedded payload");
   auto malformed = encoded;
   malformed.replace(payloadAt - 4, 4, 4, '\xff');
   rejects([&] { (void)lang::decodeTemplateModule(malformed); });

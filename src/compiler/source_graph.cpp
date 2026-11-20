@@ -36,29 +36,33 @@ void SourceGraph::attachCompiledTemplate(
   std::unordered_set<const std::string *> seen;
   std::size_t total = 0;
   for (const auto &other : units) {
-    if (other.id == id) continue;
+    if (other.id == id)
+      continue;
     for (const auto &file : other.embeddedFiles)
       if (file.bytes && seen.insert(file.bytes.get()).second) {
         if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
-          throw std::invalid_argument("embedded files exceed the compilation limit");
+          throw std::invalid_argument(
+              "embedded files exceed the compilation limit");
         total += file.bytes->size();
       }
   }
   std::vector<EmbeddedFile> restored;
   for (const auto &file : module->embeddedFiles) {
-    if (!file.bytes) throw std::invalid_argument("missing compiled embedded input");
+    if (!file.bytes)
+      throw std::invalid_argument("missing compiled embedded input");
     if (seen.insert(file.bytes.get()).second) {
       if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
-        throw std::invalid_argument("embedded files exceed the compilation limit");
+        throw std::invalid_argument(
+            "embedded files exceed the compilation limit");
       total += file.bytes->size();
     }
     auto keyword = file.keyword;
     keyword.source = unit->path.string();
     restored.push_back({.keyword = std::move(keyword),
-                       .storageOffset = file.storageOffset,
-                       .spelling = file.spelling,
-                       .bytes = file.bytes,
-                       .digest = sourceTextDigest(*file.bytes)});
+                        .storageOffset = file.storageOffset,
+                        .spelling = file.spelling,
+                        .bytes = file.bytes,
+                        .digest = sourceTextDigest(*file.bytes)});
   }
   unit->embeddedFiles = std::move(restored);
   unit->compiledTemplate = std::move(module);

@@ -1211,8 +1211,8 @@ CompiledLibraryInputs prepareScalarConsumer(
   auto loaded = standardLibrary == StandardLibraryInput::Installed
                     ? loadExecutableInputs(effective, runtime, progress,
                                            std::move(overlays), archivedInputs)
-                    : CompiledLibraryInputs{
-                          loadCompilationInputs(effective, sourceLoader, progress, overlays)};
+                    : CompiledLibraryInputs{loadCompilationInputs(
+                          effective, sourceLoader, progress, overlays)};
   CompiledLibraryInputs inputs{std::move(loaded.compilation)};
   std::move(admitted).bind(inputs);
   std::ranges::move(loaded.imports, std::back_inserter(inputs.imports));
@@ -1300,7 +1300,8 @@ loadExecutableInputs(const CompilationRequest &request,
                      std::unordered_map<std::string, std::string> overlays,
                      std::span<const std::string> archivedInputs) {
   SourceLoader loader;
-  for (const auto &path : archivedInputs) loader.useArchivedEmbeddedInputs(path);
+  for (const auto &path : archivedInputs)
+    loader.useArchivedEmbeddedInputs(path);
   const auto source = [&] {
     return CompiledLibraryInputs{
         loadCompilationInputs(request, loader, progress, overlays)};

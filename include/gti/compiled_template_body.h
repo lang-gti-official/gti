@@ -27,10 +27,10 @@ struct CompiledTemplateModule {
   LifetimeNames lifetimeNames;
   std::vector<CompiledEmbeddedFile> embeddedFiles;
 };
-CompiledTemplateModule compileTemplateModule(std::span<const StmtPtr>,
-                                             std::string_view source,
-                                             const LifetimeNames &names = {},
-                                             std::span<const EmbeddedFile> embedded = {});
+CompiledTemplateModule
+compileTemplateModule(std::span<const StmtPtr>, std::string_view source,
+                      const LifetimeNames &names = {},
+                      std::span<const EmbeddedFile> embedded = {});
 LifetimeNames compiledTemplateLifetimeNames(const CompiledTemplateModule &,
                                             std::string_view path);
 // Return the source spelling needed by expression-text queries when a restored
@@ -40,7 +40,8 @@ std::optional<std::string> restoreTemplateBodies(std::span<const StmtPtr>,
                                                  std::string_view path);
 // Attest every archived site against ordinary lexical syntax. Payload bytes
 // were snapshotted at production; this never resolves or reads those paths.
-void verifyCompiledEmbeddedFiles(const CompiledTemplateModule &, std::string_view source);
+void verifyCompiledEmbeddedFiles(const CompiledTemplateModule &,
+                                 std::string_view source);
 std::string encodeTemplateModule(const CompiledTemplateModule &);
 CompiledTemplateModule decodeTemplateModule(std::string_view);
 inline constexpr std::string_view compiledTemplateMagic =
