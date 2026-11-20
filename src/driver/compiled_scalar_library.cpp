@@ -377,10 +377,11 @@ public:
   ScalarBackend(std::vector<CompiledScalarSignature> signatures,
                 SourceUnitId root, Backend &backend,
                 std::optional<ScalarSelection> selection = {},
-                std::vector<CompiledScalarImport> imported = {})
+                std::vector<CompiledScalarImport> imported = {},
+                CompiledMirBodies *mirOutput = nullptr)
       : signatures(std::move(signatures)), imports(std::move(imported)),
         root(root), producer(true), backend(backend),
-        selection(std::move(selection)) {}
+        selection(std::move(selection)), mirOutput(mirOutput) {}
   ScalarBackend(std::vector<CompiledScalarImport> imports, Backend &backend)
       : imports(std::move(imports)), backend(backend) {}
   bool interfaceNeedsSource() const { return needsSource; }
@@ -426,6 +427,16 @@ public:
         (void)libraryIdentity(signatures);
         bound = CompiledScalarUnitBuilder().bindScoped(std::move(program),
                                                        exports, imports);
+        if (mirOutput) {
+          for (const auto &binding : bound->compiledScalarBindings()) {
+            if (binding.imported)
+              continue;
+            const auto *function =
+                bound->mir().findFunctionInstance(binding.function);
+            if (auto body = projectCompiledMir(bound->mir(), *function))
+              mirOutput->emplace(binding.symbol, std::move(body));
+          }
+        }
       } else {
         bound = CompiledScalarUnitBuilder().bindImports(std::move(program),
                                                         imports);
@@ -444,6 +455,7 @@ private:
   bool needsSource = false;
   Backend &backend;
   std::optional<ScalarSelection> selection;
+  CompiledMirBodies *mirOutput = nullptr;
 };
 std::optional<ScalarSelection>
 producerSelection(const FrontendResult &frontend,
@@ -574,10 +586,17 @@ CompiledScalarLibraryResult buildScalarLibrary(
   auto frontend =
       detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
   auto selection = producerSelection(frontend, target, profile);
-  LlvmBackend native(libraryBackendOptions(request, profile));
+  const auto options = libraryBackendOptions(request, profile);
+  LlvmBackend native(options);
+  CompiledMirBodies optimizationBodies;
+  const bool optimizeImports =
+      options.optimization != LlvmCodegenOptimization::None &&
+      !options.debugInfo &&
+      options.instrumentation == LlvmInstrumentationMode::None;
   ScalarBackend backend(std::move(signatures), frontend.sourceGraph.entryUnit(),
                         native, std::move(selection),
-                        std::move(prepared.imports));
+                        std::move(prepared.imports),
+                        optimizeImports ? &optimizationBodies : nullptr);
   CompiledScalarLibraryResult result;
   result.sourceFiles = producerImplementations(frontend.sourceGraph);
   result.compilation = detail::generateArtifact(
@@ -616,7 +635,8 @@ CompiledScalarLibraryResult buildScalarLibrary(
         {id,
          std::move(prepared.dependencies),
          {{"unit.o", result.compilation.artifact->singleObject()}},
-         metadata});
+         metadata,
+         encodeCompiledMir(optimizationBodies)});
   }
   return result;
 }
@@ -676,6 +696,32 @@ std::string quotedInterfacePath(const std::filesystem::path &path) {
   }
   return result + "\"";
 }
+CompiledMirBodies checkedOptimizationBodies(
+    const LibraryBundle &bundle,
+    const std::vector<CompiledScalarSignature> &signatures) {
+  auto bodies = decodeCompiledMir(bundle.optimizationBodies);
+  if (bodies.empty())
+    return bodies;
+  std::size_t matched = 0;
+  for (const auto &signature : signatures) {
+    auto found = bodies.find(compiledScalarSymbol(signature));
+    if (found == bodies.end())
+      continue;
+    const auto parameters = decodedKey(signature).parameters;
+    if (signature.codegenAttributes.inlining == FunctionInlining::Never ||
+        signature.codegenAttributes.cold ||
+        !verifyCompiledMir(
+            *found->second, parameters, signature.result,
+            compiledMirInterfaceFields(signature.typeMetadata, parameters)))
+      throw std::invalid_argument(
+          "invalid compiled optimization MIR for exported signature");
+    ++matched;
+  }
+  if (matched != bodies.size())
+    throw std::invalid_argument(
+        "compiled optimization MIR has an unknown callable");
+  return bodies;
+}
 struct LibraryFacade {
   std::string path;
   std::string source;
@@ -688,6 +734,8 @@ struct AdmittedLibraries {
   std::vector<LibraryBundleDependency> dependencies;
   std::vector<std::string> symbols;
 
+  CompiledMirBodies optimizationBodies;
+
   void bind(CompiledLibraryInputs &inputs) && {
     auto &graph = inputs.compilation.sourceGraph;
     for (auto &facade : facades) {
@@ -695,8 +743,12 @@ struct AdmittedLibraries {
       if (!unit)
         continue;
       graph.markCompiledScalarInterface(unit);
-      for (auto &signature : facade.signatures)
-        inputs.imports.push_back({std::move(signature), unit});
+      for (auto &signature : facade.signatures) {
+        auto found = optimizationBodies.find(compiledScalarSymbol(signature));
+        inputs.imports.push_back(
+            {std::move(signature), unit,
+             found == optimizationBodies.end() ? nullptr : found->second});
+      }
     }
     std::ranges::move(objects, std::back_inserter(inputs.objects));
     std::ranges::move(dependencies, std::back_inserter(inputs.dependencies));
@@ -731,12 +783,15 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
   std::vector<Admission> admitted;
   std::map<std::string, std::size_t> libraries;
   std::size_t declarationCount = 0;
+  CompiledMirBodies optimizationBodies;
   for (auto &input : bundles) {
     auto signatures = readInterface(input.bundle.interfaceMetadata);
     declarationCount += signatures.size();
     if (declarationCount > 256)
       throw std::invalid_argument(
           "combined compiled interface exceeds 256 declarations");
+    auto bodies = checkedOptimizationBodies(input.bundle, signatures);
+    optimizationBodies.merge(bodies);
     auto identity = libraryIdentity(signatures);
     if (!libraries.emplace(identity, admitted.size()).second)
       throw std::invalid_argument("duplicate compiled library package/target");
@@ -957,8 +1012,9 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
                          "export module " + rootNames[index] + ";\n" + forwards,
                          {}});
   }
-  return {std::move(sources), std::move(facades), std::move(objects),
-          std::move(direct), std::move(directSymbols)};
+  return {std::move(sources),       std::move(facades),
+          std::move(objects),       std::move(direct),
+          std::move(directSymbols), std::move(optimizationBodies)};
 }
 CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &request, std::vector<ScalarBundleInput> bundles,
@@ -1100,13 +1156,7 @@ loadExecutableInputs(const CompilationRequest &request,
     std::string_view facade;
   };
   static constexpr InstalledModule modules[] = {
-      {"cmath", "std/cmath.gti",
-       "export module cmath;\n"
-       "export import \"detail/cmath_declarations.gti\";\n"
-       "export import \"../.gti-compiled-cmath.gti\";\n"},
-      {"random", "std/detail/random_engine.gti",
-       "export module detail.random_engine;\n"
-       "export import \"../../.gti-compiled-random.gti\";\n"},
+#include "gti/installed_stdlib_modules.inc"
   };
   std::optional<AdmissionEnvironment> system;
   struct LoadedModule {
@@ -1268,6 +1318,7 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
         std::make_shared<const std::string>(readCompiledLibraryFile(artifact));
     auto bundle = decodeLibraryBundle(*bytes);
     auto signatures = readInterface(bundle.interfaceMetadata);
+    (void)checkedOptimizationBodies(bundle, signatures);
     const auto owner = decodedKey(signatures.front()).owner;
     if (owner.package != target.package || owner.target != target.target)
       return {};

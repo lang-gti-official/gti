@@ -48,25 +48,10 @@ export namespace std {
     ~random_engine() {}
 
     uint64_t operator()() mut {
-      // Keep the xoshiro256++ transition visible to callers so a release
-      // loop can carry all four words in registers across draws.
-      uint64_t sum = gti_internal::integer_wrapping_add(this.state.s0, this.state.s3);
-      uint64_t result = gti_internal::integer_wrapping_add(this.rol64(sum, uint64_t(23)), this.state.s0);
-      uint64_t t = this.state.s1 << uint64_t(17);
-      this.state.s2 = this.state.s2 ^ this.state.s0;
-      this.state.s3 = this.state.s3 ^ this.state.s1;
-      this.state.s1 = this.state.s1 ^ this.state.s2;
-      this.state.s0 = this.state.s0 ^ this.state.s3;
-      this.state.s2 = this.state.s2 ^ t;
-      this.state.s3 = this.rol64(this.state.s3, uint64_t(45));
-      return result;
+      return std::detail::next_random(this.state);
     }
 
   private:
-    uint64_t rol64(uint64_t x, uint64_t k) {
-      return (x << (k & uint64_t(63))) | (x >> ((uint64_t(64) - k) & uint64_t(63)));
-    }
-
     mut std::detail::random_engine_state state;
   };
 }

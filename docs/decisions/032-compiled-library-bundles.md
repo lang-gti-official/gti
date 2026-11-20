@@ -191,8 +191,10 @@ LLVM optimization within the library boundary. Cross-library inline optimization
 requires verified body availability; non-generic inline candidates carry canonical
 verified MIR plus referenced type/declaration closure, whereas dependent generic
 bodies still require semantic recipes. Missing optional optimization bodies may
-use the external call, but missing language-required bodies must reject. Optional
-versioned LLVM bitcode for LTO is an additional member profile, never the language
+use the external call, but missing language-required bodies must reject. Concrete numeric bodies and borrowed numeric state now have a bounded,
+verified executable MIR projection, described in the
+[driver architecture](../architecture/build-and-driver.md#cross-library-optimization-mir).
+Optional versioned LLVM bitcode for LTO is an additional member profile, never the language
 metadata authority.
 
 ## Cost model and remaining design work
