@@ -622,7 +622,9 @@ def llvm_pin_contract(root):
     assert cmake.count("CMAKE_DISABLE_PRECOMPILE_HEADERS ON") == 1
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     # A stalled mirror must cost minutes, not the six-hour job limit.
-    assert "sudo timeout 300 apt-get" in toolchain and "Acquire::Retries=" in toolchain
+    run([sys.executable, str(root / "tests/runner/ci_apt_recovery.py"),
+         str(root / "scripts/configure_ci_toolchain.sh")], root)
+    assert 'sudo timeout --kill-after=30 "${limit}" apt-get' in toolchain and "Acquire::Retries=" in toolchain
     assert not re.search(r"^\s*sudo apt-get ", toolchain, re.MULTILINE), \
         "every apt-get call goes through the bounded, retried wrapper"
     assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
@@ -1851,6 +1853,12 @@ def archive_contract(root, cmake):
     with tempfile.TemporaryDirectory(prefix="gti-shared-release-archive-") as temporary:
         work = pathlib.Path(temporary)
         stage = work / "stage"
+        for triple in ("x86_64-unknown-linux", "arm64-apple-macos"):
+            for profile in ("dev", "release"):
+                directory = stage / "share/gti/precompiled-stdlib" / triple / profile
+                directory.mkdir(parents=True)
+                for module in ("cmath", "random"):
+                    (directory / f"{module}.gtilib").write_bytes(b"compiled stdlib fixture")
         for relative in required_files:
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)

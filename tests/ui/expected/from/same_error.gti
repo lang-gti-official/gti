@@ -1,0 +1,12 @@
+// Exact error propagation keeps its direct path even if from<E,E> exists.
+//@ run-pass
+enum Error { failed };
+for concept std::from<Error, Error> {
+  Error from(Error error) {
+    std::println("unexpected conversion");
+    return error;
+  }
+};
+expected<int, Error> source() { return unexpected(Error::failed); }
+expected<void, Error> target() { int value = ?source(); return; }
+int main() { return target().has_value() ? 1 : 0; }

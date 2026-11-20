@@ -10,6 +10,7 @@
 #include "gti/include_suggestions.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/mir.h"
+#include "gti/mir_verification_cache.h"
 #include "gti/parser.h"
 #include "gti/program_request.h"
 #include "gti/progress.h"
@@ -21,9 +22,11 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -81,6 +84,7 @@ struct FrontendOptions {
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;
+  std::shared_ptr<MirVerificationCache> mirVerificationCache;
   std::shared_ptr<FrontendCache> cache;
   std::unordered_map<std::string, std::uint64_t> sourceGenerations;
   // Exact digests learned from a completed snapshot for the corresponding
@@ -127,6 +131,9 @@ struct FrontendOptions {
   // `stopAfter == Mir`, MIR lowers each omitted instance as a signature-only
   // declaration and checks its callers against that declaration.
   bool lowerLibraryOnlyInstanceBodies = true;
+  // Confirm a scoped MIR rejection with complete library bodies in the
+  // same checked source snapshot. Used for editor diagnostic visibility.
+  bool confirmSignatureOnlyMir = false;
   // Report raw-pointer audit findings located inside compiler-trusted units
   // (the prelude and the standard library) to an application. Off by default:
   // such a finding describes the library's own implementation, which the
@@ -215,6 +222,14 @@ struct FrontendResult {
   // source-language (Semantics-phase) errors, so semanticValid is false too;
   // this records that the rejection came from MIR rather than semantics.
   bool mirBorrowRejected = false;
+  bool confirmedWithLibraryBodies = false;
+
+  [[nodiscard]] bool
+  needsLibraryBodyConfirmation(std::size_t omittedBodies) const {
+    return omittedBodies != 0 && !cancelled && sourceValid && syntaxValid &&
+           (semanticValid || mirBorrowRejected) && hirValid &&
+           failureMetadataValid && !mirValid;
+  }
   // Files consulted while discovering fixes, including negative candidates.
   // Editors must invalidate suggestions when any of these inputs changes.
   std::vector<std::filesystem::path> includeSuggestionInputs;
@@ -244,8 +259,8 @@ public:
   takeFrom(const std::shared_ptr<FrontendResult> &snapshot);
   [[nodiscard]] bool matchesSource(std::string_view source) const;
   std::optional<std::vector<Diagnostic>>
-  check(const std::string &source,
-        const std::atomic<bool> *cancel = nullptr) const;
+  check(const std::string &source, const std::atomic<bool> *cancel = nullptr,
+        bool *borrowProof = nullptr) const;
 
   // A completed recovery pass may also diagnose the body it recovered.
   // Establish local ownership only if the isolated checker reproduces every
@@ -257,7 +272,8 @@ public:
 private:
   std::optional<std::vector<Diagnostic>>
   checkEdit(const std::string &source, const std::atomic<bool> *cancel,
-            std::optional<std::size_t> recoveryLimit) const;
+            std::optional<std::size_t> recoveryLimit,
+            bool *borrowProof = nullptr) const;
   explicit EditorBodyDiagnostics(
       const std::shared_ptr<FrontendResult> &snapshot);
   std::shared_ptr<const FrontendResult> baseline;
@@ -291,13 +307,25 @@ public:
   analyzeParsed(const std::filesystem::path &entryPath,
                 FrontendResult parsed) const;
 
+  // Observe registered signatures, entry declarations that produced
+  // diagnostics, and the primary type-check result. Generic discovery and MIR
+  // may add further diagnostics. The observer is invocation-local and cannot
+  // escape through frontend caches.
+  enum class DiagnosticStage { Registered, Declaration, TypeChecking };
+  using DiagnosticCheckpoint =
+      std::function<void(DiagnosticStage, const FrontendResult &,
+                         const SemanticModel &, std::span<const Diagnostic>)>;
+  [[nodiscard]] FrontendResult
+  analyzeParsed(const std::filesystem::path &entryPath, FrontendResult parsed,
+                const DiagnosticCheckpoint &observer) const;
+
 private:
   [[nodiscard]] FrontendResult
   finishAnalysis(const std::filesystem::path &entryPath,
                  FrontendResult result) const;
   [[nodiscard]] FrontendResult
-  checkParsed(const std::filesystem::path &entryPath,
-              FrontendResult parsed) const;
+  checkParsed(const std::filesystem::path &entryPath, FrontendResult parsed,
+              const DiagnosticCheckpoint &observer = {}) const;
   static void
   appendParserDiagnostics(std::vector<Diagnostic> &destination,
                           const std::vector<ParseDiagnostic> &diagnostics,
@@ -306,6 +334,13 @@ private:
   template <typename DiagnosticType>
   static void append(std::vector<Diagnostic> &destination,
                      const std::vector<DiagnosticType> &source);
+
+  HirLoweringResult lowerHir(const FrontendResult &result,
+                             SemanticVisitor &semantic,
+                             bool includeLibraryBodies) const;
+  void verifyLowering(const std::filesystem::path &entryPath,
+                      FrontendResult &result, HirLoweringResult &hir,
+                      const SemanticModel &model) const;
 
   FrontendOptions options;
 };

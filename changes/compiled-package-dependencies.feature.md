@@ -1,0 +1,1 @@
+- Project targets can build a declared package dependency as a compiled GTI library and reuse its verified artifact across consumer edits.

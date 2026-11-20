@@ -1,0 +1,2 @@
+import numbers;
+int main() { return answer() + values::increment() == 42 ? 0 : 1; }

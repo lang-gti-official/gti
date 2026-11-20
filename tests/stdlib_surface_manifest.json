@@ -3925,7 +3925,6 @@
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
       "operations": [
-        "std::abs(float)",
         "std::acos(float)",
         "std::asin(float)",
         "std::atan(float)",
@@ -3949,8 +3948,7 @@
         "std::trunc(float)"
       ],
       "case_ids": [
-        "cmath",
-        "constexpr-library"
+        "cmath"
       ],
       "required_instantiations": [
         "binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"
@@ -3958,7 +3956,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_cmath.gti",
         "tests/cmath_runtime_test.py",
-        "stdlib/std/cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti",
         "runtime/src/math.cpp"
       ]
     },
@@ -4234,6 +4232,22 @@
       ]
     },
     {
+      "id": "detail.cmath-declarations",
+      "source": "stdlib/std/detail/cmath_declarations.gti",
+      "status": "executable",
+      "operations": [
+        "std::abs(float)"
+      ],
+      "case_ids": [
+        "cmath",
+        "constexpr-library"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti"
+      ]
+    },
+    {
       "id": "detail.function-pointer-core",
       "source": "stdlib/std/detail/function_pointer.gti",
       "status": "executable",
@@ -4335,6 +4349,21 @@
       "evidence": [
         "tests/ui/runtime/panic",
         "tests/panic_adoption_runtime_test.py"
+      ]
+    },
+    {
+      "id": "detail.random-engine",
+      "source": "stdlib/std/detail/random_engine.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::seed_random_engine"
+      ],
+      "case_ids": [
+        "random"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {
@@ -6550,6 +6579,7 @@
         "std::optional<std::optional<std::string>>"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "tests/fixtures/optional_lifecycle.gti",
         "tests/fixtures/optional_value.gti",
         "tests/ui/stdlib/optional/clone.gti",
@@ -6865,6 +6895,7 @@
       "source": "stdlib/prelude.gti",
       "status": "executable",
       "operations": [
+        "std::from",
         "std::tryable"
       ],
       "case_ids": [
@@ -6878,14 +6909,16 @@
         "residual as the return type",
         "temporary, moved and named copyable operands",
         "shared and exclusive borrowed success results",
-        "borrowed-result contract inactive for owned concrete payloads"
+        "borrowed-result contract inactive for owned concrete payloads",
+        "registered residual and error payload conversions, including constrained generic policies"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
         "tests/ui/expected/tryable_propagation.gti",
         "tests/ui/expected/tryable_propagation",
         "tests/ui/generics/protocol_concepts",
-        "examples/165-borrowed-payload-results.gti"
+        "examples/165-borrowed-payload-results.gti",
+        "tests/ui/expected/from"
       ]
     },
     {
@@ -6970,7 +7003,8 @@
       "required_instantiations": [],
       "evidence": [
         "tests/fixtures/random_engine.gti",
-        "stdlib/std/random.gti"
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {
@@ -7638,12 +7672,23 @@
       ]
     },
     {
-      "id": "string-view.sub-views",
+      "id": "string-view.text-operations",
       "source": "stdlib/std/string_view.gti",
       "status": "executable",
       "operations": [
+        "std::string_view::at",
+        "std::string_view::back",
+        "std::string_view::compare",
+        "std::string_view::contains",
+        "std::string_view::ends_with",
+        "std::string_view::find",
+        "std::string_view::front",
+        "std::string_view::npos",
+        "std::string_view::operator ordering",
         "std::string_view::remove_prefix",
         "std::string_view::remove_suffix",
+        "std::string_view::rfind",
+        "std::string_view::starts_with",
         "std::string_view::substr"
       ],
       "case_ids": [
@@ -7653,7 +7698,10 @@
         "literal-backed and owner-backed sources",
         "clamped count, empty result and position equal to size",
         "owner relay through by-value view parameters and view fields",
-        "in-place shrinking of a writable view"
+        "in-place shrinking of a writable view",
+        "counted search including embedded NUL and empty needles",
+        "unsigned-byte comparison and checked character access at runtime and compile time",
+        "argument-free substring with the original owner dependency"
       ],
       "evidence": [
         "tests/fixtures/text_view_subview.gti",
@@ -7686,6 +7734,7 @@
         "owned copy independent of foreign storage"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "examples/151-c-string-import.gti",
         "tests/ui/stdlib/string/c_string_import",
         "tests/ui/stdlib/string/c_string_import/import.gti",
@@ -7817,7 +7866,14 @@
         "std::string::replace",
         "std::string::rfind",
         "std::string::starts_with",
-        "std::string::substr"
+        "std::string::substr",
+        "std::string_view::compare(string&)",
+        "std::string_view::contains(string&)",
+        "std::string_view::ends_with(string&)",
+        "std::string_view::find(string&[,size_t])",
+        "std::string_view::operator comparisons with string",
+        "std::string_view::rfind(string&[,size_t])",
+        "std::string_view::starts_with(string&)"
       ],
       "case_ids": [
         "string-operations",
@@ -7826,13 +7882,15 @@
       ],
       "required_instantiations": [
         "embedded NUL",
-        "nested owner relay"
+        "nested owner relay",
+        "view text operations borrow owning operands for the call"
       ],
       "evidence": [
         "tests/ui/stdlib/string/operations_errors",
         "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
-        "tests/ui/classes/declaration_construction.gti"
+        "tests/ui/classes/declaration_construction.gti",
+        "tests/ui/stdlib/text/view_iterators"
       ]
     },
     {

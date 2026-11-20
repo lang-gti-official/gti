@@ -1,0 +1,13 @@
+// View search resolves and appears as a member in editor queries.
+//@ hover @find: std::string_view::find(
+//@ hover @find: char needle
+//@ signature @arguments: std::string_view::find(
+//@ completion @members: find rfind contains starts_with ends_with compare at front back !text_view_find
+import std.string_view;
+
+int main() {
+  std::string_view text = "gti";
+  auto hit = text./*@find*/find(/*@arguments*/'t');
+  text./*@members*/;  //~ ERROR GTI-P0001
+  return int(hit);
+}

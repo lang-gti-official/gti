@@ -3219,6 +3219,21 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     }
     if (loan != nullptr) {
       const auto *selected = source ? body.findPlace(*source) : nullptr;
+      // A formal's entry loan protects the whole referent, but a reference
+      // argument can select one of its owned fields. The field's exact
+      // address supplies the mapping, as it does for complete-set flow.
+      if (fields &&
+          (operand.kind == MirOperandKind::BorrowRead ||
+           operand.kind == MirOperandKind::BorrowWrite) &&
+          selected && selected->projections.size() > 1 &&
+          !selected->traits.containsBorrowedState &&
+          loan->additionalDependencies.empty() &&
+          mir_detail::referenceParameterContainsPlace(body, *loan,
+                                                      selected->id))
+        return {{.source = selected->id,
+                 .access = operand.kind == MirOperandKind::BorrowWrite
+                               ? AccessMode::Mutable
+                               : AccessMode::ReadOnly}};
       const bool rangeStorage =
           selected != nullptr && selected->root == MirPlaceRootKind::Binding &&
           selected->projections.empty() &&
@@ -17035,6 +17050,21 @@ public:
                 "evidence for every reachable normal return"));
       }
     }
+    if (function && !function->completeReturnBorrow &&
+        function->returnBorrowOrigin == BorrowOriginKind::Global &&
+        !function->returnBorrowPlace &&
+        (function->returnType.kind == SemanticType::Class ||
+         function->returnType.kind == SemanticType::Enum)) {
+      // A static carrier has no input dependency contract. Its body can
+      // nevertheless prove that every normal return selects an alternative
+      // without references (for example, a source-defined error adapter).
+      // Propagate only that independently reconstructed empty set, never an
+      // absent contract, an unknown body, or a vacuous non-returning proof.
+      auto observed = reconstruct(*function);
+      if (observed && observed->dependencies.empty() &&
+          wellFormed(*function, *observed))
+        summaries[id - 1] = std::move(*observed);
+    }
     states[id - 1] = State::Complete;
     return summaries[id - 1] ? &*summaries[id - 1] : nullptr;
   }
@@ -23476,8 +23506,10 @@ verifyMirProgramContracts(const MirProgram &program) {
   return result;
 }
 
-MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
-    const MirProgram &program, const MirProgram *verifiedInput) {
+MirVerificationResult
+mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
+                                               const MirProgram *verifiedInput,
+                                               VerificationSession *reuse) {
   MirVerificationResult result;
   // Prove inline sum containment finite before any recursive lifecycle query.
   // Type arguments alone are not storage edges: follow exact variant fields,
@@ -23844,7 +23876,7 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
     const MirBody *verifiedBody =
         verifiedInput ? findMirBody(*verifiedInput, address) : nullptr;
     if (!verifiedBody || *verifiedBody != *body)
-      appendVerification(result, verifyMirBody(*body, address.owner));
+      appendVerification(result, verifyMirBody(*body, address.owner, reuse));
     std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
     for (const auto &entry : body->programConstantSubstitutions)
       publishedConstants.emplace(entry.hirValue, &entry.constant);
@@ -24279,7 +24311,8 @@ MirVerificationResult mir_detail::verifyMirProgramWithVerifiedBodies(
 }
 
 MirVerificationResult verifyMirProgram(const MirProgram &program,
-                                       MirVerificationComponents components) {
+                                       MirVerificationComponents components,
+                                       mir_detail::VerificationSession *reuse) {
   if (components != requiredMirVerificationComponents) {
     MirVerificationResult result;
     result.errors.push_back(
@@ -24287,7 +24320,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
          .message = "MIR verification component set is incomplete or invalid"});
     return result;
   }
-  return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr);
+  return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr,
+                                                        reuse);
 }
 
 } // namespace lang

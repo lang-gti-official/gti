@@ -4,6 +4,7 @@
 
 #include "build_source_identity.h"
 #include "compiled_scalar_support.h"
+#include "file_digest.h"
 #include "gti/build_identity_config.h"
 #include "gti/llvm_backend.h"
 #include "sha256.h"
@@ -294,44 +295,6 @@ std::string cacheObjectFile(std::size_t index) {
 }
 
 using detail::IdentityBuilder;
-
-struct FileDigest {
-  std::string hash;
-  std::uintmax_t size = 0;
-
-  bool operator==(const FileDigest &) const = default;
-};
-
-std::optional<FileDigest> digestFile(const std::filesystem::path &path,
-                                     std::string &errorMessage) {
-  std::error_code error;
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    errorMessage = "cannot inspect '" + path.string() + "': " + error.message();
-    return std::nullopt;
-  }
-
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    errorMessage = "cannot read '" + path.string() + "'";
-    return std::nullopt;
-  }
-  Sha256 hash;
-  std::array<char, 64 * 1024> buffer{};
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const std::streamsize count = input.gcount();
-    if (count > 0) {
-      hash.update(
-          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-    }
-  }
-  if (!input.eof()) {
-    errorMessage = "cannot finish reading '" + path.string() + "'";
-    return std::nullopt;
-  }
-  return FileDigest{.hash = hash.finishHex(), .size = size};
-}
 
 std::string digestText(std::string_view text) {
   Sha256 hash;
@@ -1512,6 +1475,8 @@ buildCacheKey(const ExecutableBuildRequest &request,
               std::string &policyBypassDetail, bool compilationOnly = false) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
+  if (!inputs.standardLibraryBundleDigest.empty())
+    identity.add("stdlib.bundle", inputs.standardLibraryBundleDigest);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   if (embeddingBuild(request)) {
@@ -4223,6 +4188,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
+  std::vector<CompiledScalarImport> standardImports;
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
@@ -4231,7 +4197,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                 ? reusableCompiledScalarLibrarySnapshot(
                       request.compilation(), *request.compiledLibrary(),
                       request.compiledImports(),
-                      request.toolchain().runtimeLibrary, request.output())
+                      request.toolchain().runtimeLibrary, request.output(),
+                      &result.compiledSourceFiles)
                 : CompiledLibrarySnapshot{};
         if (reused) {
           result.status = ExecutableBuildStatus::Success;
@@ -4247,6 +4214,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         auto built = buildCompiledScalarLibraryTarget(
             request.compilation(), *request.compiledLibrary(),
             request.toolchain().runtimeLibrary, request.compiledImports());
+        result.libraryInterfaceNeedsSource = built.interfaceNeedsSource;
+        result.compiledSourceFiles = std::move(built.sourceFiles);
         result.compilation = std::move(built.compilation);
         compiledBundle = std::move(built.bundle);
       } else {
@@ -4256,6 +4225,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.compilation = std::move(imported.compilation);
         importedObjects = std::move(imported.objects);
       }
+    } catch (const CompiledLibrarySourceConflict &conflict) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.sourceFallbackManifest = conflict.sourceManifest;
+      result.driverDiagnostic = conflict.what();
+      return result;
     } catch (const std::exception &error) {
       result.status = ExecutableBuildStatus::CompilationFailure;
       result.driverDiagnostic =
@@ -4272,7 +4246,18 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     compilationInputs.sources = result.compilation.sources;
     compilationInputs.sourceValid = true;
   } else {
-    compilationInputs = loadCompilationInputs(request.compilation(), progress);
+    try {
+      auto prepared = loadStandardLibraryInputs(
+          request.compilation(), request.toolchain().runtimeLibrary, progress);
+      compilationInputs = std::move(prepared.compilation);
+      standardImports = std::move(prepared.imports);
+      importedObjects = std::move(prepared.objects);
+    } catch (const std::exception &error) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.driverDiagnostic =
+          "gti: compiled standard library: " + std::string(error.what());
+      return result;
+    }
   }
   if (!compilationInputs.succeeded()) {
     result.compilation = compileToSelectedBackend(
@@ -4643,9 +4628,15 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!compiledLibrary && !compiledImport && !reusedObject)
-    result.compilation = compileToSelectedBackend(
-        request.compilation(), std::move(compilationInputs), progress);
+  if (!compiledLibrary && !compiledImport && !reusedObject) {
+    if (standardImports.empty())
+      result.compilation = compileToSelectedBackend(
+          request.compilation(), std::move(compilationInputs), progress);
+    else
+      result.compilation = compileWithLibraryImports(
+          request.compilation(), std::move(compilationInputs),
+          std::move(standardImports), progress);
+  }
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =
@@ -5274,8 +5265,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
     if (request.compiledLibrary()) {
       if (auto diagnostic =
-              compiledScalarProducerInputDiagnostic(request.nativeInputs()))
+              compiledScalarProducerInputDiagnostic(request.nativeInputs())) {
+        result.libraryInterfaceNeedsSource = true;
         return rejectCompiled(*diagnostic);
+      }
     }
   }
   if (nativeObjectCache(request)) {

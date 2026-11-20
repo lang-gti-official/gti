@@ -1,0 +1,10 @@
+manifest-version = 1
+
+[package]
+name = "standard-library-consumer"
+version = "0.1.0"
+
+[targets.app]
+kind = "executable"
+defines = ["APP_FEATURE"]
+root = "src/main.gti"

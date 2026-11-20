@@ -10171,6 +10171,12 @@ reject wrong source/run/attempt/platform/configuration, incomplete or expired
 artifact sets and altered archives/checksums; orchestration-only success does
 not establish release evidence. Main-only full CI dispatch is the commissioning
 and artifact-recovery route, with the same required integration gates.
+`ci_release` exercises the CI apt retry wrapper with fake privileged commands:
+interrupted package configuration is repaired before retrying, both apt and dpkg
+have time and kill bounds, a failed repair never becomes installation success,
+and successful installs and index refreshes do not run recovery. Install attempts
+allow 900 seconds for downloading, unpacking and configuration; index refreshes
+and recovery allow 300 seconds, with 30 seconds before forced termination.
 `ci_release` additionally
 archives a staged fixture through the real packaging script and compares both
 channels' contents and checksums. The cache test's optional `--ccache` mode

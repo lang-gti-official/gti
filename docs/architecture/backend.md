@@ -231,6 +231,14 @@ A backend returns an in-memory `BackendArtifact`; file publication, native
 compiler invocation, process handling, and final artifact replacement belong
 to the reusable driver.
 
+Native object bytes live in `BackendArtifact::objects`, in link order;
+`contents` holds source representations such as LLVM IR, MIR and native
+headers. Consumers that explicitly require one compilation unit use
+`singleObject()`, which rejects a non-object artifact or any object count
+other than one. Native linking consumes the complete ordered object list.
+Test harnesses and evidence exporters follow the same contract: an empty
+source field is not evidence that native generation failed.
+
 `BackendInput` no longer exists. `CppBackend`, `MirBackend`, and
 `NativeHeaderBackend` all verify and consume only `LoweredProgram`.
 

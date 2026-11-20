@@ -9,6 +9,7 @@
 #include "mir_source_debug.h"
 #include "mir_storage_effects.h"
 #include "mir_verification_queries.h"
+#include "mir_verification_session.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -11859,9 +11860,156 @@ static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
   return {};
 }
 
+// Two boundary markers for the same dynamic evaluation would destroy its
+// temporaries twice. Reduce the query to the CFG and the points at which an
+// evaluation restarts. Instruction identities are retained only for
+// diagnostics.
+std::optional<std::pair<MirBlockId, MirInstructionId>>
+mir_detail::conflictingExpressionBoundaries(
+    const MirBody &body, const std::vector<std::size_t> &markerCounts,
+    const MirDominanceInfo &dominance, mir_detail::VerificationSession *reuse) {
+  struct Marker {
+    MirBlockId block;
+    MirInstructionId instruction;
+    bool beforeRestart;
+  };
+  struct Expression {
+    std::vector<Marker> markers;
+    std::vector<MirBlockId> restarts;
+  };
+  std::vector<Expression> groups;
+  std::unordered_map<std::size_t, std::size_t> byExpression;
+  std::unordered_map<HirValueId, std::vector<std::size_t>> byRoot;
+  for (const auto &expr : body.fullExpressions) {
+    if (markerCounts[expr.id - 1] < 2)
+      continue;
+    const auto group = groups.size();
+    byExpression.emplace(expr.id, group);
+    groups.emplace_back();
+    for (auto root : expr.roots)
+      if (root != 0)
+        byRoot[root].push_back(group);
+  }
+  if (groups.empty())
+    return std::nullopt;
+
+  std::vector<std::vector<MirBlockId>> edges;
+  edges.reserve(body.blocks.size());
+  for (const auto &block : body.blocks) {
+    edges.push_back(successors(block.terminator));
+    const auto restart = [&](HirValueId value) {
+      auto found = byRoot.find(value);
+      if (found == byRoot.end())
+        return;
+      for (auto group : found->second) {
+        auto &stops = groups[group].restarts;
+        if (stops.empty() || stops.back() != block.id)
+          stops.push_back(block.id);
+      }
+    };
+    for (const auto &insn : block.instructions) {
+      if (insn.fullExpressionEnd == 0) {
+        restart(insn.hirValue);
+      } else if (auto found = byExpression.find(insn.fullExpressionEnd);
+                 !insn.tombstone && found != byExpression.end()) {
+        auto &group = groups[found->second];
+        group.markers.push_back(
+            {block.id, insn.id,
+             group.restarts.empty() || group.restarts.back() != block.id});
+      }
+    }
+    restart(block.terminator.hirValue);
+  }
+
+  // Exact query arguments. The entry and ordered edges determine dominance,
+  // including unreachable blocks. Source spans, owners and the numeric HIR
+  // ids used to discover restarts have no part in this proof.
+  std::vector<std::size_t> key;
+  if (reuse) {
+    key = {body.entry, edges.size()};
+    for (const auto &targets : edges) {
+      key.push_back(targets.size());
+      key.insert(key.end(), targets.begin(), targets.end());
+    }
+    for (const auto &group : groups) {
+      key.push_back(group.restarts.size());
+      key.insert(key.end(), group.restarts.begin(), group.restarts.end());
+      key.push_back(group.markers.size());
+      for (const auto &marker : group.markers) {
+        key.push_back(marker.block);
+        key.push_back(marker.beforeRestart);
+      }
+    }
+    if (reuse->knowsExclusiveBoundaries(key))
+      return std::nullopt;
+  }
+
+  // Walk once per source marker, looking for every other marker before a
+  // restart. A backedge into a loop enclosing the source begins a new
+  // iteration even if an argument fails before the outer root executes.
+  std::vector<std::size_t> visited(edges.size() + 1);
+  std::vector<bool> stops(edges.size() + 1);
+  std::vector<MirBlockId> pending;
+  std::size_t walk = 0;
+  for (const auto &group : groups) {
+    std::unordered_map<MirBlockId, std::vector<std::size_t>> targets;
+    for (std::size_t index = 0; index < group.markers.size(); ++index)
+      targets[group.markers[index].block].push_back(index);
+    for (auto block : group.restarts)
+      stops[block] = true;
+    using Pair = std::pair<std::size_t, std::size_t>;
+    std::optional<Pair> firstConflict;
+    for (std::size_t index = 0; index < group.markers.size(); ++index) {
+      const auto origin = group.markers[index].block;
+      const auto conflict = [&](std::size_t other) {
+        const Pair pair = std::minmax(index, other);
+        if (!firstConflict || pair < *firstConflict)
+          firstConflict = pair;
+      };
+      // In one block the earlier marker always reaches the later one.
+      for (auto other : targets.at(origin))
+        if (other > index)
+          conflict(other);
+      ++walk;
+      const auto enqueue = [&](MirBlockId predecessor) {
+        for (auto next : edges[predecessor - 1]) {
+          if (visited[next] == walk ||
+              (dominance.dominates(next, predecessor) &&
+               dominance.dominates(next, origin)))
+            continue;
+          visited[next] = walk;
+          pending.push_back(next);
+        }
+      };
+      enqueue(origin);
+      while (!pending.empty()) {
+        const auto block = pending.back();
+        pending.pop_back();
+        if (const auto found = targets.find(block); found != targets.end())
+          for (auto other : found->second)
+            if (group.markers[other].block != origin &&
+                group.markers[other].beforeRestart)
+              conflict(other);
+        if (!stops[block])
+          enqueue(block);
+      }
+    }
+    if (firstConflict) {
+      const auto &later = group.markers[firstConflict->second];
+      return std::pair{later.block, later.instruction};
+    }
+    for (auto block : group.restarts)
+      stops[block] = false;
+  }
+  if (reuse)
+    reuse->rememberExclusiveBoundaries(std::move(key));
+  return std::nullopt;
+}
+
 static MirVerificationResult
 verifyMirBodyImpl(const MirBody &body, std::size_t owner,
-                  MirPlaceObservationSink *observations) {
+                  MirPlaceObservationSink *observations,
+                  mir_detail::VerificationSession *reuse = nullptr) {
   const mir_detail::MirBodyReadScope readScope(body);
   if (auto sourceDebug = verifyMirSourceDebugStructure(body, owner);
       !sourceDebug.valid())
@@ -14717,8 +14865,6 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                                  0);
   std::vector<std::size_t> primaryFullExpressionMarkers(
       body.fullExpressions.size(), 0);
-  std::vector<std::vector<const MirInstruction *>> fullExpressionMarkerRows(
-      body.fullExpressions.size());
   std::vector<std::size_t> cleanupBoundaryMarkers(body.cleanupBoundaries.size(),
                                                   0);
   std::vector<std::size_t> failureParameterCounts(body.failureRecords.size(),
@@ -15123,8 +15269,6 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         if (!instruction.earlyExitFullExpressionEnd) {
           ++primaryFullExpressionMarkers[instruction.fullExpressionEnd - 1];
         }
-        fullExpressionMarkerRows[instruction.fullExpressionEnd - 1].push_back(
-            &instruction);
         const MirFullExpression &expression =
             body.fullExpressions[instruction.fullExpressionEnd - 1];
         const bool statementBoundary = expression.statement != 0;
@@ -16735,7 +16879,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                    "value-use index count does not match MIR operands");
   }
 
-  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  const std::optional<MirDominanceInfo> dominance =
+      computeMirDominance(body, reuse);
   if (!dominance) {
     return failure(body, owner, "MIR dominance analysis rejected the body CFG");
   }
@@ -17627,91 +17772,12 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
   }
 
-  const auto markerCanReach = [&](const MirInstruction &from,
-                                  const MirInstruction &to,
-                                  const MirFullExpression &expression) {
-    const MirBlockId fromBlock = instructionBlocks.at(from.id);
-    const MirBlockId toBlock = instructionBlocks.at(to.id);
-    if (fromBlock == toBlock) {
-      return instructionOrders.at(from.id) < instructionOrders.at(to.id);
-    }
-    const auto beginsNextEvaluation = [&](const MirBlock &block) {
-      const auto isRoot = [&](HirValueId value) {
-        return value != 0 &&
-               std::find(expression.roots.begin(), expression.roots.end(),
-                         value) != expression.roots.end();
-      };
-      for (const MirInstruction &instruction : block.instructions) {
-        if (instruction.id == to.id) {
-          return false;
-        }
-        // Boundary lifecycle instructions repeat the source root identity;
-        // only an ordinary root-producing instruction starts a new dynamic
-        // evaluation of this full expression.
-        if (instruction.fullExpressionEnd == 0 &&
-            isRoot(instruction.hirValue)) {
-          return true;
-        }
-      }
-      return block.id != toBlock && isRoot(block.terminator.hirValue);
-    };
-    std::queue<MirBlockId> pendingBlocks;
-    std::unordered_set<MirBlockId> visitedBlocks;
-    const auto entersNextIteration = [&](MirBlockId predecessor,
-                                         MirBlockId successor) {
-      // A source full expression cannot straddle an enclosing loop's
-      // backedge. In the next iteration, an argument may propagate an error
-      // before the expression's outer call/root instruction executes. Root
-      // identity alone therefore cannot distinguish those two evaluations.
-      return dominance->dominates(successor, predecessor) &&
-             dominance->dominates(successor, fromBlock);
-    };
-    const MirBlock *origin = body.findBlock(fromBlock);
-    if (origin != nullptr) {
-      for (const MirBlockId successor : successors(origin->terminator)) {
-        if (!entersNextIteration(fromBlock, successor)) {
-          pendingBlocks.push(successor);
-        }
-      }
-    }
-    while (!pendingBlocks.empty()) {
-      const MirBlockId candidate = pendingBlocks.front();
-      pendingBlocks.pop();
-      if (!visitedBlocks.insert(candidate).second) {
-        continue;
-      }
-      const MirBlock *block = body.findBlock(candidate);
-      if (block == nullptr || beginsNextEvaluation(*block)) {
-        continue;
-      }
-      if (candidate == toBlock) {
-        return true;
-      }
-      for (const MirBlockId successor : successors(block->terminator)) {
-        if (!entersNextIteration(candidate, successor)) {
-          pendingBlocks.push(successor);
-        }
-      }
-    }
-    return false;
-  };
-  for (std::size_t expressionIndex = 0;
-       expressionIndex < fullExpressionMarkerRows.size(); ++expressionIndex) {
-    const std::vector<const MirInstruction *> &markers =
-        fullExpressionMarkerRows[expressionIndex];
-    const MirFullExpression &expression = body.fullExpressions[expressionIndex];
-    for (std::size_t left = 0; left < markers.size(); ++left) {
-      for (std::size_t right = left + 1; right < markers.size(); ++right) {
-        if (markerCanReach(*markers[left], *markers[right], expression) ||
-            markerCanReach(*markers[right], *markers[left], expression)) {
-          return failure(body, owner,
-                         "full-expression boundary markers are not on mutually "
-                         "exclusive control-flow paths",
-                         instructionBlocks.at(markers[right]->id),
-                         markers[right]->id);
-        }
-      }
-    }
+  if (const auto conflict = mir_detail::conflictingExpressionBoundaries(
+          body, fullExpressionMarkers, *dominance, reuse)) {
+    return failure(body, owner,
+                   "full-expression boundary markers are not on mutually "
+                   "exclusive control-flow paths",
+                   conflict->first, conflict->second);
   }
 
   const auto precedingFullExpressionDrops = [&](const MirBlock &markerBlock,
@@ -18041,8 +18107,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
   return verifyMirLoanFlow(body, owner, {}, nullptr, nullptr, {}, observations);
 }
 
-MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
-  return verifyMirBodyImpl(body, owner, nullptr);
+MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner,
+                                    mir_detail::VerificationSession *reuse) {
+  return verifyMirBodyImpl(body, owner, nullptr, reuse);
 }
 
 static mir_detail::MirExistingPlaceQueryBatch verifyMirBodyWithPlaceQueriesImpl(

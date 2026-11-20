@@ -155,7 +155,37 @@ the same program and source graph to semantic analysis, HIR and MIR. Publication
 runs outside the compiler crash guard and checks both the document generation
 and the inputs read by the parser. A parser quick fix can be applied at this
 stage while its root generation, source text and dependencies are still current.
-Only the completed snapshot serves navigation.
+Definition and reference lookups use the completed snapshot.
+
+On open, clients can request progressive diagnostics with the boolean
+`initializationOptions.openFileDiagnostics`. The bundled Neovim configuration
+enables it. Standard `textDocument/publishDiagnostics` notifications for the
+open URI carry the document version and an extra `gtiDiagnosticStage` field
+while verification is pending. A `syntax` notification reports parser or
+loader findings. A `declaration` notification reports errors from the first
+completed entry-file declaration with reportable errors. If that stage has no
+findings, `typeChecking` reports the primary semantic result. An empty list at
+this point means primary type checking found no issue in the open file.
+Generic instantiation, cross-function effects and MIR borrow and lifetime
+verification can still report errors for the same version.
+
+The worker performs the ordinary configured analysis and its verification
+fallbacks. It hands an owned diagnostic list to a publisher outside crash
+recovery and continues checking. On open, once the compiler registers the
+project's declarations, it can answer hovers over ordinary function and method
+names, enum names and type aliases in the open file. These replies use the
+resolved signature, declaration documentation and exact name range. They can
+arrive before the first type-check diagnostics. A generic callable can acquire
+contracts from its body, and separate declarations and definitions can share
+documentation. Those hovers wait for the existing semantic checkpoints.
+
+At a successful primary type check the worker publishes the full set of
+declaration hovers while MIR verification continues. A hover over a use and
+other semantic queries wait for the completed snapshot. Edits and dependency changes invalidate these results.
+Each partial publication checks the root generation and the sources
+actually read, preserves other roots’ diagnostics, and finishes before the
+completed publication. Clients that omit the option receive the completed
+open-file result as before.
 
 The syntax stage can withdraw an earlier syntax diagnostic when a repair
 parses successfully. If that publication would hide a semantic diagnostic
@@ -178,14 +208,29 @@ failed text for that root. If the user repairs the body with different text,
 the isolated checker can replay the failed body. It can withdraw the recovery
 diagnostics only when it reproduces the complete published set, including the
 source ranges and related information, and can check the new body. An error
-from another declaration or a MIR borrow rejection keeps the full check in
-charge of clearing it.
+from another declaration remains the responsibility of the full check.
+
+For an eligible body edit with valid types, the worker lowers that function
+and its concrete callees against the retained semantic facts. It runs the
+compiler’s MIR borrow and cleanup checks. A rejection owned by the edited
+function can publish immediately, together with its local loan locations.
+A subsequent repair can withdraw that rejection after the same checks pass.
+Clients that enable staged diagnostics see `borrowChecking` on these updates.
+Incomplete lowering, nonlocal findings or a changed dependency defer the
+answer to project verification.
 
 The complete frontend still checks callers, lifetimes, cleanup and MIR for
 every settled edit. Its diagnostics replace the partial result and its snapshot
 serves navigation and other requests. Edits to declarations, generic or
 compile-time bodies, or functions with inferred reference results use that
 syntax publication followed by complete analysis.
+
+Full verification shares compiler-owned dominance and cleanup-path proofs across
+revisions. Within one revision each failure-effect round reuses bodies whose
+callee effects still agree. The frontend trace reports fresh and reused body
+lowerings, structural proof hits and whether the finished snapshot passed MIR.
+These counters describe the complete check separately from early diagnostics.
+See [MIR lowering and verification](mir.md#lowering-and-verification).
 
 Missing-definition diagnostics from concrete generic instances retain the
 frontend's outer requesting call as primary, including calls through an included
@@ -995,8 +1040,12 @@ declarations" in [mir.md](mir.md)). Some MIR rules still verify a call or a
 summary only against a lowered body, so a signature-only analysis can be
 rejected where complete lowering is accepted, never the reverse. The LSP
 therefore publishes a signature-only analysis that MIR accepts, and when MIR
-rejects one it analyses the snapshot again with library-only bodies and
-publishes that result. After a clean confirmation, up to eight subsequent
+rejects one it retains the parsed program and its live semantic environment.
+HIR discovers and lowers the required library bodies in that environment, and
+MIR verifies the resulting program, including borrow, lifetime, cleanup and
+persistent-storage checks. Only the confirmation's diagnostics are published.
+A previously unmet semantic demand still takes the ordinary bounded demand
+path. This reuse is confined to the current source snapshot. After a clean confirmation, up to eight subsequent
 successful edits in the same open document start with complete library bodies.
 An error before HIR preserves this preference. Closing the file, analysing a
 dependency or project change, or exhausting the window restores the ordinary

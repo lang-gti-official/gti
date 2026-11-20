@@ -1,0 +1,5 @@
+// Typed macro arguments retain the selected constant-result type through cloning.
+//@ run-pass
+#macro uint8_t narrow(uint8_t value) { return value; }
+#macro uint8_t twice(uint8_t value) { return narrow!(value); }
+int main() { return twice!((200 + 100) - 200) == 100 ? 0 : 1; }

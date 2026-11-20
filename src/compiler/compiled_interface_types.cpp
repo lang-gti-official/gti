@@ -13,6 +13,7 @@
 namespace lang {
 namespace {
 constexpr std::string_view magic = "gti.nominal-interface.2:";
+constexpr std::string_view aliasMagic = "gti.nominal-interface.3:";
 constexpr std::size_t limit = 1024 * 1024;
 struct Field {
   std::string name, type, initial;
@@ -33,6 +34,7 @@ struct Nominal {
 struct Interface {
   PersistentDeclarationOwner owner;
   std::vector<Nominal> types;
+  std::map<std::string, std::string> aliases;
 };
 [[noreturn]] void invalid(std::string_view message) {
   throw std::invalid_argument("compiled nominal interface: " +
@@ -80,9 +82,9 @@ struct Reader {
   }
 };
 std::string encode(const Interface &value) {
-  if (value.types.empty())
+  if (value.types.empty() && value.aliases.empty())
     return {};
-  std::string out(magic);
+  std::string out(value.aliases.empty() ? magic : aliasMagic);
   put(out, value.owner.package);
   put(out, value.owner.target);
   put(out, value.owner.module);
@@ -113,14 +115,22 @@ std::string encode(const Interface &value) {
       put(out, std::to_string(constant.magnitude));
     }
   }
+  if (!value.aliases.empty()) {
+    put(out, std::to_string(value.aliases.size()));
+    for (const auto &[name, target] : value.aliases) {
+      put(out, name);
+      put(out, target);
+    }
+  }
   return out;
 }
 Interface decode(std::string_view bytes) {
   if (bytes.empty())
     return {};
-  if (bytes.size() > limit || !bytes.starts_with(magic))
+  const bool hasAliases = bytes.starts_with(aliasMagic);
+  if (bytes.size() > limit || (!hasAliases && !bytes.starts_with(magic)))
     invalid("unsupported metadata");
-  Reader reader{bytes.substr(magic.size())};
+  Reader reader{bytes.substr((hasAliases ? aliasMagic : magic).size())};
   Interface result;
   result.owner = {reader.get(), reader.get(), reader.get(), {}};
   const auto count = reader.number(64);
@@ -181,6 +191,17 @@ Interface decode(std::string_view bytes) {
         (!t.enumeration && (!t.underlying.empty() || !t.values.empty())))
       invalid("inconsistent declaration shape");
     result.types.push_back(std::move(t));
+  }
+  if (hasAliases) {
+    const auto aliasCount = reader.number(256);
+    for (std::size_t i = 0; i < aliasCount; ++i) {
+      auto name = reader.get();
+      if (!isCompiledInterfaceName(name) ||
+          std::any_of(result.types.begin(), result.types.end(),
+                      [&](const auto &n) { return n.name == name; }) ||
+          !result.aliases.emplace(std::move(name), reader.get()).second)
+        invalid("invalid or duplicate public alias");
+    }
   }
   if (!reader.bytes.empty() || encode(result) != bytes)
     invalid("noncanonical metadata");
@@ -384,11 +405,10 @@ std::string initialSource(const Field &field, const Interface &interface,
                           const PersistentTypeRegistry &registry,
                           std::string_view aliasPrefix) {
   const auto type = readPersistentType(field.type, registry);
-  if (field.initial.empty()) {
-    if (type.kind != SemanticType::Class)
-      invalid("scalar field requires a default");
+  // Omitted initializers must remain absent in the consumer. Its ordinary
+  // construction checks then require the same fields as the producer.
+  if (field.initial.empty())
     return {};
-  }
   const char kind = field.initial.front();
   auto payload = std::string_view(field.initial).substr(1);
   if (kind == 'i') {
@@ -521,7 +541,8 @@ std::string
 projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
                               const PersistentDeclarationOwner &owner,
                               std::span<const SemanticType> roots,
-                              std::span<const CompiledInterfaceUnit> units) {
+                              std::span<const CompiledInterfaceUnit> units,
+                              std::span<const CompiledInterfaceAlias> aliases) {
   validateCompiledInterfaceUnits(units);
   std::map<std::string, SemanticType> closure;
   std::function<void(const SemanticType &)> collect =
@@ -556,7 +577,14 @@ projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
       };
   for (const auto &type : roots)
     collect(type);
-  Interface value{owner, {}};
+  if (aliases.size() > 256)
+    invalid("too many public aliases");
+  for (const auto &alias : aliases) {
+    if (!plainValue(alias.type))
+      invalid("public alias requires source interface metadata");
+    collect(alias.type);
+  }
+  Interface value{.owner = owner};
   PersistentTypeRegistry registry;
   for (const auto &[name, type] : closure)
     bind(registry,
@@ -567,6 +595,11 @@ projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
     value.types.push_back(project(
         program, ownerFor(sourceUnit(program, type), root, owner, units), type,
         registry));
+  for (const auto &alias : aliases)
+    if (!value.aliases
+             .emplace(alias.name, writePersistentType(alias.type, registry))
+             .second)
+      invalid("duplicate public alias");
   const auto bytes = encode(value);
   (void)compiledInterfaceTypeSource(
       bytes); // Also verify closure, recipes and cycles.
@@ -592,7 +625,7 @@ compiledInterfaceTypeRegistry(const LoweredProgram &program, SourceUnitId root,
       invalid("nominal metadata root owner disagrees with its library");
   PersistentTypeRegistry registry;
   std::vector<SemanticType> types;
-  Interface expected{value.owner, {}};
+  Interface expected{.owner = value.owner};
   for (const auto &n : value.types) {
     const auto definingUnit = unitFor(n.owner, root, value.owner, units);
     std::optional<SemanticType> type;
@@ -614,7 +647,25 @@ compiledInterfaceTypeRegistry(const LoweredProgram &program, SourceUnitId root,
     types.push_back(*type);
     expected.types.push_back(n);
   }
-  Interface actual{value.owner, {}};
+  if (!value.aliases.empty()) {
+    std::set<std::string_view> matched;
+    for (const auto &d : program.declarations()) {
+      const auto *alias = std::get_if<LoweredTypeAliasDeclaration>(&d.payload);
+      if (d.ownerClass || !alias || alias->sourceUnit != root)
+        continue;
+      const auto target = value.aliases.find(alias->qualifiedName);
+      if (target == value.aliases.end())
+        continue;
+      if (!matched.insert(alias->qualifiedName).second ||
+          !alias->explicitlyExported || alias->compilerPrivate || d.generic ||
+          !plainValue(alias->type) ||
+          writePersistentType(alias->type, registry) != target->second)
+        invalid("imported alias contract mismatch");
+    }
+    if (!allowUnreachedDeclarations && matched.size() != value.aliases.size())
+      invalid("imported alias is missing");
+  }
+  Interface actual{.owner = value.owner};
   for (std::size_t i = 0; i < types.size(); ++i)
     actual.types.push_back(
         project(program, expected.types[i].owner, types[i], registry));
@@ -635,8 +686,11 @@ compiledInterfaceDependencies(std::string_view bytes) {
 std::vector<std::string>
 compiledInterfaceDeclarationNames(std::string_view bytes) {
   std::vector<std::string> result;
-  for (const auto &type : decode(bytes).types)
+  const auto interface = decode(bytes);
+  for (const auto &type : interface.types)
     result.push_back(type.name);
+  for (const auto &[name, target] : interface.aliases)
+    result.push_back(name);
   return result;
 }
 std::string compiledInterfaceTypeSource(std::string_view bytes,
@@ -705,6 +759,15 @@ std::string compiledInterfaceTypeSource(std::string_view bytes,
   };
   for (std::size_t i = 0; i < value.types.size(); ++i)
     emit(i);
+  for (const auto &[name, target] : value.aliases) {
+    const auto type = readPersistentType(target, registry);
+    if (!plainValue(type))
+      invalid("unsupported public alias target");
+    source += compiledInterfaceNamespaceSource(
+        name,
+        "export using " + std::string(compiledInterfaceBaseName(name)) + " = " +
+            compiledInterfaceTypeSpelling(type, registry, aliasPrefix) + ";\n");
+  }
   return source;
 }
 } // namespace lang

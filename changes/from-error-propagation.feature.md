@@ -1,0 +1,1 @@
+Add `std::from<To, From>` conversions and automatic error conversion during prefix `?` propagation, including constrained generic error policies and user-defined result carriers. Conformance blocks accept bare type parameters with checked ownership and overlap rules.

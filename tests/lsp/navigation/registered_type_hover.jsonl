@@ -1,0 +1,22 @@
+// Alias and enum declaration hovers precede type checking, while a type use waits for verified semantic lookup.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "/// Wire width.\nusing Count = uint32_t;\nenum Color : uint8_t { Red };\nint main() { Count count = 1; return 0; }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "/// Wire width.\nusing Count = uint32_t;\nenum Color : uint8_t { Red };\nint main() { Count count = 1; return 0; }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 8}}, "id": 5}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 7}}, "id": 6}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 3, "character": 14}}, "id": 7}}
+{"expect": {"id": 5, "result": {"contents": {"kind": "plaintext", "value": "using Count = uint32_t\n\nWire width."}}}}
+{"expect": {"id": 6, "result": {"contents": {"kind": "plaintext", "value": "enum Color : uint8_t"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [], "gtiDiagnosticStage": "typeChecking"}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"expect": {"id": 7, "result": {"contents": {"kind": "plaintext"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 8}}, "id": 15}}
+{"expect": {"id": 15, "result": {"contents": {"kind": "plaintext", "value": "using Count = uint32_t\n\nWire width."}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 7}}, "id": 16}}
+{"expect": {"id": 16, "result": {"contents": {"kind": "plaintext", "value": "enum Color : uint8_t"}}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

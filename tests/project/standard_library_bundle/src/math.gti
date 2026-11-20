@@ -1,0 +1,2 @@
+export module math;
+export import std.cmath;

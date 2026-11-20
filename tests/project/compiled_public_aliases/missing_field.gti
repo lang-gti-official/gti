@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { units::Bounds range = {.weight = 3}; return range.weight; }

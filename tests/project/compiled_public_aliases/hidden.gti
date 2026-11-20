@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { HiddenAlias flag = true; return flag ? 0 : 1; }

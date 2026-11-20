@@ -92,7 +92,7 @@ public surface includes:
 | --- | --- |
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
-| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories; `substr`, `remove_prefix` and `remove_suffix` select part of it without copying |
+| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories, with text search, comparison, and subviews |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
@@ -637,7 +637,8 @@ The current implemented foundation includes:
   the old payload before taking the new one. A consuming `value() &&` moves
   the payload out. Both `optional(T)` and `optional(nullopt_t)` are `implicit`,
   so a declaration or declared value return accepts one exact payload or
-  `std::nullopt`. A named move-only payload needs `std::move`; a string literal
+  `std::nullopt`. The empty marker is a `constexpr nullopt_t` object.
+  A named move-only payload needs `std::move`; a string literal
   cannot chain through `string` into `optional<string>`. The ordinary
   `std::tryable` implementation enables `?` propagation. A moved source cannot
   be used under GTI's ordinary ownership rules. Storage is now an ordinary
@@ -1612,8 +1613,25 @@ cursor into a local view shell remains invalid. The implementation names in
 `std::detail` remain private. See the
 [counted text iteration example](../../examples/146-counted-text-view-iteration.gti).
 
+With `import std.string_view`, a view supports `find`, `rfind`, `contains`,
+`starts_with`, and `ends_with` with a view or a character. Import
+`std.string` for overloads that borrow a `std::string` operand for the
+duration of the call. Search positions are byte offsets. `find` starts at
+the given position (default zero), and `rfind` searches backward from the
+latest allowed starting position (default the end). An empty needle matches
+at every valid offset, including `size()`. A miss returns
+`std::string_view::npos`. Embedded NUL bytes participate in all operations.
+
+`compare` and the relational operators use lexicographic unsigned-byte
+order. Comparisons accept another view or an owning string. `at`,
+`front`, and `back` return a `char` by value, with an out-of-bounds
+access raising `GTI-R0007`. The search, comparison, and character access
+operations can run in constant expressions when the input bytes are
+available at compile time.
+
 `view.substr(position, count)` returns a counted sub-view of the same
-characters without copying them; `view.substr(position)` takes the rest. As in
+characters without copying them. `view.substr(position)` takes the rest and
+`view.substr()` returns the full view. As in
 C++, the count clamps to the characters remaining after `position`, and a
 position equal to `size()` yields an empty view. A position past `size()`
 raises `GTI-R0007` (`index_out_of_bounds` in `string_view`), even when the
