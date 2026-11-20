@@ -933,6 +933,28 @@ FrontendUnitCacheKey unitCacheKey(const FrontendOptions &options,
               unit.entry ? options.completionOffset : std::nullopt};
 }
 
+StmtPtr embeddedArrayDeclaration(const EmbeddedFile &file) {
+  const auto token = [&](TokenKind kind, std::string spelling) {
+    auto result = file.storageName();
+    result.kind = kind;
+    result.lexeme = std::move(spelling);
+    return result;
+  };
+  TypeRef type(token(TokenKind::UINT8, "uint8_t"));
+  auto extent =
+      token(TokenKind::INT_LITERAL, std::to_string(file.bytes->size()));
+  extent.literal = static_cast<std::uint64_t>(file.bytes->size());
+  type.arrayExtents.emplace_back(
+      std::make_shared<const ArrayExtentExpr>(std::move(extent)));
+  auto initializer = std::make_unique<ArrayInitializer>(
+      token(TokenKind::LEFT_BRACE, "{"), ExprList{},
+      token(TokenKind::RIGHT_BRACE, "}"), file.bytes);
+  return std::make_shared<VariableDecl>(
+      Mutability::Immutable, std::move(type), file.storageName(),
+      std::move(initializer), token(TokenKind::STATIC, "static"), false,
+      token(TokenKind::CONSTEXPR, "constexpr"));
+}
+
 std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
   std::size_t result = tokens.size() * sizeof(Token);
   for (const Token &token : tokens) {
@@ -1258,6 +1280,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                     : std::make_shared<const LifetimeNames>(
                                           parser.lifetimeNames());
         }
+        StmtList embeddedDeclarations;
+        for (const auto &file : unit->embeddedFiles) {
+          if (!file.bytes || file.storageOffset != file.keyword.position)
+            continue;
+          embeddedDeclarations.push_back(embeddedArrayDeclaration(file));
+          estimatedInputBytes += file.bytes->size();
+        }
+        unitDeclarations.insert(
+            unitDeclarations.begin(),
+            std::make_move_iterator(embeddedDeclarations.begin()),
+            std::make_move_iterator(embeddedDeclarations.end()));
         if (options.cache && !unit->compiledTemplate &&
             !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(
@@ -2165,7 +2198,7 @@ std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
   if (!snapshot)
     return {};
   if (!snapshot->bodyQueryContext || !snapshot->canGenerateCode() ||
-      !snapshot->diagnostics.empty() || snapshot->cancelled) {
+      hasErrorDiagnostics(snapshot->diagnostics) || snapshot->cancelled) {
     snapshot->bodyQueryContext.reset();
     return {};
   }
@@ -2307,8 +2340,7 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
   }
   const auto *prior =
       editedFunction(baseline->program.declarations(), path, first, past);
-  if (!prior || prior->isConstexpr() || prior->isProceduralMacro() ||
-      !prior->genericParameters().empty())
+  if (!prior || prior->isConstexpr() || prior->isProceduralMacro())
     return std::nullopt;
   const auto &span = *prior->body()->extent();
   if (span.end > original->size())
@@ -2323,7 +2355,8 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
   for (const auto &token : scanned) {
     if (token.position < span.start || token.position >= bodyEnd)
       continue;
-    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO)
+    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO ||
+        token.kind == TokenKind::EMBED_BYTES)
       return std::nullopt;
     tokens.push_back(token);
   }

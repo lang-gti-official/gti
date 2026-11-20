@@ -4862,6 +4862,9 @@ private:
   }
 
   ExprPtr primary() {
+    if (match({TokenKind::EMBED_BYTES})) {
+      return std::make_unique<Variable>(previous());
+    }
     if (match({TokenKind::UNSAFE})) {
       Token keyword = previous();
       consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");

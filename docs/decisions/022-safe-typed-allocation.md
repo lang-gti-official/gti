@@ -647,3 +647,40 @@ executables are smaller. S-ALLOC-09 records the measurements. Issue #169
 showed that moving storage policy into source without this layering cost 3.68×
 on the storage workload. Migrating the same representation is not enough; the
 layering above is what removes that cost.
+
+
+## Revision: process-buffer resizing for passive prefixes (2026-11-16)
+
+A process-owned vector can grow a live bitwise-relocatable prefix with the
+native allocator's `realloc` operation on POSIX targets. The source owner
+retains the initialized length and checked ownership identity; only its raw
+address and capacity change after success. Exclusive access still rejects any
+live borrow across growth. No public type spelling changes compiler meaning.
+
+The fast path applies only to allocations selected by the process provider's
+`malloc` predicate: alignment one, or alignment no greater than a pointer's
+with an old extent large enough for that pointer. It does not pass a
+`posix_memalign` allocation to `realloc`, and it does not shrink. The checked
+size calculation still precedes the native call. A null result leaves the old
+region untouched and follows the existing infallible exhaustion abort policy.
+No region metadata is published until success. `reserve` snapshots its initialized
+length before either capacity transition and republishes it after success. This
+keeps the size-preservation postcondition explicit across opaque native provider
+effects, without weakening the allocator effects or arithmetic checks.
+
+Over-aligned or small aligned allocations, non-bitwise elements, text,
+compile-time evaluation and Windows use allocation followed by witnessed
+relocation and release. This growth policy does not require RFC 0003's
+borrowed-element container extension; that feature retains its own transfer and
+loan-verification obligations.
+The new runtime entry is a byte-provider forwarding operation; source owns
+eligibility, alignment, capacity and object-lifetime policy. This avoids copying
+when the allocator can extend a region in place without requiring unchecked
+safe APIs or a vector-specific compiler exception.
+
+On macOS arm64 the optional prefix-resize helper is `[[noinline]]`. Keeping
+allocator descriptor state out of the hot append loop improves the measured
+growth workload; the identical annotation regresses Linux x64, so that target
+retains inlining. This is a target-specific code-layout choice, not a change to
+eligibility, failure handling, capacity policy or ownership semantics. The
+public `reserve` body remains visible to the size-preservation proof.

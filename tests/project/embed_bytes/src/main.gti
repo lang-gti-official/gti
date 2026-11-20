@@ -1,0 +1,17 @@
+import std.span;
+
+constexpr std::span<uint8_t, static> payload() {
+  return embed_bytes("../assets/data.bin");
+}
+
+constexpr bool valid_payload() {
+  auto bytes = payload();
+  return bytes.size() == 3 && bytes[0] == 0 && bytes[2] == 0xff;
+}
+
+static_assert(valid_payload());
+
+int main() {
+  auto bytes = payload();
+  return valid_payload() ? int(bytes[1]) : 1;
+}

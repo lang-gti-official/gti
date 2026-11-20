@@ -75,6 +75,17 @@ struct StagedHash {
       add(static_cast<std::size_t>(aggregate->value->kind));
       add(aggregate->value->identity);
       add(aggregate->value->variant);
+      if (aggregate->value->packedBytes)
+        add(std::hash<std::string>{}(*aggregate->value->packedBytes));
+      if (const auto &address = aggregate->value->staticAddress) {
+        add(address->symbol);
+        for (const auto &projection : address->path) {
+          add(projection.field);
+          add(projection.index);
+        }
+        add(address->arrayOffset.has_value());
+        add(address->arrayOffset.value_or(0));
+      }
       for (const auto &element : aggregate->value->elements)
         constant(element);
       for (const auto &field : aggregate->value->fields) {
@@ -331,12 +342,16 @@ auto SemanticVisitor::Impl::enforceImmediateInvocation(const Expr &expression,
   context.allowVoidCompletion = voidStatement;
   context.immediateRoot = &expression;
   ConstexprEvaluation result;
+  bool hasAddress = false;
   if (type == SemanticType::Void && !voidStatement) {
     result = constexprFailure(
         site, ConstantEvaluationFailure::UnsupportedType,
         "An immediate void call must be a standalone expression statement.");
   } else if (invocationType.kind == SemanticType::Reference ||
-             (type != SemanticType::Void && !isSupportedConstexprType(type))) {
+             (type != SemanticType::Void &&
+              (!isSupportedConstexprType(type, false, nullptr, false,
+                                         &hasAddress) ||
+               hasAddress))) {
     result = constexprFailure(
         site, ConstantEvaluationFailure::UnsupportedType,
         "An immediate invocation must publish a supported value, without "
@@ -899,11 +914,19 @@ bool stagedClosureRequiresMir(const MirProgram &program) {
         body.loans.begin(), body.loans.end(),
         [](const auto &loan) { return loan.access == AccessMode::Mutable; });
   };
-  const auto resultValues = [](const MirBody &body) {
-    const auto resultType = [](const auto &self,
-                               const SemanticType &type) -> bool {
+  const auto opaque =
+      std::find_if(program.classInstances().begin(),
+                   program.classInstances().end(), [](const auto &instance) {
+                     return instance.compilerCapability ==
+                            CompilerCapabilityTypeKind::ErasedObject;
+                   });
+  const auto resultValues = [&](const MirBody &body) {
+    const auto resultType = [&](const auto &self,
+                                const SemanticType &type) -> bool {
       return type.kind == SemanticType::UniqueOwner ||
              type.kind == SemanticType::TypePack ||
+             (opaque != program.classInstances().end() &&
+              type == opaque->type) ||
              ((type.kind == SemanticType::Array ||
                type.kind == SemanticType::Reference) &&
               type.arguments.size() == 1 && self(self, type.arguments[0]));
@@ -1009,7 +1032,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const std::vector<ConstantValue> &arguments,
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
-    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+    ConstexprInterpreter &context, const Expr *expressionRoot)
+    -> std::optional<ConstexprEvaluation> {
   // The evaluation charges its interpreter's budget, which is not always the
   // request's (see AttemptCheckpoint): a repeat starts from what the first
   // attempt found.
@@ -1028,7 +1052,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       }
     }
     return executeStagedConstexprOnce(selected, arguments, substitution,
-                                      receiver, callSite, context);
+                                      receiver, callSite, context,
+                                      expressionRoot);
   });
 }
 
@@ -1038,7 +1063,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const std::vector<ConstantValue> &arguments,
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
-    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+    ConstexprInterpreter &context, const Expr *expressionRoot)
+    -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
     return std::nullopt;
   }
@@ -1046,15 +1072,63 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // caller's partially analyzed instance delta, whatever kind of instance is
   // being reanalysed. Each worker still owns its scopes and semantic delta;
   // only the bounded work account is shared.
-  const SemanticModel &stagingModel = constexprStagingModel();
+  const SemanticModel &canonicalModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   if (function && *function)
     (void)requireBody(*function);
-  const auto *info =
-      function && *function ? stagingModel.findFunction(**function) : nullptr;
   noteConstexprAvailabilityObserved();
-  if ((function &&
+
+  std::optional<FunctionDecl> expressionEntry;
+  std::optional<SemanticModel> expressionModel;
+  if (expressionRoot) {
+    // Keep the already checked expression at its original lexical and
+    // ownership context. Only the private staged entry and its outer
+    // full-expression boundary are new.
+    auto name = callSite;
+    name.kind = TokenKind::IDENTIFIER;
+    name.lexeme = "$constexpr-expression";
+    name.generated = true;
+    auto keyword = callSite;
+    keyword.kind = TokenKind::CONSTEXPR;
+    auto statement = std::make_shared<ReturnStmt>(callSite, nullptr);
+    expressionEntry.emplace(
+        TypeRef(name), name, std::vector<GenericParameter>{},
+        std::vector<Parameter>{},
+        std::make_unique<BlockStmt>(StmtList{statement}), std::nullopt,
+        ReceiverMutability::ReadOnly, Mutability::Immutable, std::nullopt,
+        std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+        LanguageLinkage::Gti, keyword);
+    expressionModel.emplace(semanticModel);
+    expressionModel->setFunctionDemandSink(nullptr);
+    expressionModel->setCallJournal(nullptr);
+    const auto type =
+        constexprType(semanticModel.typeOf(*expressionRoot), context);
+    // A published borrow must pass the ordinary MIR proof of a static
+    // result. The executor additionally proves the backing datum is constexpr.
+    const bool staticResult =
+        (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
+        typeTraits(type).containsBorrowedState;
+    expressionModel->record(
+        *expressionEntry,
+        {.id = nextFunctionId,
+         .sourceUnit = currentSourceUnit,
+         .declaration = &*expressionEntry,
+         .qualifiedName = name.lexeme,
+         .returnType = type,
+         .constexprFunction = true,
+         .returnBorrowOrigin =
+             staticResult ? BorrowOriginKind::Global : BorrowOriginKind::None});
+    expressionModel->recordAnalyzedFunctionBody(*expressionEntry);
+    expressionModel->recordFullExpression(*statement, *expressionRoot);
+  }
+  const SemanticModel &stagingModel =
+      expressionModel ? *expressionModel : canonicalModel;
+  const auto *info =
+      expressionEntry         ? stagingModel.findFunction(*expressionEntry)
+      : function && *function ? stagingModel.findFunction(**function)
+                              : nullptr;
+  if ((function && !expressionRoot &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||
       (construction && !construction->generatedDefault &&
@@ -1064,8 +1138,9 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
   const void *const stagedTarget =
-      function ? static_cast<const void *>(*function)
-               : static_cast<const void *>(construction->declaration);
+      expressionRoot ? static_cast<const void *>(expressionRoot)
+      : function     ? static_cast<const void *>(*function)
+                     : static_cast<const void *>(construction->declaration);
   if (context.work->stagingChain.size() >= stagedNestingLimit) {
     // A fixed implementation limit, not a CompileLimits entry: no limit to
     // attribute and no configuration hint (see stagedNestingLimit).
@@ -1123,6 +1198,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
         completed.push_back(candidate->id);
       }
     }
+    if (expressionRoot)
+      completed.push_back(info->id);
     keyCompleted = completed;
     for (const FunctionDecl *declaration : pendingConstexprDefinitions())
       if (const auto *candidate = stagingModel.findFunction(*declaration))
@@ -1137,8 +1214,20 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   }
   const auto stagedConstants = requestSession.stagedConstants;
   const auto &concreteEffects = requestSession.programConcreteEffects;
+  std::vector<SymbolId> storageDependencies;
+  const auto collectStorage = [&](const ConstantValue &value) {
+    const auto storage = constantAddressDependencies(value);
+    storageDependencies.insert(storageDependencies.end(), storage.begin(),
+                               storage.end());
+  };
+  for (const auto &argument : arguments)
+    collectStorage(argument);
+  if (receiver)
+    collectStorage(*receiver);
+  // A closure with external addresses must contain the named storage.
   const auto reuseKey =
-      !concreteEffects || concreteEffects->invalidInstances.empty()
+      !expressionRoot &&
+              (!concreteEffects || concreteEffects->invalidInstances.empty())
           ? stagedConstantKey(selected, info, arguments, substitution, receiver,
                               keyCompleted, constructors)
           : std::nullopt;
@@ -1166,7 +1255,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // The closure this evaluation executes: an equal closure this request
   // already lowered (see StagedConstantResults), or a fresh lowering.
   std::optional<StagedConstantResults::Key> closureKey;
-  if (reuseKey) {
+  if (reuseKey && storageDependencies.empty()) {
     closureKey = *reuseKey;
     closureKey->arguments.clear();
     closureKey->receiver.reset();
@@ -1199,7 +1288,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     StagedInstanceProvider provider(
         *this,
         [&]() -> SemanticInstanceProvider & {
-          return stagedWorkerFor(stagingModel, context.work);
+          return stagedWorkerFor(canonicalModel, context.work);
         },
         [&](const StagedInstanceKeyView &request,
             SemanticInstanceAnalysis &analysis) {
@@ -1228,13 +1317,13 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     HirLowerer lowerer(target);
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
-      return construction
-                 ? lowerer.lowerConstantConstructor(stagingModel, provider,
-                                                    *construction, completed,
-                                                    constructors)
-                 : lowerer.lowerConstantFunction(stagingModel, provider,
-                                                 info->id, completed,
-                                                 substitution, constructors);
+      return construction ? lowerer.lowerConstantConstructor(
+                                stagingModel, provider, *construction,
+                                completed, constructors, storageDependencies)
+                          : lowerer.lowerConstantFunction(
+                                stagingModel, provider, info->id, completed,
+                                substitution, constructors, expressionRoot,
+                                storageDependencies);
     }();
     // The closure lowers a callee whose constexpr body is still pending as a
     // declaration only (it is outside `completed`). When the closure cannot
@@ -1286,6 +1375,20 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     }();
     if (!mir.valid()) {
       needPendingCallees();
+      if (expressionRoot &&
+          std::any_of(
+              mir.errors.begin(), mir.errors.end(), [&](const auto &error) {
+                const auto *instance =
+                    error.body.kind == MirBodyKind::Function
+                        ? hir.program.findFunctionInstance(error.body.owner)
+                        : nullptr;
+                return instance && instance->declaration == info->id &&
+                       error.borrow.kind == MirBorrowRejectionKind::Escape;
+              }))
+        return constexprFailure(
+            callSite, ConstantEvaluationFailure::NonConstantReference,
+            "A published constexpr borrow must refer to immutable constexpr "
+            "program storage.");
       return std::nullopt;
     }
     MirBodyAddress root;
@@ -1397,7 +1500,8 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     }
     recordLimitExhaustion(context, result.exhaustedLimit, executing);
   }
-  const bool requiresMir = context.requireMir || closure->requiresMir;
+  const bool requiresMir =
+      expressionRoot || context.requireMir || closure->requiresMir;
   // Until the ordinary MIR profile covers aggregates/references and every
   // existing statement, retain the legacy driver's admitted subset. Work
   // already executed still consumes the shared budget; arithmetic and resource

@@ -1440,6 +1440,10 @@ enum class CallReceiverMode {
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
+  // A guaranteed structural requirement supplies this open-body signature,
+  // not an executable target. Concrete instance analysis must replace it;
+  // HIR rejects any call that still carries this marker.
+  bool provisionalRequirement = false;
   // A native indirect target is a value with this exact C signature, never
   // a selected GTI function or a callback-adapter declaration.
   std::optional<SemanticType> nativeCalleeType;
@@ -2651,6 +2655,9 @@ public:
   [[nodiscard]] const BindingInfo *
   findBinding(const VariableDecl &declaration) const;
 
+  [[nodiscard]] std::optional<ProgramInitializationStep>
+  findConstantProgramStorage(SymbolId symbol) const;
+
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const;
 
@@ -3080,6 +3087,7 @@ private:
                        const SemanticFullExpression &expression);
 
   void recordFullExpression(const Stmt &statement, const ExprPtr &root);
+  void recordFullExpression(const Stmt &statement, const Expr &root);
 
   void recordFullExpression(const ConstructorInitializer &initializer);
 

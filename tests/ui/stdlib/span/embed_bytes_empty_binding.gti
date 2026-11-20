@@ -1,0 +1,11 @@
+// A saved empty embedded span preserves its static owner across a zero-length subspan.
+//@ run-pass
+// --- main.gti
+import std.span;
+
+constexpr std::span<uint8_t, static> empty = embed_bytes("empty.bin");
+constexpr std::span<uint8_t, static> slice = empty.subspan(0, 0);
+static_assert(empty.empty() && slice.empty());
+
+int main() { return empty.empty() && slice.empty() ? 0 : 1; }
+// --- empty.bin

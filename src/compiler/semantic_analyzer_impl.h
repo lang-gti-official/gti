@@ -884,6 +884,7 @@ public:
   void visitBinaryExpr(const Binary &expr) override;
 
   void visitCallExpr(const Call &expr) override;
+  void analyzeEmbedBytes(const Call &call, const Token &keyword);
 
   [[nodiscard]] static bool
   isCharacterCodeConversion(const SemanticType &source,
@@ -2165,6 +2166,8 @@ private:
     std::optional<SealedSyntaxExpression> proceduralResult;
     std::optional<Diagnostic> proceduralDiagnostic;
     const Expr *immediateRoot = nullptr;
+    const Expr *expressionRoot = nullptr;
+    bool expressionNeedsMir = false;
     // The function or constructor the compatibility interpreter is executing,
     // named in a resource-limit diagnostic; null at expression level. Stable
     // syntax identities: names are resolved only when a limit is exhausted.
@@ -2219,14 +2222,14 @@ private:
       const std::vector<ConstantValue> &arguments,
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
-      ConstexprInterpreter &context);
+      ConstexprInterpreter &context, const Expr *expressionRoot);
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
           &target,
       const std::vector<ConstantValue> &arguments,
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
-      ConstexprInterpreter &context);
+      ConstexprInterpreter &context, const Expr *expressionRoot = nullptr);
   // The reuse key of a staged evaluation, or none when it cannot be reused.
   [[nodiscard]] std::optional<StagedConstantResults::Key> stagedConstantKey(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -2247,11 +2250,13 @@ private:
   constexprValue(CompileTimeValue value,
                  const ConstexprInterpreter &context) const;
 
+  [[nodiscard]] bool isSupportedConstexprType(
+      const SemanticType &type, bool allowDependent = false,
+      std::vector<SemanticType> *visiting = nullptr, bool transient = false,
+      bool *hasAddress = nullptr) const;
+
   [[nodiscard]] bool
-  isSupportedConstexprType(const SemanticType &type,
-                           bool allowDependent = false,
-                           std::vector<SemanticType> *visiting = nullptr,
-                           bool transient = false) const;
+  isSupportedConstexprSignatureType(const SemanticType &type) const;
 
   bool insideImmediateFunction() const;
   bool immediateConstructionDependent(
@@ -4553,6 +4558,8 @@ private:
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren);
+
+  [[nodiscard]] const CallableCandidate *arraySpanFactory() const;
 
   bool analyzeStringViewAddition(const Binary &expression,
                                  const SemanticType &rightType);

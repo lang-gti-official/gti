@@ -117,8 +117,20 @@ int main() {
     mut std::vector<int> values{};
     values.reserve(std::size_t(8));
     if (provider_test_calls() != 1 || provider_test_size_queries() != 1) { return 17; }
+    for (mut int i = 0; i < 8; ++i) { values.push_back(i * 7); }
+    values.reserve(64);
+    values.reserve(128);
+    if (values.size() != 8 || values.capacity() < 128 ||
+        provider_test_calls() != 3 || provider_test_size_queries() != 3) { return 20; }
+    for (mut int i = 0; i < 8; ++i) {
+      if (values[std::size_t(i)] != i * 7) { return 21; }
+    }
   }
+#if target.os == "windows"
+  if (provider_test_releases() != 3) { return 18; }
+#else
   if (provider_test_releases() != 1) { return 18; }
+#endif
   provider_test_mode(1);
   auto limited = allocator.try_storage<int>(std::size_t(4096));
   if (limited || limited.error() != std::alloc_errc::size_overflow ||

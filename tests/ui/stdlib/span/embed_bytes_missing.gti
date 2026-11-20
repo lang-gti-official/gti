@@ -1,0 +1,6 @@
+// A missing file is diagnosed at the literal path.
+import std.span;
+
+std::span<uint8_t, static> missing() {
+  return embed_bytes("gti-test-absent.bin");  //~ ERROR GTI-S2129 Cannot read embedded file
+}

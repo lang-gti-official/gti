@@ -1,0 +1,57 @@
+// Vector growth preserves the live prefix, capacity, constexpr behavior and owning payloads.
+//@ run-pass
+//@ slow
+import std.vector;
+import std.memory;
+
+struct Pair {
+  int32_t first;
+  int32_t second;
+  Pair(int32_t first, int32_t second) : first(first), second(second) {}
+};
+
+constexpr int32_t constant_growth() {
+  mut std::vector<int32_t> values{};
+  for (mut int32_t i = 0; i < 17; ++i) { values.push_back(i); }
+  values.reserve(64);
+  return values[0] + values[16] + int32_t(values.size());
+}
+static_assert(constant_growth() == 33);
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.reserve(0);
+  if (values.size() != 0 || values.capacity() != 0) { return 1; }
+  for (mut int32_t i = 0; i < 513; ++i) {
+    values.push_back(i * 3);
+    if (values.size() != uint64_t(i + 1)) { return 2; }
+    for (mut int32_t j = 0; j <= i; ++j) {
+      if (values[uint64_t(j)] != j * 3) { return 3; }
+    }
+  }
+  values.reserve(2048);
+  uint64_t capacity = values.capacity();
+  values.reserve(64);
+  if (values.capacity() != capacity || values.size() != 513) { return 4; }
+  values.shrink_to_fit();
+  if (values.capacity() != values.size() || values[512] != 1536) { return 5; }
+  values.push_back(42);
+  if (values[513] != 42 || values[512] != 1536) { return 6; }
+
+  // The optimization is structural, including unrelated user-defined records.
+  mut std::vector<Pair> pairs{};
+  for (mut int32_t i = 0; i < 65; ++i) { pairs.push_back(Pair(i, -i)); }
+  pairs.reserve(300);
+  for (mut uint64_t i = 0; i < pairs.size(); ++i) {
+    if (pairs[i].first != int32_t(i) || pairs[i].second != -int32_t(i)) { return 7; }
+  }
+
+  // Owning elements retain their generated relocation and cleanup path.
+  mut std::vector<std::unique_ptr<int32_t>> owners{};
+  for (mut int32_t i = 0; i < 19; ++i) { owners.push_back(std::make_unique<int32_t>(i)); }
+  owners.reserve(80);
+  for (mut uint64_t i = 0; i < owners.size(); ++i) {
+    if (*owners[i] != int32_t(i)) { return 8; }
+  }
+  return 0;
+}

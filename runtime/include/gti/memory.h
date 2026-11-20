@@ -25,6 +25,10 @@ void gti_rt_aligned_free_v1(void *address);
 // proves that malloc alignment suffices for the requested object. Null means
 // exhaustion; release through gti_rt_posix_free_v1. No extent rounding.
 void *gti_rt_malloc_v1(uint64_t bytes);
+// Preconditions: address is from malloc/realloc; 0 < bytes <= SIZE_MAX.
+// Success preserves the old prefix and retires the old region. Null leaves
+// the old allocation unchanged. Source policy proves alignment and lifetimes.
+void *gti_rt_realloc_v1(void *address, uint64_t bytes);
 uint64_t gti_rt_posix_pointer_size_v1(void);
 int32_t gti_rt_posix_enomem_v1(void);
 int32_t gti_rt_posix_einval_v1(void);

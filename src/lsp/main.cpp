@@ -3793,6 +3793,14 @@ private:
             fileUriFromPath(std::filesystem::path(loadedSource)),
             unit.sourceDigest);
       }
+      for (const auto &file : unit.embeddedFiles) {
+        if (!file.path.empty())
+          result.dependencies.try_emplace(fileUriFromPath(file.path),
+                                          file.digest);
+        if (!file.lookupPath.empty())
+          result.dependencies.try_emplace(
+              authoredFileUriFromPath(file.lookupPath), 0);
+      }
     }
     for (const auto &import : analysis.sourceGraph.imports()) {
       if (import.lookupPath && import.lookupPath->string() != rootPath)
@@ -4285,7 +4293,8 @@ private:
         baseline = bodyBaseline;
         recovery = bodyRecovery;
         checkBorrows =
-            !recovery && (lastBodyDiagnostics.empty() || lastBodyBorrowProof);
+            !recovery && (!lang::hasErrorDiagnostics(lastBodyDiagnostics) ||
+                          lastBodyBorrowProof);
         if (!baseline || !sourceInputsCurrentLocked(
                              baseline->dependencies,
                              baseline->documentGenerations, baseline->inputs))
@@ -4347,9 +4356,20 @@ private:
                                 &LspDiagnostic::diagnostic))
           continue;
         // An empty partial result can retract only this provider's own error.
-        if (answer->empty() && previous->second.empty())
+        if (answer->empty() && previous->second.empty() &&
+            baseline->diagnostics.empty())
           continue;
         std::vector<LspDiagnostic> current;
+        for (const auto &d : baseline->diagnostics) {
+          // Only the exact undo reuses locations in the edited document.
+          const auto inRoot = [&](const auto &location) {
+            return location.uri == request.uri;
+          };
+          if (verified ||
+              (!inRoot(d) && !std::ranges::any_of(d.related, inRoot) &&
+               !std::ranges::any_of(d.fixes, inRoot)))
+            current.push_back(d);
+        }
         lang::SourceManager source;
         source.set(baseline->path, request.source);
         for (const auto &d : *answer)
@@ -4360,13 +4380,20 @@ private:
           affected.insert(d.uri);
         bodyRecovery.reset();
         lastBodyBorrowProof = borrowProof;
-        lastBodyDiagnostics = std::move(*answer);
+        lastBodyDiagnostics.clear();
+        for (const auto &d : current) {
+          affected.insert(d.uri);
+          lastBodyDiagnostics.push_back(d.diagnostic);
+        }
         diagnosticsByRoot[request.uri] = std::move(current);
         publications = publicationsForLocked(affected);
       }
-      publish(std::move(publications), borrowProof && progressiveOpenDiagnostics
-                                           ? "borrowChecking"
-                                           : "");
+      std::string_view stage;
+      if (progressiveOpenDiagnostics)
+        stage = verified      ? "verifiedRestoration"
+                : borrowProof ? "borrowChecking"
+                              : "bodyChecking";
+      publish(std::move(publications), stage);
     }
   }
 
@@ -5025,12 +5052,17 @@ private:
                 request.uri + ":" + std::to_string(request.generation);
         }
         if (analysis.bodyContext && analysis.frontend &&
-            analysis.frontend->mirValid && analysis.diagnostics.empty()) {
+            analysis.frontend->mirValid &&
+            std::ranges::none_of(analysis.diagnostics, [](const auto &d) {
+              return d.diagnostic.severity == lang::DiagnosticSeverity::Error;
+            })) {
           forgetBodyBaselineLocked();
           bodyBaseline = std::make_shared<BodyBaseline>(BodyBaseline{
               request.uri, analysis.rootPath, std::move(analysis.bodyContext),
               analysis.dependencies, request.documentGenerations,
-              request.frontendSources});
+              request.frontendSources, analysis.diagnostics});
+          for (const auto &d : analysis.diagnostics)
+            lastBodyDiagnostics.push_back(d.diagnostic);
         } else if (bodyBaseline && bodyBaseline->uri == request.uri) {
           bodyRecovery.reset();
           if (!std::ranges::equal(analysis.diagnostics, lastBodyDiagnostics, {},
@@ -5937,7 +5969,7 @@ private:
   lang::lsp::FrontendSnapshotState frontendSnapshots;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
-  // A single foreground lane and one last-clean baseline bound the additional
+  // A single foreground lane and one verified baseline bound the additional
   // memory independently of the number of open translation units.
   struct BodyBaseline {
     std::string uri;
@@ -5946,6 +5978,7 @@ private:
     std::unordered_map<std::string, std::uint64_t> dependencies;
     std::unordered_map<std::string, std::uint64_t> documentGenerations;
     lang::lsp::FrontendSourceSnapshot inputs;
+    std::vector<LspDiagnostic> diagnostics;
   };
   std::shared_ptr<const BodyBaseline> bodyBaseline;
   // At most one failed source and its published diagnostics. No second

@@ -108,11 +108,15 @@ def license_files(source):
                      "provide a redistributable dependency installation")
 
 
-def plan_bundle(stage, selected_libraries):
+def plan_bundle(stage, selected_libraries, *, executables=None):
     stage = stage.resolve()
-    roots = [stage / "bin/gti"]
-    if (stage / "bin/gti_lsp").exists():
-        roots.append(stage / "bin/gti_lsp")
+    if executables is None:
+        executables = ["bin/gti"]
+        if (stage / "bin/gti_lsp").exists():
+            executables.append("bin/gti_lsp")
+    roots = [stage / name for name in executables]
+    if not roots or any(not path.resolve().is_relative_to(stage) for path in roots):
+        raise ValueError("tool executable roots must stay inside staging")
     if not all(root.is_file() and not root.is_symlink() for root in roots):
         raise ValueError("staging must contain regular tool executable files")
     selected = [path.resolve(strict=True) for path in selected_libraries]
@@ -165,8 +169,9 @@ def plan_bundle(stage, selected_libraries):
     return stage, roots, libraries, edges, licenses
 
 
-def bundle(stage, selected_libraries):
-    stage, roots, libraries, edges, licenses = plan_bundle(stage, selected_libraries)
+def bundle(stage, selected_libraries, *, executables=None):
+    stage, roots, libraries, edges, licenses = plan_bundle(
+        stage, selected_libraries, executables=executables)
     # Resolve the entire closure and licenses before modifying staged files.
     for source, destination in libraries.items():
         if source != destination:

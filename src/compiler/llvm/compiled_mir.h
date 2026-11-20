@@ -4,5 +4,6 @@
 namespace lang::native_llvm {
 // Make verified imported bodies visible at direct calls before LLVM optimizes
 // the consumer. Address-taken functions retain their canonical native symbol.
-void emitCompiledMir(Session &session);
+void emitCompiledMir(Session &session,
+                     const std::map<SymbolId, llvm::GlobalVariable *> &globals);
 } // namespace lang::native_llvm

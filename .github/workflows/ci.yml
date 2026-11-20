@@ -2,8 +2,8 @@ name: CI
 
 # One required check, "CI gate". A pull request proves lint and fast checks
 # on Linux and macOS before it may enter the merge queue; the queue proves the
-# same build and fast checks on Linux (and on macOS when vars.GTI_QUEUE_MACOS
-# is `true`) on the exact candidate that becomes main (its source-stdlib and
+# same build and fast checks on both platforms by default (an explicit
+# GTI_QUEUE_MACOS=false is the outage override) on the exact candidate that becomes main (its source-stdlib and
 # LSP lanes still package both platforms). The complete suite
 # (production packaging, every integration shard) runs after integration on
 # each main head in full-validation.yml, and the sanitizers daily on the
@@ -36,35 +36,24 @@ jobs:
       reuse: ${{ steps.plan.outputs.reuse }}
       fast_matrix: ${{ steps.fast.outputs.matrix }}
       queue_macos: ${{ steps.fast.outputs.queue_macos }}
+      fast_test_matrix: ${{ steps.fast.outputs.test_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Choose the fast-checks platforms for this event
-        # The `fast` job's rows. `gate` is the CTest entries its test phase
-        # runs beyond fast feedback, and `rotate` how many tests/ui shards
-        # gti_test_ui_<i> are added to it, chosen from the commit
-        # (validation_checks.py gate-tests). Linux runs every gti-test tier.
-        # macOS, whose hosted runners are scarce (five at once on this plan,
-        # shared with full validation), runs what differs on the platform:
-        # gti_test_ui (the runner's self-test, tidy, tests/project and
-        # tests/lsp) and gti_unit_tests, plus one tests/ui shard that rotates
-        # with the commit. A pull request runs both rows, and its CI gate
-        # (both rows green) is what lets it enter the merge queue. A queue
-        # candidate runs the Linux row only, so concurrent candidates take no
-        # macOS runner, unless the repository variable GTI_QUEUE_MACOS is
-        # `true` (for a plan with ample macOS runners; unset means Linux
-        # only). A manual main dispatch runs both (validation_checks.py
-        # fast_platforms). Post-integration full validation runs every shard
-        # and gti_test_examples on macOS (tests/ci_darwin_tests.json).
+        # Enterprise capacity: one native build per platform, followed by four
+        # source-test jobs reusing that run's tools. Every source shard runs on
+        # both platforms. The queue also includes macOS unless explicitly
+        # disabled for a runner outage; the gate checks the scheduled matrix.
         id: fast
         env:
-          GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS }}
+          GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS || 'true' }}
           GTI_FAST_ROWS: >-
             [{"os": "ubuntu-24.04", "platform": "linux", "rotate": 0,
               "gate": "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"},
-             {"os": "macos-26", "platform": "darwin", "rotate": 1,
-              "gate": "gti_test_ui|gti_unit_tests"}]
+             {"os": "macos-26", "platform": "darwin", "rotate": 0,
+              "gate": "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"}]
         run: >-
           python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"
           --rows "${GTI_FAST_ROWS}" --queue-macos "${GTI_QUEUE_MACOS}" --output "${GITHUB_OUTPUT}"
@@ -210,12 +199,9 @@ jobs:
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
     strategy:
       fail-fast: false
-      # The plan's rows for this event (its "Choose the fast-checks platforms"
-      # step): Linux and macOS for a pull request or main dispatch; Linux only
-      # for a merge-queue candidate unless vars.GTI_QUEUE_MACOS is `true`, then
-      # both. A job-level `if` cannot read `matrix`, and
-      # a row whose steps all skip still holds a runner, so the matrix itself
-      # depends on the event.
+      # One native build for each scheduled platform. Enterprise queue
+      # candidates include macOS by default; an explicit false override can
+      # retain Linux-only queue checks during a runner outage.
       matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
@@ -223,8 +209,7 @@ jobs:
       - name: Skip a merge group the queue has already discarded
         # A candidate whose queue entry was removed (a failure ahead of it, a
         # dequeue) loses its gh-readonly-queue branch, but its run continues.
-        # Stop before the build rather than hold a runner (a scarce macOS one,
-        # often after a long wait) for a result nothing reads. The failure
+        # Stop before the build rather than hold a runner for a result nothing reads. The failure
         # claims nothing about the change.
         if: github.event_name == 'merge_group'
         env:
@@ -283,21 +268,14 @@ jobs:
         run: >-
           python3 scripts/validation_checks.py gate-tests --build build
           --gate "${GTI_GATE}" --rotate "${GTI_ROTATE}" --sha "${GITHUB_SHA}" --output "${GITHUB_OUTPUT}"
-      - name: Run the gti-test tiers
-        # On Linux: tests/ui, tests/project and tests/lsp (with the runner's
-        # self-test and tidy), every single-file example, and the C++ unit
-        # tests; on macOS the subset selected above. All at -O0
-        # (docs/plans/test-suite-redesign.md section 7). Each gti-test entry
-        # is silent on pass and prints one `FAIL <path>` block per failing
-        # case, which --output-on-failure shows here; the per-case JUnit
-        # reports are uploaded below.
-        env:
-          GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}
+      - name: Run the runner, project, editor, example and unit baselines
+        # Source tests run in fast-ui using the tools published below. The
+        # complete gate pattern remains available to avoid declared repeats.
         run: >-
           mkdir -p "${RUNNER_TEMP}/gti-test" &&
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" --output-junit "${RUNNER_TEMP}/gti-test/ctest.xml"
-          -R "^(${GTI_GATE_TESTS})$"
+          -R "^(gti_test_ui|gti_test_examples|gti_unit_tests)$"
       - name: Hold new and modified gti-test cases to half their limit
         # The runner's over-budget rule: a case this pull request adds or
         # changes is flagged when its warm CPU time exceeds half its kind's
@@ -339,6 +317,18 @@ jobs:
       - name: Verify the installed precompiled standard library
         if: matrix.platform == 'linux'
         run: python3 tests/project/standard_library_bundle/verify_stage.py "${RUNNER_TEMP}/gti-system-stage"
+      - name: Package this run's source-test tools
+        env:
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: python3 scripts/fast_ci.py pack --build build --platform "${GTI_PLATFORM}" --archive "${RUNNER_TEMP}/fast-tools.tar.gz"
+      - name: Share native tools with source-test jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fast-tools-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/fast-tools.tar.gz
+          compression-level: 0
+          overwrite: true
+          retention-days: 3
       - name: Upload gti-test reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -353,6 +343,63 @@ jobs:
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true
+
+  fast-ui:
+    name: Fast source tests (${{ matrix.platform }} ${{ matrix.index }}/${{ matrix.shards }})
+    if: needs.plan.outputs.mode == 'full'
+    needs: [plan, fast]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.fast_test_matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure runner resources
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install native tool dependencies
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure the unchanged CTest inventory
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: fast-tools-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/fast-tools
+      - name: Verify and restore this run's native tools
+        env:
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: python3 scripts/fast_ci.py restore --build build --platform "${GTI_PLATFORM}" --archive "${RUNNER_TEMP}/fast-tools/fast-tools.tar.gz"
+      - name: Run assigned source-test shards without rebuilding
+        env:
+          GTI_PLATFORM: ${{ matrix.platform }}
+          GTI_INDEX: ${{ matrix.index }}
+        run: >-
+          python3 scripts/fast_ci.py run --build build --platform "${GTI_PLATFORM}"
+          --index "${GTI_INDEX}" --jobs "${GTI_TEST_JOBS}"
+          --report "${RUNNER_TEMP}/fast-report/shard.json"
+      - name: Publish exact source-test coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fast-source-${{ matrix.platform }}-${{ matrix.index }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/fast-report/
+          overwrite: true
+          retention-days: 14
+      - name: Upload source-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-test-source-${{ matrix.platform }}-${{ matrix.index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gti-test/*.xml
+          retention-days: 14
 
   source-stdlib:
     name: Source stdlib (${{ matrix.platform }})
@@ -536,16 +583,27 @@ jobs:
     # The single required status check: its name is the ruleset's context.
     name: CI gate
     if: always()
-    needs: [plan, automation-tests, formatting, release-version, tree-sitter, fast, source-stdlib, lsp]
+    needs: [plan, automation-tests, formatting, release-version, tree-sitter, fast, fast-ui, source-stdlib, lsp]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Collect source-test coverage
+        if: needs.plan.outputs.mode == 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: fast-source-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/fast-reports
+      - name: Require every source-test partition on every scheduled platform
+        if: needs.plan.outputs.mode == 'full'
+        env:
+          GTI_FAST_MATRIX: ${{ needs.plan.outputs.fast_matrix }}
+        run: >-
+          python3 scripts/fast_ci.py verify --reports "${RUNNER_TEMP}/fast-reports"
+          --matrix "${GTI_FAST_MATRIX}"
       - name: Decide integration acceptance
-        # In full mode the fast job must have passed on exactly the platforms
-        # its event requires, as the plan scheduled them (validation_checks.py
-        # fast_platforms): Linux and macOS for a pull request, whose gate
-        # admits it to the queue; Linux for a queue candidate, plus macOS when
-        # the plan read GTI_QUEUE_MACOS as `true`; both for a main dispatch.
+        # Both native-build rows and every source-test partition must pass.
+        # Require the platform plan captured at run start, including its
+        # macOS queue setting, rather than re-reading a changed variable.
         env:
           GTI_VALIDATION_MODE: ${{ needs.plan.outputs.mode }}
           GTI_VALIDATION_RESULTS: ${{ toJSON(needs) }}

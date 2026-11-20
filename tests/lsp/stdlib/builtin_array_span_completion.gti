@@ -1,0 +1,9 @@
+// Member completion offers the checked span factory for a built-in array.
+//@ completion @member: as_span
+import std.span;
+
+int main() {
+  int values[2] = {1, 2};
+  values./*@member*/;  //~ ERROR GTI-P0001
+  return 0;
+}

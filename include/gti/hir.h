@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1212,14 +1213,17 @@ public:
       SemanticInstanceProvider &instanceProvider, FunctionId root,
       const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution = {},
-      const std::vector<ConstructorId> &completedConstructors = {});
+      const std::vector<ConstructorId> &completedConstructors = {},
+      const Expr *expressionRoot = nullptr,
+      std::span<const SymbolId> storageDependencies = {});
 
   [[nodiscard]] HirLoweringResult lowerConstantConstructor(
       const SemanticModel &semantics,
       SemanticInstanceProvider &instanceProvider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors);
+      const std::vector<ConstructorId> &completedConstructors,
+      std::span<const SymbolId> storageDependencies = {});
 
 private:
   class Impl;

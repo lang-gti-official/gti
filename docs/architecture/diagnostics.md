@@ -32,6 +32,11 @@ attributes and void-result declarations use `GTI-S2099` at the attribute name;
 malformed arguments and non-function placement use parser diagnostics. CLI and
 LSP consume the same policy and source spans.
 
+`GTI-S2129` covers invalid `embed_bytes` calls. The keyword anchors errors
+about the argument shape or span import. The path literal anchors file lookup,
+containment, file-kind, and resource-limit errors. Compilation and the editor
+use the same loaded snapshot for these diagnostics.
+
 Status: Current infrastructure and conventions.
 
 `GTI-S2057` also diagnoses failed immediate invocations. The invocation is the

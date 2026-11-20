@@ -546,6 +546,15 @@ suites retain the existing public contracts, including rejection diagnostics.
 Source-policy failures identify the applied concept and source requirement
 rather than referring to a retired private capability.
 
+`tests/ui/generics/temporary_results/` covers composing guaranteed owned
+free-function and member results with temporary read-only arguments, including
+formatting inside a generic error callback, evaluation/drop order, failure
+cleanup, and rejection of escaping/mutable borrows or an unresolved concrete
+producer. `tests/unit/provisional_call_boundary.cpp` injects a provisional
+requirement marker into a concrete instance provider's otherwise valid call;
+HIR must reject it instead of treating an open-body promise as an executable
+target.
+
 The complete example oracles and both body/declaration censuses remain delivery
 gates. Added source helpers legitimately increase declaration inventories;
 changes to emitted bodies or generated adapters still require individual review.

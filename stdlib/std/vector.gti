@@ -423,8 +423,9 @@ public:
 
   /// Returns a checked read-only view tied to this vector's storage.
   constexpr span<T> as_span() {
-    return span<T>(this.data, size_t(0),
-                   this.data.length());
+    unsafe {
+      return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+    }
   }
 
   /// Exclusively borrows initialized elements without permitting reallocation.
@@ -438,10 +439,16 @@ public:
       return;
     }
 
-    mut std::detail::prefix_owner<T> replacement =
-        std::detail::prefix_owner<T>(requested);
-    unsafe { this.data.relocate_to_unchecked(replacement); }
-    this.data = std::move(replacement);
+    size_t live = this.data.length();
+    if (!this.data.grow_bytes_if_supported(requested)) {
+      mut std::detail::prefix_owner<T> replacement =
+          std::detail::prefix_owner<T>(requested);
+      unsafe { this.data.relocate_to_unchecked(replacement); }
+      this.data = std::move(replacement);
+    }
+    // Both capacity transitions preserve the same initialized prefix. Publish
+    // that contract after the native provider's opaque memory effects.
+    unsafe { this.data.set_initialized_length_unchecked(live); }
   }
 
   constexpr void resize(size_t requested) mut
