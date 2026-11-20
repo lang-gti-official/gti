@@ -7,7 +7,6 @@
 #include <utility>
 
 namespace lang {
-
 Token EmbeddedFile::storageName() const {
   // The name cannot be written as a single GTI identifier. Source-local
   // storage supplies the unit identity, and the keyword offset supplies
@@ -20,6 +19,15 @@ Token EmbeddedFile::storageName() const {
   name.generated = true;
   return name;
 }
+
+void SourceGraph::attachCompiledTemplate(
+    SourceUnitId id, std::shared_ptr<const CompiledTemplateModule> module) {
+  auto *unit = findUnit(id);
+  if (!unit || unit->role != SourceUnitRole::StandardLibrary || !module)
+    throw std::invalid_argument("invalid installed template unit");
+  unit->compiledTemplate = std::move(module);
+}
+
 void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
