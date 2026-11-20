@@ -1,0 +1,65 @@
+// seconds to hours preserves range and truncates toward zero at constexpr and runtime.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+constexpr bool check() {
+  {
+    c::seconds input{(-9223372036854775807i64 - 1i64)};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != -2562047788015215i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != -2562047788015215i64) return false;
+    if (input.count() != (-9223372036854775807i64 - 1i64)) return false;
+  }
+  {
+    c::seconds input{-1500i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != -1500i64) return false;
+  }
+  {
+    c::seconds input{-1i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != -1i64) return false;
+  }
+  {
+    c::seconds input{0i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != 0i64) return false;
+  }
+  {
+    c::seconds input{1i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != 1i64) return false;
+  }
+  {
+    c::seconds input{1500i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != 1500i64) return false;
+  }
+  {
+    c::seconds input{9223372036854775807i64};
+    auto result = input.try_cast<c::hours>();
+    if (!result || result.value().count() != 2562047788015215i64) return false;
+    auto direct = input.cast<c::hours>();
+    if (direct.count() != 2562047788015215i64) return false;
+    if (input.count() != 9223372036854775807i64) return false;
+  }
+  return true;
+}
+static_assert(check());
+int main() { return check() ? 0 : 1; }

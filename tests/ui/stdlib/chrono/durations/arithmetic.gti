@@ -1,0 +1,21 @@
+// Same-unit comparisons and checked arithmetic agree at constexpr and runtime.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+constexpr bool check() {
+  c::seconds zero{};
+  c::seconds low{-2i64};
+  c::seconds high{3i64};
+  c::seconds max{9223372036854775807i64};
+  c::seconds min{-9223372036854775807i64 - 1i64};
+  if (zero.count() != 0i64 || !(low < high) || !(low <= high) || !(high > low) || !(high >= low)) return false;
+  if (!(zero == zero) || zero != zero || !(low != high)) return false;
+  auto sum = low.checked_add(high);
+  auto difference = low.checked_sub(high);
+  if (!sum || sum.value().count() != 1i64) return false;
+  if (!difference || difference.value().count() != -5i64) return false;
+  if (max.checked_add(high) || min.checked_sub(high)) return false;
+  return sizeof(c::hours) == sizeof(int64_t);
+}
+static_assert(check());
+int main() { return check() ? 0 : 1; }

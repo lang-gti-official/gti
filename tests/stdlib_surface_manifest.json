@@ -3883,8 +3883,29 @@
       "status": "executable",
       "operations": [
         "std::chrono::clock_errc",
-        "std::chrono::nanoseconds::count",
-        "std::chrono::nanoseconds::nanoseconds",
+        "std::chrono::duration::cast",
+        "std::chrono::duration::checked_add",
+        "std::chrono::duration::checked_sub",
+        "std::chrono::duration::count",
+        "std::chrono::duration::duration",
+        "std::chrono::duration::operator!=",
+        "std::chrono::duration::operator<",
+        "std::chrono::duration::operator<=",
+        "std::chrono::duration::operator==",
+        "std::chrono::duration::operator>",
+        "std::chrono::duration::operator>=",
+        "std::chrono::duration::tick_nanoseconds",
+        "std::chrono::duration::try_cast",
+        "std::chrono::duration::unit_symbol",
+        "std::chrono::duration_errc",
+        "std::chrono::duration_type",
+        "std::chrono::duration_unit",
+        "std::chrono::hours",
+        "std::chrono::microseconds",
+        "std::chrono::milliseconds",
+        "std::chrono::minutes",
+        "std::chrono::nanoseconds",
+        "std::chrono::seconds",
         "std::chrono::steady_clock::now",
         "std::chrono::steady_time_point::after",
         "std::chrono::steady_time_point::before",
@@ -3910,14 +3931,21 @@
       "required_instantiations": [
         "int64 minimum/maximum elapsed subtraction",
         "negative Unix nanosecond decomposition",
-        "steady and system host clock reads"
+        "steady and system host clock reads",
+        "all 36 duration conversion pairs, constexpr/runtime, signed boundaries and truncation",
+        "cleanup-preserving cast overflow and required-constant rejection",
+        "same-unit checked arithmetic and generic duration formatting"
       ],
       "evidence": [
         "docs/language/chrono.md",
         "runtime/src/chrono.cpp",
         "stdlib/std/chrono.gti",
         "tests/fixtures/stdlib_surface_chrono.gti",
-        "tests/unit/runtime_chrono_tests.cpp"
+        "tests/unit/runtime_chrono_tests.cpp",
+        "tests/ui/stdlib/chrono/durations/seconds_to_nanoseconds.gti",
+        "tests/ui/stdlib/chrono/durations/constexpr_overflow.gti",
+        "tests/ui/stdlib/chrono/durations/cast_overflow.gti",
+        "tests/ui/stdlib/chrono/durations/formatting.gti"
       ]
     },
     {

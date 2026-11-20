@@ -1069,13 +1069,18 @@ and child-local overrides are not part of this slice. See
 ## Clock Boundary
 
 `std.chrono` keeps duration and time-point policy in ordinary GTI. Its signed
-`nanoseconds`, nominally distinct `steady_time_point` and `system_time_point`,
+`duration<Unit>` family (nanoseconds through hours), nominally distinct `steady_time_point` and `system_time_point`,
 checked elapsed subtraction, comparison, and Unix decomposition contain no
 compiler or backend name recognition. Exact `std::checked_sub` supplies the
-recoverable duration-overflow decision.
+recoverable elapsed-overflow decision. Duration casts reduce unit scales before
+checked multiplication or integer division; `try_cast` returns an error and
+`cast` uses the same result with cleanup-preserving panic on overflow. Unit
+metadata has no per-value storage. Same-unit arithmetic and comparisons, plus
+a generic formatting conformance, are ordinary source policy.
 
 Passive duration/time-point constructors and pure observers are source-defined
-`constexpr` clients of staged canonical MIR. Clock reads and Expected-returning
+`constexpr` clients of staged canonical MIR, as are duration conversions and
+checked duration arithmetic. Clock reads and Expected-returning
 elapsed subtraction are not const-eligible. The adoption adds no evaluator
 opcode, native constexpr authority, or public-name recognition.
 
@@ -1086,7 +1091,7 @@ and leaves the output unchanged on failure. The steady epoch remains opaque;
 the system result is signed Unix time excluding leap seconds. No native
 `std::chrono` type crosses the ABI.
 
-Generic ratio durations, sleep, calendars, formatting, parsing, time zones,
+Arbitrary ratio durations, sleep, calendars, parsing, time zones,
 and additional clocks remain outside this first observation slice.
 
 ## Managed Concurrency Boundary

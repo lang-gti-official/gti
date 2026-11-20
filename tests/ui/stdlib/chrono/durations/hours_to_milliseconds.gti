@@ -1,0 +1,89 @@
+// hours to milliseconds preserves range and truncates toward zero at constexpr and runtime.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+constexpr bool check() {
+  {
+    c::hours input{(-9223372036854775807i64 - 1i64)};
+    auto result = input.try_cast<c::milliseconds>();
+    if (result || result.error() != c::duration_errc::out_of_range) return false;
+    if (input.count() != (-9223372036854775807i64 - 1i64)) return false;
+  }
+  {
+    c::hours input{-2562047788016i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (result || result.error() != c::duration_errc::out_of_range) return false;
+    if (input.count() != -2562047788016i64) return false;
+  }
+  {
+    c::hours input{-2562047788015i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != -9223372036854000000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != -9223372036854000000i64) return false;
+    if (input.count() != -2562047788015i64) return false;
+  }
+  {
+    c::hours input{-1500i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != -5400000000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != -5400000000i64) return false;
+    if (input.count() != -1500i64) return false;
+  }
+  {
+    c::hours input{-1i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != -3600000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != -3600000i64) return false;
+    if (input.count() != -1i64) return false;
+  }
+  {
+    c::hours input{0i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != 0i64) return false;
+  }
+  {
+    c::hours input{1i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != 3600000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != 3600000i64) return false;
+    if (input.count() != 1i64) return false;
+  }
+  {
+    c::hours input{1500i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != 5400000000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != 5400000000i64) return false;
+    if (input.count() != 1500i64) return false;
+  }
+  {
+    c::hours input{2562047788015i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (!result || result.value().count() != 9223372036854000000i64) return false;
+    auto direct = input.cast<c::milliseconds>();
+    if (direct.count() != 9223372036854000000i64) return false;
+    if (input.count() != 2562047788015i64) return false;
+  }
+  {
+    c::hours input{2562047788016i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (result || result.error() != c::duration_errc::out_of_range) return false;
+    if (input.count() != 2562047788016i64) return false;
+  }
+  {
+    c::hours input{9223372036854775807i64};
+    auto result = input.try_cast<c::milliseconds>();
+    if (result || result.error() != c::duration_errc::out_of_range) return false;
+    if (input.count() != 9223372036854775807i64) return false;
+  }
+  return true;
+}
+static_assert(check());
+int main() { return check() ? 0 : 1; }
