@@ -22,6 +22,9 @@ def verify(stage):
         root = Path(temporary)
         stdlib = root / "stdlib"
         shutil.copytree(stage / "share/gti/stdlib", stdlib)
+        roots = {p.relative_to(stdlib) for p in (stdlib / "std").rglob("*.gti")}
+        if set(entries) != roots - {Path("std/assert.gti")} or Path("std/assert.gti") not in roots:
+            raise RuntimeError("the installed catalog must cover all std modules except the source-based std.assert")
         bundles = root / "precompiled-stdlib"
         shutil.copytree(stage / "share/gti/precompiled-stdlib", bundles)
         # The identity envelope begins with the SHA-256 of the exact compiler
@@ -88,6 +91,24 @@ def verify(stage):
                 raise RuntimeError(f"{profile}: vector recipe changed the executable bytes")
             if observations != output:
                 raise RuntimeError(f"{profile}: vector recipe changed cleanup output or diagnostics")
+
+        # The public imports reach the private module implementations through
+        # their normal dependencies. Only std.assert still has a source body.
+        imports = [f"import {'.'.join(entry.with_suffix('').parts)};"
+                   for entry in sorted(roots) if entry.parts[1] != "detail"]
+        source.write_text("\n".join(imports) + """
+int main() {
+  mut int evaluated = 0;
+  std::debug_assert!(++evaluated == 1);
+#ifdef NDEBUG
+  return evaluated;
+#else
+  return evaluated == 1 ? 0 : 1;
+#endif
+}
+""")
+        for profile in ([], ["--release"]):
+            run("run", *profile)
 
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         for profile in ([], ["--release"]):

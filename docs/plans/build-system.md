@@ -1750,6 +1750,10 @@ needs ownership/cleanup and general control-flow bodies for cross-module
 optimization. See the
 [installed module contract](../architecture/build-and-driver.md#precompiled-standard-library).
 
+The installed catalog covers 68 module roots in dev and release. The installed
+test imports all public standard modules together after removing the 68 packaged
+implementations. It exercises source-based debug assertions under each profile.
+
 The installed array fixture compiles a previously unseen application-defined
 element type and extent from `array.gtilib` after removing `std/array.gti`.
 It also checks constraints, borrow rejection, constant evaluation and reuse of
