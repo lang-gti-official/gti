@@ -7,7 +7,8 @@
 namespace lang {
 namespace {
 constexpr std::string_view magic = "gti.project-template.1\n";
-constexpr std::size_t limit = 1024 * 1024;
+constexpr std::size_t limit = compiledTemplateArchiveLimit +
+                              2U * compiledTemplateSyntaxLimit;
 [[noreturn]] void reject(std::string_view reason) {
   throw std::invalid_argument("compiled project template: " +
                               std::string(reason));
@@ -158,8 +159,10 @@ std::vector<Token> projectTemplateTokens(const CompiledTemplateModule &module,
 void verifyProjectTemplate(const CompiledTemplateModule &module,
                            std::span<const StmtPtr> declarations,
                            const LifetimeNames &lifetimes) {
+  verifyCompiledEmbeddedFiles(module, module.projectSyntax.value());
   auto canonical = compileTemplateModule(
       declarations, module.projectSyntax.value(), lifetimes);
+  canonical.embeddedFiles = module.embeddedFiles;
   if (encodeTemplateModule(canonical) != encodeTemplateModule(module))
     reject("body recipe does not match ordinary parsed syntax");
 }

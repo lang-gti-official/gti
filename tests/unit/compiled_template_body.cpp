@@ -3,6 +3,7 @@
 #include "gti/compiled_template_body.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
+#include "gti/source_graph.h"
 #include "unit_test.h"
 #include <iostream>
 #include <stdexcept>
@@ -185,6 +186,58 @@ int&<a> second<lifetime a>(int&<a> value) { int&<a> ref = value; return ref; }
                 restored.uses[i].binder.source == "installed.gti",
             "lifetime use rebound to a different declaration");
 }
+void checkEmbeddedInputs() {
+  const std::string source =
+      "int f<T>(T value) { auto a = embed_bytes(\"asset.bin\"); "
+      "auto b = embed_bytes(\"asset.bin\"); return int(a[0] + b[0]); }";
+  auto parsed = parse(source, "producer.gti");
+  lang::Lexer lexer;
+  const auto tokens = lexer.scan(source, "producer.gti");
+  std::vector<lang::EmbeddedFile> inputs;
+  auto payload = std::make_shared<const std::string>(1024 * 1024 + 17, '\x07');
+  for (const auto &token : tokens) {
+    if (token.kind != lang::TokenKind::EMBED_BYTES) continue;
+    lang::EmbeddedFile input;
+    input.keyword = token;
+    input.storageOffset = inputs.empty() ? token.position : inputs[0].storageOffset;
+    input.spelling = "asset.bin";
+    input.bytes = payload;
+    inputs.push_back(std::move(input));
+  }
+  auto original = lang::compileTemplateModule(parsed.declarations(), source, {}, inputs);
+  auto encoded = lang::encodeTemplateModule(original);
+  auto received = lang::decodeTemplateModule(encoded);
+  require(received.embeddedFiles.size() == 2 &&
+              *received.embeddedFiles[0].bytes == *payload &&
+              received.embeddedFiles[0].bytes == received.embeddedFiles[1].bytes,
+          "embedded payload or shared storage lost");
+  lang::verifyCompiledEmbeddedFiles(received, source);
+  auto rejects = [](auto operation) {
+    try { operation(); } catch (const std::invalid_argument &) { return; }
+    throw std::runtime_error("invalid embedded metadata accepted");
+  };
+  auto broken = received;
+  broken.embeddedFiles[0].spelling = "other.bin";
+  rejects([&] { lang::verifyCompiledEmbeddedFiles(broken, source); });
+  broken = received;
+  ++broken.embeddedFiles[0].keyword.position;
+  rejects([&] { lang::verifyCompiledEmbeddedFiles(broken, source); });
+  broken = received;
+  broken.embeddedFiles[1].storageOffset = broken.embeddedFiles[1].keyword.position;
+  rejects([&] { (void)lang::encodeTemplateModule(broken); });
+  broken = received;
+  broken.embeddedFiles[0].bytes.reset();
+  rejects([&] { (void)lang::encodeTemplateModule(broken); });
+  // Decoder must reject truncated payloads, malformed payload lengths and
+  // trailing data even when an outer archive checksum has been recomputed.
+  rejects([&] { (void)lang::decodeTemplateModule(encoded.substr(0, encoded.size() - 1)); });
+  rejects([&] { (void)lang::decodeTemplateModule(encoded + "x"); });
+  const auto payloadAt = encoded.find(std::string(64, '\x07'));
+  require(payloadAt != std::string::npos && payloadAt >= 4, "missing embedded payload");
+  auto malformed = encoded;
+  malformed.replace(payloadAt - 4, 4, 4, '\xff');
+  rejects([&] { (void)lang::decodeTemplateModule(malformed); });
+}
 void checkUnsupported(const std::string &source, std::string_view reason) {
   auto parsed = parse(source, "producer.gti");
   try {
@@ -236,6 +289,7 @@ GTI_UNIT_TEST(compiled_template_body) {
   invalid.bodies.clear();
   if (!reject(invalid))
     return 5;
+  checkEmbeddedInputs();
   checkDeclarationUnits();
   checkControlFlow();
   checkLifetimes();

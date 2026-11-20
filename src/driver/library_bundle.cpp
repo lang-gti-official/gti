@@ -68,7 +68,8 @@ std::size_t validate(const LibraryBundle &bundle) {
       bundle.objects.empty() != bundle.templateOnly ||
       bundle.objects.size() > libraryBundleEntryLimit)
     reject(Kind::ResourceLimit, "invalid library object count");
-  if (bundle.interfaceMetadata.size() > 1024U * 1024U)
+  if (bundle.interfaceMetadata.size() >
+      (bundle.templateOnly ? libraryBundleTemplateInterfaceLimit : 1024U * 1024U))
     reject(Kind::ResourceLimit, "library interface exceeds byte limit");
   std::size_t size =
       4 + bundle.interfaceMetadata.size() + magic.size() + 4 + 4 + 4 + 4 + 64;
@@ -209,7 +210,8 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
   id.library = reader.blob(64);
   id.sources = reader.blob(64);
   validateIdentity(id);
-  result.interfaceMetadata = reader.blob(1024U * 1024U);
+  result.interfaceMetadata = reader.blob(
+      result.templateOnly ? libraryBundleTemplateInterfaceLimit : 1024U * 1024U);
   const auto depCount = reader.count();
   for (std::uint32_t i = 0; i < depCount; ++i) {
     LibraryBundleDependency dep{reader.blob(64), reader.blob(64)};

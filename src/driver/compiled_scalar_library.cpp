@@ -525,7 +525,8 @@ projectModuleMetadata(const FrontendResult &frontend,
     throw std::invalid_argument("missing generic library source snapshot");
   auto recipe = compileTemplateModule(
       declarations, *source,
-      entry->lifetimeNames ? *entry->lifetimeNames : LifetimeNames{});
+      entry->lifetimeNames ? *entry->lifetimeNames : LifetimeNames{},
+      entry->embeddedFiles);
   return profile == LibraryProfile::InstalledStdlib
              ? encodeTemplateModule(recipe)
              : encodeProjectTemplate(recipe, *source);
@@ -585,7 +586,8 @@ enum class StandardLibraryInput { Source, Installed };
 CompiledLibraryInputs
 loadExecutableInputs(const CompilationRequest &, const std::filesystem::path &,
                      ProgressObserver *,
-                     std::unordered_map<std::string, std::string> overlays);
+                     std::unordered_map<std::string, std::string> overlays,
+                     std::span<const std::string> archivedInputs = {});
 CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &, std::span<const CompiledLibraryImport>,
     const std::filesystem::path &, ProgressObserver *progress = nullptr,
@@ -601,7 +603,7 @@ producerImplementations(const SourceGraph &graph) {
 }
 std::string producerSources(const CompilationInputs &inputs,
                             const CompiledLibraryTarget *target) {
-  std::string sources = "gti.compiled-source-graph.2";
+  std::string sources = "gti.compiled-source-graph.3";
   const auto &graph = inputs.sourceGraph;
   field(sources, graph.sourceOwners()
                      ? graph.sourceOwners()->resolutionIdentity()
@@ -620,6 +622,17 @@ std::string producerSources(const CompilationInputs &inputs,
           unit && unit->compiledScalarInterface ? "compiled" : "source");
     field(sources, unit && unit->entry ? "entry" : "dependency");
     field(sources, unit && unit->prelude ? "prelude" : "ordinary");
+    // Embedded inputs are producer dependencies even when the GTI source and
+    // configured tokens are unchanged. Hash the immutable loader snapshot,
+    // never reopen the path after checking it.
+    field(sources, std::to_string(unit ? unit->embeddedFiles.size() : 0));
+    if (unit)
+      for (const auto &file : unit->embeddedFiles) {
+        field(sources, std::to_string(file.keyword.position));
+        field(sources, std::to_string(file.storageOffset));
+        field(sources, file.spelling);
+        field(sources, file.bytes ? hash(*file.bytes) : "missing");
+      }
     // Include the actual configured token stream, not a lossy cache digest.
     field(sources,
           std::to_string(unit && unit->tokens ? unit->tokens->size() : 0));
@@ -1181,18 +1194,25 @@ CompiledLibraryInputs prepareScalarConsumer(
       request, bundles,
       admissionEnvironment(request, runtime, LibraryProfile::Project));
   std::unordered_map<std::string, std::string> overlays;
-  for (auto &facade : admitted.facades)
+  std::vector<std::string> archivedInputs;
+  SourceLoader sourceLoader;
+  for (auto &facade : admitted.facades) {
+    if (facade.recipe) {
+      archivedInputs.push_back(facade.path);
+      sourceLoader.useArchivedEmbeddedInputs(facade.path);
+    }
     if (!overlays.emplace(facade.path, std::move(facade.source)).second)
       throw std::invalid_argument("duplicate compiled module interface path");
+  }
   auto effective =
       request.withPackageSources(std::move(admitted.packageSources));
   // A library producer owns its implementation dependencies. A final consumer
   // can link the installed standard library alongside its project libraries.
   auto loaded = standardLibrary == StandardLibraryInput::Installed
                     ? loadExecutableInputs(effective, runtime, progress,
-                                           std::move(overlays))
+                                           std::move(overlays), archivedInputs)
                     : CompiledLibraryInputs{
-                          loadCompilationInputs(effective, progress, overlays)};
+                          loadCompilationInputs(effective, sourceLoader, progress, overlays)};
   CompiledLibraryInputs inputs{std::move(loaded.compilation)};
   std::move(admitted).bind(inputs);
   std::ranges::move(loaded.imports, std::back_inserter(inputs.imports));
@@ -1277,10 +1297,13 @@ CompiledLibraryInputs
 loadExecutableInputs(const CompilationRequest &request,
                      const std::filesystem::path &runtime,
                      ProgressObserver *progress,
-                     std::unordered_map<std::string, std::string> overlays) {
+                     std::unordered_map<std::string, std::string> overlays,
+                     std::span<const std::string> archivedInputs) {
+  SourceLoader loader;
+  for (const auto &path : archivedInputs) loader.useArchivedEmbeddedInputs(path);
   const auto source = [&] {
     return CompiledLibraryInputs{
-        loadCompilationInputs(request, progress, overlays)};
+        loadCompilationInputs(request, loader, progress, overlays)};
   };
   const auto &target = request.target();
   if (request.backend() != BackendKind::Llvm || request.debugInfo() ||
@@ -1318,7 +1341,6 @@ loadExecutableInputs(const CompilationRequest &request,
   std::map<std::string, LoadedModule> loaded;
   std::size_t totalBytes = 0;
   std::size_t declarations = 0;
-  SourceLoader loader;
   // Recipe modules expose their own declaration and import skeleton at their
   // public path. The ordinary source loader still resolves its dependencies.
   for (const auto &module : installedModules) {
@@ -1328,6 +1350,7 @@ loadExecutableInputs(const CompilationRequest &request,
       if (overlays.contains(entry.string()))
         throw std::invalid_argument(
             "project interface overlaps the installed standard library");
+      loader.useArchivedEmbeddedInputs(entry.string());
       loader.deferInstalledModule(entry.string(), [&, name, entry] {
         const auto artifact = directory / (name + ".gtilib");
         const auto bytes = readCompiledLibraryFileBounded(
