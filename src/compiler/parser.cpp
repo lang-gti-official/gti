@@ -41,10 +41,10 @@ namespace {
 
 } // namespace
 
-StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword, Mutability bindingMutability,
-                              TypeRef bindingType, Token bindingName,
-                              Token colon, ExprPtr range, StmtPtr body,
-                              StmtPtr initializer) {
+StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword,
+                           Mutability bindingMutability, TypeRef bindingType,
+                           Token bindingName, Token colon, ExprPtr range,
+                           StmtPtr body, StmtPtr initializer) {
   const Stmt *sourceBody = body.get();
   const bool mutableElementLoan =
       bindingMutability == Mutability::Mutable && bindingType.reference;
@@ -53,10 +53,10 @@ StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword, Mutability bindin
       generatedToken(TokenKind::IDENTIFIER, "__gti_owner_" + suffix, colon);
   Token rangeName =
       generatedToken(TokenKind::IDENTIFIER, "__gti_range_" + suffix, colon);
-  Token iteratorName = generatedToken(TokenKind::IDENTIFIER,
-                                      "__gti_iterator_" + suffix, colon);
-  Token sentinelName = generatedToken(TokenKind::IDENTIFIER,
-                                      "__gti_sentinel_" + suffix, colon);
+  Token iteratorName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_iterator_" + suffix, colon);
+  Token sentinelName =
+      generatedToken(TokenKind::IDENTIFIER, "__gti_sentinel_" + suffix, colon);
 
   TypeRef ownerType(generatedToken(TokenKind::AUTO, "auto", colon));
   TypeRef rangeType(generatedToken(TokenKind::AUTO, "auto", colon));
@@ -96,9 +96,8 @@ StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword, Mutability bindin
           generatedVariable(iteratorName),
           generatedToken(TokenKind::BANG_EQUAL, "!=", colon),
           generatedVariable(sentinelName)),
-      std::make_unique<Unary>(
-          generatedToken(TokenKind::PLUS_PLUS, "++", colon),
-          generatedVariable(iteratorName)),
+      std::make_unique<Unary>(generatedToken(TokenKind::PLUS_PLUS, "++", colon),
+                              generatedVariable(iteratorName)),
       std::make_unique<BlockStmt>(std::move(loopBody)));
   const ForStmt *coreLoopPointer = coreLoop.get();
 
@@ -117,8 +116,8 @@ StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword, Mutability bindin
   lowered.emplace_back(std::move(rangeBinding));
   auto iteratorBinding = std::make_shared<VariableDecl>(
       Mutability::Mutable, std::move(iteratorType), iteratorName,
-      generatedMemberCall(rangeName,
-                          mutableElementLoan ? "begin_mut" : "begin", colon),
+      generatedMemberCall(rangeName, mutableElementLoan ? "begin_mut" : "begin",
+                          colon),
       std::nullopt, false, std::nullopt, false, true);
   const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
   lowered.emplace_back(std::move(iteratorBinding));
@@ -138,13 +137,15 @@ StmtPtr makeParsedRangeFor(std::size_t ordinal, Token keyword, Mutability bindin
       sourceBody, std::move(initializer), ordinal);
 }
 
-
-StmtPtr makeParsedConstexprFor(Token constexprKeyword, Token keyword, Mutability mutability, TypeRef bindingType, Token name, Token colon, ExprPtr sequence, StmtPtr body) {
+StmtPtr makeParsedConstexprFor(Token constexprKeyword, Token keyword,
+                               Mutability mutability, TypeRef bindingType,
+                               Token name, Token colon, ExprPtr sequence,
+                               StmtPtr body) {
   auto initializer = std::make_unique<Call>(
       generatedVariable(generatedToken(TokenKind::IDENTIFIER,
                                        "__constexpr_for_element", name)),
-      std::vector<TypeRef>{},
-      generatedToken(TokenKind::RIGHT_PAREN, ")", name), ExprList{});
+      std::vector<TypeRef>{}, generatedToken(TokenKind::RIGHT_PAREN, ")", name),
+      ExprList{});
   const Call *initializerPointer = initializer.get();
   auto elementBinding = std::make_shared<VariableDecl>(
       mutability, bindingType, name, std::move(initializer), std::nullopt,
@@ -220,10 +221,9 @@ public:
             sourceUnitImport();
             continue;
           }
-          sawInterfaceLambda = false;
+          interfaceLambdaCount = 0;
           auto topLevel = declaration();
-          if (sawInterfaceLambda)
-            topLevel->markInterfaceLambda();
+          topLevel->setInterfaceLambdaCount(interfaceLambdaCount);
           declarations.emplace_back(std::move(topLevel));
         } catch (const ParseError &) {
           synchronize(false, false, true);
@@ -3926,7 +3926,10 @@ private:
     consume(TokenKind::RIGHT_PAREN,
             "Expect ')' after the 'constexpr for' sequence.");
     StmtPtr body = statement();
-    return makeParsedConstexprFor(std::move(constexprKeyword), std::move(keyword), mutability, std::move(bindingType), std::move(name), std::move(colon), std::move(sequence), std::move(body));
+    return makeParsedConstexprFor(
+        std::move(constexprKeyword), std::move(keyword), mutability,
+        std::move(bindingType), std::move(name), std::move(colon),
+        std::move(sequence), std::move(body));
   }
 
   StmtPtr forStatement() {
@@ -4048,7 +4051,10 @@ private:
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body,
                                 StmtPtr initializer = nullptr) {
-    return makeParsedRangeFor(++generatedNameCounter, std::move(keyword), bindingMutability, std::move(bindingType), std::move(bindingName), std::move(colon), std::move(range), std::move(body), std::move(initializer));
+    return makeParsedRangeFor(
+        ++generatedNameCounter, std::move(keyword), bindingMutability,
+        std::move(bindingType), std::move(bindingName), std::move(colon),
+        std::move(range), std::move(body), std::move(initializer));
   }
 
   StmtPtr switchStatement() {
@@ -4963,8 +4969,9 @@ private:
   }
 
   ExprPtr lambdaExpression(Token bracket) {
-    if (!namedBodyDepth)
-      sawInterfaceLambda = true;
+    const bool interfaceLambda = !namedBodyDepth;
+    if (interfaceLambda)
+      ++interfaceLambdaCount;
     std::vector<LambdaCapture> captures;
     if (!check(TokenKind::RIGHT_BRACKET)) {
       do {
@@ -5020,10 +5027,19 @@ private:
       resultAccess = previous();
     TypeRef returnType = parseType();
     returnType.referenceMutability = std::move(resultAccess);
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
-    return std::make_unique<Lambda>(std::move(bracket), std::move(captures),
-                                    std::move(parameters), std::move(arrow),
-                                    std::move(returnType), blockItems());
+    const Token open =
+        consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
+    // Nested lambdas in these statements belong to this body's recipe.
+    NestingGuard inBody(namedBodyDepth);
+    auto lambda = std::make_unique<Lambda>(
+        std::move(bracket), std::move(captures), std::move(parameters),
+        std::move(arrow), std::move(returnType), blockItems());
+    if (interfaceLambda)
+      lambda->setInterfaceBodySpan(std::make_shared<const SourceSpan>(
+          SourceSpan{open.source, open.position,
+                     previous().position + previous().lexeme.size(),
+                     open.line}));
+    return lambda;
   }
 
   [[nodiscard]] static bool isIdentifierUseToken(TokenKind kind) {
@@ -5845,7 +5861,7 @@ private:
   std::size_t conditionalDepth = 0;
   std::size_t generatedNameCounter = 0;
   std::size_t namedBodyDepth = 0;
-  bool sawInterfaceLambda = false;
+  std::size_t interfaceLambdaCount = 0;
   std::optional<Token> currentClassName;
   std::optional<ClassKind> currentClassKind;
   bool consumedCompletion = false;

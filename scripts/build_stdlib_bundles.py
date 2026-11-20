@@ -98,13 +98,13 @@ def build(stage, source, modules):
                                cwd=consumer, env=env, check=True)
         # Compile and execute a consumer-owned substitution after its producer
         # root has been removed from the toolchain used by the application.
-        shutil.copyfile(consumer / "array_consumer.gti", consumer / "src/main.gti")
-        for profile in ([], ["--release"]):
-            subprocess.run([compiler, "run", "--offline", *profile],
-                           cwd=consumer, env=env, check=True)
-        shutil.copyfile(source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti", consumer / "src/main.gti")
-        for profile in ([], ["--release"]):
-            subprocess.run([compiler, "run", "--offline", *profile], cwd=consumer, env=env, check=True)
+        cases = (consumer / "array_consumer.gti",
+                 source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
+                 source / "tests/ui/callables/borrowing_captures/borrowing_captures_19.gti")
+        for case in cases:
+            shutil.copyfile(case, consumer / "src/main.gti")
+            for profile in ([], ["--release"]):
+                subprocess.run([compiler, "run", "--offline", *profile], cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:

@@ -13,8 +13,10 @@ struct CompiledTemplateModule {
   LifetimeNames lifetimeNames;
 };
 CompiledTemplateModule compileTemplateModule(std::span<const StmtPtr>,
-                                             std::string_view source, const LifetimeNames &names = {});
-LifetimeNames compiledTemplateLifetimeNames(const CompiledTemplateModule &, std::string_view path);
+                                             std::string_view source,
+                                             const LifetimeNames &names = {});
+LifetimeNames compiledTemplateLifetimeNames(const CompiledTemplateModule &,
+                                            std::string_view path);
 void restoreTemplateBodies(std::span<const StmtPtr>,
                            const CompiledTemplateModule &,
                            std::string_view path);

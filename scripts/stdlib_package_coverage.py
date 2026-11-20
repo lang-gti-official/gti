@@ -9,6 +9,14 @@ import subprocess
 import tempfile
 
 
+def unit_kind(unit):
+    if unit.parts[0] == "tests":
+        return "test input"
+    if unit.parent == Path("."):
+        return "prelude or aggregate"
+    return "standard module"
+
+
 def inventory(compiler, library, output):
     with tempfile.TemporaryDirectory(prefix="gti-package-coverage-") as temp:
         project = Path(temp)
@@ -50,12 +58,17 @@ def inventory(compiler, library, output):
                 reason = reason.split("valid GTI program: ", 1)[1]
             elif "error[" in reason:
                 reason = reason[reason.index("error["):]
-            rows.append(dict(unit=unit.as_posix(), test=unit.parts[0] == "tests",
+            rows.append(dict(unit=unit.as_posix(), kind=unit_kind(unit), exit_code=result.returncode,
                              result="failed" if result.returncode else "built",
                              diagnostic=reason, log=log if result.returncode else ""))
         output.write_text(json.dumps(rows, indent=2) + "\n")
-        for (kind, diagnostic), count in Counter((r["result"], r["diagnostic"]) for r in rows).most_common():
-            print(count, kind, diagnostic)
+        for group in sorted({row["kind"] for row in rows}):
+            group_rows = [row for row in rows if row["kind"] == group]
+            built = sum(row["result"] == "built" for row in group_rows)
+            print(f"{group}: {built}/{len(group_rows)} packaged")
+        failures = Counter(row["diagnostic"] for row in rows if row["result"] == "failed")
+        for diagnostic, count in failures.most_common():
+            print(f"{count} failed: {diagnostic}")
 
 
 if __name__ == "__main__":

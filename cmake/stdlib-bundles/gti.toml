@@ -31,3 +31,7 @@ root = "stdlib/std/span.gti"
 [targets.vector]
 kind = "gti-library"
 root = "stdlib/std/vector.gti"
+
+[targets.functional]
+kind = "gti-library"
+root = "stdlib/std/functional.gti"

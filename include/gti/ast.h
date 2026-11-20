@@ -1010,14 +1010,18 @@ public:
 
   // The declaration interface may retain expressions (e.g. parameter defaults).
   // A lambda in one of those expressions introduces a separate executable body.
-  [[nodiscard]] bool hasInterfaceLambda() const { return interfaceLambda_; }
-  void markInterfaceLambda() { interfaceLambda_ = true; }
+  [[nodiscard]] std::size_t interfaceLambdaCount() const {
+    return interfaceLambdaCount_;
+  }
+  void setInterfaceLambdaCount(std::size_t count) {
+    interfaceLambdaCount_ = count;
+  }
 
 private:
   std::optional<SourceSpan> extent_;
   std::optional<std::string> documentationMarkdown_;
   std::optional<Token> exportKeyword_;
-  bool interfaceLambda_ = false;
+  std::size_t interfaceLambdaCount_ = 0;
 };
 
 template <StmtKind Kind> class StmtOfKind : public Stmt {
@@ -1568,6 +1572,17 @@ public:
   [[nodiscard]] const TypeRef &returnType() const { return returnType_; }
   [[nodiscard]] const StmtList &body() const { return body_; }
 
+  // Only a lambda outside a named body needs its own declaration projection.
+  const std::shared_ptr<const SourceSpan> &interfaceBodySpan() const {
+    return interfaceBodySpan_;
+  }
+  void setInterfaceBodySpan(std::shared_ptr<const SourceSpan> span) {
+    interfaceBodySpan_ = std::move(span);
+  }
+  void restoreCompiledStatements(StmtList statements) {
+    body_ = std::move(statements);
+  }
+
 private:
   Token bracket_;
   std::vector<LambdaCapture> captures_;
@@ -1575,6 +1590,7 @@ private:
   Token arrow_;
   TypeRef returnType_;
   StmtList body_;
+  std::shared_ptr<const SourceSpan> interfaceBodySpan_;
 };
 
 enum class LayoutQueryKind {
@@ -2471,7 +2487,8 @@ public:
                const VariableDecl *sentinelBinding,
                const VariableDecl *elementBinding, const ForStmt *coreLoop,
                const VariableDecl *elementOwnerBinding = nullptr,
-               const Stmt *sourceBody = nullptr, StmtPtr initializer = nullptr, std::size_t syntaxOrdinal = 0)
+               const Stmt *sourceBody = nullptr, StmtPtr initializer = nullptr,
+               std::size_t syntaxOrdinal = 0)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
@@ -2479,7 +2496,8 @@ public:
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
         coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding),
-        sourceBody_(sourceBody), initializer_(std::move(initializer)), syntaxOrdinal_(syntaxOrdinal) {}
+        sourceBody_(sourceBody), initializer_(std::move(initializer)),
+        syntaxOrdinal_(syntaxOrdinal) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);

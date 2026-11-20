@@ -3377,7 +3377,7 @@ seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
 The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` retains its source implementation and OS entropy backend.
-The installed array, span and vector bundles carry their modules’ declarations
+The installed array, span, vector and functional bundles carry their modules’ declarations
 and dependent method bodies. The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,

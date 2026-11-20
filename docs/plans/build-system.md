@@ -1753,8 +1753,8 @@ optimization. See the
 The installed array fixture compiles a previously unseen application-defined
 element type and extent from `array.gtilib` after removing `std/array.gti`.
 It also checks constraints, borrow rejection, constant evaluation and reuse of
-the same artifact for different substitutions. Installed span and vector consumers
-also exercise constant evaluation and ownership across module boundaries. The
+the same artifact for different substitutions. Installed span, vector and functional consumers
+exercise constant evaluation, ownership and calls through erased callbacks. The
 `compiled_generic_container` transcript builds an ordinary package, removes
 its producer, runs a separate project with its own element type, and verifies
 both loan rejection and artifact consistency. Multi-unit project template

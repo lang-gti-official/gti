@@ -1,9 +1,9 @@
 #include "gti/compiled_template_body.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
-#include <set>
 #include <algorithm>
 #include <climits>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -97,11 +97,15 @@ void putType(Output &out, const TypeRef &t) {
   fields(out, t.name, t.arguments);
   out.number(bool(t.qualifiedOwner));
   if (t.qualifiedOwner)
-    putType(out,*t.qualifiedOwner);
-  fields(out, t.lifetimeArguments, t.referenceLifetime, t.lifetimeBinder, t.functionSignatureQualifier, t.packExpansion);
-  out.number(t.nativeFunctionParameterCount ? 1 : t.functionSignatureParameterCount ? 2 : 0);
+    putType(out, *t.qualifiedOwner);
+  fields(out, t.lifetimeArguments, t.referenceLifetime, t.lifetimeBinder,
+         t.functionSignatureQualifier, t.packExpansion);
+  out.number(t.nativeFunctionParameterCount      ? 1
+             : t.functionSignatureParameterCount ? 2
+                                                 : 0);
   if (t.nativeFunctionParameterCount || t.functionSignatureParameterCount)
-    out.number(t.nativeFunctionParameterCount.value_or(t.functionSignatureParameterCount.value_or(0)));
+    out.number(t.nativeFunctionParameterCount.value_or(
+        t.functionSignatureParameterCount.value_or(0)));
   out.number(t.pointers.size());
   for (const auto &p : t.pointers)
     fields(out, p.star, p.pointeeConst);
@@ -123,7 +127,8 @@ TypeRef getType(Input &in) {
   const auto functionKind = in.number();
   if (functionKind) {
     const auto arity = in.number();
-    if (functionKind > 2 || t.arguments.empty() || arity != t.arguments.size() - 1)
+    if (functionKind > 2 || t.arguments.empty() ||
+        arity != t.arguments.size() - 1)
       invalid("invalid function type arity");
     if (functionKind == 1)
       t.nativeFunctionParameterCount = arity;
@@ -143,7 +148,8 @@ TypeRef getType(Input &in) {
   return t;
 }
 Token implicitToken(TokenKind kind, std::string spelling, const Token &anchor) {
-  return {kind, std::move(spelling), {}, anchor.position, anchor.line, anchor.source, false, true};
+  return {kind,        std::move(spelling), {},    anchor.position,
+          anchor.line, anchor.source,       false, true};
 }
 
 template <class T> void put(Output &out, const T &value) {
@@ -177,16 +183,17 @@ template <class T> void put(Output &out, const T &value) {
       writeExpr(out, *value);
     else
       writeStmt(out, *value);
-  } else if constexpr (std::is_same_v<T,LambdaCapture>) {
+  } else if constexpr (std::is_same_v<T, LambdaCapture>) {
     fields(out, value.name, value.equal, value.borrow, value.mutKeyword);
     if (value.equal)
       put(out, value.initializer);
-  } else if constexpr (std::is_same_v<T,Parameter>) {
+  } else if constexpr (std::is_same_v<T, Parameter>) {
     fields(out, value.type, value.name, value.pack);
     out.number(value.mutability == Mutability::Mutable);
     out.number(bool(value.defaultArgument));
     if (value.defaultArgument)
-      fields(out, value.defaultArgument->equal, value.defaultArgument->expression);
+      fields(out, value.defaultArgument->equal,
+             value.defaultArgument->expression);
   } else if constexpr (Optional<T>::value) {
     out.number(value.has_value());
     if (value)
@@ -235,7 +242,8 @@ template <class T> T get(Input &in) {
   else if constexpr (std::is_same_v<T, LifetimeParameterSyntax>)
     return {get<Token>(in), get<Token>(in)};
   else if constexpr (std::is_same_v<T, LifetimeBinder>)
-    return {get<Token>(in), get<Token>(in), get<std::vector<LifetimeParameterSyntax>>(in), get<Token>(in)};
+    return {get<Token>(in), get<Token>(in),
+            get<std::vector<LifetimeParameterSyntax>>(in), get<Token>(in)};
   else if constexpr (std::is_same_v<T, TypeRef>)
     return getType(in);
   else if constexpr (std::is_same_v<T, ArrayExtentExprPtr>) {
@@ -253,7 +261,7 @@ template <class T> T get(Input &in) {
     return readExpr(in);
   else if constexpr (std::is_same_v<T, StmtPtr>)
     return readStmt(in);
-  else if constexpr (std::is_same_v<T,LambdaCapture>) {
+  else if constexpr (std::is_same_v<T, LambdaCapture>) {
     auto name = get<Token>(in);
     auto equal = get<std::optional<Token>>(in);
     auto borrow = get<std::optional<Token>>(in);
@@ -270,9 +278,11 @@ template <class T> T get(Input &in) {
     else if (name.kind == TokenKind::THIS)
       initializer = std::make_unique<This>(name);
     else
-      initializer = std::make_unique<Variable>(implicitToken(TokenKind::IDENTIFIER,name.lexeme,name));
-    return {std::move(name),std::move(equal),std::move(initializer),std::move(borrow),std::move(mut)};
-  } else if constexpr (std::is_same_v<T,Parameter>) {
+      initializer = std::make_unique<Variable>(
+          implicitToken(TokenKind::IDENTIFIER, name.lexeme, name));
+    return {std::move(name), std::move(equal), std::move(initializer),
+            std::move(borrow), std::move(mut)};
+  } else if constexpr (std::is_same_v<T, Parameter>) {
     auto type = get<TypeRef>(in);
     auto name = get<Token>(in);
     auto pack = get<std::optional<Token>>(in);
@@ -284,7 +294,8 @@ template <class T> T get(Input &in) {
         invalid("invalid lambda parameter default");
       argument.emplace(std::move(equal), get<ExprPtr>(in));
     }
-    return {std::move(type),std::move(name),mutability,std::move(pack),std::move(argument)};
+    return {std::move(type), std::move(name), mutability, std::move(pack),
+            std::move(argument)};
   } else if constexpr (Optional<T>::value) {
     if (!in.flag())
       return {};
@@ -337,29 +348,30 @@ std::optional<SourceSpan> readOrigin(Input &in) {
 SyntaxCapture lexicalCapture(std::string_view text, std::size_t start,
                              int firstLine, std::string_view path) {
   Lexer lexer;
-  auto tokens=lexer.scan(std::string(text),std::string(path));
-  if (lexer.hadError() || tokens.size()<3 || tokens.size()>itemLimit)
+  auto tokens = lexer.scan(std::string(text), std::string(path));
+  if (lexer.hadError() || tokens.size() < 3 || tokens.size() > itemLimit)
     invalid("invalid captured macro syntax");
   tokens.pop_back();
-  auto balanced=balancedSyntax(tokens,0);
-  if (!balanced.complete || balanced.end+1!=tokens.size() ||
-      tokens.front().kind!=TokenKind::LEFT_PAREN || tokens.front().position!=0 ||
-      tokens.back().position+tokens.back().lexeme.size()!=text.size())
+  auto balanced = balancedSyntax(tokens, 0);
+  if (!balanced.complete || balanced.end + 1 != tokens.size() ||
+      tokens.front().kind != TokenKind::LEFT_PAREN ||
+      tokens.front().position != 0 ||
+      tokens.back().position + tokens.back().lexeme.size() != text.size())
     invalid("invalid macro argument delimiters");
-  auto capture=captureSyntax(tokens,text);
-  capture.start=start;
-  for (std::size_t i=0;i<capture.tokens.size();++i) {
-    auto &token=capture.tokens[i];
-    if (token.line-1 > INT_MAX-firstLine)
+  auto capture = captureSyntax(tokens, text);
+  capture.start = start;
+  for (std::size_t i = 0; i < capture.tokens.size(); ++i) {
+    auto &token = capture.tokens[i];
+    if (token.line - 1 > INT_MAX - firstLine)
       invalid("invalid macro line");
-    token.position+=start;
-    token.line+=firstLine-1;
-    capture.origins[i]=tokenSpan(token);
+    token.position += start;
+    token.line += firstLine - 1;
+    capture.origins[i] = tokenSpan(token);
   }
   return capture;
 }
 void writeMacroCapture(Output &out, const Call &call) {
-  put(out,call.macroBang());
+  put(out, call.macroBang());
   if (!call.macroBang()) {
     if (call.capturedArguments())
       invalid("unexpected call capture");
@@ -367,18 +379,21 @@ void writeMacroCapture(Output &out, const Call &call) {
   }
   if (!call.capturedArguments() || !call.macroArgumentErrors().empty())
     invalid("unsupported macro capture with speculative argument diagnostics");
-  const auto &capture=*call.capturedArguments();
+  const auto &capture = *call.capturedArguments();
   if (capture.tokens.empty())
     invalid("empty macro capture");
-  const auto &start=capture.tokens.front();
-  auto expected=lexicalCapture(capture.text,capture.start,start.line,start.source);
-  if (expected.origins!=capture.origins || expected.textRanges!=capture.textRanges ||
-      expected.tokens.size()!=capture.tokens.size())
+  const auto &start = capture.tokens.front();
+  auto expected =
+      lexicalCapture(capture.text, capture.start, start.line, start.source);
+  if (expected.origins != capture.origins ||
+      expected.textRanges != capture.textRanges ||
+      expected.tokens.size() != capture.tokens.size())
     invalid("unsupported spliced macro capture");
-  for (std::size_t i=0;i<capture.tokens.size();++i) {
-    const auto &token=capture.tokens[i];
-    if (token.kind!=expected.tokens[i].kind || token.lexeme!=expected.tokens[i].lexeme ||
-        token.generated || token.expansion || token.configurationFlagReference || token.completion)
+  for (std::size_t i = 0; i < capture.tokens.size(); ++i) {
+    const auto &token = capture.tokens[i];
+    if (token.kind != expected.tokens[i].kind ||
+        token.lexeme != expected.tokens[i].lexeme || token.generated ||
+        token.expansion || token.configurationFlagReference || token.completion)
       invalid("unsupported transformed macro capture");
   }
   out.number(capture.start);
@@ -386,18 +401,20 @@ void writeMacroCapture(Output &out, const Call &call) {
   out.text(capture.text);
 }
 void readMacroCapture(Input &in, Call &call) {
-  auto bang=get<std::optional<Token>>(in);
+  auto bang = get<std::optional<Token>>(in);
   if (!bang)
     return;
-  const auto start=in.number(),line=in.number();
-  auto text=in.text();
-  if (bang->kind!=TokenKind::BANG || !line || line>INT_MAX || start>in.extent ||
-      text.size()>in.extent-start || !call.leftParen() || call.leftParen()->position!=start)
+  const auto start = in.number(), line = in.number();
+  auto text = in.text();
+  if (bang->kind != TokenKind::BANG || !line || line > INT_MAX ||
+      start > in.extent || text.size() > in.extent - start ||
+      !call.leftParen() || call.leftParen()->position != start)
     invalid("invalid macro argument location");
-  auto capture=lexicalCapture(text,start,static_cast<int>(line),in.path);
-  if (capture.tokens.back().position!=call.paren().position)
+  auto capture = lexicalCapture(text, start, static_cast<int>(line), in.path);
+  if (capture.tokens.back().position != call.paren().position)
     invalid("invalid macro closing parenthesis");
-  call.setCapturedArguments(std::make_shared<SyntaxCapture>(std::move(capture)));
+  call.setCapturedArguments(
+      std::make_shared<SyntaxCapture>(std::move(capture)));
   call.setMacroBang(std::move(*bang));
 }
 void writeExpr(Output &out, const Expr &e) {
@@ -416,7 +433,8 @@ void writeExpr(Output &out, const Expr &e) {
     put(out, var.name());
     out.number(var.isReferencePattern());
     if (var.isReferencePattern())
-      fields(out, *var.patternAuto(), *var.patternReference(), var.patternMutability());
+      fields(out, *var.patternAuto(), *var.patternReference(),
+             var.patternMutability());
     return;
   }
   case ExprKind::ConceptTest: {
@@ -424,7 +442,8 @@ void writeExpr(Output &out, const Expr &e) {
     const auto &application = test.application();
     if (application.memberRequirement || application.predicate)
       invalid("unsupported compound concept-test expression");
-    fields(out, application.name, application.arguments, application.lifetimeArguments, test.close());
+    fields(out, application.name, application.arguments,
+           application.lifetimeArguments, test.close());
     return;
   }
   case ExprKind::MemberRequirement: {
@@ -434,24 +453,32 @@ void writeExpr(Output &out, const Expr &e) {
     if (requirement.isExpressionRequirement()) {
       out.number(bool(requirement.iteration()));
       if (requirement.iteration())
-        put(out,requirement.iteration());
+        put(out, requirement.iteration());
       put(out, requirement.expression());
       out.number(requirement.inferredResult());
-      const auto *iteration = stmtAs<RangeForStmt>(requirement.iteration().get());
-      if (!requirement.inferredResult() && !(iteration && iteration->bindingType().name.last().kind == TokenKind::AUTO))
+      const auto *iteration =
+          stmtAs<RangeForStmt>(requirement.iteration().get());
+      if (!requirement.inferredResult() &&
+          !(iteration &&
+            iteration->bindingType().name.last().kind == TokenKind::AUTO))
         put(out, requirement.result());
-      fields(out, requirement.parameters(), requirement.bindings(), requirement.unsafeKeyword(), requirement.borrowedFrom());
+      fields(out, requirement.parameters(), requirement.bindings(),
+             requirement.unsafeKeyword(), requirement.borrowedFrom());
     } else {
-      fields(out, requirement.receiver(), requirement.binding(), requirement.receiverUse(), requirement.member(),
-             requirement.result(), requirement.parameters(), requirement.bindings(), requirement.arguments(), requirement.unsafeKeyword());
+      fields(out, requirement.receiver(), requirement.binding(),
+             requirement.receiverUse(), requirement.member(),
+             requirement.result(), requirement.parameters(),
+             requirement.bindings(), requirement.arguments(),
+             requirement.unsafeKeyword());
     }
     return;
   }
   case ExprKind::Call: {
     const auto &call = static_cast<const Call &>(e);
     fields(out, call.callee(), call.typeArguments(), call.paren(),
-           call.arguments(), call.leftParen(), call.argumentCommas(), call.lifetimeArguments());
-    writeMacroCapture(out,call);
+           call.arguments(), call.leftParen(), call.argumentCommas(),
+           call.lifetimeArguments());
+    writeMacroCapture(out, call);
     return;
   }
   case ExprKind::LiteralExpr:
@@ -484,21 +511,26 @@ ExprPtr readExpr(Input &in) {
     if (pattern.kind != TokenKind::AUTO || ref.kind != TokenKind::AMPERSAND ||
         (mut && mut->kind != TokenKind::MUT))
       invalid("invalid reference binding pattern");
-    expr = std::make_unique<Variable>(std::move(name), std::move(pattern), std::move(ref), std::move(mut));
+    expr = std::make_unique<Variable>(std::move(name), std::move(pattern),
+                                      std::move(ref), std::move(mut));
     break;
   }
   case static_cast<unsigned>(ExprKind::ConceptTest): {
-    ConceptApplication application{get<NamePath>(in), get<std::vector<TypeRef>>(in)};
+    ConceptApplication application{get<NamePath>(in),
+                                   get<std::vector<TypeRef>>(in)};
     application.lifetimeArguments = get<std::vector<TypeRef>>(in);
-    expr = std::make_unique<ConceptTest>(std::move(application), get<Token>(in));
+    expr =
+        std::make_unique<ConceptTest>(std::move(application), get<Token>(in));
     break;
   }
   case static_cast<unsigned>(ExprKind::MemberRequirement): {
     if (!in.flag()) {
-      expr = Shape<MemberRequirement, &MemberRequirement::keyword, &MemberRequirement::receiver,
-                   &MemberRequirement::binding, &MemberRequirement::receiverUse, &MemberRequirement::member,
-                   &MemberRequirement::result, &MemberRequirement::parameters, &MemberRequirement::bindings,
-                   &MemberRequirement::arguments, &MemberRequirement::unsafeKeyword>::read(in);
+      expr = Shape<MemberRequirement, &MemberRequirement::keyword,
+                   &MemberRequirement::receiver, &MemberRequirement::binding,
+                   &MemberRequirement::receiverUse, &MemberRequirement::member,
+                   &MemberRequirement::result, &MemberRequirement::parameters,
+                   &MemberRequirement::bindings, &MemberRequirement::arguments,
+                   &MemberRequirement::unsafeKeyword>::read(in);
       break;
     }
     auto keyword = get<Token>(in);
@@ -508,16 +540,20 @@ ExprPtr readExpr(Input &in) {
       invalid("invalid iteration requirement");
     auto operand = get<ExprPtr>(in);
     bool inferred = in.flag();
-    TypeRef result = inferred ? TypeRef(implicitToken(TokenKind::AUTO,"auto",keyword))
-        : (loop && loop->bindingType().name.last().kind == TokenKind::AUTO) ?
-          TypeRef(implicitToken(TokenKind::VOID,"void",loop->keyword())) : get<TypeRef>(in);
+    TypeRef result =
+        inferred ? TypeRef(implicitToken(TokenKind::AUTO, "auto", keyword))
+        : (loop && loop->bindingType().name.last().kind == TokenKind::AUTO)
+            ? TypeRef(implicitToken(TokenKind::VOID, "void", loop->keyword()))
+            : get<TypeRef>(in);
     auto parameters = get<std::vector<TypeRef>>(in);
     auto bindings = get<std::vector<Token>>(in);
     if (parameters.size() != bindings.size())
       invalid("invalid requirement binding count");
     auto unsafe = get<std::optional<Token>>(in);
-    expr = std::make_unique<MemberRequirement>(std::move(keyword), std::move(operand), std::move(result),
-        std::move(parameters), std::move(bindings), std::move(unsafe), get<std::optional<Token>>(in), std::move(iteration), inferred);
+    expr = std::make_unique<MemberRequirement>(
+        std::move(keyword), std::move(operand), std::move(result),
+        std::move(parameters), std::move(bindings), std::move(unsafe),
+        get<std::optional<Token>>(in), std::move(iteration), inferred);
     break;
   }
   case static_cast<unsigned>(ExprKind::Call): {
@@ -530,7 +566,7 @@ ExprPtr readExpr(Input &in) {
     if (open)
       call->setArgumentGeometry(std::move(*open), std::move(commas));
     call->setLifetimeArguments(get<std::vector<TypeRef>>(in));
-    readMacroCapture(in,*call);
+    readMacroCapture(in, *call);
     expr = std::move(call);
     break;
   }
@@ -572,20 +608,20 @@ void writeCondition(Output &out, const CompileCondition &condition) {
   out.number(static_cast<unsigned>(condition.kind));
   switch (condition.kind) {
   case Kind::TargetComparison:
-    fields(out,condition.token,condition.oper,condition.valueToken);
+    fields(out, condition.token, condition.oper, condition.valueToken);
     return;
   case Kind::Defined:
     // The loader resolves a flag at its textual position, before body restore.
     invalid("unsupported configuration flag inside compiled body");
   case Kind::Not:
-    put(out,condition.token);
-    writeCondition(out,*condition.left);
+    put(out, condition.token);
+    writeCondition(out, *condition.left);
     return;
   case Kind::And:
   case Kind::Or:
-    put(out,condition.token);
-    writeCondition(out,*condition.left);
-    writeCondition(out,*condition.right);
+    put(out, condition.token);
+    writeCondition(out, *condition.left);
+    writeCondition(out, *condition.right);
     return;
   }
 }
@@ -600,23 +636,30 @@ CompileCondition readCondition(Input &in) {
     auto oper = get<Token>(in);
     auto value = get<Token>(in);
     const auto *literal = std::get_if<std::string>(&value.literal);
-    if (!prop || (oper.kind != TokenKind::EQUAL_EQUAL && oper.kind != TokenKind::BANG_EQUAL) ||
+    if (!prop ||
+        (oper.kind != TokenKind::EQUAL_EQUAL &&
+         oper.kind != TokenKind::BANG_EQUAL) ||
         value.kind != TokenKind::STRING_LITERAL || !literal)
       invalid("invalid target condition");
     std::string expected = *literal;
-    return CompileCondition::targetComparison(std::move(token),*prop,std::move(oper),std::move(value),std::move(expected));
+    return CompileCondition::targetComparison(std::move(token), *prop,
+                                              std::move(oper), std::move(value),
+                                              std::move(expected));
   }
   case static_cast<unsigned>(Kind::Not):
     if (token.kind != TokenKind::BANG)
       invalid("invalid target negation");
-    return CompileCondition::unary(Kind::Not,std::move(token),readCondition(in));
+    return CompileCondition::unary(Kind::Not, std::move(token),
+                                   readCondition(in));
   case static_cast<unsigned>(Kind::And):
   case static_cast<unsigned>(Kind::Or): {
     const bool conjunction = kind == static_cast<unsigned>(Kind::And);
     if (token.kind != (conjunction ? TokenKind::AND : TokenKind::OR))
       invalid("invalid target condition operator");
     auto left = readCondition(in);
-    return CompileCondition::binary(conjunction ? Kind::And : Kind::Or,std::move(left),std::move(token),readCondition(in));
+    return CompileCondition::binary(conjunction ? Kind::And : Kind::Or,
+                                    std::move(left), std::move(token),
+                                    readCondition(in));
   }
   default:
     invalid("invalid target condition kind");
@@ -665,25 +708,27 @@ void writeStmt(Output &out, const Stmt &s) {
     return;
   }
   if (auto *conditional = stmtAs<ConditionalStmt>(&s)) {
-    put(out,conditional->directive());
+    put(out, conditional->directive());
     out.number(conditional->branches().size());
     for (const auto &branch : conditional->branches()) {
       out.number(branch.condition.has_value());
       if (branch.condition)
-        writeCondition(out,*branch.condition);
-      put(out,branch.statements);
+        writeCondition(out, *branch.condition);
+      put(out, branch.statements);
     }
     return;
   }
   if (auto *loop = stmtAs<RangeForStmt>(&s)) {
-    if (!loop->sourceBody() || !loop->ownerBinding() || !loop->ownerBinding()->initializer())
+    if (!loop->sourceBody() || !loop->ownerBinding() ||
+        !loop->ownerBinding()->initializer())
       invalid("range loop lacks written operands");
     if (!loop->syntaxOrdinal())
       invalid("range loop lacks a parser identity");
     out.number(loop->syntaxOrdinal());
     put(out, loop->keyword());
     out.number(loop->bindingMutability() == Mutability::Mutable);
-    fields(out, loop->bindingType(), loop->bindingName(), loop->colon(), loop->ownerBinding()->initializer());
+    fields(out, loop->bindingType(), loop->bindingName(), loop->colon(),
+           loop->ownerBinding()->initializer());
     writeStmt(out, *loop->sourceBody());
     putMaybe(out, loop->initializer());
     return;
@@ -691,7 +736,8 @@ void writeStmt(Output &out, const Stmt &s) {
   if (auto *loop = stmtAs<ConstexprForStmt>(&s)) {
     fields(out, loop->constexprKeyword(), loop->forKeyword());
     out.number(loop->bindingMutability() == Mutability::Mutable);
-    fields(out, loop->bindingType(), loop->bindingName(), loop->colon(), loop->sequence(), loop->body());
+    fields(out, loop->bindingType(), loop->bindingName(), loop->colon(),
+           loop->sequence(), loop->body());
     return;
   }
   if (auto *loop = stmtAs<WhileStmt>(&s)) {
@@ -707,7 +753,8 @@ void writeStmt(Output &out, const Stmt &s) {
   if (auto *empty = stmtAs<EmptyStmt>(&s))
     return put(out, empty->semicolon());
   if (auto *choice = stmtAs<SwitchStmt>(&s)) {
-    fields(out, choice->keyword(), choice->expression(), choice->closingBrace());
+    fields(out, choice->keyword(), choice->expression(),
+           choice->closingBrace());
     putMaybe(out, choice->initializer());
     out.number(choice->arms().size());
     for (const auto &arm : choice->arms()) {
@@ -721,8 +768,10 @@ void writeStmt(Output &out, const Stmt &s) {
     return;
   }
   if (auto *assertion = stmtAs<StaticAssertDecl>(&s)) {
-    fields(out, assertion->keyword(), assertion->leftParen(), assertion->conditionStart(), assertion->condition(),
-           assertion->comma(), assertion->messageToken(), assertion->rightParen(), assertion->semicolon());
+    fields(out, assertion->keyword(), assertion->leftParen(),
+           assertion->conditionStart(), assertion->condition(),
+           assertion->comma(), assertion->messageToken(),
+           assertion->rightParen(), assertion->semicolon());
     return;
   }
   if (stmtAs<StructuredBindingDecl>(&s))
@@ -740,22 +789,24 @@ StmtPtr readStmt(Input &in) {
   case static_cast<unsigned>(StmtKind::ConditionalStmt): {
     auto directive = get<Token>(in);
     std::vector<ConditionalBranch> branches;
-    for (unsigned n=in.count();n;--n) {
+    for (unsigned n = in.count(); n; --n) {
       std::optional<CompileCondition> condition;
       if (in.flag())
         condition = readCondition(in);
-      else if (branches.empty() || n!=1)
+      else if (branches.empty() || n != 1)
         invalid("misplaced unconditional target branch");
-      branches.push_back({std::move(condition),get<StmtList>(in)});
+      branches.push_back({std::move(condition), get<StmtList>(in)});
     }
     if (branches.empty())
       invalid("empty target conditional");
-    stmt = std::make_shared<ConditionalStmt>(std::move(directive),std::move(branches));
+    stmt = std::make_shared<ConditionalStmt>(std::move(directive),
+                                             std::move(branches));
     break;
   }
   case static_cast<unsigned>(StmtKind::RangeForStmt):
   case static_cast<unsigned>(StmtKind::ConstexprForStmt): {
-    const bool compileTime = kind == static_cast<unsigned>(StmtKind::ConstexprForStmt);
+    const bool compileTime =
+        kind == static_cast<unsigned>(StmtKind::ConstexprForStmt);
     std::optional<Token> constexprKeyword;
     unsigned ordinal = 0;
     if (compileTime)
@@ -763,26 +814,36 @@ StmtPtr readStmt(Input &in) {
     else if (!(ordinal = in.number()))
       invalid("invalid range ordinal");
     auto keyword = get<Token>(in);
-    const auto mutability = in.flag() ? Mutability::Mutable : Mutability::Immutable;
+    const auto mutability =
+        in.flag() ? Mutability::Mutable : Mutability::Immutable;
     auto type = get<TypeRef>(in);
     auto name = get<Token>(in);
     auto colon = get<Token>(in);
     if (keyword.kind != TokenKind::FOR || colon.kind != TokenKind::COLON ||
-        name.kind != TokenKind::IDENTIFIER || (constexprKeyword && constexprKeyword->kind != TokenKind::CONSTEXPR))
+        name.kind != TokenKind::IDENTIFIER ||
+        (constexprKeyword && constexprKeyword->kind != TokenKind::CONSTEXPR))
       invalid("invalid range syntax");
     auto range = get<ExprPtr>(in);
     auto body = get<StmtPtr>(in);
     if (compileTime)
-      stmt = makeParsedConstexprFor(std::move(*constexprKeyword), std::move(keyword), mutability, std::move(type), std::move(name), std::move(colon), std::move(range), std::move(body));
+      stmt = makeParsedConstexprFor(
+          std::move(*constexprKeyword), std::move(keyword), mutability,
+          std::move(type), std::move(name), std::move(colon), std::move(range),
+          std::move(body));
     else
-      stmt = makeParsedRangeFor(ordinal, std::move(keyword), mutability, std::move(type), std::move(name), std::move(colon), std::move(range), std::move(body), getMaybe<StmtPtr>(in));
+      stmt = makeParsedRangeFor(ordinal, std::move(keyword), mutability,
+                                std::move(type), std::move(name),
+                                std::move(colon), std::move(range),
+                                std::move(body), getMaybe<StmtPtr>(in));
     break;
   }
   case static_cast<unsigned>(StmtKind::WhileStmt):
     stmt = Shape<WhileStmt, &WhileStmt::condition, &WhileStmt::body>::read(in);
     break;
   case static_cast<unsigned>(StmtKind::DoWhileStmt):
-    stmt = Shape<DoWhileStmt, &DoWhileStmt::body, &DoWhileStmt::condition>::read(in);
+    stmt =
+        Shape<DoWhileStmt, &DoWhileStmt::body, &DoWhileStmt::condition>::read(
+            in);
     break;
   case static_cast<unsigned>(StmtKind::LoopControlStmt): {
     auto keyword = get<Token>(in);
@@ -807,23 +868,30 @@ StmtPtr readStmt(Input &in) {
         auto colon = get<Token>(in);
         auto value = getMaybe<ExprPtr>(in);
         if (colon.kind != TokenKind::COLON ||
-            (label.kind != TokenKind::CASE && label.kind != TokenKind::DEFAULT) ||
+            (label.kind != TokenKind::CASE &&
+             label.kind != TokenKind::DEFAULT) ||
             (label.kind == TokenKind::CASE) != bool(value))
           invalid("invalid switch label");
-        arm.labels.push_back({std::move(label), std::move(value), std::move(colon)});
+        arm.labels.push_back(
+            {std::move(label), std::move(value), std::move(colon)});
       }
       if (arm.labels.empty())
         invalid("missing switch label");
       arm.statements = get<StmtList>(in);
       arms.push_back(std::move(arm));
     }
-    stmt = std::make_shared<SwitchStmt>(std::move(keyword), std::move(subject), std::move(arms), std::move(close), std::move(init));
+    stmt = std::make_shared<SwitchStmt>(std::move(keyword), std::move(subject),
+                                        std::move(arms), std::move(close),
+                                        std::move(init));
     break;
   }
   case static_cast<unsigned>(StmtKind::StaticAssertDecl):
-    stmt = Shape<StaticAssertDecl, &StaticAssertDecl::keyword, &StaticAssertDecl::leftParen,
-                 &StaticAssertDecl::conditionStart, &StaticAssertDecl::condition, &StaticAssertDecl::comma,
-                 &StaticAssertDecl::messageToken, &StaticAssertDecl::rightParen, &StaticAssertDecl::semicolon>::read(in);
+    stmt =
+        Shape<StaticAssertDecl, &StaticAssertDecl::keyword,
+              &StaticAssertDecl::leftParen, &StaticAssertDecl::conditionStart,
+              &StaticAssertDecl::condition, &StaticAssertDecl::comma,
+              &StaticAssertDecl::messageToken, &StaticAssertDecl::rightParen,
+              &StaticAssertDecl::semicolon>::read(in);
     break;
   case static_cast<unsigned>(StmtKind::BlockStmt):
     stmt = Shape<BlockStmt, &BlockStmt::statements,
@@ -876,38 +944,88 @@ StmtPtr readStmt(Input &in) {
     stmt->setExtent(std::move(*span));
   return stmt;
 }
-// The declaration interface is parsed by the same frontend as ordinary source.
-// Visit every scope that can own definitions, including target branches and
-// conformance blocks. Bodyless declarations remain wholly in the interface.
+// Walk expression operands in the same schema as the codec. Lambda bodies
+// have their own recipe, so only their capture/default expressions belong in
+// the enclosing declaration. Any remaining interface lambdas cause rejection.
+struct InterfaceLambdas {
+  std::vector<Lambda *> nodes;
+  void scan(const ExprPtr &expression) {
+    if (!expression)
+      return;
+    if (auto lambda = exprAs<Lambda>(expression.get()))
+      nodes.push_back(lambda);
+    switch (expression->exprKind()) {
+#define GTI_TEMPLATE_EXPR(N, ...)                                              \
+  case ExprKind::N:                                                            \
+    return scanShape<__VA_ARGS__>(static_cast<const N &>(*expression));
+#include "compiled_template_nodes.def"
+#undef GTI_TEMPLATE_EXPR
+    case ExprKind::Call:
+      return scanShape<&Call::callee, &Call::arguments>(
+          static_cast<const Call &>(*expression));
+    case ExprKind::MemberRequirement:
+      scan(static_cast<const MemberRequirement &>(*expression).expression());
+      break;
+    default:
+      break;
+    }
+  }
+  template <class T> void scan(const T &) {}
+  template <class T> void scan(const std::vector<T> &values) {
+    for (const auto &value : values)
+      scan(value);
+  }
+  void scan(const Parameter &parameter) {
+    if (parameter.defaultArgument)
+      scan(parameter.defaultArgument->expression);
+  }
+  void scan(const LambdaCapture &capture) { scan(capture.initializer); }
+  template <auto... Field, class Node> void scanShape(const Node &node) {
+    (scan((node.*Field)()), ...);
+  }
+};
+
+// The parser deliberately gives both a conformance and its carrier namespace
+// the same operation. Callers deduplicate those shared body pointers.
 template <class Visit>
-void forEachBody(std::span<const StmtPtr> declarations, Visit &visit) {
+void walkDeclarations(std::span<const StmtPtr> declarations, Visit &visit,
+                      InterfaceLambdas *lambdas) {
   for (const auto &decl : declarations) {
-    if (decl->hasInterfaceLambda())
-      invalid("unsupported lambda in a declaration initializer, default, or constraint");
+    auto block = [&](const auto &body) {
+      if (body)
+        visit(*body, body->extent() ? &*body->extent() : nullptr,
+              body->statements());
+    };
     if (auto *ns = stmtAs<NamespaceDecl>(decl.get()))
-      forEachBody(ns->declarations(), visit);
+      walkDeclarations(ns->declarations(), visit, lambdas);
     else if (auto *cls = stmtAs<ClassDecl>(decl.get()))
-      forEachBody(cls->members(), visit);
-    else if (auto *linkage = stmtAs<ExternCDecl>(decl.get()))
-      forEachBody(linkage->declarations(), visit);
+      walkDeclarations(cls->members(), visit, lambdas);
+    else if (auto *ext = stmtAs<ExternCDecl>(decl.get()))
+      walkDeclarations(ext->declarations(), visit, lambdas);
     else if (auto *conf = stmtAs<ConformanceDecl>(decl.get()))
-      forEachBody(conf->members(), visit);
+      walkDeclarations(conf->members(), visit, lambdas);
     else if (auto *group = stmtAs<MutableFieldGroupDecl>(decl.get()))
-      forEachBody(group->members(), visit);
-    else if (auto *conditional = stmtAs<ConditionalStmt>(decl.get())) {
-      for (const auto &branch : conditional->branches())
-        forEachBody(branch.statements, visit);
+      walkDeclarations(group->members(), visit, lambdas);
+    else if (auto *cfg = stmtAs<ConditionalStmt>(decl.get())) {
+      for (const auto &arm : cfg->branches())
+        walkDeclarations(arm.statements, visit, lambdas);
     } else if (auto *fn = stmtAs<FunctionDecl>(decl.get())) {
-      if (fn->body())
-        visit(*fn->body());
+      block(fn->body());
+      if (lambdas)
+        lambdas->scan(fn->parameters());
     } else if (auto *ctor = stmtAs<ConstructorDecl>(decl.get())) {
-      if (ctor->body())
-        visit(*ctor->body());
-    } else if (auto *dtor = stmtAs<DestructorDecl>(decl.get())) {
-      if (dtor->body())
-        visit(*dtor->body());
+      block(ctor->body());
+      if (lambdas) {
+        lambdas->scan(ctor->parameters());
+        for (const auto &initializer : ctor->initializers())
+          lambdas->scan(initializer.arguments);
+      }
+    } else if (auto *dtor = stmtAs<DestructorDecl>(decl.get()))
+      block(dtor->body());
+    else if (auto *var = stmtAs<VariableDecl>(decl.get())) {
+      if (lambdas)
+        lambdas->scan(var->initializer());
     } else if (!stmtAs<TypeAliasDecl>(decl.get()) &&
-               !stmtAs<VariableDecl>(decl.get()) &&
                !stmtAs<AccessSpecifierDecl>(decl.get()) &&
                !stmtAs<EnumDecl>(decl.get()) &&
                !stmtAs<ConceptDecl>(decl.get()) &&
@@ -916,6 +1034,24 @@ void forEachBody(std::span<const StmtPtr> declarations, Visit &visit) {
                !stmtAs<CompileErrorDirective>(decl.get()) &&
                !stmtAs<EmptyStmt>(decl.get()))
       invalid("unsupported declaration in module interface");
+  }
+}
+template <class Visit>
+void forEachBody(std::span<const StmtPtr> declarations, Visit &visit) {
+  for (auto &root : declarations) {
+    InterfaceLambdas lambdas;
+    walkDeclarations(std::span(&root, 1), visit,
+                     root->interfaceLambdaCount() ? &lambdas : nullptr);
+    std::set<std::size_t> locations;
+    for (auto *lambda : lambdas.nodes) {
+      auto span = lambda->interfaceBodySpan();
+      if (!span)
+        invalid("lambda lacks an interface body extent");
+      locations.insert(span->start);
+      visit(*lambda, span.get(), lambda->body());
+    }
+    if (locations.size() != root->interfaceLambdaCount())
+      invalid("unsupported lambda in declaration context");
   }
 }
 } // namespace
@@ -929,20 +1065,23 @@ compileTemplateModule(std::span<const StmtPtr> declarations,
   CompiledTemplateModule module{std::string(source), {}, std::nullopt, names};
   // Conformance operations appear in both the conformance and its carrier
   // namespace. Those two declarations share exactly the same parsed body.
-  std::set<const BlockStmt *> visited;
-  auto save = [&](const BlockStmt &body) {
+  std::set<const void *> visited;
+  auto save = [&](const auto &body, const SourceSpan *extent,
+                  const StmtList &statements) {
     if (!visited.insert(&body).second)
       return;
-    if (!body.extent())
-      invalid("method body lacks a parsed extent");
-    const auto &span = *body.extent();
+    if (!extent)
+      invalid("body lacks a parsed extent");
+    const auto &span = *extent;
     if (span.end > source.size() || span.end < span.start + 2 ||
         source[span.start] != '{' || source[span.end - 1] != '}')
       invalid("invalid method extent");
     Output out;
-    put(out, body.statements());
-    if (!module.bodies.emplace(span.start, std::move(out.bytes)).second)
-      invalid("duplicate method");
+    put(out, statements);
+    auto [entry, inserted] =
+        module.bodies.try_emplace(span.start, std::move(out.bytes));
+    if (!inserted && entry->second != out.bytes)
+      invalid("inconsistent bodies at the same location");
     for (std::size_t i = span.start + 1; i < span.end - 1; ++i)
       if (module.declarations[i] != '\n')
         module.declarations[i] = ' ';
@@ -953,13 +1092,16 @@ compileTemplateModule(std::span<const StmtPtr> declarations,
 void restoreTemplateBodies(std::span<const StmtPtr> declarations,
                            const CompiledTemplateModule &module,
                            std::string_view path) {
-  std::set<const BlockStmt *> visited;
-  auto load = [&](BlockStmt &body) {
+  std::set<const void *> visited;
+  std::set<std::size_t> locations;
+  auto load = [&](auto &body, const SourceSpan *extent,
+                  const StmtList &original) {
     if (!visited.insert(&body).second)
       return;
-    if (!body.extent() || !body.statements().empty())
+    if (!extent || !original.empty())
       invalid("expected declaration-only method");
-    const auto found = module.bodies.find(body.extent()->start);
+    locations.insert(extent->start);
+    const auto found = module.bodies.find(extent->start);
     if (found == module.bodies.end())
       invalid("missing method recipe");
     Input in{found->second, std::string(path), module.declarations.size()};
@@ -969,7 +1111,7 @@ void restoreTemplateBodies(std::span<const StmtPtr> declarations,
     body.restoreCompiledStatements(std::move(statements));
   };
   forEachBody(declarations, load);
-  if (visited.size() != module.bodies.size())
+  if (locations.size() != module.bodies.size())
     invalid("template declaration mismatch");
 }
 std::string encodeTemplateModule(const CompiledTemplateModule &module) {
@@ -980,23 +1122,25 @@ std::string encodeTemplateModule(const CompiledTemplateModule &module) {
     out.number(position);
     out.text(body);
   }
-  put(out,module.lifetimeNames.binders);
+  put(out, module.lifetimeNames.binders);
   out.number(module.lifetimeNames.uses.size());
-  for (const auto &use: module.lifetimeNames.uses)
-    fields(out,use.name,use.binder);
-  put(out,module.lifetimeNames.unknown);
+  for (const auto &use : module.lifetimeNames.uses)
+    fields(out, use.name, use.binder);
+  put(out, module.lifetimeNames.unknown);
   return std::move(out.bytes);
 }
-LifetimeNames compiledTemplateLifetimeNames(const CompiledTemplateModule &module, std::string_view path) {
+LifetimeNames
+compiledTemplateLifetimeNames(const CompiledTemplateModule &module,
+                              std::string_view path) {
   auto names = module.lifetimeNames;
   for (auto &binder : names.binders)
-    binder.source=path;
+    binder.source = path;
   for (auto &use : names.uses) {
-    use.name.source=path;
-    use.binder.source=path;
+    use.name.source = path;
+    use.binder.source = path;
   }
   for (auto &unknown : names.unknown)
-    unknown.source=path;
+    unknown.source = path;
   return names;
 }
 CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
@@ -1011,11 +1155,11 @@ CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
         !module.bodies.emplace(pos, body).second)
       invalid("invalid method location");
   }
-  in.extent=module.declarations.size();
-  module.lifetimeNames.binders=get<std::vector<Token>>(in);
-  for (unsigned n=in.count();n;--n)
-    module.lifetimeNames.uses.push_back({get<Token>(in),get<Token>(in)});
-  module.lifetimeNames.unknown=get<std::vector<Token>>(in);
+  in.extent = module.declarations.size();
+  module.lifetimeNames.binders = get<std::vector<Token>>(in);
+  for (unsigned n = in.count(); n; --n)
+    module.lifetimeNames.uses.push_back({get<Token>(in), get<Token>(in)});
+  module.lifetimeNames.unknown = get<std::vector<Token>>(in);
   if (!in.bytes.empty())
     invalid("invalid method inventory");
   return module;
