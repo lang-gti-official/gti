@@ -59,6 +59,12 @@ extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() { return sizeof(void *);
 extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
 extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
 extern "C" void *gti_rt_malloc_v1(std::uint64_t n) { return remember(std::malloc(n)); }
+extern "C" void *gti_rt_realloc_v1(void *p, std::uint64_t n) {
+  const bool new_region = p == nullptr;
+  void *result = std::realloc(p, n);
+  if (result) { ++allocations; if (new_region) { ++live; } }
+  return result;
+}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t n, std::uint64_t a, std::int32_t *status) {
   void *p = nullptr;
   *status = posix_memalign(&p, a, n);
