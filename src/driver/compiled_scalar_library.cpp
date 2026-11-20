@@ -889,6 +889,15 @@ CompiledScalarLibraryResult buildScalarLibrary(
                   : ModuleDependencies{};
   auto projected = projectModuleMetadata(
       frontend, target, profile, !prepared.dependencies.empty(), nativeModule);
+  if (target && profile == LibraryProfile::InstalledStdlib &&
+      frontend.canGenerateCode()) {
+    const auto installed = std::ranges::find(installedModules, target->target,
+                                             &InstalledModule::target);
+    if (installed != std::end(installedModules) &&
+        installed->facade.empty() != projected.has_value())
+      throw std::invalid_argument(
+          "compiled standard library does not match its catalog interface");
+  }
   if (projected && !nativeModule) {
     const auto &graph = frontend.sourceGraph;
     auto metadata = std::move(*projected);

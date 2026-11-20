@@ -8,6 +8,7 @@ $ rm -r producer
 $ cd consumer
 $ gti check --release
 $ gti run --release
+$ sh -c "python3 ../check_calls.py build/gti/release/*/app"
 $ test ! -e api.gti
 $ cp ../private.gti main.gti
 $ gti check --release
