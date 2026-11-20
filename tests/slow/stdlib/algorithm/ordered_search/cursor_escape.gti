@@ -1,4 +1,5 @@
 // A partition_point cursor into a local cannot be returned as derived from a parameter.
+//@ slow
 //@ check-fail
 import std.algorithm;
 import std.functional;

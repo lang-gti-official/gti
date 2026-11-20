@@ -1,4 +1,5 @@
 // Audit dependency severity: the program is accepted.
+//@ slow
 //@ check-pass
 //@ raw-pointer-audit: warn
 //@ raw-pointer-audit-library-findings

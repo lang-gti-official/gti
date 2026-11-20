@@ -100,7 +100,7 @@ def build(stage, source):
         # Compile and execute a consumer-owned substitution after its producer
         # root has been removed from the toolchain used by the application.
         cases = (consumer / "array_consumer.gti",
-                 source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
+                 source / "tests/slow/stdlib/vector/constexpr_range_for_views.gti",
                  source / "tests/ui/callables/borrowing_captures/borrowing_captures_19.gti")
         for case in cases:
             shutil.copyfile(case, consumer / "src/main.gti")

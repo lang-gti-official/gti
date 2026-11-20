@@ -1,4 +1,5 @@
 // Audit dependency severity: opting in reports library findings in Warn and Strict promotes exactly those findings.
+//@ slow
 //@ raw-pointer-audit: strict
 //@ raw-pointer-audit-library-findings
 //@ error-limit: 0
