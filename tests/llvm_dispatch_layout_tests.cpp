@@ -4972,7 +4972,7 @@ int main(void) { return gti_relocation_probe(); }
            "inert relocation module verifies");
     session.requireDefinition(*probe);
     const auto object = temporary / "probe.o";
-    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+    expect(driver::writeArtifact(object, session.emitObject().singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write relocation native object");
     driver::NativeInputs inputs;

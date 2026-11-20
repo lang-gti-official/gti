@@ -84,6 +84,39 @@ foreach(required_file
   endif()
 endforeach()
 
+if(GTI_PLATFORM STREQUAL "darwin-arm64")
+  set(stdlib_target "arm64-apple-macos")
+elseif(GTI_PLATFORM STREQUAL "linux-x64")
+  set(stdlib_target "x86_64-unknown-linux")
+endif()
+if(DEFINED stdlib_target)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${GTI_SOURCE_DIR}/scripts/build_stdlib_bundles.py" --list-targets
+    OUTPUT_VARIABLE stdlib_modules OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${GTI_SOURCE_DIR}/scripts/build_stdlib_bundles.py" --list-template-targets
+    OUTPUT_VARIABLE template_modules OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  foreach(profile IN ITEMS dev release)
+    foreach(module IN LISTS stdlib_modules)
+      set(bundle "${GTI_STAGE_DIR}/share/gti/precompiled-stdlib/${stdlib_target}/${profile}/${module}.gtilib")
+      if(NOT EXISTS "${bundle}" OR IS_DIRECTORY "${bundle}" OR IS_SYMLINK "${bundle}")
+        message(FATAL_ERROR "Release staging is missing a regular compiled stdlib: ${bundle}")
+      endif()
+      if(module IN_LIST template_modules)
+        if(NOT EXISTS "${bundle}.sha256" OR IS_DIRECTORY "${bundle}.sha256" OR IS_SYMLINK "${bundle}.sha256")
+          message(FATAL_ERROR "Missing regular generic library receipt: ${bundle}")
+        endif()
+        file(SHA256 "${bundle}" expected_recipe)
+        file(READ "${bundle}.sha256" actual_recipe)
+        if(NOT actual_recipe STREQUAL "${expected_recipe}\n")
+          message(FATAL_ERROR "Invalid installed generic library receipt: ${bundle}")
+        endif()
+      endif()
+    endforeach()
+  endforeach()
+endif()
+
 file(STRINGS "${GTI_STAGE_DIR}/share/gti/llvm-backend-archives.txt"
      GTI_LLVM_BACKEND_ARCHIVES)
 if(GTI_LLVM_BACKEND_ARCHIVES STREQUAL "")

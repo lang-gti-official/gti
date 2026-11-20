@@ -2,6 +2,11 @@ export module string_view;
 
 import std.iterator;
 import "detail/iterator.gti";
+
+export namespace std::string_view {
+  constexpr std::size_t npos = uint64_t(18446744073709551615);
+}
+
 namespace std::detail {
 class text_view_sentinel {
   size_t final_position;
@@ -116,6 +121,152 @@ export std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::str
   return std::detail::text_view_iterator<1>(view, position);
 }
 
+// Searches and comparisons work on the counted code units.
+constexpr bool text_matches_at(std::string_view text, std::size_t position,
+                               std::string_view needle) {
+  if (position > text.size() || needle.size() > text.size() - position) {
+    return false;
+  }
+  for (mut std::size_t offset = 0; offset < needle.size(); offset++) {
+    if (text[position + offset] != needle[offset]) { return false; }
+  }
+  return true;
+}
+
+export constexpr std::size_t text_view_find(std::string_view text,
+                                          std::string_view needle,
+                                          std::size_t position) {
+  if (position > text.size() || needle.size() > text.size() - position) {
+    return std::string_view::npos;
+  }
+  std::size_t last = text.size() - needle.size();
+  for (mut std::size_t index = position;; index++) {
+    if (text_matches_at(text, index, needle)) { return index; }
+    if (index == last) { return std::string_view::npos; }
+  }
+}
+
+export constexpr std::size_t text_view_find(std::string_view text,
+                                          std::string_view needle) {
+  return text_view_find(text, needle, std::size_t(0));
+}
+
+export constexpr std::size_t text_view_find(std::string_view text, char needle,
+                                          std::size_t position) {
+  for (mut std::size_t index = position; index < text.size(); index++) {
+    if (text[index] == needle) { return index; }
+  }
+  return std::string_view::npos;
+}
+
+export constexpr std::size_t text_view_find(std::string_view text, char needle) {
+  return text_view_find(text, needle, std::size_t(0));
+}
+
+export constexpr std::size_t text_view_rfind(std::string_view text,
+                                           std::string_view needle,
+                                           std::size_t position) {
+  if (needle.size() > text.size()) { return std::string_view::npos; }
+  mut std::size_t index = text.size() - needle.size();
+  if (position < index) { index = position; }
+  while (true) {
+    if (text_matches_at(text, index, needle)) { return index; }
+    if (index == 0) { return std::string_view::npos; }
+    index--;
+  }
+}
+
+export constexpr std::size_t text_view_rfind(std::string_view text,
+                                           std::string_view needle) {
+  return text_view_rfind(text, needle, std::string_view::npos);
+}
+
+export constexpr std::size_t text_view_rfind(std::string_view text, char needle,
+                                           std::size_t position) {
+  if (text.empty()) { return std::string_view::npos; }
+  mut std::size_t index = text.size() - std::size_t(1);
+  if (position < index) { index = position; }
+  while (true) {
+    if (text[index] == needle) { return index; }
+    if (index == 0) { return std::string_view::npos; }
+    index--;
+  }
+}
+
+export constexpr std::size_t text_view_rfind(std::string_view text, char needle) {
+  return text_view_rfind(text, needle, std::string_view::npos);
+}
+
+export constexpr bool text_view_contains(std::string_view text, std::string_view needle) {
+  return text_view_find(text, needle) != std::string_view::npos;
+}
+
+export constexpr bool text_view_contains(std::string_view text, char needle) {
+  return text_view_find(text, needle) != std::string_view::npos;
+}
+
+export constexpr bool text_view_starts_with(std::string_view text, std::string_view prefix) {
+  return text_matches_at(text, std::size_t(0), prefix);
+}
+
+export constexpr bool text_view_starts_with(std::string_view text, char prefix) {
+  return !text.empty() && text[std::size_t(0)] == prefix;
+}
+
+export constexpr bool text_view_ends_with(std::string_view text, std::string_view suffix) {
+  return suffix.size() <= text.size() &&
+         text_matches_at(text, text.size() - suffix.size(), suffix);
+}
+
+export constexpr bool text_view_ends_with(std::string_view text, char suffix) {
+  return !text.empty() && text[text.size() - std::size_t(1)] == suffix;
+}
+
+export constexpr int text_view_compare(std::string_view left, std::string_view right) {
+  std::size_t shared = left.size() < right.size() ? left.size() : right.size();
+  for (mut std::size_t index = 0; index < shared; index++) {
+    uint8_t a = uint8_t(left[index]);
+    uint8_t b = uint8_t(right[index]);
+    if (a < b) { return -1; }
+    if (a > b) { return 1; }
+  }
+  if (left.size() < right.size()) { return -1; }
+  if (left.size() > right.size()) { return 1; }
+  return 0;
+}
+
+export constexpr char text_view_at(std::string_view text, int position) {
+  return text[position];
+}
+
+export constexpr char text_view_at(std::string_view text, std::size_t position) {
+  return text[position];
+}
+
+export constexpr char text_view_front(std::string_view text) {
+  return text[std::size_t(0)];
+}
+
+export constexpr char text_view_back(std::string_view text) {
+  return text[text.empty() ? std::size_t(0) : text.size() - std::size_t(1)];
+}
+
+export constexpr bool text_compare_less(std::string_view left, std::string_view right) {
+  return text_view_compare(left, right) < 0;
+}
+
+export constexpr bool text_compare_less_equal(std::string_view left, std::string_view right) {
+  return text_view_compare(left, right) <= 0;
+}
+
+export constexpr bool text_compare_greater(std::string_view left, std::string_view right) {
+  return text_view_compare(left, right) > 0;
+}
+
+export constexpr bool text_compare_greater_equal(std::string_view left, std::string_view right) {
+  return text_view_compare(left, right) >= 0;
+}
+
 // Compiler primitive: rewrites view to [offset, offset + count) of its current
 // characters. The caller proves offset + count <= view.size(); the place keeps
 // its owner dependency, so a narrowed copy relays exactly what view relayed.
@@ -134,13 +285,18 @@ std::string_view checked_text_subview(mut std::string_view view, std::size_t pos
   unsafe { narrow_text_view(view, position, length); }
   return view;
 }
+// The argument-free form returns the existing counted view.
+export constexpr std::string_view text_view_substr(std::string_view view) {
+  return view;
+}
+
 // view.substr(position, count) and view.substr(position).
 export std::string_view text_view_substr(std::string_view view, std::size_t position,
                                          std::size_t count) {
   return checked_text_subview(view, position, count);
 }
 export std::string_view text_view_substr(std::string_view view, std::size_t position) {
-  return checked_text_subview(view, position, uint64_t(18446744073709551615));
+  return checked_text_subview(view, position, std::string_view::npos);
 }
 // view.remove_prefix(count) and view.remove_suffix(count) shrink a writable
 // view in place; it keeps its owner. A count past size() raises GTI-R0007.

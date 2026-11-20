@@ -63,6 +63,9 @@ struct LlvmBackendOptions {
   bool textualIr = false;
   LlvmCodegenUnits codegen;
   LlvmCodegenUnitCache *unitCache = nullptr;
+  // Emit distributed library objects for the platform baseline. Ordinary
+  // native compilations retain their host's deployment target.
+  bool distributedLibrary = false;
 };
 
 // Resolved producer facts for whole-program object caches. LLVM types remain

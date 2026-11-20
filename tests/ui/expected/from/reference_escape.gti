@@ -1,0 +1,12 @@
+// Error conversion cannot erase the successful reference's lifetime obligation.
+enum Source { failed };
+enum Target { failed };
+for concept std::from<Target, Source> {
+  Target from(Source error) { return Target::failed; }
+};
+expected<int&, Source> load(int& value) { return value; }
+expected<int&, Target> escape() {
+  int local = 42;
+  int& result = ?load(local);
+  return result;  //~ ERROR GTI-S2045
+}

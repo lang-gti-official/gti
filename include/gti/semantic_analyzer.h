@@ -4,13 +4,17 @@
 #include "gti/semantic_model.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
+#include <span>
 
 namespace lang {
 
 class InstanceAnalysisCache;
 class SemanticPreamble;
 class SourceManager;
+class SemanticInstanceProvider;
+
 struct EditedFunctionBody {
   const Program &program;
   const SemanticModel &model;
@@ -18,6 +22,9 @@ struct EditedFunctionBody {
   const SourceManager &sources;
   const FunctionDecl &declaration;
   const BlockStmt &body;
+  std::function<std::optional<std::vector<Diagnostic>>(
+      const SemanticModel &, SemanticInstanceProvider &, FunctionId)>
+      verify;
 };
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
@@ -100,6 +107,10 @@ public:
   // A subsequent check invalidates references borrowed from model() or
   // errors(), including when a rejected preamble adoption restarts the request.
   bool check(const Program &program);
+  using EntryDiagnosticObserver =
+      std::function<void(std::span<const Diagnostic>)>;
+  bool check(const Program &program, const EntryDiagnosticObserver &observer,
+             const std::function<void()> &onRegistered = {});
   // Stops check(program) at its next safe point once `cancellation` is set;
   // check then returns false and cancelled() reports why.
   void setCancellation(const std::atomic<bool> *cancellation);

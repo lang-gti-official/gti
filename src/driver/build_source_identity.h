@@ -57,8 +57,16 @@ struct BuildSourceMaterialRecord {
   std::string sha256;
 };
 
+struct BuildEmbeddedFileMaterial {
+  std::string source;
+  std::size_t offset = 0;
+  std::size_t storageOffset = 0;
+  std::optional<std::string> sha256;
+};
+
 struct BuildSourceMaterialProjection {
   std::vector<BuildSourceMaterialRecord> units;
+  std::vector<BuildEmbeddedFileMaterial> embeddedFiles;
   std::vector<std::string> logicalNamesById;
   std::vector<std::string> preludeRoots;
   std::vector<std::string> dependencyEdges;

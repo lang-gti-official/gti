@@ -57,18 +57,18 @@ public:
   }
 };
 
-class vector_iterator<std::storage_element T, uint64_t Reverse = 0> {
+class vector_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
   // The whole-owner loan keeps this inclusive bound stable. Cache it before
   // retaining the owner; it is movement state, never element-read authority.
   size_t final_position;
-  std::detail::prefix_owner<T>& data;
+  std::detail::prefix_owner<T>&<owner> data;
   mut size_t current_position;
 
 public:
-  constexpr vector_iterator(std::detail::prefix_owner<T>& source, size_t position)
+  constexpr vector_iterator(std::detail::prefix_owner<T>&<owner> source, size_t position)
       : final_position(source.length()), data(source), current_position(position) {}
 
-  constexpr T& operator*() {
+  constexpr T&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t position = checked_iterator_position(this.current_position, size_t(0),
                                                   this.data.length(), ptrdiff_t(-1));
@@ -77,8 +77,8 @@ public:
     return this.data.read(this.current_position);
   }
 
-  constexpr T& operator->() { return *this; }
-  constexpr T& operator[](ptrdiff_t offset) {
+  constexpr T&<owner> operator->() { return *this; }
+  constexpr T&<owner> operator[](ptrdiff_t offset) {
     mut size_t position = checked_iterator_position(this.current_position, size_t(0),
                                                 this.data.length(), offset, Reverse != 0);
     if constexpr (Reverse != 0) { position = checked_iterator_position(position, size_t(0), this.data.length(), ptrdiff_t(-1)); }
@@ -423,8 +423,9 @@ public:
 
   /// Returns a checked read-only view tied to this vector's storage.
   constexpr span<T> as_span() {
-    return span<T>(this.data, size_t(0),
-                   this.data.length());
+    unsafe {
+      return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+    }
   }
 
   /// Exclusively borrows initialized elements without permitting reallocation.
@@ -438,10 +439,16 @@ public:
       return;
     }
 
-    mut std::detail::prefix_owner<T> replacement =
-        std::detail::prefix_owner<T>(requested);
-    unsafe { this.data.relocate_to_unchecked(replacement); }
-    this.data = std::move(replacement);
+    size_t live = this.data.length();
+    if (!this.data.grow_bytes_if_supported(requested)) {
+      mut std::detail::prefix_owner<T> replacement =
+          std::detail::prefix_owner<T>(requested);
+      unsafe { this.data.relocate_to_unchecked(replacement); }
+      this.data = std::move(replacement);
+    }
+    // Both capacity transitions preserve the same initialized prefix. Publish
+    // that contract after the native provider's opaque memory effects.
+    unsafe { this.data.set_initialized_length_unchecked(live); }
   }
 
   constexpr void resize(size_t requested) mut

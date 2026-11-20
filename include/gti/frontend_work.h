@@ -91,6 +91,11 @@ struct FrontendWorkMetrics {
   // whatever body-local checking MIR performs. Zero when analysis stopped
   // before MIR.
   std::size_t mirMicroseconds = 0;
+  std::size_t mirRoundBodyLowerings = 0;
+  std::size_t mirRoundBodyReuses = 0;
+  std::size_t mirDominanceReuses = 0;
+  std::size_t mirBoundaryQueries = 0;
+  std::size_t mirBoundaryReuses = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
@@ -152,6 +157,8 @@ struct FrontendWorkMetrics {
     semanticEffectQueryRecords = 0;
     hirOmittedInstanceBodies = 0;
     mirMicroseconds = 0;
+    mirRoundBodyLowerings = mirRoundBodyReuses = 0;
+    mirDominanceReuses = mirBoundaryQueries = mirBoundaryReuses = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;

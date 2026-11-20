@@ -210,6 +210,14 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
                        .associatedTypes = conceptInfo.associatedTypes,
                        .parameterCount = conceptInfo.parameterIds.size()});
 
+  // Qualified operations inhabit the concept's member scope, so an ordinary
+  // function may share its enclosing concept's name (C<T>::C). Associated
+  // type names and parameter names remain protected above.
+  if (std::none_of(declaration.typeParameters().begin(),
+                   declaration.typeParameters().end(), [&](const Token &name) {
+                     return name.lexeme == declaration.name().lexeme;
+                   }))
+    names.erase(declaration.name().lexeme);
   for (const StmtPtr &statement : body.operations) {
     const auto *operation = stmtAs<FunctionDecl>(statement.get());
     if (operation == nullptr || !claim(operation->name())) {
@@ -378,10 +386,10 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
-    // Each argument is a closed type, or one class or enum template, pointer
-    // or fixed-length array type applied to block parameters; every block
-    // parameter appears in some argument. A repeated parameter must bind the
-    // same type at each of its occurrences.
+    // Each argument is a closed type, a parameter, or a class/enum template,
+    // pointer or fixed-length array type applied to block parameters; every
+    // block parameter appears in some argument. A repeated parameter must bind
+    // the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
@@ -407,6 +415,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
         valid = false;
       } else if (!containsOpenTypeParameter(pattern)) {
         pattern = canonicalExactSpecializationType(std::move(pattern));
+      } else if (ownParameter(pattern)) {
+        used.insert(pattern.genericParameterId);
       } else {
         const bool nominalTemplate =
             (pattern.kind == SemanticType::Class && pattern.classId != 0 &&
@@ -422,7 +432,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
         if (!shape) {
           reportConformanceError(
               argument.name.last(),
-              "Each argument of a conformance block is a concrete type, or "
+              "Each argument of a conformance block is a concrete type, a "
+              "block type parameter, or "
               "one class or enum template, pointer or array type applied to "
               "the block's parameters, such as 'Box<T>', 'T*' or 'T[3]'.");
           valid = false;
@@ -458,10 +469,19 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       // one canonical conformance regardless of the requester's imports.
       bool owns = declarationOwner(currentSourceUnit) ==
                   declarationOwner(conceptInfo.sourceUnit);
+      bool uncoveredParameter = false;
       for (std::size_t position = 0; !owns && position < patterns.size();
            ++position) {
+        uncoveredParameter |= ownParameter(patterns[position]);
         owns = ownsNominalSpecializationArgument(currentSourceUnit,
                                                  patterns[position]);
+        if (owns && uncoveredParameter) {
+          reportConformanceError(
+              site, "A conformance for a foreign concept cannot place an "
+                    "uncovered type parameter before its first locally owned "
+                    "argument type.");
+          valid = false;
+        }
       }
       if (!owns) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -898,7 +918,7 @@ auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
   return std::nullopt;
 }
 
-// A block's pattern is open when it applies a template to block parameters;
+// A block's pattern is open when it is or contains a block parameter;
 // a closed pattern is one concrete type.
 auto SemanticVisitor::Impl::openConformancePattern(const SemanticType &pattern)
     -> bool {
@@ -960,7 +980,7 @@ auto SemanticVisitor::Impl::matchConformance(
   // Match a declared family structurally even when its arguments are open.
   // This establishes only the conformance head and substitution; constraints
   // and operation borrow contracts are checked separately. A bare parameter
-  // cannot match a class/enum family, nor can a repeated binder change type.
+  // binds a whole type; a repeated binder must agree at every occurrence.
   for (std::size_t index = 0; index < conformances.size(); ++index) {
     const RegisteredConformance &conformance = conformances[index];
     if (conformance.conceptId != id ||
@@ -990,6 +1010,11 @@ auto SemanticVisitor::Impl::matchConformance(
     for (std::size_t position = 0; matches && position < arguments.size();
          ++position) {
       const SemanticType &pattern = conformance.patterns[position];
+      if (pattern.kind == SemanticType::TypeParameter &&
+          !pattern.isAssociatedTypeProjection()) {
+        matches = bind(pattern.genericParameterId, arguments[position]);
+        continue;
+      }
       if (!openConformancePattern(pattern)) {
         matches =
             pattern == canonicalExactSpecializationType(arguments[position]);
@@ -1011,93 +1036,104 @@ auto SemanticVisitor::Impl::matchConformance(
   return std::nullopt;
 }
 
-// Whether some concrete arguments match both blocks. Every pattern is a
-// closed type or a template or built-in type applied to block parameters, so
-// unifying two blocks binds parameters only to closed types or to each
-// other: a union-find over both blocks' parameters, each class carrying at
-// most one closed type, decides it.
+// Whether some finite concrete argument list matches both blocks. Requirements
+// never distinguish overlapping heads; structural unification owns coherence.
 auto SemanticVisitor::Impl::conformancePatternsOverlap(
     const RegisteredConformance &existing,
     const std::vector<SemanticType> &patterns) const -> bool {
   if (existing.patterns.size() != patterns.size()) {
     return false;
   }
-  // Parameters are keyed by block (0: existing, 1: candidate) and identity.
+  // Unify both heads with variables scoped to their declaring block. Bare
+  // parameters can bind whole type applications, so an occurs check matters:
+  // C<T, Box<T>> and C<Box<U>, U> have no finite common instance.
   using Variable = std::pair<int, GenericParameterId>;
-  std::map<Variable, Variable> parent;
-  std::map<Variable, SemanticType> closed;
-  const auto find = [&](Variable variable) {
-    while (true) {
-      const auto found = parent.find(variable);
-      if (found == parent.end() || found->second == variable) {
-        return variable;
-      }
-      variable = found->second;
-    }
+  struct Term {
+    int block;
+    SemanticType type;
   };
-  const auto assign = [&](Variable variable, SemanticType type) {
-    type = canonicalExactSpecializationType(std::move(type));
-    const Variable root = find(variable);
-    const auto found = closed.find(root);
-    if (found == closed.end()) {
-      closed.emplace(root, std::move(type));
-      return true;
-    }
-    return found->second == type;
+  std::map<Variable, Term> bindings;
+  const auto variable = [](const Term &term) -> std::optional<Variable> {
+    if (term.type.kind == SemanticType::TypeParameter &&
+        !term.type.isAssociatedTypeProjection())
+      return Variable{term.block, term.type.genericParameterId};
+    return std::nullopt;
   };
-  const auto unite = [&](Variable left, Variable right) {
-    const Variable leftRoot = find(left);
-    const Variable rightRoot = find(right);
-    if (leftRoot == rightRoot) {
-      return true;
+  const auto resolve = [&](Term term) {
+    while (const auto key = variable(term)) {
+      const auto found = bindings.find(*key);
+      if (found == bindings.end())
+        break;
+      term = found->second;
     }
-    parent[leftRoot] = rightRoot;
-    const auto leftClosed = closed.find(leftRoot);
-    if (leftClosed == closed.end()) {
-      return true;
-    }
-    SemanticType type = leftClosed->second;
-    closed.erase(leftClosed);
-    return assign(rightRoot, std::move(type));
+    return term;
   };
-  for (std::size_t position = 0; position < patterns.size(); ++position) {
-    const SemanticType &left = existing.patterns[position];
-    const SemanticType &right = patterns[position];
-    const bool leftOpen = openConformancePattern(left);
-    const bool rightOpen = openConformancePattern(right);
-    if (!leftOpen && !rightOpen) {
-      if (left != right) {
-        return false;
-      }
-      continue;
-    }
-    if (leftOpen && rightOpen) {
-      if (!sameConformanceConstructor(left, right) ||
-          left.arguments.size() != right.arguments.size()) {
-        return false;
-      }
-      for (std::size_t inner = 0; inner < left.arguments.size(); ++inner) {
-        if (!unite({0, left.arguments[inner].genericParameterId},
-                   {1, right.arguments[inner].genericParameterId})) {
-          return false;
-        }
-      }
-      continue;
-    }
-    // One side is closed: it must be an instance of the other's template.
-    const SemanticType &open = leftOpen ? left : right;
-    const std::optional<std::vector<SemanticType>> instance =
-        patternInstanceArguments(open, leftOpen ? right : left);
-    if (!instance || instance->size() != open.arguments.size()) {
+  std::size_t work = 0;
+  bool exhausted = false;
+  const auto charge = [&]() {
+    if (++work <= maximumProjectionWork)
+      return true;
+    exhausted = true;
+    return false;
+  };
+  const auto occurs = [&](const auto &self, Variable key, Term term) -> bool {
+    if (!charge())
+      return true;
+    term = resolve(std::move(term));
+    if (const auto other = variable(term))
+      return *other == key;
+    for (const auto &argument : term.type.arguments)
+      if (self(self, key, Term{term.block, argument}))
+        return true;
+    return false;
+  };
+  const auto unify = [&](const auto &self, Term left, Term right) -> bool {
+    if (!charge())
       return false;
-    }
-    for (std::size_t inner = 0; inner < open.arguments.size(); ++inner) {
-      if (!assign({leftOpen ? 0 : 1, open.arguments[inner].genericParameterId},
-                  (*instance)[inner])) {
+    left = resolve(std::move(left));
+    right = resolve(std::move(right));
+    const auto leftVariable = variable(left);
+    const auto rightVariable = variable(right);
+    if (leftVariable || rightVariable) {
+      if (leftVariable && rightVariable && *leftVariable == *rightVariable)
+        return true;
+      const Variable key = leftVariable ? *leftVariable : *rightVariable;
+      Term term = leftVariable ? right : left;
+      if (occurs(occurs, key, term))
         return false;
-      }
+      bindings.emplace(key, std::move(term));
+      return true;
     }
-  }
+    const bool leftOpen = openConformancePattern(left.type);
+    const bool rightOpen = openConformancePattern(right.type);
+    if (!leftOpen && !rightOpen)
+      return canonicalExactSpecializationType(left.type) ==
+             canonicalExactSpecializationType(right.type);
+    auto leftArguments = left.type.arguments;
+    auto rightArguments = right.type.arguments;
+    if (leftOpen && rightOpen) {
+      if (!sameConformanceConstructor(left.type, right.type))
+        return false;
+    } else {
+      const auto instance = patternInstanceArguments(
+          leftOpen ? left.type : right.type, leftOpen ? right.type : left.type);
+      if (!instance)
+        return false;
+      (leftOpen ? rightArguments : leftArguments) = *instance;
+    }
+    if (leftArguments.size() != rightArguments.size())
+      return false;
+    for (std::size_t index = 0; index < leftArguments.size(); ++index)
+      if (!self(self, Term{left.block, leftArguments[index]},
+                Term{right.block, rightArguments[index]}))
+        return false;
+    return true;
+  };
+  for (std::size_t position = 0; position < patterns.size(); ++position)
+    if (!unify(unify, Term{0, existing.patterns[position]},
+               Term{1, patterns[position]}))
+      // Exhaustion rejects a potentially overlapping block, never admits it.
+      return exhausted;
   return true;
 }
 

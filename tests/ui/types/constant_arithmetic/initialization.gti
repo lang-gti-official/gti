@@ -1,0 +1,11 @@
+// Initialization, assignment and return share checked constant-arithmetic conversion.
+//@ run-pass
+constexpr uint8_t constant = (200 + 100) - 200;
+uint64_t result() { return 32 * 32; }
+struct Record { Record() = default; uint64_t value = 16 * 16; };
+int main() {
+  mut uint8_t value = 8 * 8;
+  value = 15 * 15;
+  Record record{};
+  return value == 225 && constant == 100 && result() == 1024 && record.value == 256 ? 0 : 1;
+}

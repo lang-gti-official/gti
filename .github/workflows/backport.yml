@@ -53,17 +53,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 0}
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 1}
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 2}
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 3}
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 4}
-          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 5}
-          # macOS proves only the `darwin` test set (what differs on the
-          # platform); Linux proves the complete inventory once. The rows match
-          # full-validation.yml (tests/ci_release_test.py checks).
-          - {os: macos-26, platform: darwin, shards: 2, index: 0}
-          - {os: macos-26, platform: darwin, shards: 2, index: 1}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 0}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 1}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 2}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 3}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 4}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 5}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 6}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 7}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 8}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 9}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 10}
+          - {os: ubuntu-24.04, platform: linux, shards: 12, index: 11}
+          - {os: macos-26, platform: darwin, shards: 6, index: 0}
+          - {os: macos-26, platform: darwin, shards: 6, index: 1}
+          - {os: macos-26, platform: darwin, shards: 6, index: 2}
+          - {os: macos-26, platform: darwin, shards: 6, index: 3}
+          - {os: macos-26, platform: darwin, shards: 6, index: 4}
+          - {os: macos-26, platform: darwin, shards: 6, index: 5}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 360
     steps:

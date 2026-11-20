@@ -156,8 +156,38 @@ std::optional<std::uint64_t> checkedSquareResultBound(llvm::Value *left,
   return root * root * *factor;
 }
 
-Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
-    : session(session), ir(ir), guard(std::move(guard)) {}
+Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard,
+                 const std::map<SymbolId, llvm::GlobalVariable *> &globals)
+    : session(session), ir(ir), guard(std::move(guard)), globals(globals) {}
+
+llvm::Constant *Scalars::constantAddress(const ConstantStorageAddress &address,
+                                         const SemanticType &type) {
+  const auto resolved =
+      resolveMirConstantAddress(session.program().mir(), address, type);
+  const auto global = globals.find(address.symbol);
+  if (!resolved || global == globals.end())
+    throw std::logic_error("LLVM constant address lost its verified storage");
+  std::uint64_t offset = 0;
+  for (std::size_t index = 0; index < address.path.size(); ++index) {
+    const auto &projection = address.path[index];
+    const auto &container = *resolved->types[index];
+    if (projection.field) {
+      const auto field =
+          session.layouts().fieldIndex(container, projection.field);
+      offset += session.layouts().get(container).fieldOffsets.at(field);
+    } else {
+      offset += session.layouts().get(*resolved->types[index + 1]).stride *
+                projection.index;
+    }
+  }
+  if (address.arrayOffset)
+    offset += session.layouts().get(*resolved->referent).stride *
+              *address.arrayOffset;
+  if (offset == 0)
+    return global->second;
+  return llvm::ConstantExpr::getGetElementPtr(ir.getInt8Ty(), global->second,
+                                              ir.getInt64(offset));
+}
 
 llvm::Constant *Scalars::constantStorage(
     const TypeLayout &layout,
@@ -188,6 +218,9 @@ llvm::Constant *Scalars::constantStorage(
 llvm::Constant *Scalars::constant(const ConstantValue &value,
                                   const SemanticType &type) {
   auto *storage = session.layouts().get(type).storage;
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value && aggregate->value->staticAddress)
+    return constantAddress(*aggregate->value->staticAddress, type);
   if (std::holds_alternative<NullConstant>(value))
     return llvm::ConstantPointerNull::get(session.layouts().pointer());
   if (const auto *text = std::get_if<std::string>(&value))
@@ -221,7 +254,11 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
       aggregate && aggregate->value &&
       aggregate->value->kind == ConstantAggregateKind::Array &&
       type.kind == SemanticType::Array &&
-      aggregate->value->elements.size() == type.arrayLength) {
+      aggregate->value->elementCount() == type.arrayLength) {
+    if (aggregate->value->packedBytes)
+      return llvm::ConstantDataArray::getString(session.context(),
+                                                *aggregate->value->packedBytes,
+                                                /*AddNull=*/false);
     std::vector<llvm::Constant *> elements;
     for (const auto &element : aggregate->value->elements)
       elements.push_back(constant(element, type.arguments.at(0)));

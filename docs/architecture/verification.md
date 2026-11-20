@@ -546,6 +546,15 @@ suites retain the existing public contracts, including rejection diagnostics.
 Source-policy failures identify the applied concept and source requirement
 rather than referring to a retired private capability.
 
+`tests/ui/generics/temporary_results/` covers composing guaranteed owned
+free-function and member results with temporary read-only arguments, including
+formatting inside a generic error callback, evaluation/drop order, failure
+cleanup, and rejection of escaping/mutable borrows or an unresolved concrete
+producer. `tests/unit/provisional_call_boundary.cpp` injects a provisional
+requirement marker into a concrete instance provider's otherwise valid call;
+HIR must reject it instead of treating an open-body promise as an executable
+target.
+
 The complete example oracles and both body/declaration censuses remain delivery
 gates. Added source helpers legitimately increase declaration inventories;
 changes to emitted bodies or generated adapters still require individual review.
@@ -10171,6 +10180,12 @@ reject wrong source/run/attempt/platform/configuration, incomplete or expired
 artifact sets and altered archives/checksums; orchestration-only success does
 not establish release evidence. Main-only full CI dispatch is the commissioning
 and artifact-recovery route, with the same required integration gates.
+`ci_release` exercises the CI apt retry wrapper with fake privileged commands:
+interrupted package configuration is repaired before retrying, both apt and dpkg
+have time and kill bounds, a failed repair never becomes installation success,
+and successful installs and index refreshes do not run recovery. Install attempts
+allow 900 seconds for downloading, unpacking and configuration; index refreshes
+and recovery allow 300 seconds, with 30 seconds before forced termination.
 `ci_release` additionally
 archives a staged fixture through the real packaging script and compares both
 channels' contents and checksums. The cache test's optional `--ccache` mode

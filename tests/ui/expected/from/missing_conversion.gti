@@ -1,0 +1,7 @@
+// Different error types require an explicitly registered conversion.
+enum Source { failed };
+enum Target { failed };
+expected<int, Source> source() { return unexpected(Source::failed); }
+expected<int, Target> target() {
+  return ?source();  //~ ERROR GTI-S2029
+}

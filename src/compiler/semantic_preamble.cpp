@@ -242,6 +242,9 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
             .count());
   }
 
+  if (registrationObserver && !hadError())
+    (*registrationObserver)();
+
   // The body phase adds only this program's own bodies (and the trusted
   // bodies after the prefix); the finalization scope confines every
   // whole-program pass to what it added, exactly as late demand does.

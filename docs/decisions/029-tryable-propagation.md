@@ -141,3 +141,22 @@ operation cannot enter that closure. No AST protocol interpreter or special
 result-type execution path is introduced. This applies to unrelated source
 carriers as well as source-defined library results; persistent constants still
 must satisfy the constant profile's ordinary storage restrictions.
+
+## Revision: registered residual conversion (2026-11-19)
+
+All source result carriers, including expected, use the protocol. A residual
+that already is the return type, or has an exact eligible implicit constructor,
+keeps that path. Otherwise `std::from<Return, Residual>` supplies an ordinary
+consuming call. The source prelude adapts `unexpected_value<E>` to
+`expected<T, F>` by calling `std::from<F, E>`; this is not a compiler rule for
+expected. Missing/overlapping registrations fail, chains are not searched, and
+ordinary assignments/arguments gain no new implicit conversion. Both success
+and failure retain their existing ownership and cleanup rules.
+
+This revises the original exact-residual-constructor restriction without adding
+syntax. Conformance heads now accept a bare block parameter, enabling generic
+application error policies. A foreign-concept block requires a local nominal
+anchor before any uncovered parameter; overlap unification includes whole-type
+bindings and an occurs check. These rules apply to all protocols. No blanket
+identity conversion is registered, because it would overlap useful generic
+policies; direct propagation already preserves identical errors.

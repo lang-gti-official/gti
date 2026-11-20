@@ -1117,6 +1117,7 @@ paths = [
   "stdlib/std/environment.gti",
   "stdlib/std/chrono.gti",
   "stdlib/std/random.gti",
+  "stdlib/std/detail/random_engine.gti",
   "stdlib/std/cmath.gti",
   "stdlib/std/http.gti",
   "stdlib/std/tcp.gti",
@@ -1164,6 +1165,9 @@ paths = [
   "include/gti/persistent_declaration.h",
   "src/compiler/compiled_interface_types.cpp",
   "src/compiler/compiled_scalar_unit.cpp",
+  "src/compiler/compiled_template_body.cpp",
+  "src/compiler/compiled_template_nodes.def",
+  "include/gti/compiled_template_body.h",
   "src/compiler/persistent_declaration.cpp",
   "tests/compiled_*",
   "tests/persistent_declaration_tests.cpp",
@@ -1253,6 +1257,8 @@ area = "driver-native-build"
 paths = [
   "src/driver/native_toolchain.cpp",
   "src/driver/build.cpp",
+  "src/driver/file_digest.cpp",
+  "src/driver/file_digest.h",
   "src/driver/build_script.cpp",
   "src/driver/compilation.cpp",
   "src/driver/artifact.cpp",
@@ -1453,6 +1459,7 @@ paths = [
   ".github/",
   ".gitea/",
   "scripts/validation_checks.py",
+  "scripts/fast_ci.py",
   "scripts/source_stdlib_ci.py",
   "scripts/example_gates.py",
   "tests/source_stdlib_ci_test.py",
@@ -1488,6 +1495,8 @@ consumers = [
 area = "release-packaging"
 risk = "system"
 paths = [
+  "scripts/build_stdlib_bundles.py",
+  "cmake/stdlib-bundles/",
   "scripts/check_release_version.py",
   "scripts/sync_release_assets.py",
   "scripts/resolve_release_source.py",

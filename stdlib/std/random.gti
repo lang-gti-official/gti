@@ -1,6 +1,6 @@
 export module random;
 
-import std.numeric;
+import "detail/random_engine.gti";
 export namespace gti_internal {
 namespace runtime {
 extern "C" {
@@ -43,41 +43,15 @@ export namespace std {
 
   class random_engine {
   public:
-    // splitmix64 expands the seed across all four state words. Running it once
-    random_engine(uint64_t seed) {
-      mut uint64_t z = seed;
-      for (mut uint64_t i = uint64_t(0); i<uint64_t(4); i++) {
-        z = std::wrapping_add(z, uint64_t(0x9e3779b97f4a7c15));
-        mut uint64_t x = z;
-        x = std::wrapping_mul(x ^ (x>> uint64_t(30)), uint64_t(0xbf58476d1ce4e5b9));
-        x = std::wrapping_mul(x ^ (x >> uint64_t(27)), uint64_t(0x94d049bb133111eb));
-        this.state[i] = x ^ (x >> uint64_t(31));
-      }
-    }
+    random_engine(uint64_t seed) : state(std::detail::seed_random_engine(seed)) {}
 
     ~random_engine() {}
 
-    // xoshiro256++. `mut` because the call advances the state, and the state is
     uint64_t operator()() mut {
-      uint64_t result = std::wrapping_add(this.rol64(std::wrapping_add(this.state[0], this.state[3]), uint64_t(23)), this.state[0]);
-      uint64_t t = this.state[1] << uint64_t(17);
-
-      this.state[2] = this.state[2] ^ this.state[0];
-      this.state[3] = this.state[3] ^ this.state[1];
-      this.state[1] = this.state[1] ^ this.state[2];
-      this.state[0] = this.state[0] ^ this.state[3];
-      this.state[2] = this.state[2] ^ t;
-      this.state[3] = this.rol64(this.state[3], uint64_t(45));
-
-      return result;
+      return std::detail::next_random(this.state);
     }
 
   private:
-    // Masked so a count of 0 or 64 cannot raise shift_count_out_of_range.
-    uint64_t rol64(uint64_t x, uint64_t k) {
-      return (x << (k & uint64_t(63))) | (x >> ((uint64_t(64) - k) & uint64_t(63)));
-    }
-
-    mut uint64_t state[4] = {};
+    mut std::detail::random_engine_state state;
   };
 }

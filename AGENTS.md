@@ -143,12 +143,13 @@ semantics.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
   role. A PR's `CI gate` runs the fast checks (lint, the `tree-consistency` tests, and
-  a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
-  entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
-  one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
-  runs the Linux half of that set on the exact candidate (macOS too when the
-  repository variable `GTI_QUEUE_MACOS` is `true`); otherwise a macOS-only
-  failure from combining queued PRs is caught by full validation after merge. Post-integration full validation then runs the per-commit
+  a macOS arm64 and Linux x64 build with `feedback-fast`, the runner/editor/
+  project/example/unit baselines, and all eight source-test shards distributed
+  across four additional jobs per platform using same-run native tools).
+  The queue runs the same set on both platforms by default; `GTI_QUEUE_MACOS=false`
+  explicitly disables its macOS row during a runner outage. The gate requires
+  every scheduled shard and verifies source, run, producer attempt and complete
+  disjoint coverage. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
@@ -421,8 +422,8 @@ one-off implementation-note or redesign files when an existing category fits.
   `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
   runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
   in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
-  it on Linux (macOS runs one rotating shard per pull request and every shard
-  after integration). Declared names the gate already ran are not re-run, and
+  it on Linux (both platforms run every source shard through the
+  four-job fanout before integration). Declared names the gate already ran are not re-run, and
   macOS re-runs only declared tests in the `darwin` set. Run them all with
   `ctest --test-dir build-release -R '^gti_test_ui'`.
   Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish

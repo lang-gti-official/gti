@@ -1,0 +1,21 @@
+// Undoing a body edit restores the verified warning at its original location before the next full pass.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int warn() {  mut int code = 3; return code; }\nint main() { return warn(); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int warn() {  mut int code = 3; return code; }\nint main() { return warn(); }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}}]}}}
+{"send": {"jsonrpc": "2.0", "id": 7, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 7, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int warn() {  mut int code = 3; return code; }\nint main() { return wrn(); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "int warn() {  mut int code = 3; return code; }\nint main() { return warn(); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}}], "gtiDiagnosticStage": "verifiedRestoration"}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}}]}}}
+{"send": {"jsonrpc": "2.0", "id": 8, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 8, "result": {}}}
+{"analysisTrace": {"generation": 3, "mirVerified": true}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

@@ -1,0 +1,5 @@
+// Bare conformance parameters bind consistently across arguments.
+//@ run-pass
+concept same_read<A, B> { int read(A a, B b); };
+for <T> concept same_read<T, T> { int read(T a, T b) { return 42; } };
+int main() { return same_read<int, int>::read(1, 2) - 42; }

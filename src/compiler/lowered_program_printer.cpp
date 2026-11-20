@@ -1,4 +1,5 @@
 #include "gti/lowered_program_printer.h"
+#include "gti/compiled_mir.h"
 
 #include "gti/lowered_program.h"
 #include "gti/mir_printer.h"
@@ -407,6 +408,11 @@ private:
             } else {
               output << "type:null";
             }
+            if (constantValue.value->packedBytes) {
+              output << ":packed-bytes="
+                     << constantValue.value->packedBytes->size();
+              return;
+            }
             output << ":[";
             for (std::size_t index = 0;
                  index < constantValue.value->elements.size(); ++index) {
@@ -533,7 +539,8 @@ private:
     output << "type-alias(unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
     type(value.type);
-    output << ";private=" << value.compilerPrivate << ')';
+    output << ";private=" << value.compilerPrivate
+           << ";exported=" << value.explicitlyExported << ')';
   }
 
   void printValue(const LoweredClassDeclaration &value) {
@@ -928,6 +935,16 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
              << static_cast<unsigned>(binding.codegenAttributes.inlining)
              << " codegen-cold=" << binding.codegenAttributes.cold
              << " symbol=" << std::quoted(binding.symbol) << '\n';
+      if (binding.optimizationBody) {
+        // Include the full portable body in the construction seal.
+        const auto bytes =
+            encodeCompiledMir({{binding.symbol, binding.optimizationBody}});
+        constexpr char hex[] = "0123456789abcdef";
+        output << "    optimization-mir=";
+        for (unsigned char byte : bytes)
+          output << hex[byte >> 4] << hex[byte & 15];
+        output << '\n';
+      }
     }
   }
   output << "source-debug-profile="

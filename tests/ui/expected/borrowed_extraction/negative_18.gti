@@ -14,5 +14,5 @@ expected<Resource&, int> lookup(Resource& owner, bool fail) {
 }
 
 expected<int, bool> run(Resource& owner) {
-  Resource& alias = ?lookup(owner, false); return alias.read();  //~ ERROR GTI-S2086 //~ ERROR GTI-S2017
+  Resource& alias = ?lookup(owner, false); return alias.read();  //~ ERROR GTI-S2029 //~ ERROR GTI-S2017
 }

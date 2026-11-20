@@ -108,6 +108,18 @@ through the existing contextual-literal path, including signed minima. It is
 not a runtime cast and does not introduce eager argument evaluation. A failed
 signature probe leaves an unknown result type, preventing secondary unused-result
 errors from an unrelated preceding expression.
+Literal-only integer arithmetic uses the same fallback after ordinary operand
+checking. Semantics admits a structural tree of unsuffixed integer literals and
+built-in integer operators, queries the existing constant evaluator with normal
+typed intermediate operations and limits, and caches only successful values in
+the semantic snapshot. Candidate probes do not publish a destination conversion.
+After unique selection, the existing required constant scalar publication record
+carries the checked target type and value to HIR and verified MIR. Initializers,
+assignments and returns use that boundary too. Typed macro cloning retains the
+selected target on the expression root and checks the original arithmetic before
+materializing it; the target is not pushed into the arithmetic leaves. No runtime
+state, allocation, backend-specific evaluator or new syntax is introduced.
+
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. Signature probing runs inside the owning request's body-demand
@@ -831,6 +843,14 @@ the target-less call then reached the C++ backend as `GTI-B0001`. A rejected
 arrow step has already been diagnosed by the callee's analysis and selects no
 member.
 
+The counted text view forwards source members to trusted declarations in
+`std.string_view` and uses `std.string` adapters for owning operands.
+Overloads prefer exact matches, with the ordinary fallback tier for fitting
+integer literals and call-only read borrows of temporaries. Semantic
+resolution keeps the receiver as the first argument to the selected
+source function. HIR and constant evaluation use that argument order,
+and editor signatures show the written member.
+
 Semantic analysis is GTI's authoritative language layer. It resolves meaning
 over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
@@ -948,6 +968,11 @@ on declaration-wide registration. It currently:
    Order And Demand" below);
 9. finalizes callable forwarding and argument contracts; and
 10. finalizes the program-initialization plan and semantic occurrences.
+
+Sealing also freezes each nonempty overload set. Copies of those sets in
+value-flow snapshots share read-only candidates. Registration, concrete type
+substitution, and rebinding to a copied catalog edit a private list. Candidate
+declaration pointers in a copied catalog still refer to its own records.
 
 After an otherwise valid program check, `Frontend` applies the immutable
 artifact `ProgramRequest`. Executable requests admit no exports. A dormant
@@ -1220,9 +1245,9 @@ reuse ordinary instance analysis in isolated workers keyed by declaration and
 exact owner/type/value arguments. Recursive or unavailable evidence stays
 unknown; a callable with no normal return does not obtain a vacuous empty
 contract. The synthetic residual return of a prefix `?` contributes its
-selected conversion's complete set, with no dependency and the constructor's
-alternatives as guards; only a conversion without a complete construction
-contract leaves `bodyFlow.unknownImplicitResultReturn` set. Explicit
+selected constructor or `std::from` call's complete set, with no input
+dependency and its result alternatives as guards; only a conversion without
+a complete return contract leaves `bodyFlow.unknownImplicitResultReturn` set. Explicit
 unknown entries shadow base-model facts during concrete reanalysis. These
 contracts carry typed alternative inventories and declaration-relative mappings,
 never callee-local loan/place IDs. Guarded nonempty mappings remain a separate
@@ -3034,7 +3059,16 @@ construction relationship. Only these bounded guaranteed facts admit
 operations in an open generic body. Arbitrary compound expressions are concrete
 filters, not inferred proofs of their subexpressions. The selected concrete
 instance still resolves every executable call/constructor normally. Query
-recursion is bounded to 64 active checks. Re-entering the same in-flight query
+results from guaranteed free-function and member requirements carry
+`ResolvedCallInfo::provisionalRequirement` until concrete reanalysis replaces
+the signature with an ordinary target. The shared fresh-value query admits
+such a result only after its concrete value type and absence of stored borrows
+are established. This lets a required owned result compose with the existing
+temporary read-borrow rules without recognizing library names. HIR rejects a
+remaining provisional marker, even if other target fields are populated;
+neither it nor MIR treats the open-body signature as executable proof.
+
+Query recursion is bounded to 64 active checks. Re-entering the same in-flight query
 with identical syntax, resolved argument types and exact type/value-generic
 substitutions fails immediately rather than expanding a branching probe tree.
 Isolated query workers and typed-macro selection probes inherit that active
@@ -4137,6 +4171,16 @@ generic substitutions, automatic values, and an optional read-only receiver
 through constexpr calls and constructors while enforcing the request's
 configured step and call-depth limits (`CompileLimits`).
 
+Staged lowering brings the checked data of referenced constexpr program
+storage and its address dependencies into the ordinary initialization plan.
+A borrowed result must pass MIR's static-result proof and the executor's
+publication check. The persisted address records the storage symbol and
+typed field or fixed-array projections. Each request reconstructs read-only
+designators from those symbols, with
+one storage cell per symbol under the ordinary constant-storage budget.
+Verified MIR checks symbol, path, access and type before LLVM emits the
+corresponding relocatable addresses using the selected target layout.
+
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
 may name a polymorphic, inherited or otherwise runtime-only class without
@@ -4147,12 +4191,10 @@ profile's restrictions. This is a general identity/representation distinction,
 not an exemption for named reflection types.
 
 Only fully initialized structural aggregates enter this representation.
-Semantics rejects bases, polymorphism, stored references, union state, active
-cleanup, mutable receiver execution, and unsupported field types before a
-constant is accepted. HIR and MIR retain only facts needed by runtime or
-program-storage materialization. The C++ backend may serialize an accepted
-constant from its exact fields, but it cannot invoke source constructors or
-host constant evaluation to recover language meaning.
+Bases, polymorphism, union state, active cleanup, and unsupported field types
+remain outside the published aggregate profile. Read-only address fields
+retain their verified static referents. Local constexpr execution can also
+use mutable receivers and transient references under ordinary MIR checks.
 
 Literal-backed text inspection dispatches on resolved `StringViewSize` and
 `StringViewEmpty` intrinsic identities and the typed string-view index
@@ -4327,6 +4369,23 @@ profile; it is not admitted by the integral-enum catalog.
 
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
+
+### Embedded byte storage
+
+The frontend creates an immutable, source-local `constexpr uint8_t[N]`
+declaration for each distinct embedded input in a unit. The declaration's
+packed constant retains the exact array type and byte extent with no
+per-element syntax or constant nodes. Semantics rewrites the public
+expression into the normal checked array-to-span call. The program
+initialization plan records the backing array as data-only. Staged MIR
+materializes that verified static origin and can project individual bytes
+with the same checked array rules. LLVM emits the packed array as constant
+data. Both paths use the ordinary source-defined span code.
+
+When an otherwise publishable constant expression consumes a borrowed
+intermediate, staging keeps the producer and consumer in one verified MIR
+body. Its temporary loans live until the full expression completes, and only
+the final persistent value returns to semantic analysis.
 
 ## Staged Constant Limits And Reuse
 

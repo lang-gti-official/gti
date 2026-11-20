@@ -124,6 +124,27 @@ ProjectWorkspace::findPackage(std::string_view identity) const {
   return found == resolvedPackages.end() ? nullptr : &*found;
 }
 
+ProjectWorkspace
+ProjectWorkspace::buildViewFor(const ResolvedProjectPackage &selected) const {
+  std::set<std::string> reachable;
+  std::vector<const ResolvedProjectPackage *> pending{&selected};
+  while (!pending.empty()) {
+    const auto *package = pending.back();
+    pending.pop_back();
+    if (!reachable.insert(package->identity()).second)
+      continue;
+    for (const auto &edge : package->dependencies)
+      if (const auto *child = findPackage(edge.targetIdentity))
+        pending.push_back(child);
+  }
+  std::vector<ResolvedProjectPackage> packages;
+  for (const auto &package : resolvedPackages)
+    if (reachable.contains(package.identity()))
+      packages.push_back(package);
+  return ProjectWorkspace(workspaceRoot, std::move(packages),
+                          selected.identity(), explicitWorkspace);
+}
+
 std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   std::vector<PackageSourceRoot> roots;
   roots.reserve(resolvedPackages.size());
@@ -137,6 +158,18 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
                                package.manifest.package().moduleImplementations,
                            .moduleLookupPaths =
                                package.manifest.package().moduleLookupPaths};
+    if (const auto &name = package.manifest.package().defaultLibrary) {
+      const auto *library = package.manifest.findTarget(*name);
+      if (!library->libraryModule.empty()) {
+        root.defaultModule = library->libraryModule;
+        const auto registered = std::find_if(
+            root.modules.begin(), root.modules.end(), [&](const auto &module) {
+              return module.first == root.defaultModule;
+            });
+        if (registered == root.modules.end())
+          root.modules.emplace_back(root.defaultModule, library->root);
+      }
+    }
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(
@@ -219,6 +252,9 @@ std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {
     identity += "\npackage:" + package.identity();
+    if (package.manifest.package().defaultLibrary)
+      identity +=
+          "\ndefault-library:" + *package.manifest.package().defaultLibrary;
     for (const auto &[name, path] : package.manifest.package().modules) {
       identity += "\nmodule:" + package.identity() + ":" + name + "=" +
                   path.lexically_relative(package.manifest.packageRoot())

@@ -434,7 +434,11 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
         "LLVM Thread instrumentation requires verified communicating runtime "
         "and native-provider instrumentation provenance");
   initializeTarget();
-  const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+  // LLVM's Darwin default includes the running kernel version. An installed
+  // library must be usable across OS updates, down to the first arm64 macOS.
+  const llvm::Triple triple(options.distributedLibrary && target.os == "macos"
+                                ? "arm64-apple-macosx11.0.0"
+                                : llvm::sys::getDefaultTargetTriple());
 #if LLVM_VERSION_MAJOR >= 21
   const auto &machineTriple = triple;
 #else

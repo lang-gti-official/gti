@@ -1,0 +1,48 @@
+export module detail.random_engine;
+
+import std.numeric;
+
+namespace std::detail {
+export struct random_engine_state {
+  mut uint64_t s0 = 0;
+  mut uint64_t s1 = 0;
+  mut uint64_t s2 = 0;
+  mut uint64_t s3 = 0;
+  random_engine_state() = default;
+};
+
+uint64_t splitmix64(mut uint64_t& seed) {
+  seed = std::wrapping_add(seed, uint64_t(0x9e3779b97f4a7c15));
+  mut uint64_t x = seed;
+  x = std::wrapping_mul(x ^ (x >> uint64_t(30)), uint64_t(0xbf58476d1ce4e5b9));
+  x = std::wrapping_mul(x ^ (x >> uint64_t(27)), uint64_t(0x94d049bb133111eb));
+  return x ^ (x >> uint64_t(31));
+}
+
+export random_engine_state seed_random_engine(mut uint64_t seed) {
+  mut random_engine_state state{};
+  state.s0 = splitmix64(seed);
+  state.s1 = splitmix64(seed);
+  state.s2 = splitmix64(seed);
+  state.s3 = splitmix64(seed);
+  return state;
+}
+
+uint64_t rotate_left(uint64_t x, uint64_t k) {
+  return (x << (k & uint64_t(63))) | (x >> ((uint64_t(64) - k) & uint64_t(63)));
+}
+
+// One xoshiro256++ transition on the four words owned by this generator.
+export uint64_t next_random(mut random_engine_state& state) {
+  uint64_t sum = std::wrapping_add(state.s0, state.s3);
+  uint64_t result = std::wrapping_add(rotate_left(sum, uint64_t(23)), state.s0);
+  uint64_t t = state.s1 << uint64_t(17);
+  state.s2 = state.s2 ^ state.s0;
+  state.s3 = state.s3 ^ state.s1;
+  state.s1 = state.s1 ^ state.s2;
+  state.s0 = state.s0 ^ state.s3;
+  state.s2 = state.s2 ^ t;
+  state.s3 = rotate_left(state.s3, uint64_t(45));
+  return result;
+}
+}

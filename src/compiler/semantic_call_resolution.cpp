@@ -1702,7 +1702,8 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
     // Provisional type information only. The concrete body uses the ordinary
     // call resolver and records a real target before HIR is constructed.
     semanticModel.record(
-        call, ResolvedCallInfo{.returnType = proof->arguments.back(),
+        call, ResolvedCallInfo{.provisionalRequirement = true,
+                               .returnType = proof->arguments.back(),
                                .parameterTypes = {proof->arguments.begin(),
                                                   proof->arguments.end() - 1}});
     currentType = callExpressionType(proof->arguments.back());
@@ -1716,7 +1717,7 @@ auto SemanticVisitor::Impl::applyRequiredFreeCall(
       selected == 0)
     return reject("The requirement does not select an exact read-only "
                   "free-function overload for this call.");
-  std::erase_if(callee.overloads,
+  std::erase_if(callee.overloads.edit(),
                 [selected](const CallableCandidate &candidate) {
                   return candidate.id != selected;
                 });
@@ -6103,9 +6104,8 @@ auto SemanticVisitor::Impl::accessorResultUse(const ResultUse &use,
     if (found == owner->members.end() ||
         found->second.symbol.type != SemanticType::Function)
       return ResultUseAccess::Unknown;
-    std::vector<CallableCandidate> candidates =
-        substituteSymbol(found->second.symbol, type).overloads;
-    std::erase_if(candidates, [](const CallableCandidate &candidate) {
+    auto candidates = substituteSymbol(found->second.symbol, type).overloads;
+    std::erase_if(candidates.edit(), [](const CallableCandidate &candidate) {
       return candidate.staticMember;
     });
     if (candidates.empty())
@@ -6162,7 +6162,7 @@ auto SemanticVisitor::Impl::readOnlyAccessorOperator(
   if (found == owner->members.end() ||
       found->second.symbol.type != SemanticType::Function)
     return false;
-  const std::vector<CallableCandidate> candidates =
+  const auto candidates =
       substituteSymbol(found->second.symbol, receiver).overloads;
   const auto form = [](const CallableCandidate &candidate,
                        ReceiverMutability receiverMutability,

@@ -1,4 +1,5 @@
 #pragma once
+#include "gti/compiled_mir.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/lowered_program.h"
 #include <span>
@@ -8,15 +9,17 @@ struct PersistentDeclarationOwner;
 struct CompiledScalarImport {
   CompiledScalarSignature signature;
   SourceUnitId sourceUnit = 0;
+  std::shared_ptr<const CompiledMirBody> optimizationBody;
 };
 // Imported calls conservatively retain the normal GTI failure channel.
 class CompiledScalarUnitBuilder final {
 public:
-  [[nodiscard]] std::vector<CompiledScalarSignature>
-  selectExports(const LoweredProgram &, SourceUnitId,
-                const PersistentDeclarationOwner &,
-                std::span<const std::string> functions,
-                std::span<const CompiledScalarImport> imports = {}) const;
+  [[nodiscard]] std::vector<CompiledScalarSignature> selectExports(
+      const LoweredProgram &, SourceUnitId, const PersistentDeclarationOwner &,
+      std::span<const std::string> functions,
+      std::span<const CompiledScalarImport> imports = {},
+      std::span<const SourceSpan> publicDeclarations = {},
+      std::span<const CompiledInterfaceUnit> producerUnits = {}) const;
   [[nodiscard]] LoweredProgram
   bindExports(LoweredProgram, SourceUnitId root,
               std::span<const CompiledScalarSignature>) const;
@@ -31,7 +34,6 @@ public:
                                     std::span<const std::string> keys,
                                     bool producer) const;
 
-private:
   [[nodiscard]] LoweredProgram
   bindScoped(LoweredProgram, std::span<const CompiledScalarImport> exports,
              std::span<const CompiledScalarImport> imports) const;

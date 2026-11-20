@@ -11,6 +11,10 @@ struct CompiledInterfaceUnit {
   SourceUnitId sourceUnit = 0;
   PersistentDeclarationOwner owner;
 };
+struct CompiledInterfaceAlias {
+  std::string name;
+  SemanticType type;
+};
 void validateCompiledInterfaceUnits(std::span<const CompiledInterfaceUnit>);
 // Canonical nominal declarations, independent of compiler-session IDs. The
 // initial executable profile retains ordinary generated value lifecycles.
@@ -18,7 +22,8 @@ std::string
 projectCompiledInterfaceTypes(const LoweredProgram &, SourceUnitId,
                               const PersistentDeclarationOwner &,
                               std::span<const SemanticType> roots,
-                              std::span<const CompiledInterfaceUnit> = {});
+                              std::span<const CompiledInterfaceUnit> = {},
+                              std::span<const CompiledInterfaceAlias> = {});
 PersistentTypeRegistry compiledInterfaceSyntheticRegistry(std::string_view);
 PersistentTypeRegistry
 compiledInterfaceTypeRegistry(const LoweredProgram &, SourceUnitId,

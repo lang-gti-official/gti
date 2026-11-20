@@ -2,7 +2,7 @@
 
 Date: 2026-10-30
 Status: Accepted direction; container/envelope, bounded typed executable interfaces,
-whole-argument borrowed returns and same-manifest dependency builds implemented.
+whole-argument borrowed returns, and builds of local and dependency-package targets implemented.
 General ownership/generic serialization and production promotion remain incomplete.
 
 ## Outcome and boundary
@@ -28,6 +28,13 @@ explicit artifact imports from `library` embedding exports. The first normal
 build mode now admits concrete value records, integral enums and bounded checked
 reference contracts. Same-manifest source-target edges build dependencies before
 consumers; explicit artifact imports continue to work with producer sources absent.
+
+The default GTI library follows the package's registered `lib.gti` module.
+The root's public exports and re-exports determine the interface. The driver
+chooses a compatible bundle when resolving an ordinary dependency and retains
+source compilation when the public interface or storage requires it. Explicit
+target and artifact selection remain available for specialized layouts and
+source-free distribution.
 
 ## Container decision
 
@@ -184,8 +191,10 @@ LLVM optimization within the library boundary. Cross-library inline optimization
 requires verified body availability; non-generic inline candidates carry canonical
 verified MIR plus referenced type/declaration closure, whereas dependent generic
 bodies still require semantic recipes. Missing optional optimization bodies may
-use the external call, but missing language-required bodies must reject. Optional
-versioned LLVM bitcode for LTO is an additional member profile, never the language
+use the external call, but missing language-required bodies must reject. Concrete numeric bodies and borrowed numeric state now have a bounded,
+verified executable MIR projection, described in the
+[driver architecture](../architecture/build-and-driver.md#cross-library-optimization-mir).
+Optional versioned LLVM bitcode for LTO is an additional member profile, never the language
 metadata authority.
 
 ## Cost model and remaining design work

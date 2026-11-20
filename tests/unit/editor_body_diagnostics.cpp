@@ -34,6 +34,26 @@ GTI_UNIT_TEST(editor_body_diagnostics) {
       return 1;
     }
   }
+  // Recovery can discard a malformed return. A later body edit owns the
+  // resulting function-name diagnostic only when the whole set is reproduced.
+  const auto broken =
+      prefix +
+      "return (this.value + n) = n; } }; }\nint main() { return 0; }\n";
+  lang::FrontendOptions recovery;
+  recovery.analyzeRecoveredProgram = true;
+  auto observed =
+      lang::Frontend(recovery).analyze("editor-body.gti", broken).diagnostics;
+  if (observed.size() != 2 ||
+      !query->reproducesRecovery(broken, observed, nullptr)) {
+    std::cerr << "Expected to account for the parse and recovered body "
+                 "diagnostics.\n";
+    return 1;
+  }
+  observed.push_back(observed.back());
+  if (query->reproducesRecovery(broken, observed, nullptr)) {
+    std::cerr << "An additional diagnostic requires the complete check.\n";
+    return 1;
+  }
   std::atomic<bool> cancelled{true};
   if (query->check(prefix + "int sample = 1; " + suffix, &cancelled) ||
       query->check(prefix + "int sample = ; " + suffix) ||

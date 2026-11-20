@@ -856,13 +856,16 @@ private:
       row.kind = LoweredDeclarationKind::TypeAlias;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
+      row.generic = !declaration->sourceGenericParameters().empty();
       if (const TypeAliasInfo *info = semantics_.findTypeAlias(*declaration)) {
         row.semanticIdentity = info->id;
         row.payload = LoweredTypeAliasDeclaration{
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
             .type = info->type,
-            .compilerPrivate = info->compilerPrivate};
+            .compilerPrivate = info->compilerPrivate,
+            .explicitlyExported =
+                inheritedExport || declaration->exportKeyword().has_value()};
       }
     } else if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Class;

@@ -10,6 +10,7 @@ FrontendSnapshotState::FrontendSnapshotState(
       sharedPreambleCache(std::make_shared<SemanticPreambleCache>()),
       sharedInstanceCache(
           std::make_shared<InstanceAnalysisCache>(instanceLimits)),
+      sharedMirVerificationCache(std::make_shared<MirVerificationCache>()),
       sharedIncludeDiscoveryCache(std::make_shared<IncludeDiscoveryCache>()) {}
 
 std::uint64_t
@@ -29,6 +30,7 @@ FrontendSourceSnapshot FrontendSnapshotState::capture() const {
   const std::lock_guard lock(mutex);
   return {.cache = sharedCache,
           .instanceCache = sharedInstanceCache,
+          .mirVerificationCache = sharedMirVerificationCache,
           .preambleCache = sharedPreambleCache,
           .includeDiscoveryCache = sharedIncludeDiscoveryCache,
           .generations = generations,

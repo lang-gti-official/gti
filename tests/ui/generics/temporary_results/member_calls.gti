@@ -1,0 +1,15 @@
+// An owned result promised by a member requirement can be borrowed by another call.
+//@ run-pass
+struct Value { int n; Value(int n) : n(n) {} };
+struct Source {
+  Source() = default;
+  Value make() { return Value(7); }
+};
+concept produces<S> = requires(S& source) {
+  { source.make() } -> Value;
+};
+int sum(Value& left, Value& right) { return left.n + right.n; }
+int run<S>(S& source) requires produces<S> {
+  return sum(source.make(), source.make());
+}
+int main() { Source source{}; return run(source) - 14; }

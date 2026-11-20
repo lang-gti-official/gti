@@ -659,6 +659,7 @@ add_library(
   "src/compiler/mir_body_lowering.cpp"
   "src/compiler/mir_loan_liveness.cpp"
   "src/compiler/mir_dominance.cpp"
+  "src/compiler/mir_verification_cache.cpp"
   "src/compiler/mir_failure_effects.cpp"
   "src/compiler/mir_hosted_startup_builder.cpp"
   "src/compiler/mir_lowering.cpp"
@@ -692,7 +693,9 @@ add_library(
   "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
   "src/compiler/persistent_declaration.cpp"
+  "src/compiler/compiled_mir.cpp"
   "src/compiler/compiled_scalar_unit.cpp"
+  "src/compiler/compiled_template_body.cpp"
   "src/compiler/compiled_interface_types.cpp"
   "src/compiler/semantic_instance_reuse.cpp"
   "src/compiler/semantic_preamble.cpp"
@@ -790,6 +793,7 @@ add_library(
   "src/compiler/llvm/callables.cpp"
   "src/compiler/llvm/parameter_packs.cpp"
   "src/compiler/llvm/body.cpp"
+  "src/compiler/llvm/compiled_mir.cpp"
   "src/compiler/llvm/places.cpp"
   "src/compiler/llvm/placement.cpp"
   "src/compiler/llvm/lifetimes.cpp"
@@ -941,14 +945,26 @@ if(APPLE)
     "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
 endif()
 
+file(GLOB GTI_STDLIB_FACADES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/stdlib-bundles/facades/*.gti")
+set(GTI_STDLIB_REGISTRY "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/installed_stdlib_modules.inc")
+add_custom_command(
+  OUTPUT "${GTI_STDLIB_REGISTRY}"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_stdlib_bundles.py"
+          --write-registry "${GTI_STDLIB_REGISTRY}"
+  DEPENDS scripts/build_stdlib_bundles.py cmake/stdlib-bundles/gti.toml ${GTI_STDLIB_FACADES}
+  VERBATIM
+)
 add_library(
   "gti_driver" STATIC
+  "${GTI_STDLIB_REGISTRY}"
   "src/driver/library_bundle.cpp"
   "src/driver/compiled_scalar_library.cpp"
   "src/driver/embedding_library.cpp"
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"
+  "src/driver/file_digest.cpp"
   "src/driver/build_report.cpp"
   "src/driver/borrow_dependencies.cpp"
   "src/driver/compilation.cpp"
@@ -1273,6 +1289,19 @@ if(APPLE)
     if(NOT gti_bundle_result EQUAL 0)
       message(FATAL_ERROR \"Failed to bundle macOS toolchain runtime dependencies\")
     endif()
+  " COMPONENT gti_toolchain)
+endif()
+
+# The bundle identity includes the installed executable and runtime archive.
+# Produce it after rpath rewriting and macOS signing, with the staged compiler.
+if(NOT CMAKE_CROSSCOMPILING AND
+   ((APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$") OR
+    (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")))
+  install(CODE "
+    execute_process(
+      COMMAND \"${Python3_EXECUTABLE}\" \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_stdlib_bundles.py\"
+              --stage \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\"
+      COMMAND_ERROR_IS_FATAL ANY)
   " COMPONENT gti_toolchain)
 endif()
 

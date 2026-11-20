@@ -47,6 +47,10 @@ function queryCaptures(name, input = fixture) {
 }
 
 const captures = queryCaptures("highlights");
+if (!captures.some((capture) => capture.text === "embed_bytes" &&
+    capture.name === "function.builtin")) {
+  throw new Error("Missing builtin function capture for embed_bytes");
+}
 const moduleCaptures = queryCaptures("highlights", path.join(__dirname, "modules.gti"));
 for (const [text, name] of [
   ["export", "keyword.modifier"], ["module", "keyword.type"],

@@ -3603,6 +3603,7 @@
       "status": "executable",
       "operations": [
         "std::array::array",
+        "std::array::as_span",
         "std::array::at",
         "std::array::back",
         "std::array::begin",
@@ -3646,6 +3647,9 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_array.gti",
+        "tests/ui/stdlib/array/span.gti",
+        "tests/ui/stdlib/array/empty_span_borrow.gti",
+        "tests/ui/stdlib/array/empty_subspan_borrow.gti",
         "tests/ui/stdlib/array/comparison",
         "tests/fixtures/algorithm_search.gti",
         "tests/fixtures/algorithm_mutation.gti",
@@ -3921,7 +3925,6 @@
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
       "operations": [
-        "std::abs(float)",
         "std::acos(float)",
         "std::asin(float)",
         "std::atan(float)",
@@ -3945,8 +3948,7 @@
         "std::trunc(float)"
       ],
       "case_ids": [
-        "cmath",
-        "constexpr-library"
+        "cmath"
       ],
       "required_instantiations": [
         "binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"
@@ -3954,7 +3956,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_cmath.gti",
         "tests/cmath_runtime_test.py",
-        "stdlib/std/cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti",
         "runtime/src/math.cpp"
       ]
     },
@@ -4080,13 +4082,15 @@
         "exclusive noncopyable cursor",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -4228,6 +4232,22 @@
       ]
     },
     {
+      "id": "detail.cmath-declarations",
+      "source": "stdlib/std/detail/cmath_declarations.gti",
+      "status": "executable",
+      "operations": [
+        "std::abs(float)"
+      ],
+      "case_ids": [
+        "cmath",
+        "constexpr-library"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_cmath.gti",
+        "tests/project/standard_library_bundle/src/main.gti"
+      ]
+    },
+    {
       "id": "detail.function-pointer-core",
       "source": "stdlib/std/detail/function_pointer.gti",
       "status": "executable",
@@ -4266,6 +4286,7 @@
       "source": "stdlib/std/detail/memory_capabilities.gti",
       "status": "executable",
       "operations": [
+        "gti_internal::runtime::gti_rt_realloc_v1",
         "gti_internal::shared_owner",
         "gti_internal::uninitialized_storage",
         "gti_internal::unique_owner"
@@ -4279,7 +4300,8 @@
       "evidence": [
         "tests/llvm_memory_execution_test.py",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/unit/resource_memory_runtime_tests.cpp"
       ],
       "required_instantiations": [
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
@@ -4307,10 +4329,14 @@
         "tests/fixtures/process_storage_policy.gti",
         "tests/ui/stdlib/process/storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ],
       "required_instantiations": [
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "shared element references remain tied to the retained owner after cursor movement or destruction",
+        "eligible process-region resizing preserves initialized prefix; unsupported allocation layouts retain owner-aware relocation"
       ]
     },
     {
@@ -4327,6 +4353,22 @@
       "evidence": [
         "tests/ui/runtime/panic",
         "tests/panic_adoption_runtime_test.py"
+      ]
+    },
+    {
+      "id": "detail.random-engine",
+      "source": "stdlib/std/detail/random_engine.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::next_random",
+        "std::detail::seed_random_engine"
+      ],
+      "case_ids": [
+        "random"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {
@@ -4728,12 +4770,14 @@
         "move-only owning string",
         "immovable final-address payload",
         "independent shared cursor copies",
-        "exclusive element mutation"
+        "exclusive element mutation",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/forward_list_iterator_completion.gti",
         "tests/ui/stdlib/forward_list",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -5369,13 +5413,15 @@
         "exclusive noncopyable cursor",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -5580,7 +5626,8 @@
         "readonly key",
         "exclusive scalar and owning mapped value",
         "noncopyable exclusive cursor",
-        "reverse mapped projection"
+        "reverse mapped projection",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
@@ -5588,7 +5635,8 @@
         "tests/fixtures/map_mutable_entry_projection.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
-        "examples/087-associative-containers.gti"
+        "examples/087-associative-containers.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -5875,12 +5923,14 @@
         "immovable payload",
         "prefix arena",
         "independent shared cursors",
-        "exclusive mutation and resource lifetime"
+        "exclusive mutation and resource lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/storage_lane_iterator_completion.gti",
         "tests/storage_lane_iterator_runtime_test.py",
-        "examples/145-live-slot-and-lane-iteration.gti"
+        "examples/145-live-slot-and-lane-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -6338,11 +6388,13 @@
         "noncopyable exclusive cursor",
         "readonly child traversal",
         "signed positioned mutation",
-        "reverse subspan and empty endpoint"
+        "reverse subspan and empty endpoint",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
-        "tests/ui/stdlib/iterator/contiguous"
+        "tests/ui/stdlib/iterator/contiguous",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -6532,6 +6584,7 @@
         "std::optional<std::optional<std::string>>"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "tests/fixtures/optional_lifecycle.gti",
         "tests/fixtures/optional_value.gti",
         "tests/ui/stdlib/optional/clone.gti",
@@ -6847,6 +6900,7 @@
       "source": "stdlib/prelude.gti",
       "status": "executable",
       "operations": [
+        "std::from",
         "std::tryable"
       ],
       "case_ids": [
@@ -6860,14 +6914,16 @@
         "residual as the return type",
         "temporary, moved and named copyable operands",
         "shared and exclusive borrowed success results",
-        "borrowed-result contract inactive for owned concrete payloads"
+        "borrowed-result contract inactive for owned concrete payloads",
+        "registered residual and error payload conversions, including constrained generic policies"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
         "tests/ui/expected/tryable_propagation.gti",
         "tests/ui/expected/tryable_propagation",
         "tests/ui/generics/protocol_concepts",
-        "examples/165-borrowed-payload-results.gti"
+        "examples/165-borrowed-payload-results.gti",
+        "tests/ui/expected/from"
       ]
     },
     {
@@ -6949,10 +7005,13 @@
       "case_ids": [
         "random"
       ],
-      "required_instantiations": [],
+      "required_instantiations": [
+        "independent seeded engines imported from the installed dev and release bundles"
+      ],
       "evidence": [
         "tests/fixtures/random_engine.gti",
-        "stdlib/std/random.gti"
+        "tests/ui/stdlib/random/engine.gti",
+        "tests/project/standard_library_bundle/verify_stage.py"
       ]
     },
     {
@@ -7073,13 +7132,15 @@
         "exclusive noncopyable cursor",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/ui/stdlib/iterator/owner_tied_resource_vector.gti"
       ]
     },
     {
@@ -7269,12 +7330,14 @@
         "readonly keys",
         "shared independent bidirectional cursors",
         "common-position endpoint",
-        "reverse empty and populated sets"
+        "reverse empty and populated sets",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/container_reverse_probe.gti",
-        "tests/ui/stdlib/iterator/movement"
+        "tests/ui/stdlib/iterator/movement",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -7363,12 +7426,14 @@
         "boolean masks",
         "zero lane count",
         "shared copies",
-        "exclusive lane mutation"
+        "exclusive lane mutation",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/storage_lane_iterator_completion.gti",
         "tests/storage_lane_iterator_runtime_test.py",
-        "examples/145-live-slot-and-lane-iteration.gti"
+        "examples/145-live-slot-and-lane-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -7495,13 +7560,15 @@
         "readonly whole spans and subspans",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -7535,6 +7602,10 @@
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
+        "tests/ui/stdlib/array/span.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr.gti",
+        "tests/ui/stdlib/span/builtin_array_constexpr_static.gti",
+        "tests/ui/stdlib/paired_span/iterators/subspan_erased_owners.gti",
         "stdlib/std/span.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
       ]
@@ -7608,12 +7679,23 @@
       ]
     },
     {
-      "id": "string-view.sub-views",
+      "id": "string-view.text-operations",
       "source": "stdlib/std/string_view.gti",
       "status": "executable",
       "operations": [
+        "std::string_view::at",
+        "std::string_view::back",
+        "std::string_view::compare",
+        "std::string_view::contains",
+        "std::string_view::ends_with",
+        "std::string_view::find",
+        "std::string_view::front",
+        "std::string_view::npos",
+        "std::string_view::operator ordering",
         "std::string_view::remove_prefix",
         "std::string_view::remove_suffix",
+        "std::string_view::rfind",
+        "std::string_view::starts_with",
         "std::string_view::substr"
       ],
       "case_ids": [
@@ -7623,7 +7705,10 @@
         "literal-backed and owner-backed sources",
         "clamped count, empty result and position equal to size",
         "owner relay through by-value view parameters and view fields",
-        "in-place shrinking of a writable view"
+        "in-place shrinking of a writable view",
+        "counted search including embedded NUL and empty needles",
+        "unsigned-byte comparison and checked character access at runtime and compile time",
+        "argument-free substring with the original owner dependency"
       ],
       "evidence": [
         "tests/fixtures/text_view_subview.gti",
@@ -7656,6 +7741,7 @@
         "owned copy independent of foreign storage"
       ],
       "evidence": [
+        "tests/project/compiled_package_dependencies/test.transcript",
         "examples/151-c-string-import.gti",
         "tests/ui/stdlib/string/c_string_import",
         "tests/ui/stdlib/string/c_string_import/import.gti",
@@ -7687,13 +7773,15 @@
         "exclusive noncopyable cursor",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/contiguous_iterator_completion.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -7751,6 +7839,7 @@
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)",
         "owning string elements in source-protocol-hashed pair keys",
+        "read-only character spans and subviews of counted string storage",
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
@@ -7784,7 +7873,14 @@
         "std::string::replace",
         "std::string::rfind",
         "std::string::starts_with",
-        "std::string::substr"
+        "std::string::substr",
+        "std::string_view::compare(string&)",
+        "std::string_view::contains(string&)",
+        "std::string_view::ends_with(string&)",
+        "std::string_view::find(string&[,size_t])",
+        "std::string_view::operator comparisons with string",
+        "std::string_view::rfind(string&[,size_t])",
+        "std::string_view::starts_with(string&)"
       ],
       "case_ids": [
         "string-operations",
@@ -7793,13 +7889,15 @@
       ],
       "required_instantiations": [
         "embedded NUL",
-        "nested owner relay"
+        "nested owner relay",
+        "view text operations borrow owning operands for the call"
       ],
       "evidence": [
         "tests/ui/stdlib/string/operations_errors",
         "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
-        "tests/ui/classes/declaration_construction.gti"
+        "tests/ui/classes/declaration_construction.gti",
+        "tests/ui/stdlib/text/view_iterators"
       ]
     },
     {
@@ -8132,14 +8230,16 @@
         "exclusive mapped scalar and owning value",
         "vacant bucket skipping",
         "no fabricated reverse category",
-        "independently advanced shared copies and by-value sentinel equality"
+        "independently advanced shared copies and by-value sentinel equality",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/map_mutable_entry_projection.gti",
         "tests/fixtures/container_iterator_movement.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/map_mutable_entry_projection_test.py",
-        "examples/087-associative-containers.gti"
+        "examples/087-associative-containers.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -8256,11 +8356,13 @@
         "readonly keys",
         "forward shared cursors",
         "common-position endpoint without fabricated reverse support",
-        "independently advanced shared copies and by-value sentinel equality"
+        "independently advanced shared copies and by-value sentinel equality",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
-        "tests/ui/stdlib/iterator/movement"
+        "tests/ui/stdlib/iterator/movement",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -8453,13 +8555,15 @@
         "exclusive noncopyable cursor",
         "empty and one-past positions",
         "signed movement and reverse direction",
-        "checked bounds and owner lifetime"
+        "checked bounds and owner lifetime",
+        "shared element references remain tied to the retained owner after cursor movement or destruction"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/ui/stdlib/iterator/movement",
         "tests/ui/stdlib/iterator/contiguous",
-        "examples/143-checked-container-iteration.gti"
+        "examples/143-checked-container-iteration.gti",
+        "tests/slow/stdlib/iterator/owner_tied_elements.gti"
       ]
     },
     {
@@ -8564,10 +8668,12 @@
         "construction-only Message",
         "std::vector<std::optional<std::string>>",
         "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "repeated scalar and user-record growth, owning-element fallback, reserve/no-op/shrink and constexpr growth"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
+        "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
         "tests/fixtures/stdlib_surface_vector.gti",
         "tests/fixtures/generic_clone.gti",
         "tests/fixtures/vector_construction_only.gti",
@@ -8576,7 +8682,9 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
         "tests/ui/memory/source_prefix",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/slow/stdlib/vector/growth_o0.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ]
     },
     {

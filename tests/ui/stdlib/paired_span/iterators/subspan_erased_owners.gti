@@ -1,0 +1,14 @@
+// A paired subspan keeps both erased owner borrows across a subview return.
+//@ run-pass
+import std.array;
+import std.paired_span;
+import std.vector;
+
+int main() {
+  std::array<int, 3> left = std::array<int, 3>({2, 3, 5});
+  std::vector<int> right = {7, 11, 13};
+  auto pair = std::paired_span<int, int>(left.as_span(), right.as_span());
+  auto tail = pair.subspan(std::size_t(1), std::size_t(2));
+  return tail.first(std::size_t(0)) == 3 &&
+         tail.second(std::size_t(1)) == 13 ? 0 : 1;
+}

@@ -1070,9 +1070,11 @@ private:
 
 class ArrayInitializer final : public ExprOfKind<ExprKind::ArrayInitializer> {
 public:
-  ArrayInitializer(Token brace, ExprList elements, Token closingBrace)
+  ArrayInitializer(Token brace, ExprList elements, Token closingBrace,
+                   std::shared_ptr<const std::string> packedBytes = nullptr)
       : brace_(std::move(brace)), elements_(std::move(elements)),
-        closingBrace_(std::move(closingBrace)) {}
+        closingBrace_(std::move(closingBrace)),
+        packedBytes_(std::move(packedBytes)) {}
   ArrayInitializer(ArrayInitializer &&) = default;
   ArrayInitializer(const ArrayInitializer &) = delete;
   ArrayInitializer &operator=(ArrayInitializer &&) = default;
@@ -1086,11 +1088,15 @@ public:
   [[nodiscard]] const Token &brace() const { return brace_; }
   [[nodiscard]] const ExprList &elements() const { return elements_; }
   [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
+  // A compiler-synthesized array initializer owns immutable input bytes
+  // without constructing one AST node for each element.
+  [[nodiscard]] const auto &packedBytes() const { return packedBytes_; }
 
 private:
   Token brace_;
   ExprList elements_;
   Token closingBrace_;
+  std::shared_ptr<const std::string> packedBytes_;
 };
 
 class Binary final : public ExprOfKind<ExprKind::Binary> {
@@ -1925,6 +1931,9 @@ public:
   }
 
   [[nodiscard]] const StmtList &statements() const { return statements_; }
+  void restoreCompiledStatements(StmtList statements) {
+    statements_ = std::move(statements);
+  }
   [[nodiscard]] bool isUnsafe() const { return unsafeKeyword_.has_value(); }
   [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
     return unsafeKeyword_;

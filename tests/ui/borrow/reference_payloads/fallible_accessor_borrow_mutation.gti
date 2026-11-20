@@ -1,0 +1,19 @@
+// A live fallible result protects the field borrowed by an accessor.
+enum class LookupError { missing };
+
+struct Record {
+  mut int selected = 37;
+  Record() = default;
+  int& get() { return this.selected; }
+};
+
+expected<int&, LookupError> lookup(Record& record) {
+  return record.get();
+}
+
+int main() {
+  mut Record record{};
+  auto found = lookup(record);
+  record.selected = 89;  //~ ERROR GTI-S2017
+  return found.value() - 37;
+}

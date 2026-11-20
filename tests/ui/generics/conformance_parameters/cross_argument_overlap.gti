@@ -1,0 +1,13 @@
+// Whole-type bindings must propagate into later positions during overlap checks.
+concept read<A, B, C> { int get(A a, B b, C c); };
+struct Box<T> { T value; Box(T value) : value(std::move(value)) {} };
+for <T> concept read<T, Box<T>, int> {
+  int get(T a, Box<T> b, int c) { return 1; }
+};
+for <U> concept read<Box<U>, U, int> {
+  int get(Box<U> a, U b, int c) { return 2; }
+};
+for <V> concept read<Box<int>, Box<V>, int> {  //~ ERROR GTI-S2123 overlaps another
+  int get(Box<int> a, Box<V> b, int c) { return 3; }
+};
+int main() { return 0; }

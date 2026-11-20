@@ -1,5 +1,6 @@
 #pragma once
 #include "gti/compiled_scalar_signature.h"
+#include "gti/compiled_scalar_unit.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/compiled_library.h"
 #include "gti/driver/library_bundle.h"
@@ -10,6 +11,28 @@ namespace lang::driver {
 decodeCompiledLibraryInterface(std::string_view bytes);
 [[nodiscard]] std::string encodeCompiledLibraryInterface(
     const std::vector<CompiledScalarSignature> &signatures);
+struct CompiledLibraryInputs {
+  CompilationInputs compilation;
+  std::vector<CompiledScalarImport> imports;
+  std::vector<LibraryBundleMember> objects;
+  std::vector<LibraryBundleDependency> dependencies;
+  std::vector<std::string> symbols;
+};
+
+// Select installed, compatible standard modules reached by this compilation.
+[[nodiscard]] CompiledLibraryInputs
+loadStandardLibraryInputs(const CompilationRequest &,
+                          const std::filesystem::path &runtime,
+                          ProgressObserver *progress = nullptr);
+[[nodiscard]] CompilationResult
+compileWithLibraryImports(const CompilationRequest &, CompilationInputs,
+                          std::vector<CompiledScalarImport>,
+                          ProgressObserver *progress = nullptr,
+                          LlvmCodegenUnitCache *unitCache = nullptr);
+[[nodiscard]] CheckResult
+checkWithStandardLibraries(const CompilationRequest &,
+                           const std::filesystem::path &runtime,
+                           ProgressObserver *);
 class ProjectBuildPlan;
 struct ToolchainLayout;
 // Read-only artifact-aware checking: validates metadata, compatibility, imports
@@ -22,8 +45,20 @@ checkCompiledScalarProject(const ProjectBuildPlan &, const ToolchainLayout &,
 // borrow contracts. Producers may own verified passive zero/constant storage;
 // generic APIs, producer entry points and executable storage lifetimes reject.
 struct CompiledScalarLibraryResult {
+  bool interfaceNeedsSource = false;
   CompilationResult compilation;
   std::string bundle;
+  std::vector<std::filesystem::path> sourceFiles;
+};
+class CompiledLibrarySourceConflict final : public std::runtime_error {
+public:
+  CompiledLibrarySourceConflict(const std::filesystem::path &source,
+                                std::filesystem::path manifest)
+      : std::runtime_error(
+            "compiled library implementation also imported from source: " +
+            source.string()),
+        sourceManifest(std::move(manifest)) {}
+  std::filesystem::path sourceManifest;
 };
 [[nodiscard]] CompiledScalarLibraryResult
 buildCompiledScalarLibrary(const CompilationRequest &,
@@ -42,12 +77,11 @@ reusableCompiledScalarLibraryTarget(const CompilationRequest &,
                                     const std::filesystem::path &runtime,
                                     const std::filesystem::path &artifact);
 // Same validation as the boolean query, retaining the bytes it actually read.
-[[nodiscard]] CompiledLibrarySnapshot
-reusableCompiledScalarLibrarySnapshot(const CompilationRequest &,
-                                      const CompiledLibraryTarget &,
-                                      std::span<const CompiledLibraryImport>,
-                                      const std::filesystem::path &runtime,
-                                      const std::filesystem::path &artifact);
+[[nodiscard]] CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
+    const CompilationRequest &, const CompiledLibraryTarget &,
+    std::span<const CompiledLibraryImport>,
+    const std::filesystem::path &runtime, const std::filesystem::path &artifact,
+    std::vector<std::filesystem::path> *sourceFiles = nullptr);
 struct CompiledScalarConsumerResult {
   CompilationResult compilation;
   std::vector<LibraryBundleMember> objects;

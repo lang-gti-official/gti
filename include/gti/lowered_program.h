@@ -508,6 +508,7 @@ struct LoweredTypeAliasDeclaration {
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
   bool compilerPrivate = false;
+  bool explicitlyExported = false;
 
   friend bool operator==(const LoweredTypeAliasDeclaration &,
                          const LoweredTypeAliasDeclaration &) = default;
@@ -846,6 +847,7 @@ verifyLoweredProgramContents(const LoweredProgram &program);
 } // namespace lowered_detail
 
 // Compiler-validated linkage for the development scalar separate-unit profile.
+struct CompiledMirBody;
 struct CompiledScalarBinding {
   LoweredFunctionInstanceId function = 0;
   std::string key;
@@ -858,6 +860,7 @@ struct CompiledScalarBinding {
   CompiledBorrowContract borrow;
   // Exported source policy, or authenticated interface policy for an import.
   FunctionCodegenAttributes codegenAttributes;
+  std::shared_ptr<const CompiledMirBody> optimizationBody;
 };
 class CompiledScalarUnitBuilder;
 

@@ -164,6 +164,36 @@ public:
     return previous;
   }
   unsafe constexpr void attach(std::detail::raw_allocation allocation) mut { this.allocation = allocation; }
+  // Only malloc-origin regions can use realloc. The exact same source predicate
+  // selects malloc in process_resource::allocate; small aligned allocations
+  // and over-aligned storage retain the allocate/relocate/release path.
+  // The caller proves bitwise relocation of every live object and exclusive
+  // access to the region. Failure leaves this lease and all objects intact.
+  constexpr bool supports_byte_growth() {
+    if (gti_internal::constant_evaluation()) { return false; }
+#if target.os != "windows"
+    uint64_t alignment = this.allocation.alignment;
+    return this.allocation.address != nullptr &&
+           (alignment == uint64_t(1) ||
+            (alignment <= std::layout_of<void*>().alignment &&
+             this.allocation.bytes >= std::layout_of<void*>().bytes));
+#else
+    return false;
+#endif
+  }
+  unsafe constexpr void* grow_bytes_if_supported(uint64_t bytes) mut {
+    if (!this.supports_byte_growth() || bytes <= this.allocation.bytes) { return nullptr; }
+#if target.os != "windows"
+    unsafe {
+      void* replacement = gti_internal::runtime::gti_rt_realloc_v1(this.allocation.address, bytes);
+      if (replacement == nullptr) { gti_internal::fail_allocation(std::alloc_errc::resource_exhausted); }
+      this.allocation = std::detail::raw_allocation(replacement, bytes, this.allocation.alignment, this.allocation.id);
+      return replacement;
+    }
+#else
+    return nullptr;
+#endif
+  }
   constexpr uint64_t alignment() { return this.allocation.alignment; }
   constexpr void release() mut {
     std::detail::raw_allocation previous = this.take();
@@ -278,6 +308,12 @@ public:
     this.objects = address;
     this.slots = count;
     return;
+  }
+  // Caller has successfully resized this buffer's process lease, preserving
+  // every live bitwise-relocatable object; publish its new address and extent.
+  unsafe constexpr void publish_grown_region(void* address, uint64_t count) mut {
+    unsafe { this.objects = std::typed_address<T>(address); }
+    this.slots = count;
   }
   // Both buffers are distinct; count live source objects fit in vacant
   // destination storage. Relocation cannot fail or call custom movement.
@@ -740,6 +776,36 @@ public:
   constexpr expected<void, alloc_errc> try_allocate(uint64_t count) mut {
     return this.data.try_allocate(count);
   }
+  // Keep each target declaration complete: GTI conditionals select declarations,
+  // not token fragments. Both wrappers use the same storage policy below.
+#if target.os == "macos" && target.arch == "arm64"
+  [[noinline]] constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+    return this.grow_bytes(count);
+  }
+#else
+  constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+    return this.grow_bytes(count);
+  }
+#endif
+private:
+  constexpr bool grow_bytes(uint64_t count) mut {
+    if constexpr (std::bitwise_relocatable<T> && !std::meta::is_text<T>()) {
+      if (count <= this.data.capacity()) { return true; }
+      if (!this.data.buffer.lease.supports_byte_growth()) { return false; }
+      std::layout object = std::layout_of<T>();
+      uint64_t maximum = gti_internal::native_size_limit();
+      if (count > maximum / object.bytes) { gti_internal::fail_allocation(std::alloc_errc::size_overflow); }
+      unsafe {
+        void* replacement = this.data.buffer.lease.grow_bytes_if_supported(count * object.bytes);
+        if (replacement == nullptr) { return false; }
+        this.data.buffer.publish_grown_region(replacement, count);
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+public:
   constexpr uint64_t capacity() { return this.data.capacity(); }
   constexpr uint64_t length() { return this.data.length(); }
   unsafe constexpr void set_initialized_length_unchecked(uint64_t count) mut {
@@ -800,11 +866,11 @@ public:
   size_t position() { return this.limit; }
 };
 
-export class sparse_iterator<std::storage_element T, uint64_t Reverse = 0> {
-  gti_internal::sparse_slots<T>& slots;
+export class sparse_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+  gti_internal::sparse_slots<T>&<owner> slots;
   mut size_t position;
 public:
-  sparse_iterator(gti_internal::sparse_slots<T>& slots, size_t position)
+  sparse_iterator(gti_internal::sparse_slots<T>&<owner> slots, size_t position)
       : slots(slots), position(position) {
     gti_internal::require_container_argument(position <= slots.capacity());
     if constexpr (Reverse != 0) {
@@ -820,14 +886,14 @@ public:
       }
     }
   }
-  T& operator*() {
+  T&<owner> operator*() {
     if constexpr (Reverse != 0) {
       size_t selected = checked_iterator_position(this.position, size_t(0), this.slots.capacity(), ptrdiff_t(-1));
       return this.slots.read(selected);
     }
     return this.slots.read(this.position);
   }
-  T& operator->() { return *this; }
+  T&<owner> operator->() { return *this; }
   void operator++() mut {
     if constexpr (Reverse != 0) {
       gti_internal::require_container_argument(this.position > size_t(0));

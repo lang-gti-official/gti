@@ -96,3 +96,14 @@ the fixture and example 186 on LLVM at O0 and O3, including integer limits,
 multiple literal arguments, exact-tier selection and temporary-borrow cleanup.
 The deprecated C++ backend receives no feature work; its existing supported
 comparator remains available through the shared backend test policy.
+
+
+## Revision — checked literal arithmetic (2026-11-19)
+
+The representable integer-literal fallback also accepts side-effect-free arithmetic
+trees composed of unsuffixed integer literals. Ordinary typed evaluation must
+succeed before a fitting result can convert to a selected integer parameter.
+Exact-first priority, unique fallback selection and generic deduction are unchanged.
+Explicit operand types and named constants keep their previous behavior. The same
+checked-result publication supports initialization, assignment and return without
+changing the expression's intermediate arithmetic domain.

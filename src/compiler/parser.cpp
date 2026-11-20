@@ -2354,8 +2354,7 @@ private:
           nullptr, std::nullopt, std::nullopt, std::move(attributes));
     }
 
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
+    auto body = functionBody("Expect '{' before constructor body.");
     return std::make_shared<ConstructorDecl>(
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
@@ -2521,8 +2520,7 @@ private:
                                  .kind = kind},
           nullptr, std::move(attributes));
     }
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
+    auto body = functionBody("Expect '{' before destructor body.");
     return std::make_shared<DestructorDecl>(std::move(tilde), std::move(name),
                                             std::nullopt, std::move(body),
                                             std::move(attributes));
@@ -3177,9 +3175,9 @@ private:
     return NamePath(std::move(segments));
   }
 
-  std::unique_ptr<BlockStmt> functionBody() {
-    const Token opening =
-        consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
+  std::unique_ptr<BlockStmt>
+  functionBody(std::string_view message = "Expect '{' before function body.") {
+    const Token opening = consume(TokenKind::LEFT_BRACE, message);
     auto body = std::make_unique<BlockStmt>(blockItems());
     body->setExtent({opening.source, opening.position,
                      previous().position + previous().lexeme.size(),
@@ -4838,6 +4836,9 @@ private:
   }
 
   ExprPtr primary() {
+    if (match({TokenKind::EMBED_BYTES})) {
+      return std::make_unique<Variable>(previous());
+    }
     if (match({TokenKind::UNSAFE})) {
       Token keyword = previous();
       consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");

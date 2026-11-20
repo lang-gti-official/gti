@@ -1,0 +1,11 @@
+manifest-version = 1
+[package]
+name = "math"
+version = "1.0.0"
+default-library = "common"
+[targets.common]
+kind = "gti-library"
+root = "src/common.gti"
+[targets.special]
+kind = "gti-library"
+root = "src/special.gti"

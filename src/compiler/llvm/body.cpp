@@ -3,6 +3,7 @@
 #include "atomics.h"
 #include "callables.h"
 #include "closure_environment.h"
+#include "compiled_mir.h"
 #include "constructor_field_publication.h"
 #include "debug_info.h"
 #include "dispatch.h"
@@ -180,10 +181,12 @@ public:
         threadLocals(threadLocals), bodyAbi(std::move(bodyAbi)), owner(owner),
         constructor(constructor), receiverType(std::move(receiverType)),
         callables(callables), threads(threads),
-        scalars(session, ir,
-                [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
-                  guard(condition, outcome);
-                }),
+        scalars(
+            session, ir,
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            },
+            globals),
         atomics(session, ir), findFunction(std::move(findFunction)),
         values(body.values.size() + 1),
         memory(
@@ -3226,31 +3229,54 @@ void Bodies::body(MirBodyAddress address) {
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
   threadLocals.allocate(globals);
   llvm::IRBuilder<> constants(session.context());
-  Scalars scalars(session, constants, [](llvm::Value *, DefinedFailureOutcome) {
-    throw std::logic_error("LLVM static datum cannot perform runtime checking");
-  });
-  const auto *module =
-      findMirBody(session.program().mir(), {MirBodyKind::Module, 0});
-  for (const auto &step :
-       session.program().mir().programInitializationPlan().steps) {
+  Scalars scalars(
+      session, constants,
+      [](llvm::Value *, DefinedFailureOutcome) {
+        throw std::logic_error(
+            "LLVM static datum cannot perform runtime checking");
+      },
+      globals);
+  const auto &mir = session.program().mir();
+  const auto *module = findMirBody(mir, {MirBodyKind::Module, 0});
+  const auto &steps = mir.programInitializationPlan().steps;
+  // Declare all storage roots first so initializers can refer to each other,
+  // including a compiler-generated backing array later in the source plan.
+  for (const auto &step : steps) {
+    const auto layout =
+        session.layouts().get(module->findPlace(step.storagePlace)->type);
+    auto *global = new llvm::GlobalVariable(
+        session.module(), layout.storage, false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::Constant::getNullValue(layout.storage),
+        "__gti_native_v1_g" + std::to_string(step.symbol));
+    global->setAlignment(llvm::Align(layout.alignment));
+    globals.emplace(step.symbol, global);
+  }
+  for (const auto &step : steps) {
+    if (!step.dataConstant)
+      continue;
     const auto &type = module->findPlace(step.storagePlace)->type;
-    // Admission establishes the storage family. Allocate every admitted
-    // initialization-plan root, including pointer and counted-text globals.
-    auto *storage = session.layouts().get(type).storage;
-    llvm::Constant *initial = llvm::Constant::getNullValue(storage);
-    if (step.dataConstant)
-      initial = scalars.constant(*step.dataConstant, type);
+    auto *initial = scalars.constant(*step.dataConstant, type);
     const auto layout = session.layouts().get(type);
     if (session.dataLayout().getTypeAllocSize(initial->getType()) !=
         layout.size)
       throw std::logic_error(
           "LLVM global initializer differs from its sealed extent");
-    auto *global = new llvm::GlobalVariable(
-        session.module(), initial->getType(), false,
-        llvm::GlobalValue::InternalLinkage, initial,
-        "__gti_native_v1_g" + std::to_string(step.symbol));
-    global->setAlignment(llvm::Align(layout.alignment));
-    globals.emplace(step.symbol, global);
+    auto *&global = globals.at(step.symbol);
+    if (global->getValueType() == initial->getType()) {
+      global->setInitializer(initial);
+      continue;
+    }
+    // Some aggregate constants use typed fragments to retain relocations
+    // within byte-congruent storage. Opaque-pointer uses survive the swap.
+    auto *replacement =
+        new llvm::GlobalVariable(session.module(), initial->getType(), false,
+                                 llvm::GlobalValue::InternalLinkage, initial);
+    replacement->takeName(global);
+    replacement->setAlignment(global->getAlign());
+    global->replaceAllUsesWith(replacement);
+    global->eraseFromParent();
+    global = replacement;
   }
   declareNativeCStorage(session, globals);
   lifetimes.prepareProgramStorage(globals);
@@ -3307,6 +3333,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   }
   if (session.program().embeddingPlan())
     emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
+  emitCompiledMir(session, globals);
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void Bodies::lowerEvaluation(std::span<const MirBodyAddress> bodies,

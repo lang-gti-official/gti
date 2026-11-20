@@ -271,6 +271,28 @@ CompiledBorrowContract borrowContract(const MirFunctionInstance &function) {
         "compiled conditional borrow dependencies require complete metadata");
   return result;
 }
+bool supportsCompiledStorage(const LoweredProgram &program) {
+  // Object data has no startup/retirement ordering to compose. Admit only the
+  // already verified passive MIR storage stages; executable initialization,
+  // lazy local storage and cleanup still need a per-library lifetime plan.
+  const auto &storage = program.mir().programInitializationPlan().steps;
+  const bool passiveStorage =
+      std::all_of(storage.begin(), storage.end(), [](const auto &step) {
+        return step.role == ProgramInitializationStepRole::DataOnly &&
+               (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
+                step.storageKind == ProgramStorageKind::StaticField) &&
+               !step.requiresActiveCleanup && !step.nativeRetirement &&
+               !step.sourceCleanup &&
+               ((step.dataInitialization ==
+                     MirProgramDataInitializationKind::ImplicitZero &&
+                 !step.dataConstant) ||
+                (step.dataInitialization ==
+                     MirProgramDataInitializationKind::Constant &&
+                 step.dataConstant));
+      });
+  return !program.mir().hostedStartupPlan() && passiveStorage &&
+         program.mir().threadLocalStorage().empty();
+}
 bool scalarFunction(const LoweredProgram &program,
                     const MirFunctionInstance &f) {
   const auto *d = program.findFunctionDeclaration(f.declaration);
@@ -292,14 +314,74 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     const LoweredProgram &program, SourceUnitId entry,
     const PersistentDeclarationOwner &owner,
     std::span<const std::string> functions,
-    std::span<const CompiledScalarImport> imports) const {
+    std::span<const CompiledScalarImport> imports,
+    std::span<const SourceSpan> publicDeclarations,
+    std::span<const CompiledInterfaceUnit> producerUnits) const {
   auto units = interfaceUnits(imports);
+  for (const auto &unit : producerUnits)
+    retainInterfaceUnit(units, unit.sourceUnit, unit.owner);
   retainInterfaceUnit(units, entry, owner);
+  std::vector<SemanticType> roots;
+  std::vector<CompiledInterfaceAlias> aliases;
+  std::vector<std::string> inferred;
+  if (functions.empty()) {
+    if (!supportsCompiledStorage(program))
+      throw std::invalid_argument(
+          "library initialization requires a source build");
+    std::set<std::string> publicNames;
+    // The frontend inventory also includes declarations that have no executable
+    // instance. A missing recipe must never silently narrow a library's API.
+    for (const auto &span : publicDeclarations) {
+      bool represented = false;
+      for (const auto &item : program.declarations()) {
+        if (item.ownerClass || item.source.source != span.source ||
+            item.source.start < span.start || item.source.start >= span.end)
+          continue;
+        if (const auto *f =
+                std::get_if<LoweredFunctionDeclaration>(&item.payload);
+            f && f->sourceUnit == entry && f->explicitlyExported) {
+          const auto &instances = program.mir().functionInstances();
+          if (std::none_of(instances.begin(), instances.end(),
+                           [&](const auto &instance) {
+                             return instance.declaration == f->id &&
+                                    scalarFunction(program, instance);
+                           }))
+            throw std::invalid_argument(
+                "public declaration requires source interface metadata");
+          publicNames.insert(f->qualifiedName);
+          represented = true;
+        } else if (const auto *c =
+                       std::get_if<LoweredClassDeclaration>(&item.payload);
+                   c && c->sourceUnit == entry && c->explicitlyExported) {
+          SemanticType type(SemanticType::Class);
+          type.classId = c->id;
+          roots.push_back(type);
+          represented = true;
+        } else if (const auto *e =
+                       std::get_if<LoweredEnumDeclaration>(&item.payload);
+                   e && e->sourceUnit == entry && e->explicitlyExported) {
+          roots.push_back(e->type);
+          represented = true;
+        } else if (const auto *alias =
+                       std::get_if<LoweredTypeAliasDeclaration>(&item.payload);
+                   alias && alias->sourceUnit == entry &&
+                   alias->explicitlyExported && !alias->compilerPrivate &&
+                   !item.generic) {
+          aliases.push_back({alias->qualifiedName, alias->type});
+          represented = true;
+        }
+      }
+      if (!represented)
+        throw std::invalid_argument(
+            "public declaration requires source interface metadata");
+    }
+    inferred.assign(publicNames.begin(), publicNames.end());
+    functions = inferred;
+  }
   if (functions.empty() || functions.size() > 256)
     throw std::invalid_argument(
         "compiled library requires 1 to 256 selected functions");
   std::vector<const MirFunctionInstance *> selected;
-  std::vector<SemanticType> roots;
   std::set<std::string> names;
   for (const auto &name : functions) {
     if (!names.insert(name).second)
@@ -329,8 +411,8 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
                                   "explicitly exported by the root module: " +
                                   name);
   }
-  const auto metadata =
-      projectCompiledInterfaceTypes(program, entry, owner, roots, units);
+  const auto metadata = projectCompiledInterfaceTypes(program, entry, owner,
+                                                      roots, units, aliases);
   const auto registry =
       compiledInterfaceTypeRegistry(program, entry, metadata, units);
   std::vector<CompiledScalarSignature> signatures;
@@ -365,27 +447,7 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
   }
   if (program.compiledScalarBindings().size() > 256 || program.embeddingPlan())
     errors.push_back("invalid compiled scalar unit profile");
-  // Object data has no startup/retirement ordering to compose. Admit only the
-  // already verified passive MIR storage stages; executable initialization,
-  // lazy local storage and cleanup still need a per-library lifetime plan.
-  const auto &storage = program.mir().programInitializationPlan().steps;
-  const bool passiveStorage =
-      std::all_of(storage.begin(), storage.end(), [](const auto &step) {
-        return step.role == ProgramInitializationStepRole::DataOnly &&
-               (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
-                step.storageKind == ProgramStorageKind::StaticField) &&
-               !step.requiresActiveCleanup && !step.nativeRetirement &&
-               !step.sourceCleanup &&
-               ((step.dataInitialization ==
-                     MirProgramDataInitializationKind::ImplicitZero &&
-                 !step.dataConstant) ||
-                (step.dataInitialization ==
-                     MirProgramDataInitializationKind::Constant &&
-                 step.dataConstant));
-      });
-  if (program.compiledScalarProducer() &&
-      (program.mir().hostedStartupPlan() || !passiveStorage ||
-       !program.mir().threadLocalStorage().empty()))
+  if (program.compiledScalarProducer() && !supportsCompiledStorage(program))
     errors.push_back(
         "compiled library requires passive program storage without entry, "
         "thread-local initialization or cleanup");
@@ -402,6 +464,14 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
       errors.push_back("unsupported compiled function signature");
       continue;
     }
+    if (binding.optimizationBody &&
+        (!binding.imported ||
+         binding.codegenAttributes.inlining == FunctionInlining::Never ||
+         binding.codegenAttributes.cold ||
+         !verifyCompiledMir(
+             *binding.optimizationBody, f->parameterTypes, f->returnType,
+             compiledMirFields(program.mir(), f->parameterTypes))))
+      errors.push_back("invalid reusable MIR for compiled import");
     if ((!binding.imported && !program.compiledScalarProducer()) ||
         f->definitionKind != (binding.imported ? MirDefinitionKind::Declaration
                                                : MirDefinitionKind::Source) ||
@@ -508,8 +578,8 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
     program.compiledScalarBindings_.push_back(
         {selected->id, signature.key, compiledScalarSymbol(signature), imported,
          result, input.sourceUnit, signature.typeMetadata,
-         signature.resultRecipe, signature.borrow,
-         signature.codegenAttributes});
+         signature.resultRecipe, signature.borrow, signature.codegenAttributes,
+         input.optimizationBody});
   };
   for (const auto &input : exports)
     bindOne(input, false);

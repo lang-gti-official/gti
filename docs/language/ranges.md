@@ -468,14 +468,48 @@ implicitly suspend an exclusive borrow.
 ## Spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
-source prefix owner. `std::vector<T>::as_span()` and
-`std::string::as_span()` construct a complete span without exposing an address
-or pointer-length pair. A span stores an offset and count alongside its checked
-read-only storage dependency and provides checked indexing, `front()`,
-`back()`, `first()`, `last()`, `subspan()`, and structural iteration. Empty
-spans remain valid. Copy and move construction preserve the same shared owner
-dependency; assignment is unavailable because the current lifetime model does
-not reseat borrowed-state carriers.
+contiguous owner. `std::vector<T>::as_span()`, `std::array<T, N>::as_span()`,
+and `std::string::as_span()` construct a complete span. The span holds a
+checked erased owner borrow alongside its internal base address and bounds.
+It provides checked indexing, `front()`, `back()`, `first()`, `last()`,
+`subspan()`, and structural iteration. An empty span retains its owner even
+when there is no element address. Copy and move construction preserve the
+shared owner dependency. The view remains bound to that owner for its lifetime.
+Vector- and array-backed spans support constant evaluation when their storage
+and operations are eligible for constexpr execution.
+
+With `std.span` available, a built-in array `T[N]` offers the same
+`array.as_span()` operation. It borrows the whole array, including when
+`N` is zero. An array in static storage can back a `std::span<T, static>`.
+When that array is `constexpr`, its elements can also be read through the
+span during constant evaluation.
+
+### Embedding files as bytes
+
+With `import std.span;`, `embed_bytes("relative/path")` produces a read-only
+`std::span<uint8_t, static>`. Its single argument is a string literal giving a
+path relative to the GTI file that contains the call. Project paths must stay
+within the source file's owning package, including after resolving symlinks.
+Direct compilation confines the path to the containing source directory.
+GTI diagnoses missing or unreadable files, non-regular files, and paths that
+cross those boundaries. The limits are 16 MiB per file and 64 MiB across
+canonical inputs per compilation.
+
+The span contains every byte verbatim, including zero bytes and bytes above
+127, without a terminator. An empty input produces an empty span. The compiler
+reads the file while loading build inputs and publishes the bytes in immutable
+static storage. A running executable can use the view without the original
+file. A constexpr binding can save the span and use it both at compile time
+and at run time.
+
+```gti
+import std.span;
+
+constexpr std::span<uint8_t, static> logo = embed_bytes("assets/logo.bin");
+static_assert(logo.size() > 0);
+```
+
+### String views
 
 `std::string::view()` returns a counted `std::string_view` over the string's
 live character prefix. Literal-backed string views remain independent trivial
@@ -553,9 +587,48 @@ resizing, owner transfer and destruction, so element writes through an exclusive
 cursor cannot invalidate that bound. One-step movement uses the snapshot without
 reloading the owner length; dereference and arbitrary signed jumps remain checked
 against the actual owner. The snapshot is movement state, not permission to read
-vacant or out-of-range storage. A child element borrow still prevents cursor
-movement until that borrow ends. On the measured 64-bit target this adds one
-inline eight-byte field to each vector/resource-vector cursor, with no allocation.
+vacant or out-of-range storage. A child element borrow from an exclusive cursor
+still prevents cursor movement until that borrow ends. On the measured 64-bit
+target this adds one inline eight-byte field to each vector/resource-vector
+cursor, with no allocation.
+
+### Element references and their container
+
+A shared cursor's `operator*`, `operator->` and `operator[]` return a reference
+in the region of the owner the cursor stores, not of the cursor:
+`T&<owner> operator*()` in a `cursor<lifetime owner>` class (see
+[lifetime parameters](ownership-and-lifetimes.md#lifetime-parameters-and-elision)).
+The element therefore keeps the container borrowed rather than the cursor. It
+stays valid after the cursor advances, outlives a temporary cursor, and can be
+returned through a reference parameter:
+
+```gti
+mut auto cursor = values.begin();
+int& first = *cursor;      // valid after the advance
+++cursor;
+int& last = *values.rbegin();
+int& largest = *std::max_element(values.begin(), values.end());
+int& head(std::vector<int>& values) { return *values.begin(); }
+```
+
+While such a reference is live the container cannot be mutated, moved or
+destroyed, and an element of a local container cannot be returned. The
+vector, resource_vector, deque, list, forward_list, string, span, arena, SIMD
+lane and mask, map, set, unordered_map, unordered_set and sparse storage/pool
+cursors follow this rule. So do `std::span`'s `front()`, `back()`, `at()` and
+`[]`, which name the span's `source` region. Two cursors keep cursor-tied
+results:
+- `paired_span`, whose proxy element lives inside the cursor;
+- `array`, which can hold ownerless text views: an owner-region yield of a
+  `std::string_view` element is not yet lowered correctly, so the array cursor
+  keeps its cursor-tied result until that is fixed.
+
+Exclusive cursors (`begin_mut()`, `mutable_span`) keep results tied to the
+cursor. A mutable `*it` can be repeated at the same position, so a
+container-tied `mut T&` would let two dereferences alias. A user-defined
+cursor gets the same behaviour by declaring a lifetime parameter for the owner
+it stores and naming it in its dereference result. Elision alone ties a method
+result to the receiver.
 
 ## Generic iterator contracts
 

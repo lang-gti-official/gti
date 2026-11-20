@@ -276,6 +276,19 @@ extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
   remember(address, Path::Process);
   return address;
 }
+extern "C" void *gti_rt_realloc_v1(void *address, std::uint64_t size) {
+  if (failed_attempt(size))
+    return nullptr;
+  for (auto &region : regions) {
+    if (region.address == address && region.path == Path::Process) {
+      void *result = std::realloc(address, static_cast<std::size_t>(size));
+      if (result)
+        region.address = result;
+      return result;
+    }
+  }
+  std::abort();
+}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t size,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {

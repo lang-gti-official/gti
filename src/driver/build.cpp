@@ -4,6 +4,7 @@
 
 #include "build_source_identity.h"
 #include "compiled_scalar_support.h"
+#include "file_digest.h"
 #include "gti/build_identity_config.h"
 #include "gti/llvm_backend.h"
 #include "sha256.h"
@@ -28,6 +29,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -293,44 +296,6 @@ std::string cacheObjectFile(std::size_t index) {
 }
 
 using detail::IdentityBuilder;
-
-struct FileDigest {
-  std::string hash;
-  std::uintmax_t size = 0;
-
-  bool operator==(const FileDigest &) const = default;
-};
-
-std::optional<FileDigest> digestFile(const std::filesystem::path &path,
-                                     std::string &errorMessage) {
-  std::error_code error;
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    errorMessage = "cannot inspect '" + path.string() + "': " + error.message();
-    return std::nullopt;
-  }
-
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    errorMessage = "cannot read '" + path.string() + "'";
-    return std::nullopt;
-  }
-  Sha256 hash;
-  std::array<char, 64 * 1024> buffer{};
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const std::streamsize count = input.gcount();
-    if (count > 0) {
-      hash.update(
-          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-    }
-  }
-  if (!input.eof()) {
-    errorMessage = "cannot finish reading '" + path.string() + "'";
-    return std::nullopt;
-  }
-  return FileDigest{.hash = hash.finishHex(), .size = size};
-}
 
 std::string digestText(std::string_view text) {
   Sha256 hash;
@@ -792,6 +757,7 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
                             const std::filesystem::path &sourceRoot,
                             std::string &errorMessage) {
   BuildSourceMaterialProjection projection;
+  std::unordered_map<const std::string *, std::string> embeddedDigests;
   projection.units.reserve(inputs.sourceGraph.sourceUnits().size());
   projection.logicalNamesById.resize(inputs.sourceGraph.sourceUnits().size() +
                                      1);
@@ -827,7 +793,26 @@ projectBuildSourceMaterials(const CompilationInputs &inputs,
                                 .prelude = unit.prelude,
                                 .bytes = source->size(),
                                 .sha256 = digestText(*source)});
+    for (const auto &file : unit.embeddedFiles) {
+      std::optional<std::string> sha256;
+      if (file.bytes) {
+        const auto [entry, inserted] =
+            embeddedDigests.try_emplace(file.bytes.get());
+        if (inserted)
+          entry->second = digestText(*file.bytes);
+        sha256 = entry->second;
+      }
+      projection.embeddedFiles.push_back({.source = *name,
+                                          .offset = file.keyword.position,
+                                          .storageOffset = file.storageOffset,
+                                          .sha256 = std::move(sha256)});
+    }
   }
+  std::sort(projection.embeddedFiles.begin(), projection.embeddedFiles.end(),
+            [](const auto &left, const auto &right) {
+              return std::tie(left.source, left.offset) <
+                     std::tie(right.source, right.offset);
+            });
   std::sort(projection.units.begin(), projection.units.end(),
             [](const BuildSourceMaterialRecord &left,
                const BuildSourceMaterialRecord &right) {
@@ -893,6 +878,12 @@ void appendBuildSourceMaterialsIdentity(
     identity.add("source.prelude", static_cast<std::uint64_t>(record.prelude));
     identity.add("source.size", static_cast<std::uint64_t>(record.bytes));
     identity.add("source.sha256", record.sha256);
+  }
+  for (const auto &file : projection.embeddedFiles) {
+    identity.add("source.embed.unit", file.source);
+    identity.add("source.embed.offset", file.offset);
+    identity.add("source.embed.storage-offset", file.storageOffset);
+    identity.add("source.embed.sha256", file.sha256.value_or(""));
   }
   identity.add("source.prelude-roots",
                static_cast<std::uint64_t>(projection.preludeRoots.size()));
@@ -1486,6 +1477,8 @@ buildCacheKey(const ExecutableBuildRequest &request,
               std::string *unitProducer) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
+  if (!inputs.standardLibraryBundleDigest.empty())
+    identity.add("stdlib.bundle", inputs.standardLibraryBundleDigest);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   if (embeddingBuild(request)) {
@@ -4256,6 +4249,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
+  std::vector<CompiledScalarImport> standardImports;
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
@@ -4264,7 +4258,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                 ? reusableCompiledScalarLibrarySnapshot(
                       request.compilation(), *request.compiledLibrary(),
                       request.compiledImports(),
-                      request.toolchain().runtimeLibrary, request.output())
+                      request.toolchain().runtimeLibrary, request.output(),
+                      &result.compiledSourceFiles)
                 : CompiledLibrarySnapshot{};
         if (reused) {
           result.status = ExecutableBuildStatus::Success;
@@ -4280,6 +4275,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         auto built = buildCompiledScalarLibraryTarget(
             request.compilation(), *request.compiledLibrary(),
             request.toolchain().runtimeLibrary, request.compiledImports());
+        result.libraryInterfaceNeedsSource = built.interfaceNeedsSource;
+        result.compiledSourceFiles = std::move(built.sourceFiles);
         result.compilation = std::move(built.compilation);
         compiledBundle = std::move(built.bundle);
       } else {
@@ -4289,6 +4286,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.compilation = std::move(imported.compilation);
         importedObjects = std::move(imported.objects);
       }
+    } catch (const CompiledLibrarySourceConflict &conflict) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.sourceFallbackManifest = conflict.sourceManifest;
+      result.driverDiagnostic = conflict.what();
+      return result;
     } catch (const std::exception &error) {
       result.status = ExecutableBuildStatus::CompilationFailure;
       result.driverDiagnostic =
@@ -4305,7 +4307,18 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     compilationInputs.sources = result.compilation.sources;
     compilationInputs.sourceValid = true;
   } else {
-    compilationInputs = loadCompilationInputs(request.compilation(), progress);
+    try {
+      auto prepared = loadStandardLibraryInputs(
+          request.compilation(), request.toolchain().runtimeLibrary, progress);
+      compilationInputs = std::move(prepared.compilation);
+      standardImports = std::move(prepared.imports);
+      importedObjects = std::move(prepared.objects);
+    } catch (const std::exception &error) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.driverDiagnostic =
+          "gti: compiled standard library: " + std::string(error.what());
+      return result;
+    }
   }
   if (!compilationInputs.succeeded()) {
     result.compilation = compileToSelectedBackend(
@@ -4682,9 +4695,14 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     if (!unitProducer.empty() && (cacheEntry || objectEntry))
       units.emplace(request.cache()->root / "codegen-unit-v1",
                     *request.managedOutput(), std::move(unitProducer));
-    result.compilation = compileToSelectedBackend(
-        request.compilation(), std::move(compilationInputs), progress,
-        units ? &*units : nullptr);
+    if (standardImports.empty())
+      result.compilation = compileToSelectedBackend(
+          request.compilation(), std::move(compilationInputs), progress,
+          units ? &*units : nullptr);
+    else
+      result.compilation = compileWithLibraryImports(
+          request.compilation(), std::move(compilationInputs),
+          std::move(standardImports), progress, units ? &*units : nullptr);
     if (units && units->attempts) {
       result.cache.codegenUnits = units->attempts;
       result.cache.reusedCodegenUnits = units->hits;
@@ -5320,8 +5338,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
     if (request.compiledLibrary()) {
       if (auto diagnostic =
-              compiledScalarProducerInputDiagnostic(request.nativeInputs()))
+              compiledScalarProducerInputDiagnostic(request.nativeInputs())) {
+        result.libraryInterfaceNeedsSource = true;
         return rejectCompiled(*diagnostic);
+      }
     }
   }
   if (nativeObjectCache(request)) {

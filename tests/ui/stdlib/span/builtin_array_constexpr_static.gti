@@ -1,0 +1,18 @@
+// A returned static span can read constexpr byte storage at compile time and at run time.
+//@ run-pass
+import std.span;
+
+constexpr uint8_t payload[4] = {0x47, 0, 0xff, 0x49};
+
+constexpr std::span<uint8_t, static> bytes() {
+  return payload.as_span();
+}
+
+constexpr bool check() {
+  auto view = bytes();
+  auto middle = view.subspan(1, 2);
+  return view.size() == 4 && middle[0] == 0 && middle[1] == 0xff;
+}
+
+static_assert(check());
+int main() { return check() ? 0 : 1; }

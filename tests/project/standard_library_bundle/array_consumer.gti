@@ -1,0 +1,18 @@
+// Only this application knows the element layout and extent.
+import std.array;
+
+struct Sample {
+  mut int reading;
+  uint64_t sequence;
+  Sample(int value, uint64_t id) : reading(value), sequence(id) {}
+};
+
+int main() {
+  mut std::array<Sample, 5> samples = std::array<Sample, 5>({
+    Sample(1, 73), Sample(2, 74), Sample(3, 75), Sample(4, 76), Sample(5, 77)
+  });
+  samples[4].reading = 41;
+  if (samples.size() != 5 || samples.back().reading != 41) { return 1; }
+  if (samples.front().sequence != uint64_t(73)) { return 2; }
+  return 0;
+}
