@@ -1,0 +1,6 @@
+import catalog;
+
+int main() {
+  auto rack = instruments::Rack<int, 2>({3, 5});
+  return rack.peek(1) == 5 ? 0 : 1;
+}

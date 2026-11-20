@@ -3088,8 +3088,9 @@ permission, host-width integer or native structure dump. The complete layout is:
 
 1. Eight bytes `GTILIB\r\n`, followed by the container version and envelope schema.
    Native libraries use version `2`, schema `1`. Native libraries with optimization
-   MIR use version `3`, schema `1`. Installed generic modules use version `2`,
-   schema `2` and store their declaration interface and dependent bodies in field 3.
+   MIR use version `3`, schema `1`. Generic modules use version `2`, schema `2`. Field 3 contains the declaration
+   interface, dependent bodies and lifetime bindings. The project variant also
+   carries the lexical evidence checked by the consumer.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
 3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
@@ -3376,16 +3377,16 @@ seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
 The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` retains its source implementation and OS entropy backend.
-The installed `array.gtilib` carries the declarations of `std.array` and its
-dependent method bodies. The producer encodes the parsed statements and
+The installed array, span and vector bundles carry their modules’ declarations
+and dependent method bodies. The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,
 constant evaluation, MIR borrow checking and LLVM code generation paths then
 handle each requested substitution. Private helpers and iterator types defined
-in the array module travel with it. Imports of other modules retain their
+in the same module travel with it. Imports of other modules retain their
 ordinary source and visibility rules. The template envelope has no native
-object or producer-side concrete substitution. Only the toolchain's installed
-module provider can admit it; an independent packaging receipt covers its
+object or producer-side concrete substitution. The installed module provider
+checks an independent packaging receipt covering its
 complete bytes before the source loader can resolve its imports. The full
 artifact digest also participates in the consumer's build identity.
 
@@ -3427,6 +3428,22 @@ public module with the implementation source removed. For a hot function,
 also check optimized code generation or compare source and packaged execution.
 
 ### Compiled-library project requests
+
+A project library whose root exports a generic class or function can supply its
+interface and dependent bodies in the `.gtilib`. Its root declares an exported
+module and can import named standard-library modules. Other project source
+units, compiled dependency closures and configuration directives require
+additional packaging support. Explicit native function targets keep their
+native interface.
+
+For project imports the artifact carries the lexical tokens erased from the
+interface alongside the serialized body recipe. The ordinary parser reads
+these tokens in the consumer, retaining its usual lifetime bindings. The
+compiler compares that parse with the recipe before using it. The virtual
+interface has application provenance and receives the same type, visibility
+and borrow checks as application source. The installed toolchain can instead
+restore its independently authenticated recipes directly. Neither route
+requires the library’s implementation files or a list of future element types.
 
 A registered interface at `<source-root>/lib.gti` supplies the default GTI
 library. The target takes the package name, or the package name with a

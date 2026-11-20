@@ -1008,10 +1008,16 @@ public:
   }
   void setExportKeyword(Token keyword) { exportKeyword_ = std::move(keyword); }
 
+  // The declaration interface may retain expressions (e.g. parameter defaults).
+  // A lambda in one of those expressions introduces a separate executable body.
+  [[nodiscard]] bool hasInterfaceLambda() const { return interfaceLambda_; }
+  void markInterfaceLambda() { interfaceLambda_ = true; }
+
 private:
   std::optional<SourceSpan> extent_;
   std::optional<std::string> documentationMarkdown_;
   std::optional<Token> exportKeyword_;
+  bool interfaceLambda_ = false;
 };
 
 template <StmtKind Kind> class StmtOfKind : public Stmt {
@@ -2465,7 +2471,7 @@ public:
                const VariableDecl *sentinelBinding,
                const VariableDecl *elementBinding, const ForStmt *coreLoop,
                const VariableDecl *elementOwnerBinding = nullptr,
-               const Stmt *sourceBody = nullptr, StmtPtr initializer = nullptr)
+               const Stmt *sourceBody = nullptr, StmtPtr initializer = nullptr, std::size_t syntaxOrdinal = 0)
       : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
         bindingType_(std::move(bindingType)),
         bindingName_(std::move(bindingName)), colon_(std::move(colon)),
@@ -2473,7 +2479,7 @@ public:
         rangeBinding_(rangeBinding), iteratorBinding_(iteratorBinding),
         sentinelBinding_(sentinelBinding), elementBinding_(elementBinding),
         coreLoop_(coreLoop), elementOwnerBinding_(elementOwnerBinding),
-        sourceBody_(sourceBody), initializer_(std::move(initializer)) {}
+        sourceBody_(sourceBody), initializer_(std::move(initializer)), syntaxOrdinal_(syntaxOrdinal) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitRangeForStmt(*this);
@@ -2513,6 +2519,8 @@ public:
   // does not contain it.
   [[nodiscard]] const StmtPtr &initializer() const { return initializer_; }
 
+  [[nodiscard]] std::size_t syntaxOrdinal() const { return syntaxOrdinal_; }
+
 private:
   Token keyword_;
   Mutability bindingMutability_;
@@ -2529,6 +2537,7 @@ private:
   const VariableDecl *elementOwnerBinding_ = nullptr;
   const Stmt *sourceBody_ = nullptr;
   StmtPtr initializer_;
+  std::size_t syntaxOrdinal_ = 0;
 };
 
 class FunctionDecl final : public StmtOfKind<StmtKind::FunctionDecl> {

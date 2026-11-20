@@ -102,6 +102,9 @@ def build(stage, source, modules):
         for profile in ([], ["--release"]):
             subprocess.run([compiler, "run", "--offline", *profile],
                            cwd=consumer, env=env, check=True)
+        shutil.copyfile(source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti", consumer / "src/main.gti")
+        for profile in ([], ["--release"]):
+            subprocess.run([compiler, "run", "--offline", *profile], cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:

@@ -7,6 +7,7 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/parser.h"
+#include "gti/project_template.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
@@ -1212,9 +1213,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                 ? std::move(const_cast<std::vector<Token> &>(*unit->tokens))
                 : unitTokens;
         unit->tokens.reset();
-        Parser parser(std::move(parserTokens), source == nullptr
-                                                   ? std::string_view{}
-                                                   : std::string_view{*source});
+        const auto &recipe = unit->compiledTemplate;
+        if (recipe && recipe->projectSyntax) {
+          parserTokens =
+              projectTemplateTokens(*recipe, parserTokens, unit->path.string());
+          source = &*recipe->projectSyntax;
+        }
+        Parser parser(std::move(parserTokens),
+                      source ? std::string_view(*source) : std::string_view{});
         const std::size_t parseErrorLimit =
             options.limits.errorLimit == 0
                 ? 0
@@ -1229,13 +1235,27 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
-        if (unit->compiledTemplate && !parser.hadError())
-          restoreTemplateBodies(unitDeclarations, *unit->compiledTemplate,
-                                unit->path.string());
-        unit->lifetimeNames =
-            parser.lifetimeNames().empty()
-                ? nullptr
-                : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
+        if (recipe && !parser.hadError()) {
+          if (recipe->projectSyntax)
+            verifyProjectTemplate(*recipe, unitDeclarations,
+                                  parser.lifetimeNames());
+          else
+            restoreTemplateBodies(unitDeclarations, *recipe,
+                                  unit->path.string());
+        }
+        if (recipe && !recipe->projectSyntax && !parser.hadError()) {
+          auto names =
+              compiledTemplateLifetimeNames(*recipe, unit->path.string());
+          unit->lifetimeNames =
+              names.empty()
+                  ? nullptr
+                  : std::make_shared<const LifetimeNames>(std::move(names));
+        } else {
+          unit->lifetimeNames = parser.lifetimeNames().empty()
+                                    ? nullptr
+                                    : std::make_shared<const LifetimeNames>(
+                                          parser.lifetimeNames());
+        }
         if (options.cache && !unit->compiledTemplate &&
             !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(

@@ -23,3 +23,11 @@ functions = ["std::detail::seed_random_engine", "std::detail::next_random"]
 [targets.array]
 kind = "gti-library"
 root = "stdlib/std/array.gti"
+
+[targets.span]
+kind = "gti-library"
+root = "stdlib/std/span.gti"
+
+[targets.vector]
+kind = "gti-library"
+root = "stdlib/std/vector.gti"

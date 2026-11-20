@@ -181,6 +181,8 @@ public:
   [[nodiscard]] StmtPtr stmt(const Stmt &statement) {
     StmtPtr copy = cloneStatement(statement);
     if (copy) {
+      if (statement.hasInterfaceLambda())
+        copy->markInterfaceLambda();
       if (statement.extent()) {
         copy->setExtent(*statement.extent());
       }
@@ -586,7 +588,7 @@ private:
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
           mapped(node.coreLoop()), mapped(node.elementOwnerBinding()),
-          mapped(node.sourceBody()), std::move(initializer));
+          mapped(node.sourceBody()), std::move(initializer), node.syntaxOrdinal());
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);

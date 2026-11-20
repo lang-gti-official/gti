@@ -72,6 +72,9 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
+        shutil.copyfile(fixture.parents[1] / "ui/stdlib/vector/constexpr_range_for_views.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
         array_bundle, = bundles.glob("*/release/array.gtilib")
         array_receipt = array_bundle.with_suffix(".gtilib.sha256")
         digest = hashlib.sha256(array_bundle.read_bytes()).hexdigest()

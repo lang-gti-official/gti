@@ -1,4 +1,5 @@
 #include "gti/source_graph.h"
+#include "gti/compiled_template_body.h"
 #include <stdexcept>
 
 #include <algorithm>
@@ -10,8 +11,12 @@ namespace lang {
 void SourceGraph::attachCompiledTemplate(
     SourceUnitId id, std::shared_ptr<const CompiledTemplateModule> module) {
   auto *unit = findUnit(id);
-  if (!unit || unit->role != SourceUnitRole::StandardLibrary || !module)
-    throw std::invalid_argument("invalid installed template unit");
+  if (!unit || !module ||
+      (module->projectSyntax ? unit->prelude || unit->entry ||
+                                   unit->role != SourceUnitRole::Application ||
+                                   isCompilerTrusted(id)
+                             : unit->role != SourceUnitRole::StandardLibrary))
+    throw std::invalid_argument("invalid compiled template unit provenance");
   unit->compiledTemplate = std::move(module);
 }
 void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
