@@ -12,8 +12,8 @@ types in the library interface.
 The `int32_t` identity overload requests `[[inline]]`, the `int64_t` overload
 requests `[[noinline]]`, and the infrequent `divide` operation uses
 `[[cold, noinline]]`. These policies survive the compiled interface and source-free
-consumer build independently for each overload. Inline advice does not provide
-the consumer with a function body or enable cross-library inlining. The division
+consumer build independently for each overload. The eligible scalar identity body is available for cross-library inlining in
+optimized builds. The division
 failure checks still exercise normal panic propagation and consumer cleanup.
 
 With an optimized GTI toolchain on `PATH`, from this directory:

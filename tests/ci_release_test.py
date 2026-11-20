@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 
 
 def run(command, cwd, success=True):
@@ -1853,11 +1854,13 @@ def archive_contract(root, cmake):
     with tempfile.TemporaryDirectory(prefix="gti-shared-release-archive-") as temporary:
         work = pathlib.Path(temporary)
         stage = work / "stage"
+        with (root / "cmake/stdlib-bundles/gti.toml").open("rb") as stream:
+            modules = tomllib.load(stream)["targets"]
         for triple in ("x86_64-unknown-linux", "arm64-apple-macos"):
             for profile in ("dev", "release"):
                 directory = stage / "share/gti/precompiled-stdlib" / triple / profile
                 directory.mkdir(parents=True)
-                for module in ("cmath", "random"):
+                for module in modules:
                     (directory / f"{module}.gtilib").write_bytes(b"compiled stdlib fixture")
         for relative in required_files:
             target = stage / relative

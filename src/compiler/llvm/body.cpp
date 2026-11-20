@@ -3,6 +3,7 @@
 #include "atomics.h"
 #include "callables.h"
 #include "closure_environment.h"
+#include "compiled_mir.h"
 #include "constructor_field_publication.h"
 #include "debug_info.h"
 #include "dispatch.h"
@@ -3307,6 +3308,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   }
   if (session.program().embeddingPlan())
     emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
+  emitCompiledMir(session);
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void Bodies::lowerEvaluation(std::span<const MirBodyAddress> bodies,
