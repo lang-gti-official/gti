@@ -8693,6 +8693,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                         expr.paren(), "Calling an unsafe required member");
         }
         ResolvedCallInfo resolved{
+            .provisionalRequirement = true,
             .returnType = selected->arguments[1],
             .parameterTypes = std::vector<SemanticType>(
                 selected->arguments.begin() + 2, selected->arguments.end()),

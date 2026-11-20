@@ -78,6 +78,9 @@ def main() -> None:
         # the instance provider directly for effect-budget value keys; the
         # Frontend facade cannot expose either boundary.
         "tests/unit/thread_local_semantic_api_tests.cpp",
+        # Injects an unresolved requirement into a concrete instance provider;
+        # Frontend cannot expose or substitute that semantic-to-HIR boundary.
+        "tests/unit/provisional_call_boundary.cpp",
         # Analyzes one parsed tree with and without source-debug collection to
         # prove collection preserves symbol identities and diagnostics;
         # separate Frontend snapshots would reparse into different trees.
