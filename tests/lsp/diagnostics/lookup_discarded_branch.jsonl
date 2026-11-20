@@ -1,0 +1,15 @@
+// Editing an unresolved name in a discarded compile-time branch stays clean through verified MIR.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int read<T>(T value) { if constexpr (false) { return old_name(value); } return 1; }\nint main() { return read(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int read<T>(T value) { if constexpr (false) { return old_name(value); } return 1; }\nint main() { return read(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int read<T>(T value) { if constexpr (false) { return absent_name(value); } return 1; }\nint main() { return read(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 7}}
+{"expect": {"id": 7, "result": {}}}
+{"analysisTrace": {"generation": 2, "mirVerified": true}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}
