@@ -1402,8 +1402,9 @@ profile selected by `settings.gti.profile`/initialization options, or the normal
 driver default when none is selected. Defines, execution model, raw-pointer
 audit and warning policy change together without invoking a build.
 
-`gti build --all` builds every declared executable and test target of the
-selected package for one profile. Each target is delegated to a child
+`gti build --all` builds every declared target of the selected package for one
+profile, including compiled libraries. Both target discovery and child builds
+respect `--offline` and `--locked`. Each target is delegated to a child
 `gti build <target>` invocation carrying the parent's resolved options, so
 every target remains an independent whole-program build; `--jobs <count>`
 bounds how many children run concurrently (defaulting to the host's hardware
@@ -3417,8 +3418,10 @@ not invalidate that object. The shared declarations module supplies `constexpr s
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.
 
-Staging builds these bundles using its final compiler and runtime, then checks
-and runs an independent project with the implementation sources removed. A
+Staging uses the installed compiler and runtime to build all targets offline,
+one profile at a time, with up to four parallel target builds. After both
+profiles succeed, it checks and runs an independent project with the
+implementation sources removed. A
 source-only toolchain repack rebuilds the bundles from the replacement library.
 Bundle compatibility and the checks for each envelope apply before executable cache reuse;
 the names and digests of the reached bundles participate in the cache key in

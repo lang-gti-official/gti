@@ -66,13 +66,16 @@ def build(stage, source):
         env = dict(os.environ, GTI_STDLIB_PATH=str(package / "stdlib"),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
+        # Each manifest target has its own output. Let the project builder
+        # schedule them, then collect artifacts only after the whole profile succeeds.
+        cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+        jobs = min(4, cpus)
         outputs = []
         for profile in ("dev", "release"):
+            subprocess.run([str(stage / "bin/gti"), "build", "--all", "--offline",
+                            "--profile", profile, "--jobs", str(jobs)],
+                           cwd=package, env=env, check=True)
             for name in modules:
-                command = [str(stage / "bin/gti"), "build", name, "--offline"]
-                if profile == "release":
-                    command.append("--release")
-                subprocess.run(command, cwd=package, env=env, check=True)
                 bundle, = (package / "build/gti" / profile).glob(f"*/{name}.gtilib")
                 relative = Path("precompiled-stdlib") / bundle.parent.name / profile / bundle.name
                 candidate = package / relative
