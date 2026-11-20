@@ -937,8 +937,10 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 Enterprise runner capacity (2026-11-19) replaces the former five-macOS-runner
 assumption. Each platform builds once in `fast`, runs feedback and the
-runner/project/editor/example/unit baselines, and uploads only the four native
-tools needed by source tests. Four `fast-ui` jobs per platform configure the same
+runner/project/editor/example/unit baselines, and uploads the four native
+tools needed by source tests. On macOS their exact transitive non-system dylibs
+and licenses travel with them, rewritten and signed using the production runtime
+bundler; a consumer never depends on matching Homebrew versions. Four `fast-ui` jobs per platform configure the same
 CTest inventory without compiling, verify and restore those tools, then execute
 disjoint partitions of all `gti_test_ui_<i>` entries. There is no rotating macOS
 subset. The gate rejects failed, missing, duplicate or inconsistent partition

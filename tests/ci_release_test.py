@@ -2125,6 +2125,57 @@ def fast_fanout_contract(root):
             assert (output / "gti").read_bytes() == before
 
 
+def fast_runtime_relocation_contract(root, fast):
+    # Real Mach-O dependency closure: gti-test alone uses a transitive dylib.
+    # Removing the producer installation must not break any restored tool.
+    if sys.platform != "darwin":
+        return
+    with tempfile.TemporaryDirectory(prefix="gti-fast-runtime-") as directory:
+        home = pathlib.Path(directory).resolve()
+        build = home / "build"; build.mkdir()
+        host = home / "producer"; host.mkdir()
+        (host / "LICENSE").write_text("Synthetic test fixture, public domain.\n")
+        (host / "leaf.c").write_text("int leaf(void) { return 0; }\n")
+        (host / "middle.c").write_text("int leaf(void); int middle(void) { return leaf(); }\n")
+        (home / "test.c").write_text("int middle(void); int main(void) { return middle(); }\n")
+        (home / "empty.c").write_text("int main(void) { return 0; }\n")
+        leaf = host / "libLeaf.dylib"; middle = host / "libMiddle.dylib"
+        run(["cc", "-dynamiclib", str(host / "leaf.c"), "-o", str(leaf),
+             "-Wl,-install_name," + str(leaf)], root)
+        run(["cc", "-dynamiclib", str(host / "middle.c"), str(leaf), "-o", str(middle),
+             "-Wl,-install_name," + str(middle)], root)
+        for name in fast.TOOLS[:3]:
+            source = home / ("test.c" if name == "gti-test" else "empty.c")
+            run(["cc", str(source), *([str(middle)] if name == "gti-test" else []),
+                 "-o", str(build / name)], root)
+        (build / "libgti_runtime.a").write_bytes(b"runtime fixture")
+        (build / "CMakeCache.txt").write_text("".join(
+            f"{k}:STRING={v}\n" for k, v in fast.CONFIGURATION.items()))
+        ident = fast.identity("a" * 40, "42", "1", "darwin")
+        archive = home / "tools.tar.gz"
+        original = (build / "gti-test").read_bytes()
+        fast.pack(build, archive, ident)
+        assert (build / "gti-test").read_bytes() == original
+        host.rename(home / "removed-producer")
+        output = home / "consumer"
+        fast.restore(output, archive, ident)
+        for name in fast.TOOLS[:3]:
+            run([str(output / name)], root)
+        assert (output / "lib/gti/host-runtime/libLeaf.dylib").is_file()
+        assert (output / "share/licenses/gti/host-runtime/libMiddle.dylib/LICENSE").is_file()
+        # Parent symlinks are forbidden before any restored executable is overwritten.
+        linked = home / "linked"; linked.mkdir()
+        sentinel = linked / "gti"; sentinel.write_bytes(b"unchanged")
+        (linked / "lib").symlink_to(output / "lib", target_is_directory=True)
+        try:
+            fast.restore(linked, archive, ident)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("followed a linked runtime destination")
+        assert sentinel.read_bytes() == b"unchanged"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=pathlib.Path)
@@ -2133,6 +2184,7 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     fast_fanout_contract(root)
+    fast_runtime_relocation_contract(root, load_module(root / "scripts/fast_ci.py", "fast_runtime_contract"))
     suite_measures_contract(root)
     installed_system_command_contract(root)
     change_review_contract(root)

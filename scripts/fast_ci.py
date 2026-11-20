@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import sys
 import subprocess
 import tarfile
 import tempfile
@@ -57,56 +59,102 @@ def pack(build, archive, expected):
                             (build / "CMakeCache.txt").read_text(), re.M))
     if any(cache.get(key) != value for key, value in CONFIGURATION.items()):
         raise ValueError("Fast tools require Release, system LLVM and the C++ backend off")
-    files = {}
-    for name in TOOLS:
-        path = build / name
-        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_FILE:
-            raise ValueError(f"Missing or invalid native tool: {name}")
-        files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    manifest = dict(identity=expected, configuration=CONFIGURATION, files=files)
-    archive.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive, "w:gz") as tar:
-        data = json.dumps(manifest).encode()
-        info = tarfile.TarInfo("manifest.json")
-        info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
+    # Homebrew dependency ABIs can differ even between same-label runners.
+    # Bundle the producer's exact closure, including gti-test, on copies only.
+    with tempfile.TemporaryDirectory(prefix="gti-fast-pack-") as temporary:
+        stage = Path(temporary)
         for name in TOOLS:
-            tar.add(build / name, arcname=name, recursive=False)
+            path = build / name
+            if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_FILE:
+                raise ValueError(f"Missing or invalid native tool: {name}")
+            shutil.copy2(path, stage / name)
+        if expected["platform"] == "darwin":
+            if sys.platform != "darwin":
+                raise ValueError("Darwin native tools must be bundled on macOS")
+            # Also works when loaded by repository contract tests via importlib.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "fast_macos_runtime", Path(__file__).with_name("bundle_macos_runtime.py"))
+            bundler = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(bundler)
+            bundler.bundle(stage, [], executables=TOOLS[:3])
+        paths = sorted(path for path in stage.rglob("*") if path.is_file())
+        files = {path.relative_to(stage).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in paths}
+        validate_inventory(files, expected["platform"])
+        manifest = dict(identity=expected, configuration=CONFIGURATION, files=files)
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "w:gz") as tar:
+            data = json.dumps(manifest).encode()
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            for path in paths:
+                tar.add(path, arcname=path.relative_to(stage).as_posix(), recursive=False)
+
+
+def validate_inventory(files, platform):
+    names = set(files)
+    if not set(TOOLS) <= names or len(names) > 512:
+        raise ValueError("Invalid fast-tools archive inventory")
+    if platform != "darwin":
+        if names != set(TOOLS):
+            raise ValueError("Unexpected non-Darwin runtime files")
+        return
+    if "share/gti/host-runtime.json" not in names:
+        raise ValueError("Missing bundled Darwin runtime manifest")
+    for name in names - set(TOOLS) - {"share/gti/host-runtime.json"}:
+        if not (re.fullmatch(r"lib/gti/host-runtime/[^/]+\.dylib", name) or
+                re.fullmatch(r"share/licenses/gti/host-runtime/[^/]+\.dylib/[^/]+", name)):
+            raise ValueError("Unexpected bundled runtime file")
+        if any(part in (".", "..") for part in name.split("/")):
+            raise ValueError("Invalid bundled runtime path")
 
 
 def restore(build, archive, expected):
-    # Never extract archive paths. Validate the complete fixed inventory and
-    # identity before writing a tool; reject links, duplicates and corrupt data.
+    # Never extract archive paths. Validate identity, the bounded allowlisted
+    # inventory and every checksum before writing tools or their dependencies.
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
-        if (len(members) != len(TOOLS) + 1 or
-                {m.name for m in members} != {*TOOLS, "manifest.json"} or
+        names = [m.name for m in members]
+        if (len(members) > 513 or len(set(names)) != len(names) or
+                "manifest.json" not in names or
                 any(not m.isfile() or not 0 < m.size <= MAX_FILE for m in members)):
             raise ValueError("Invalid fast-tools archive inventory")
         manifest_member = tar.getmember("manifest.json")
-        if manifest_member.size > 16384:
+        if manifest_member.size > 262144:
             raise ValueError("Oversized fast-tools manifest")
         manifest = json.load(tar.extractfile(manifest_member))
+        files = manifest.get("files", {})
         if (not matches_attempt(manifest.get("identity", {}), expected) or
                 manifest.get("configuration") != CONFIGURATION or
-                set(manifest.get("files", {})) != set(TOOLS)):
+                set(files) != set(names) - {"manifest.json"}):
             raise ValueError("Fast tools do not match this source/run/attempt/platform")
+        validate_inventory(files, expected["platform"])
         with tempfile.TemporaryDirectory(prefix="gti-fast-tools-") as temporary:
             stage = Path(temporary)
-            for name in TOOLS:
+            for name in files:
                 data = tar.extractfile(name).read()
-                if hashlib.sha256(data).hexdigest() != manifest["files"][name]:
+                if hashlib.sha256(data).hexdigest() != files[name]:
                     raise ValueError(f"Fast-tools checksum mismatch: {name}")
-                (stage / name).write_bytes(data)
-            build.mkdir(parents=True, exist_ok=True)
-            for name in TOOLS:
+                destination = stage / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+            if build.is_symlink():
+                raise ValueError("Refusing a linked native-tool build directory")
+            for name in files:
                 destination = build / name
-                if destination.is_symlink():
-                    raise ValueError(f"Refusing a linked native-tool destination: {name}")
-            for name in TOOLS:
+                for path in [destination, *destination.relative_to(build).parents]:
+                    candidate = path if path == destination else build / path
+                    if candidate.is_symlink():
+                        raise ValueError(f"Refusing a linked native-tool destination: {name}")
+                if destination.exists() and not destination.is_file():
+                    raise ValueError(f"Invalid native-tool destination: {name}")
+            for name in files:
                 destination = build / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes((stage / name).read_bytes())
-                destination.chmod(0o644 if name.endswith(".a") else 0o755)
+                destination.chmod(0o755 if name in TOOLS[:3] else 0o644)
 
 
 def selection(inventory, index, count=SHARDS):
