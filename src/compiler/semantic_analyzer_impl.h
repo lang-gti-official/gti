@@ -16,6 +16,7 @@
 #include "semantic_body_context.h"
 #include "semantic_declaration_index.h"
 #include "semantic_diagnostics.h"
+#include "semantic_overload_set.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
 #include "source_text.h"
@@ -285,6 +286,9 @@ public:
   void finishLimitedAnalysis();
   bool enforceErrorLimit = false;
   const std::atomic<bool> *cancellation = nullptr;
+  const std::function<void()> *registrationObserver = nullptr;
+  const SemanticVisitor::EntryDiagnosticObserver *entryDiagnosticObserver =
+      nullptr;
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
@@ -1504,7 +1508,7 @@ private:
     SemanticMoveOrigins moveOrigins;
     std::vector<RawPointerOrigin> rawPointerOrigins;
     std::vector<ProjectedRawPointerOrigins> rawPointerFields;
-    std::vector<CallableCandidate> overloads;
+    SemanticOverloadSet<CallableCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
@@ -4456,7 +4460,7 @@ private:
   [[nodiscard]] bool
   contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
                                        const SemanticType &argument,
-                                       const ExprPtr &expression) const;
+                                       const ExprPtr &expression);
 
   SemanticType
   adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
@@ -4553,6 +4557,8 @@ private:
 
   bool analyzeStringViewAddition(const Binary &expression,
                                  const SemanticType &rightType);
+  bool analyzeStringViewComparison(const Binary &expression,
+                                   const SemanticType &rightType);
   void recordLiteralTextConcatenation(const Binary &expression);
 
   void
@@ -5300,10 +5306,12 @@ private:
   protocolOperationCall(const RegisteredConformance &conformance,
                         const std::vector<SemanticType> &binding,
                         std::size_t operation) const;
-  [[nodiscard]] bool
-  selectResidualReturn(const Unary &expr, const SemanticType &returnType,
-                       const SemanticType &residualType,
-                       std::optional<ResolvedConstructionInfo> &construction);
+  [[nodiscard]] bool selectResidualReturn(
+      const Unary &expr, const SemanticType &returnType,
+      const SemanticType &residualType,
+      std::optional<ResolvedConstructionInfo> &construction,
+      std::optional<ResolvedCallInfo> &conversion,
+      std::optional<SemanticBorrowDependencySet> &conversionBorrow);
   [[nodiscard]] SemanticType
   analyzeTryablePropagation(const Unary &expr, const SemanticType &operandType);
   void reportConformanceError(const Token &site, std::string message,
@@ -5977,9 +5985,22 @@ private:
   [[nodiscard]] bool isMutexLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
+  struct TextViewOverload {
+    const CallableCandidate *candidate;
+    std::vector<std::size_t> ephemeralBorrowArguments;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
+  };
+
+  [[nodiscard]] std::vector<CallableCandidate>
+  textViewAdapters(std::string_view name, std::string_view libraryUnit) const;
+  [[nodiscard]] std::vector<CallableCandidate>
+  textViewMemberFactories(std::string_view member) const;
   [[nodiscard]] std::optional<CallableCandidate>
-  textViewMemberFactory(std::string_view member,
-                        std::optional<std::size_t> inputs = {}) const;
+  textViewMemberFactory(std::string_view member) const;
+  [[nodiscard]] std::vector<TextViewOverload>
+  matchTextViewOverloads(std::span<const CallableCandidate> candidates,
+                         std::span<const ExprPtr *const> inputs,
+                         std::span<const SemanticType> types);
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 
@@ -7031,6 +7052,12 @@ private:
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
 
+  [[nodiscard]] static bool
+  isContextualIntegerArithmetic(const Expr *expression);
+  SemanticType
+  materializeContextualIntegerArithmetic(const Expr &expression,
+                                         const SemanticType &target);
+
   // A written integer literal with a numeric suffix (`10u8`), optionally
   // parenthesized and optionally carrying one sign. Its type is the suffix
   // type; it never adopts a contextual type.
@@ -7095,6 +7122,9 @@ private:
     bool negative = false;
     std::uint64_t magnitude = 0;
   };
+
+  [[nodiscard]] std::optional<IntegerConstant>
+  contextualIntegerConstant(const Expr *expression);
 
   [[nodiscard]] static bool integerFits(SemanticType type,
                                         IntegerConstant value);
@@ -7253,15 +7283,12 @@ private:
     SemanticCatalog(const SemanticCatalog &other);
     SemanticCatalog &operator=(const SemanticCatalog &other);
     void rebindCallables(Symbol &symbol) const;
+    template <typename Visit> void forEachSymbol(Visit visit);
     void rebindCallables();
 
     void clear() { *this = SemanticCatalog{}; }
     [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
-    void seal() {
-      assert(!sealed);
-      sealedShape = shape();
-      sealed = true;
-    }
+    void seal();
 
     void assertUnchangedSinceSeal() const {
       assert(sealed);

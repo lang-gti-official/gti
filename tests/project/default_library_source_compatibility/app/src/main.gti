@@ -1,0 +1,2 @@
+import util;
+int main() { Number n = value(); return n == meaning && n == 42 ? 0 : 1; }

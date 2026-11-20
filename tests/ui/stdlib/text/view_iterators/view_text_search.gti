@@ -1,0 +1,22 @@
+// Counted views search embedded NULs and borrow owning needles for the call.
+//@ run-pass
+import std.string;
+import std.string_view;
+
+int main() {
+  std::string owner{"gti\0gti!"};
+  std::string_view text = owner.view();
+  mut std::string needle{"gti"};
+  if (text.find(needle) != 0 || text.find(needle, 1) != 4) { return 1; }
+  if (text.rfind(needle) != 4 || text.rfind(needle, 3) != 0) { return 2; }
+  if (!text.contains(needle) || !text.starts_with(needle) || text.ends_with(needle)) { return 3; }
+  if (text.find(std::string("ti!")) != 5) { return 4; }
+  needle.clear();
+  if (text.find('\0') != 3 || text.find("gti\0g") != 0) { return 5; }
+  if (text.find('g', 1) != 4 || text.rfind('g', 3) != 0) { return 6; }
+  if (text.find("", 8) != 8 || text.find("", 9) != std::string_view::npos) { return 7; }
+  if (text.rfind("", 99) != 8 || text.rfind("gti", 99) != 4) { return 8; }
+  if (!text.contains('\0') || !text.starts_with("") || !text.ends_with('!')) { return 9; }
+  if (text.contains('z') || text.starts_with("gti\0gti!?") || text.ends_with("gti\0gti!?")) { return 10; }
+  return 0;
+}

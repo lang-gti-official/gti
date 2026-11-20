@@ -1,0 +1,10 @@
+// Recursive overlap equations without a finite type do not conflict.
+concept reading<A, B> { int read(A a, B b); };
+struct Box<T> { T value; Box(T value) : value(std::move(value)) {} };
+for <T> concept reading<T, Box<T>> {
+  int read(T a, Box<T> b) { return 1; }
+};
+for <T> concept reading<Box<T>, T> {
+  int read(Box<T> a, T b) { return 2; }
+};
+int main() { return reading<int, Box<int>>::read(1, Box<int>(2)) - 1; }

@@ -5635,9 +5635,12 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
                                                     SymbolId field) {
   if (!program || !type || type->kind != SemanticType::Class)
     return nullptr;
-  const auto record = std::find_if(
-      program->classInstances().begin(), program->classInstances().end(),
-      [&](const auto &candidate) { return candidate.type == *type; });
+  const auto record =
+      std::find_if(program->classInstances().begin(),
+                   program->classInstances().end(), [&](const auto &candidate) {
+                     return candidate.type.classId == type->classId &&
+                            candidate.type == *type;
+                   });
   if (record == program->classInstances().end() ||
       record->kind == ClassKind::Union ||
       record->compilerCapability != CompilerCapabilityTypeKind::None)

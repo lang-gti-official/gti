@@ -1196,6 +1196,13 @@ public:
   lower(const Program &source, const SemanticModel &semantics,
         SemanticInstanceProvider &instanceProvider);
 
+  // Editor-only projection of one rechecked definition and its called bodies.
+  // The old declaration keeps its identity; only its parsed block is replaced.
+  [[nodiscard]] HirLoweringResult
+  lowerEditedFunction(const SemanticModel &model,
+                      SemanticInstanceProvider &provider, FunctionId root,
+                      const BlockStmt &changed);
+
   // Staged execution only: lower a completed function/method/constructor root
   // and its closure without publishing whole-program initialization or entry.
   // The result deliberately has no whole-program analysis seal and cannot

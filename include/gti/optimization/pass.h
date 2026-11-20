@@ -118,6 +118,11 @@ private:
 // interior MIR pointers survive invalidation.
 class MirBodyAnalysisManager {
 public:
+  // Checks all program contracts. An optimizer-owned manager can reuse local
+  // body checks from its immutable, successfully verified input.
+  [[nodiscard]] MirVerificationResult
+  verifyEditedProgram(const MirProgram &candidate) const;
+
   [[nodiscard]] std::size_t revision(MirBodyAddress address) const;
 
   [[nodiscard]] const MirCfgAnalysis *cfg(const MirProgram &program,
@@ -166,6 +171,8 @@ private:
   [[nodiscard]] const Entry *findEntry(MirBodyAddress address) const;
   [[nodiscard]] bool accepts(const MirProgram &program);
 
+  friend class OptimizationPipeline;
+  const MirProgram *verifiedInput = nullptr;
   const MirProgram *programIdentity = nullptr;
   std::size_t programRevision = 0;
   std::size_t closedCallSafetyRevision = 0;

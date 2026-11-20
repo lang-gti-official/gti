@@ -187,6 +187,13 @@ LimitArgument parseLimitArgument(int argc, char *argv[], int &index,
 }
 
 struct Options {
+  std::optional<unsigned> codegenUnits;
+  std::optional<unsigned> codegenThreads;
+
+  lang::LlvmCodegenUnits codegenPolicy() const {
+    return {codegenUnits.value_or(1), codegenThreads.value_or(0)};
+  }
+
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   lang::CompileLimitOverrides compileLimits;
   std::optional<bool> rawPointerAuditLibraryFindings;
@@ -245,6 +252,13 @@ enum class ProjectCommand {
 };
 
 struct ProjectOptions {
+  std::optional<unsigned> codegenUnits;
+  std::optional<unsigned> codegenThreads;
+
+  lang::LlvmCodegenUnits codegenPolicy() const {
+    return {codegenUnits.value_or(1), codegenThreads.value_or(0)};
+  }
+
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   lang::CompileLimitOverrides compileLimits;
   std::optional<bool> rawPointerAuditLibraryFindings;
@@ -427,6 +441,10 @@ void printUsage(std::ostream &stream) {
          "-Wno-unused-mut).\n"
          "      --disable-warning <group>\n"
          "                       Disable a warning group; may be repeated.\n"
+         "      --codegen-units <N>  Split LLVM machine-code generation "
+         "(default 1).\n"
+         "      --codegen-threads <N>  Bound workers independently of unit "
+         "count.\n"
          "      --time-trace <path>  Write a compile-time profile as Chrome "
          "Trace JSON.\n"
          "      --dump-mir-before <path>\n"
@@ -485,6 +503,9 @@ void printUsage(std::ostream &stream) {
          "      --format <mode> Test results: human (default), json (JSON "
          "Lines).\n"
          "      --std <version>  Override c++20 or c++23.\n"
+         "      --codegen-units <N>  Split LLVM machine-code generation "
+         "(default 1).\n"
+         "      --codegen-threads <N>  Bound code generation workers.\n"
          "      --backend <name> Select llvm or cpp for executable builds "
          "(default: llvm on arm64 macOS and x86_64 Linux, cpp elsewhere).\n"
          "      --execution-profile <name>\n"
@@ -694,6 +715,26 @@ defaultNativeHeaderPath(const std::filesystem::path &input) {
   return input.parent_path() / (input.stem().string() + ".native.h");
 }
 
+bool parseCodegenCount(std::string_view flag, int argc, char *argv[],
+                       int &index, std::optional<unsigned> &count) {
+  if (count || ++index >= argc) {
+    std::cerr << "gti: " << flag << " requires exactly one count\n";
+    return false;
+  }
+  const std::string_view text = argv[index];
+  unsigned value = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc{} || end != text.data() + text.size() || value == 0 ||
+      value > lang::maxLlvmCodegenUnits) {
+    std::cerr << "gti: " << flag << " requires a whole number from 1 to "
+              << lang::maxLlvmCodegenUnits << '\n';
+    return false;
+  }
+  count = value;
+  return true;
+}
+
 ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   for (int index = 1; index < argc; ++index) {
     const auto progress = parseProgressArgument(argc, argv, index);
@@ -744,6 +785,13 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.cxx = argv[index];
+      continue;
+    }
+    if (argument == "--codegen-units" || argument == "--codegen-threads") {
+      auto &count = argument == "--codegen-units" ? options.codegenUnits
+                                                  : options.codegenThreads;
+      if (!parseCodegenCount(argument, argc, argv, index, count))
+        return ArgumentResult::ExitFailure;
       continue;
     }
     if (argument == "--backend") {
@@ -987,6 +1035,14 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
        options.emitLlvm || options.emitBorrowDependencies)) {
     std::cerr << "gti: --backend selects executable generation and cannot be "
                  "combined with an explicit emission mode\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if ((options.codegenUnits || options.codegenThreads) &&
+      ((options.backendSelected && options.backend == lang::BackendKind::Cpp) ||
+       options.emitCpp || options.emitMir || options.emitNativeHeader ||
+       options.emitBorrowDependencies) &&
+      !options.emitLlvm) {
+    std::cerr << "gti: code generation units require LLVM output\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.backend == lang::BackendKind::Llvm && options.keepCpp) {
@@ -1369,6 +1425,13 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.cc = argv[index];
       continue;
     }
+    if (argument == "--codegen-units" || argument == "--codegen-threads") {
+      auto &count = argument == "--codegen-units" ? options.codegenUnits
+                                                  : options.codegenThreads;
+      if (!parseCodegenCount(argument, argc, argv, index, count))
+        return ArgumentResult::ExitFailure;
+      continue;
+    }
     if (argument == "--backend") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --backend is not valid for gti "
@@ -1585,6 +1648,12 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       return ArgumentResult::ExitFailure;
     }
     options.target = argument;
+  }
+  if ((options.codegenUnits || options.codegenThreads) &&
+      (!buildsExecutable(options.command) || options.emitMir ||
+       options.noBuild || options.backend == lang::BackendKind::Cpp)) {
+    std::cerr << "gti: code generation units require an LLVM build\n";
+    return ArgumentResult::ExitFailure;
   }
   if (options.emitMir && options.keepCpp.value_or(false)) {
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
@@ -2770,6 +2839,7 @@ int runDirect(const Options &options, const char *driver) {
                   {}, {},
                   options.rawPointerAuditLibraryFindings.value_or(false))
                   .withBackend(backend)
+                  .withLlvmCodegenUnits(options.codegenPolicy())
                   .withCompileLimits(
                       lang::resolveCompileLimits({}, options.compileLimits)),
               toolchain, generatedSource, options.output,
@@ -2980,18 +3050,26 @@ int buildProjectPlan(
     DiagnosticSummary *capturedDiagnostics = nullptr,
     std::vector<std::string> *capturedTestCases = nullptr,
     lang::driver::CompiledLibrarySnapshots *selectedLibraries = nullptr,
-    lang::driver::CompiledLibrarySnapshot *capturedLibrary = nullptr) {
+    lang::driver::ProjectLibrarySnapshot *capturedLibrary = nullptr,
+    std::filesystem::path *unsupportedLibrary = nullptr) {
   lang::driver::CompiledLibrarySnapshots localLibraries;
   auto &libraries = selectedLibraries ? *selectedLibraries : localLibraries;
   for (const auto &dependency : plan.compiledBuildDependencies()) {
-    lang::driver::CompiledLibrarySnapshot artifact;
-    const int status = buildProjectPlan(
-        dependency, options, toolchain, diagnosticSources, driver, nullptr,
-        nullptr, nullptr, &libraries, &artifact);
+    lang::driver::ProjectLibrarySnapshot artifact;
+    const bool optional = std::any_of(
+        plan.compiledImports().begin(), plan.compiledImports().end(),
+        [&](const auto &edge) {
+          return edge.artifact == dependency.output() && edge.automatic;
+        });
+    const int status =
+        buildProjectPlan(dependency, options, toolchain, diagnosticSources,
+                         driver, nullptr, nullptr, nullptr, &libraries,
+                         &artifact, optional ? unsupportedLibrary : nullptr);
     if (status != exitCode(ExitStatus::Success))
       return status;
     try {
-      libraries.retain(dependency.output(), std::move(artifact));
+      libraries.retain(dependency.output(), std::move(artifact.bytes),
+                       std::move(artifact.sourceFiles));
     } catch (const std::exception &error) {
       std::cerr << "gti: compiled library: " << error.what() << '\n';
       return exitCode(ExitStatus::Compilation);
@@ -2999,6 +3077,10 @@ int buildProjectPlan(
   }
   if (plan.compiledLibrary() &&
       (!plan.buildScripts().empty() || !plan.bindgenImports().empty())) {
+    if (unsupportedLibrary && capturedLibrary) {
+      *unsupportedLibrary = plan.manifestPath();
+      return exitCode(ExitStatus::Usage);
+    }
     std::cerr << "gti: compiled library producers do not support native build "
                  "scripts or bindgen imports in this profile\n";
     return exitCode(ExitStatus::Usage);
@@ -3133,6 +3215,7 @@ int buildProjectPlan(
                   plan.declaredConfigurationFlags(),
                   plan.rawPointerAuditLibraryFindings())
                   .withBackend(plan.backend())
+                  .withLlvmCodegenUnits(options.codegenPolicy())
                   .withCompileLimits(plan.compileLimits()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
@@ -3143,6 +3226,15 @@ int buildProjectPlan(
               plan.compiledLibrary(), std::nullopt, std::move(imports)),
           progress.observer());
   progress.suspend();
+  if (unsupportedLibrary && !result.sourceFallbackManifest.empty()) {
+    *unsupportedLibrary = result.sourceFallbackManifest;
+    return exitCode(ExitStatus::Compilation);
+  }
+  if (unsupportedLibrary && capturedLibrary &&
+      result.libraryInterfaceNeedsSource) {
+    *unsupportedLibrary = plan.manifestPath();
+    return exitCode(ExitStatus::Compilation);
+  }
   const int status = reportBuildResult(
       result, options.verbose, options.testJson ? std::cerr : std::cout);
   if (capturedDiagnostics != nullptr) {
@@ -3155,7 +3247,8 @@ int buildProjectPlan(
     *capturedTestCases = result.compilation.testCases;
   }
   if (capturedLibrary != nullptr && result.succeeded())
-    *capturedLibrary = result.compiledLibrarySnapshot;
+    *capturedLibrary = {result.compiledLibrarySnapshot,
+                        result.compiledSourceFiles};
   progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }
@@ -3203,9 +3296,12 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   const std::size_t targetCount = resolution.plans.size();
   const unsigned hardwareJobs =
       std::max(1u, std::thread::hardware_concurrency());
-  const std::size_t boundedJobs = std::min<std::size_t>(
-      targetCount,
-      options.jobs ? static_cast<std::size_t>(*options.jobs) : hardwareJobs);
+  const unsigned requestedJobs =
+      options.jobs ? static_cast<unsigned>(*options.jobs) : hardwareJobs;
+  const unsigned jobBudget = options.codegenPolicy().units > 1
+                                 ? std::min(requestedJobs, hardwareJobs)
+                                 : requestedJobs;
+  const std::size_t boundedJobs = std::min<std::size_t>(targetCount, jobBudget);
   if (options.verbose) {
     std::cerr << "gti: building " << targetCount << " targets with "
               << boundedJobs << " parallel jobs\n";
@@ -3243,6 +3339,17 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (options.standard) {
       command.emplace_back("--std");
       command.emplace_back(lang::cli::cppStandardName(*options.standard));
+    }
+    if (options.codegenUnits || options.codegenThreads) {
+      const auto codegen = options.codegenPolicy();
+      const unsigned budget =
+          std::max(1u, hardwareJobs / static_cast<unsigned>(boundedJobs));
+      command.emplace_back("--codegen-units");
+      command.push_back(std::to_string(codegen.units));
+      command.emplace_back("--codegen-threads");
+      command.push_back(std::to_string(
+          codegen.threads == 0 ? std::min(budget, codegen.units)
+                               : std::min(budget, codegen.threads)));
     }
     if (options.backend) {
       command.emplace_back("--backend");
@@ -3465,7 +3572,10 @@ bool searchedByPath(const std::filesystem::path &directory) {
   }
 }
 
-int runProject(const ProjectOptions &options, const char *driver) {
+int runProjectAttempt(
+    const ProjectOptions &options, const char *driver,
+    const std::vector<std::filesystem::path> &sourceOnlyLibraries,
+    std::filesystem::path &unsupportedLibrary) {
   const std::optional<std::filesystem::path> currentDirectory =
       projectDirectory(options);
   if (!currentDirectory) {
@@ -3473,6 +3583,10 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   lang::driver::ProjectBuildOverrides overrides;
+  overrides.automaticLibraries = options.command != ProjectCommand::Check &&
+                                 !options.emitMir && !options.buildReport &&
+                                 options.codegenPolicy().units == 1;
+  overrides.sourceOnlyLibraries = sourceOnlyLibraries;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
@@ -3627,7 +3741,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
         plan.compiledLibrary() || !plan.compiledImports().empty()
             ? lang::driver::checkCompiledScalarProject(plan, toolchain,
                                                        progress.observer())
-            : lang::driver::checkCompilation(
+            : lang::driver::checkWithStandardLibraries(
                   lang::driver::CompilationRequest(
                       plan.entry(), toolchain.standardLibrary, plan.target(),
                       plan.optimization(), plan.cppStandard(),
@@ -3638,7 +3752,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
                       plan.rawPointerAuditLibraryFindings())
                       .forExecutable()
                       .withCompileLimits(plan.compileLimits()),
-                  progress.observer());
+                  toolchain.runtimeLibrary, progress.observer());
     progress.suspend();
     if (!result.succeeded()) {
       if (result.driverDiagnostic)
@@ -3664,9 +3778,9 @@ int runProject(const ProjectOptions &options, const char *driver) {
 
   std::optional<lang::driver::BuildProvenance> provenance;
   DiagnosticSummary diagnosticSummary;
-  const int status =
-      buildProjectPlan(plan, options, toolchain, &resolution.sources, driver,
-                       &provenance, &diagnosticSummary);
+  const int status = buildProjectPlan(
+      plan, options, toolchain, &resolution.sources, driver, &provenance,
+      &diagnosticSummary, nullptr, nullptr, nullptr, &unsupportedLibrary);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -3721,6 +3835,26 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return invokeProjectProgram(plan, options, false);
   }
   return exitCode(ExitStatus::Success);
+}
+
+int runProject(const ProjectOptions &options, const char *driver) {
+  std::vector<std::filesystem::path> sourceOnlyLibraries;
+  while (true) {
+    std::filesystem::path unsupported;
+    const int status =
+        runProjectAttempt(options, driver, sourceOnlyLibraries, unsupported);
+    if (unsupported.empty())
+      return status;
+    if (std::find(sourceOnlyLibraries.begin(), sourceOnlyLibraries.end(),
+                  unsupported) != sourceOnlyLibraries.end()) {
+      std::cerr << "gti: failed to resolve source fallback for " << unsupported
+                << '\n';
+      return status;
+    }
+    if (options.verbose)
+      std::cerr << "gti: using source interface for " << unsupported << '\n';
+    sourceOnlyLibraries.push_back(std::move(unsupported));
+  }
 }
 
 // Re-runs the build a recorded report describes and names every recorded

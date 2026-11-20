@@ -4,6 +4,7 @@
 
 #include "build_source_identity.h"
 #include "compiled_scalar_support.h"
+#include "file_digest.h"
 #include "gti/build_identity_config.h"
 #include "gti/llvm_backend.h"
 #include "sha256.h"
@@ -292,44 +293,6 @@ std::string cacheObjectFile(std::size_t index) {
 }
 
 using detail::IdentityBuilder;
-
-struct FileDigest {
-  std::string hash;
-  std::uintmax_t size = 0;
-
-  bool operator==(const FileDigest &) const = default;
-};
-
-std::optional<FileDigest> digestFile(const std::filesystem::path &path,
-                                     std::string &errorMessage) {
-  std::error_code error;
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    errorMessage = "cannot inspect '" + path.string() + "': " + error.message();
-    return std::nullopt;
-  }
-
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    errorMessage = "cannot read '" + path.string() + "'";
-    return std::nullopt;
-  }
-  Sha256 hash;
-  std::array<char, 64 * 1024> buffer{};
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const std::streamsize count = input.gcount();
-    if (count > 0) {
-      hash.update(
-          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-    }
-  }
-  if (!input.eof()) {
-    errorMessage = "cannot finish reading '" + path.string() + "'";
-    return std::nullopt;
-  }
-  return FileDigest{.hash = hash.finishHex(), .size = size};
-}
 
 std::string digestText(std::string_view text) {
   Sha256 hash;
@@ -1484,6 +1447,8 @@ buildCacheKey(const ExecutableBuildRequest &request,
               std::string &policyBypassDetail, bool compilationOnly = false) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
+  if (!inputs.standardLibraryBundleDigest.empty())
+    identity.add("stdlib.bundle", inputs.standardLibraryBundleDigest);
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   if (embeddingBuild(request)) {
@@ -1534,6 +1499,9 @@ buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("llvm.relocation", backend->relocation);
     identity.add("llvm.code-model", backend->codeModel);
     identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.codegen-units",
+                 static_cast<std::uint64_t>(backend->codegenUnits));
+    identity.add("llvm.codegen-partitioner", backend->partitioner);
     identity.add("llvm.debug-info",
                  static_cast<std::uint64_t>(backend->debugInfo));
     identity.add("llvm.instrumentation", backend->instrumentation);
@@ -1569,10 +1537,28 @@ buildCacheKey(const ExecutableBuildRequest &request,
     for (const std::string &path : sourcePaths) {
       identity.add("debug.source-path", path);
     }
-    if (request.compilation().target().os == "macos" &&
-        !addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
-                             errorMessage)) {
-      return std::nullopt;
+    if (request.compilation().target().os == "macos") {
+      if (!addCompilerIdentity(identity, "debug.dsymutil", "dsymutil",
+                               errorMessage))
+        return std::nullopt;
+      if (request.compilation().llvmCodegenUnits().units > 1) {
+        // Apple's strip does not provide --version. Fingerprint both the
+        // system launcher and the tool selected by the active developer root.
+        const ProcessResult selected =
+            invokeProcess({"/usr/bin/xcrun", "--find", "strip"},
+                          {.captureSuccessfulOutput = true});
+        std::string path = selected.output;
+        path.erase(path.find_last_not_of("\r\n") + 1);
+        if (!selected.succeeded() ||
+            !std::filesystem::path(path).is_absolute()) {
+          errorMessage = "cannot resolve Darwin strip for split debug output";
+          return std::nullopt;
+        }
+        if (!addFileIdentity(identity, "debug.strip-launcher", "/usr/bin/strip",
+                             true, errorMessage) ||
+            !addFileIdentity(identity, "debug.strip", path, true, errorMessage))
+          return std::nullopt;
+      }
     }
   }
   identity.add(
@@ -2226,8 +2212,8 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    std::string_view expectedKey, bool object,
-                                   bool requiresSymbols,
-                                   bool embedding = false) {
+                                   bool requiresSymbols, bool embedding,
+                                   unsigned expectedObjects) {
   const std::filesystem::path metadataPath = entry / "metadata";
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
@@ -2260,6 +2246,9 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
+  if (object && metadata->additionalObjects.size() + 1 != expectedObjects)
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "cached object count does not match the requested units"};
   if (metadata->symbols.has_value() != requiresSymbols)
     return {.status = CacheLookupStatus::Corrupt,
             .detail =
@@ -2470,9 +2459,8 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
     errorMessage = "backend artifact does not match the cache schema";
     return false;
   }
-  if (object && (artifact.objects.empty() ||
-                 artifact.objects.size() > maxLlvmCodegenUnits ||
-                 (embeddingBuild(request) && artifact.objects.size() != 1))) {
+  if (object && artifact.objects.size() !=
+                    request.compilation().llvmCodegenUnits().units) {
     errorMessage = "backend object count does not match the cache schema";
     return false;
   }
@@ -4156,9 +4144,23 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
 
   const bool compiledLibrary = request.compiledLibrary().has_value();
   const bool compiledImport = !request.compiledImports().empty();
+  const auto codegen = request.compilation().llvmCodegenUnits();
+  if (codegen.units == 0 || codegen.units > maxLlvmCodegenUnits ||
+      ((codegen.units > 1 || codegen.threads > 0) &&
+       request.compilation().backend() != BackendKind::Llvm) ||
+      (codegen.units > 1 && (library || compiledLibrary ||
+                             request.compilation().llvmInstrumentation() !=
+                                 LlvmInstrumentationMode::None))) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    result.driverDiagnostic = "gti: multiple LLVM code generation units "
+                              "require an uninstrumented hosted executable";
+    return result;
+  }
+
   std::string compiledBundle;
   std::vector<LibraryBundleMember> importedObjects;
   CompilationInputs compilationInputs;
+  std::vector<CompiledScalarImport> standardImports;
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
@@ -4167,7 +4169,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                 ? reusableCompiledScalarLibrarySnapshot(
                       request.compilation(), *request.compiledLibrary(),
                       request.compiledImports(),
-                      request.toolchain().runtimeLibrary, request.output())
+                      request.toolchain().runtimeLibrary, request.output(),
+                      &result.compiledSourceFiles)
                 : CompiledLibrarySnapshot{};
         if (reused) {
           result.status = ExecutableBuildStatus::Success;
@@ -4183,6 +4186,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         auto built = buildCompiledScalarLibraryTarget(
             request.compilation(), *request.compiledLibrary(),
             request.toolchain().runtimeLibrary, request.compiledImports());
+        result.libraryInterfaceNeedsSource = built.interfaceNeedsSource;
+        result.compiledSourceFiles = std::move(built.sourceFiles);
         result.compilation = std::move(built.compilation);
         compiledBundle = std::move(built.bundle);
       } else {
@@ -4192,6 +4197,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         result.compilation = std::move(imported.compilation);
         importedObjects = std::move(imported.objects);
       }
+    } catch (const CompiledLibrarySourceConflict &conflict) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.sourceFallbackManifest = conflict.sourceManifest;
+      result.driverDiagnostic = conflict.what();
+      return result;
     } catch (const std::exception &error) {
       result.status = ExecutableBuildStatus::CompilationFailure;
       result.driverDiagnostic =
@@ -4208,7 +4218,18 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     compilationInputs.sources = result.compilation.sources;
     compilationInputs.sourceValid = true;
   } else {
-    compilationInputs = loadCompilationInputs(request.compilation(), progress);
+    try {
+      auto prepared = loadStandardLibraryInputs(
+          request.compilation(), request.toolchain().runtimeLibrary, progress);
+      compilationInputs = std::move(prepared.compilation);
+      standardImports = std::move(prepared.imports);
+      importedObjects = std::move(prepared.objects);
+    } catch (const std::exception &error) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.driverDiagnostic =
+          "gti: compiled standard library: " + std::string(error.what());
+      return result;
+    }
   }
   if (!compilationInputs.succeeded()) {
     result.compilation = compileToSelectedBackend(
@@ -4347,8 +4368,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
             result.driverDiagnostic = diagnostic;
             return result;
           }
-          if (auto object = readCompilationObjects(*objectEntry, *key, 1,
-                                                   result.cache.warning)) {
+          if (auto object = readCompilationObjects(
+                  *objectEntry, *key, codegen.units, result.cache.warning)) {
             result.compilation.artifact =
                 BackendArtifact{.kind = BackendArtifactKind::Object,
                                 .extension = ".o",
@@ -4407,11 +4428,11 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           return result;
         }
 
-        const CacheLookupResult lookup =
-            lookupCacheEntry(*cacheEntry, *key, object,
-                             request.compilation().debugInfo() &&
-                                 request.compilation().target().os == "macos",
-                             library);
+        const CacheLookupResult lookup = lookupCacheEntry(
+            *cacheEntry, *key, object,
+            request.compilation().debugInfo() &&
+                request.compilation().target().os == "macos",
+            library, request.compilation().llvmCodegenUnits().units);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -4579,9 +4600,15 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!compiledLibrary && !compiledImport && !reusedObject)
-    result.compilation = compileToSelectedBackend(
-        request.compilation(), std::move(compilationInputs), progress);
+  if (!compiledLibrary && !compiledImport && !reusedObject) {
+    if (standardImports.empty())
+      result.compilation = compileToSelectedBackend(
+          request.compilation(), std::move(compilationInputs), progress);
+    else
+      result.compilation = compileWithLibraryImports(
+          request.compilation(), std::move(compilationInputs),
+          std::move(standardImports), progress);
+  }
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =
@@ -5059,6 +5086,22 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         return result;
       }
     }
+    if (backendArtifact.objects.size() > 1) {
+      // dsymutil has consumed the Mach-O debug map. Its OSO records still
+      // name the unique object staging paths, so remove that map before
+      // publishing. The UUID and adjacent dSYM continue to identify the
+      // executable, including after the temporary objects are removed.
+      const ProcessResult stripProcess = invokeProcess(
+          {"/usr/bin/strip", "-S", stagedOutput.string()},
+          {.captureSuccessfulOutput = request.captureSuccessfulNativeOutput()});
+      if (!stripProcess.succeeded()) {
+        result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+        result.driverDiagnostic = "gti: failed to remove staged object paths "
+                                  "from debug executable: " +
+                                  stripProcess.output;
+        return result;
+      }
+    }
     if (const auto diagnostic =
             library ? std::optional<std::string>{}
                     : debugPublication.publish(stagedSymbols, symbols)) {
@@ -5194,8 +5237,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
     }
     if (request.compiledLibrary()) {
       if (auto diagnostic =
-              compiledScalarProducerInputDiagnostic(request.nativeInputs()))
+              compiledScalarProducerInputDiagnostic(request.nativeInputs())) {
+        result.libraryInterfaceNeedsSource = true;
         return rejectCompiled(*diagnostic);
+      }
     }
   }
   if (nativeObjectCache(request)) {

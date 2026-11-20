@@ -32,24 +32,24 @@ public:
   deque_sentinel(size_t limit) : limit(limit) {}
   size_t position() { return this.limit; }
 };
-class deque_iterator<T, uint64_t Reverse = 0> {
-  vector<deque_slot<T>>& slots;
+class deque_iterator<T, uint64_t Reverse = 0, lifetime owner> {
+  vector<deque_slot<T>>&<owner> slots;
   size_t head;
   size_t length;
   mut size_t position;
 public:
-  deque_iterator(vector<deque_slot<T>>& slots, size_t head, size_t length, size_t position)
+  deque_iterator(vector<deque_slot<T>>&<owner> slots, size_t head, size_t length, size_t position)
       : slots(slots), head(head), length(length), position(position) {}
-  T& operator*() {
+  T&<owner> operator*() {
     size_t selected = checked_iterator_element(this.position, size_t(0), this.length, ptrdiff_t(0), Reverse != 0);
     return this.slots[(this.head + selected) % this.slots.size()].get();
   }
-  T& operator->() { return *this; }
+  T&<owner> operator->() { return *this; }
   void operator++() mut {
     this.position = checked_iterator_step<Reverse>(this.position, size_t(0), this.length);
   }
   void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), this.length); }
-  T& operator[](ptrdiff_t offset) {
+  T&<owner> operator[](ptrdiff_t offset) {
     size_t position = checked_iterator_element(this.position, size_t(0), this.length, offset, Reverse != 0);
     return this.slots[(this.head + position) % this.slots.size()].get();
   }

@@ -1,0 +1,7 @@
+// A from operation must return its destination directly, not another result.
+enum Source { failed };
+enum Target { failed };
+for concept std::from<Target, Source> {
+  expected<Target, int> from(Source error) { return Target::failed; }  //~ ERROR GTI-S2123
+};
+int main() { return 0; }

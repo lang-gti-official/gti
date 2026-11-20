@@ -1,0 +1,9 @@
+export module units;
+export namespace units {
+  struct Range { int end; int weight = 2; };
+  using Interval = Range;
+  using Bounds = Interval;
+  enum class Unit { seconds, minutes };
+  using Scale = Unit;
+  int upper(Bounds range) { return range.end * range.weight; }
+}

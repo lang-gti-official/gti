@@ -1,0 +1,6 @@
+// A private library module also imported from source must have one shared counter.
+$ cd app
+$ gti run --verbose
+stderr: using source interface for
+$ gti run --verbose
+stderr: using source interface for

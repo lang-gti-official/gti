@@ -1,0 +1,31 @@
+// A runtime failure inside the converter destroys the residual and caller scope.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: payload
+//@ stdout: scope
+//@ stderr-contains: division_by_zero
+class Owned {
+public:
+  Owned() = default;
+  Owned(Owned& other) = delete;
+  ~Owned() { std::println("payload"); }
+};
+enum Source { failed(Owned payload) };
+enum Target { failed(int code) };
+struct Guard {
+  Guard() = default;
+  ~Guard() { std::println("scope"); }
+};
+int zero() { return 0; }
+for concept std::from<Target, Source> {
+  Target from(Source error) {
+    return Target::failed(42 / zero());
+  }
+};
+expected<int, Source> source() { return unexpected(Source::failed(Owned())); }
+expected<void, Target> target() {
+  Guard guard{};
+  int value = ?source();
+  return;
+}
+int main() { auto result = target(); return 0; }

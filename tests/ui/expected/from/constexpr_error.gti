@@ -1,0 +1,17 @@
+// Expected's error adapter uses the same conversion during constant execution.
+//@ run-pass
+enum Source { failed };
+enum Target { failed };
+for concept std::from<Target, Source> {
+  constexpr Target from(Source error) { return Target::failed; }
+};
+constexpr expected<int, Source> source(bool fail) {
+  if (fail) return unexpected(Source::failed);
+  return 42;
+}
+constexpr expected<int, Target> target(bool fail) { return ?source(fail); }
+static_assert(target(false).value() == 42);
+static_assert(target(true).error() == Target::failed);
+int main() {
+  return target(false).value() == 42 && target(true).error() == Target::failed ? 0 : 1;
+}

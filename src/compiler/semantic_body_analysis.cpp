@@ -295,6 +295,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
+  if (registrationObserver && !hadError())
+    (*registrationObserver)();
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
   recordLifetimeNames(program);
@@ -4929,12 +4931,18 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
   if (buildingPreamble && sourceGraph && leafUnit &&
       !sourceGraph->isCompilerTrusted(leafUnit))
     prefixDemands.emplace(semanticModel, &demandedFunctions);
+  const std::size_t firstDiagnostic = diagnostics.size();
   analyze(statement);
   {
     std::vector<Diagnostic> held = std::move(heldDiagnostics.back());
     heldDiagnostics.pop_back();
     diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
                        std::make_move_iterator(held.end()));
+  }
+  if (entryDiagnosticObserver && heldDiagnostics.empty() && sourceGraph &&
+      leafUnit == sourceGraph->entryUnit() &&
+      diagnostics.size() > firstDiagnostic && unmetBodyDemandList().empty()) {
+    (*entryDiagnosticObserver)(std::span(diagnostics).subspan(firstDiagnostic));
   }
   measureTopLevelStatements = measure;
   if (measure && workMetrics != nullptr) {
@@ -7960,6 +7968,11 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     recordLiteralTextConcatenation(expr);
     return;
   }
+
+  if (leftType == SemanticType::StringView &&
+      rightType != SemanticType::Unknown &&
+      analyzeStringViewComparison(expr, rightType))
+    return;
 
   // An existence-only requirement can establish an operand operation without
   // knowing its result yet. Do not turn a dependent comparison into a bool
@@ -15105,6 +15118,11 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
                               "Compile-time operators require a supported "
                               "receiver call.");
     }
+    // Forwarded operators receive the left operand as their first argument.
+    if (operation->operandArguments) {
+      arguments.insert(arguments.begin(), receiver);
+      receiver = nullptr;
+    }
     const ResolvedCallInfo call{.function = operation->function,
                                 .declaration = operation->declaration,
                                 .returnType = operation->returnType,
@@ -15656,10 +15674,11 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     }
 
     const auto *member = exprAs<Get>(call->callee().get());
+    const ResolvedCallArguments arguments(*call, resolved);
     std::vector<const Expr *> explicitArguments;
-    for (const ExprPtr &argument : call->arguments()) {
-      explicitArguments.push_back(argument.get());
-    }
+    explicitArguments.reserve(arguments.size());
+    for (std::size_t index = 0; index < arguments.size(); ++index)
+      explicitArguments.push_back(arguments[index].get());
     // A member call's evaluation site is its member name: that token names
     // the operation the user wrote and is where a library-internal constant
     // evaluation failure is reported.

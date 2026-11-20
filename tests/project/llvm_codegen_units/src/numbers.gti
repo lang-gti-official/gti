@@ -1,0 +1,2 @@
+export module numbers;
+export int choose(int value) { return value; }

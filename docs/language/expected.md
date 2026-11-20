@@ -2,8 +2,8 @@
 
 GTI uses `expected<T, E>` for recoverable failures. Ordinary function return
 types carry no recoverable error alternative, although execution may still
-raise a defined runtime failure. GTI does not provide exception handling or
-implicit error conversion.
+raise a defined runtime failure. GTI does not provide exception handling. Error propagation may apply an
+explicitly registered `std::from` conversion on its failure path.
 
 `expected` is an ordinary source-defined class family in the implicit prelude,
 not a reserved type expression. It deliberately remains a global name rather
@@ -231,12 +231,40 @@ expected<void, std::string_view> initialise_all(bool fail) {
 }
 ```
 
-For an operand of type `expected<T, E>`, the enclosing callable must return
-`expected<U, E>` with the exact same `E`. The operand is evaluated once. On
-success, `?operand` produces its `T` value (or completes as `void`); on error,
-the callable immediately returns `unexpected(error)` after cleaning up the
-live full-expression and lexical obligations on that path. Propagation never
-performs an implicit error conversion.
+For an operand of type `expected<T, E>`, an enclosing callable returning
+`expected<U, E>` propagates the error directly. If it returns `expected<U, F>`,
+a declared `std::from<F, E>` conformance supplies the conversion. The operand
+is evaluated once. On success, `?operand` produces its `T` value (or completes
+as `void`); no conversion runs. On error, it consumes the error, converts it
+when necessary, and returns the failure after cleaning up the live
+full-expression and lexical obligations on that path.
+
+The prelude declares `concept from<To, From> { To from(From value); };`.
+It is a consuming conversion, called explicitly as
+`std::from<To, From>::from(value)` or selected during propagation. It does not
+add implicit conversions to assignments or ordinary function arguments.
+The operation returns `To` directly; a conversion that can return a recoverable
+failure needs explicit handling. Its ordinary runtime failure and cleanup rules
+still apply. Conversion does not require boxing, dynamic dispatch or allocation.
+
+```gti
+enum ReadError { missing };
+enum AppError { read(ReadError cause) };
+for concept std::from<AppError, ReadError> {
+  AppError from(ReadError error) { return AppError::read(error); }
+};
+expected<int, ReadError> load() { return unexpected(ReadError::missing); }
+expected<int, AppError> run() { return ?load(); }
+```
+
+Constrained generic blocks such as
+`for <E> concept std::from<AppError, E> requires described_error<E>` can supply
+one policy for several source errors. The usual conformance ownership and
+overlap rules apply: constraints do not rank overlapping registrations. Missing
+conversions are errors, and propagation never searches conversion chains.
+There is no blanket `std::from<T, T>` block that would overlap these families;
+unchanged error propagation already has a direct path. Context specific to an
+operation still belongs in explicit `transform_error` or application helpers.
 
 Other types propagate with the same operator through the prelude's
 `std::tryable` protocol concept
@@ -258,8 +286,13 @@ Status total() {
 }
 ```
 
-The enclosing return type receives the residual as `R result = residual;`
-would, so `Status` above declares `implicit Status(Rejected rejected)`. The
+The enclosing return type first receives an identical residual directly, or
+uses its existing exact implicit residual constructor, so `Status` above
+declares `implicit Status(Rejected rejected)`. Otherwise a declared
+`std::from<R, Residual>` supplies one conversion to the enclosing return type.
+The prelude's source-defined adapter from `unexpected_value<E>` to
+`expected<U, F>` delegates to `std::from<F, E>`; the compiler does not recognize
+those wrappers by name. The
 operand is passed like a by-value argument: unlike `expected`, a named place
 is copied whole, and a named move-only operand needs `std::move`. A
 `void` `value_type` makes `?operand` a statement. See

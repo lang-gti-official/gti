@@ -36,6 +36,11 @@ llvmInstrumentationModeName(LlvmInstrumentationMode mode);
 
 // Policy for the native LLVM backend. LLVM implementation types stay private
 // to the backend translation unit so installed GTI headers remain LLVM-free.
+struct LlvmCodegenUnits {
+  unsigned units = 1;
+  unsigned threads = 0; // Resolve from hardware concurrency when unspecified.
+};
+
 struct LlvmBackendOptions {
   LlvmCodegenOptimization optimization = LlvmCodegenOptimization::None;
   bool debugInfo = false;
@@ -45,6 +50,10 @@ struct LlvmBackendOptions {
   // GTI's own MIR optimization and the selected LLVM pipeline. Inspection only;
   // never part of object-cache identity.
   bool textualIr = false;
+  LlvmCodegenUnits codegen;
+  // Emit distributed library objects for the platform baseline. Ordinary
+  // native compilations retain their host's deployment target.
+  bool distributedLibrary = false;
 };
 
 // Resolved producer facts for whole-program object caches. LLVM types remain
@@ -62,6 +71,8 @@ struct LlvmBackendIdentity {
   std::uint64_t relocation = 0;
   std::uint64_t codeModel = 0;
   std::uint64_t codegenOptimization = 0;
+  unsigned codegenUnits = 1;
+  std::string partitioner;
   bool debugInfo = false;
   std::string instrumentation;
 };

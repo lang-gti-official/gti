@@ -701,6 +701,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   std::shared_ptr<const std::vector<Token>> lexedTokens;
   std::optional<LoadedLexicalUnit> lexical;
   if (!processed) {
+    std::string deferredText;
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
     if (isEntry && entrySource && !entrySourceConsumed) {
@@ -710,6 +711,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     } else if (const auto override = sourceOverrides->find(key);
                override != sourceOverrides->end()) {
       exactSource = override->second;
+    } else if (const auto found = deferredSources.find(key);
+               found != deferredSources.end()) {
+      deferredText = found->second();
+      exactSource = deferredText;
     }
     std::uint64_t generation = 0;
     if (sourceGenerations != nullptr) {
@@ -1286,6 +1291,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
     const bool hasLocal = owner && local != owner->modules.end();
     const SourceOwnerDescriptor *target =
         sourceOwners->findImplicitAlias(names.front());
+    std::string selectedModule;
     if (owner) {
       const auto dependency = std::find_if(
           owner->dependencies.begin(), owner->dependencies.end(),
@@ -1295,13 +1301,16 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
           return reject("Dependency alias '" + names.front() +
                         "' conflicts with a configured source owner.");
         target = packageByIdentity(dependency->targetIdentity);
+        selectedModule = dependency->defaultModule;
         if (!target)
           return reject(
               "Imported source owner is absent from the resolved graph.");
       }
     }
     const std::string dependencyName =
-        target && names.size() == 1 ? target->defaultModule : joinNames(1);
+        target && names.size() == 1
+            ? (selectedModule.empty() ? target->defaultModule : selectedModule)
+            : joinNames(1);
     const std::pair<std::string, std::filesystem::path> *dependencyModule =
         nullptr;
     if (target) {
@@ -1352,7 +1361,8 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   sourceImport.lookupPath = path;
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error) &&
-      !sourceOverrides->contains(path.string())) {
+      !sourceOverrides->contains(path.string()) &&
+      !deferredSources.contains(path.string())) {
     const auto *targetOwner = packageForPath(path);
     if (targetOwner && targetOwner->kind == SourceOwnerKind::Generated)
       return reject(

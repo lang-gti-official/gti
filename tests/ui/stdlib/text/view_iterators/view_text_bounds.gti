@@ -1,0 +1,20 @@
+// Checked view access diagnoses empty and invalid positions at runtime.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0007]
+//@ stderr-contains: in string_view
+//@ revisions: front back negative at_end
+//@[back] args: back
+//@[negative] args: negative position
+//@[at_end] args: at end position
+import std.string;
+import std.string_view;
+import std.vector;
+
+int main(int argc, std::vector<std::string> argv) {
+  std::string_view empty = "";
+  if (argc == 1) { return empty.front() == 'a' ? 0 : 1; }
+  if (argc == 2) { return empty.back() == 'a' ? 0 : 1; }
+  if (argc == 3) { return "a".at(-1) == 'a' ? 0 : 1; }
+  return empty.at(empty.size()) == 'a' ? 0 : 1;
+}

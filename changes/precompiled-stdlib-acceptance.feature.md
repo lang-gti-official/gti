@@ -1,0 +1,1 @@
+The Linux x64 and macOS arm64 toolchains ship precompiled runtime functions for `std.cmath`. Ordinary dev and release projects reuse the matching bundle, while `std::abs` remains available to constant expressions.

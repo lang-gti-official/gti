@@ -1,5 +1,6 @@
 #include "gti/driver/compilation.h"
 
+#include "compilation_pipeline.h"
 #include "gti/driver/borrow_dependencies.h"
 
 #ifndef GTI_HAS_CPP_BACKEND
@@ -102,11 +103,18 @@ FrontendResult analyze(const CompilationRequest &request,
   return finish(std::move(result));
 }
 
-CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
+} // namespace
+
+FrontendResult detail::analyzeForArtifact(const CompilationRequest &request,
                                           CompilationInputs inputs,
-                                          Backend &backend,
                                           ProgressObserver *progress) {
-  FrontendResult frontend = analyze(request, std::move(inputs), progress, true);
+  return analyze(request, std::move(inputs), progress, true);
+}
+
+CompilationResult detail::generateArtifact(const CompilationRequest &request,
+                                           FrontendResult frontend,
+                                           Backend &backend,
+                                           ProgressObserver *progress) {
   CompilationResult result;
   result.testCases = std::move(frontend.testCases);
   if (!frontend.canGenerateCode()) {
@@ -244,8 +252,6 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   return result;
 }
 
-} // namespace
-
 CompilationRequest::CompilationRequest(
     std::filesystem::path entry, StandardLibraryLayout standardLibrary,
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
@@ -377,10 +383,24 @@ CompilationRequest CompilationRequest::withLlvmInstrumentation(
   return result;
 }
 
+CompilationRequest CompilationRequest::withPackageSources(
+    std::vector<PackageSourceRoot> roots) const {
+  auto copy = *this;
+  copy.packageSourceRootSet = std::move(roots);
+  return copy;
+}
+
 CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress,
     const std::unordered_map<std::string, std::string> &overrides) {
   SourceLoader sourceLoader;
+  return loadCompilationInputs(request, sourceLoader, progress, overrides);
+}
+
+CompilationInputs loadCompilationInputs(
+    const CompilationRequest &request, SourceLoader &sourceLoader,
+    ProgressObserver *progress,
+    const std::unordered_map<std::string, std::string> &overrides) {
   sourceLoader.setErrorLimit(request.compileLimits().errorLimit);
   CompilationInputs inputs;
   std::vector<std::filesystem::path> preludes{
@@ -414,20 +434,29 @@ CompilationInputs loadCompilationInputs(
 CompilationResult compileWithBackend(const CompilationRequest &request,
                                      Backend &backend,
                                      ProgressObserver *progress) {
-  return compileWithLoadedInputs(
-      request, loadCompilationInputs(request, progress), backend, progress);
+  return compileWithBackend(request, loadCompilationInputs(request, progress),
+                            backend, progress);
 }
 
 CompilationResult compileWithBackend(const CompilationRequest &request,
                                      CompilationInputs inputs, Backend &backend,
                                      ProgressObserver *progress) {
-  return compileWithLoadedInputs(request, std::move(inputs), backend, progress);
+  return detail::generateArtifact(
+      request, detail::analyzeForArtifact(request, std::move(inputs), progress),
+      backend, progress);
 }
 
 CheckResult checkCompilation(const CompilationRequest &request,
                              ProgressObserver *progress) {
-  FrontendResult frontend = analyze(
-      request, loadCompilationInputs(request, progress), progress, false);
+  return checkCompilation(request, loadCompilationInputs(request, progress),
+                          progress);
+}
+
+CheckResult checkCompilation(const CompilationRequest &request,
+                             CompilationInputs inputs,
+                             ProgressObserver *progress) {
+  FrontendResult frontend =
+      analyze(request, std::move(inputs), progress, false);
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);
@@ -491,7 +520,8 @@ llvmCodegenOptimization(OptimizationLevel optimization) {
 LlvmBackendOptions llvmBackendOptions(const CompilationRequest &request) {
   return {.optimization = llvmCodegenOptimization(request.optimization()),
           .debugInfo = request.debugInfo(),
-          .instrumentation = request.llvmInstrumentation()};
+          .instrumentation = request.llvmInstrumentation(),
+          .codegen = request.llvmCodegenUnits()};
 }
 
 namespace {
@@ -519,8 +549,8 @@ CompilationResult compileToSelectedBackend(const CompilationRequest &request,
                                            CompilationInputs inputs,
                                            ProgressObserver *progress) {
   std::unique_ptr<Backend> backend = selectedBackend(request);
-  return compileWithLoadedInputs(request.withDefinitionClosure(),
-                                 std::move(inputs), *backend, progress);
+  return compileWithBackend(request.withDefinitionClosure(), std::move(inputs),
+                            *backend, progress);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
@@ -530,8 +560,8 @@ CompilationResult compileToCpp(const CompilationRequest &request,
     throw std::invalid_argument(
         "LLVM instrumentation requires the LLVM backend");
   const std::unique_ptr<Backend> backend = makeCppBackend(request);
-  return compileWithLoadedInputs(request.withDefinitionClosure(),
-                                 std::move(inputs), *backend, progress);
+  return compileWithBackend(request.withDefinitionClosure(), std::move(inputs),
+                            *backend, progress);
 }
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request,
