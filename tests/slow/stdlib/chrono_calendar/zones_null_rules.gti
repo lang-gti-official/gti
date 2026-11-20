@@ -1,5 +1,7 @@
 // The internal owning factory reports an empty rules handle before dereferencing it.
 //@ run-pass
+//@ slow
+//@ reason: Zone-rules ownership integration took 12.60 CPU seconds on Linux CI, above the fast-tier budget.
 //@ stdlib-overlay: std/chrono_rules_probe.gti
 // --- main.gti
 import std.chrono_rules_probe;
