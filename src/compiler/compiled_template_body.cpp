@@ -879,11 +879,20 @@ StmtPtr readStmt(Input &in) {
         auto label = get<Token>(in);
         auto colon = get<Token>(in);
         auto value = getMaybe<ExprPtr>(in);
-        if (colon.kind != TokenKind::COLON ||
-            (label.kind != TokenKind::CASE &&
-             label.kind != TokenKind::DEFAULT) ||
-            (label.kind == TokenKind::CASE) != bool(value))
-          invalid("invalid switch label");
+        if (keyword.kind == TokenKind::IF && !value) {
+          if ((label.kind != TokenKind::ELSE &&
+               label.kind != TokenKind::RIGHT_PAREN) ||
+              colon.kind != TokenKind::RIGHT_PAREN)
+            invalid("invalid if case fallback");
+        } else {
+          const auto separator = keyword.kind == TokenKind::IF
+                                     ? TokenKind::EQUAL
+                                     : TokenKind::COLON;
+          const auto expectedLabel =
+              value ? TokenKind::CASE : TokenKind::DEFAULT;
+          if (label.kind != expectedLabel || colon.kind != separator)
+            invalid("invalid switch label");
+        }
         arm.labels.push_back(
             {std::move(label), std::move(value), std::move(colon)});
       }

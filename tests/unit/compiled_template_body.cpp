@@ -74,6 +74,7 @@ int total<T>(T& values, int offset) {
   mut int answer = 0;
   auto add = [offset](int value) -> int { return value + offset; };
   for (auto& value : values) {
+    if (case Period::seconds(auto& seconds) = value) { return seconds; }
     switch (value) {
     case 0: continue;
     default: answer += add(value);

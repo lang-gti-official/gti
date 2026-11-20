@@ -4494,7 +4494,8 @@ private:
            .binding = consumedSubject,
            .value = subject,
            .switchArms = std::move(arms),
-           .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement)},
+           .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement),
+           .conditionalPattern = switchStatement->isIfCase()},
           body);
     }
     if (const auto *structured = stmtAs<StructuredBindingDecl>(statement)) {
