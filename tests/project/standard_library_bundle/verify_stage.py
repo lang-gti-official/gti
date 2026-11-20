@@ -35,6 +35,7 @@ def verify(stage):
                         target = b"arm64-apple-macosx11.0.0"
                         if stream.read(4 + len(target)) != struct.pack("<I", len(target)) + target:
                             raise RuntimeError(f"{bundle} must target the macOS arm64 baseline across OS updates")
+        (stdlib / "std/array.gti").unlink()
         (stdlib / "std/cmath.gti").unlink()
         (stdlib / "std/detail/random_engine.gti").unlink()
         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib),
@@ -56,6 +57,11 @@ def verify(stage):
             elif result.returncode == 0 or rejection not in output:
                 raise RuntimeError(f"expected {rejection!r} from {arguments}\n{output}")
 
+        for profile in ([], ["--release"]):
+            run("check", *profile)
+            run("run", *profile)
+        # The producer was staged before this application's type existed.
+        shutil.copyfile(fixture / "array_consumer.gti", source)
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
