@@ -879,7 +879,11 @@ StmtPtr readStmt(Input &in) {
         auto label = get<Token>(in);
         auto colon = get<Token>(in);
         auto value = getMaybe<ExprPtr>(in);
-        if (colon.kind != TokenKind::COLON ||
+        const TokenKind separator =
+            keyword.kind != TokenKind::IF   ? TokenKind::COLON
+            : label.kind == TokenKind::CASE ? TokenKind::EQUAL
+                                            : TokenKind::DEFAULT;
+        if (colon.kind != separator ||
             (label.kind != TokenKind::CASE &&
              label.kind != TokenKind::DEFAULT) ||
             (label.kind == TokenKind::CASE) != bool(value))

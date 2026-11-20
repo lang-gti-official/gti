@@ -2952,6 +2952,7 @@ public:
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  [[nodiscard]] bool isIfCase() const { return keyword_.kind == TokenKind::IF; }
   [[nodiscard]] const std::vector<SwitchArm> &arms() const { return arms_; }
   [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
   // The written C++17 init statement of `switch (init; subject)`.

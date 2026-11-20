@@ -3814,11 +3814,38 @@ private:
   }
 
   StmtPtr ifStatement() {
+    const Token keyword = previous();
     std::optional<Token> constexprKeyword;
     if (match({TokenKind::CONSTEXPR})) {
       constexprKeyword = previous();
     }
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'if'.");
+    if (!constexprKeyword && match({TokenKind::CASE})) {
+      const Token caseToken = previous();
+      ExprPtr pattern;
+      {
+        NestingGuard patternGuard(casePatternDepth);
+        pattern = logicalOr();
+      }
+      if (!exprAs<Call>(pattern.get()))
+        throw error(caseToken,
+                    "Expect a variant payload pattern after 'if (case'.");
+      const Token equal =
+          consume(TokenKind::EQUAL, "Expect '=' after if case pattern.");
+      ExprPtr subject = expression();
+      consume(TokenKind::RIGHT_PAREN, "Expect ')' after if case subject.");
+      std::vector<SwitchArm> arms(2);
+      arms.front().labels.push_back({caseToken, std::move(pattern), equal});
+      arms.front().statements.push_back(statement());
+      // Both outcomes exist even when the mismatch branch is empty.
+      const Token fallback =
+          generatedToken(TokenKind::DEFAULT, "default", caseToken);
+      arms.back().labels.push_back({fallback, nullptr, fallback});
+      if (match({TokenKind::ELSE}))
+        arms.back().statements.push_back(statement());
+      return std::make_shared<SwitchStmt>(keyword, std::move(subject),
+                                          std::move(arms), previous());
+    }
     StmtPtr initializer = hasInitStatement() ? initStatement(true) : StmtPtr{};
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after if condition.");

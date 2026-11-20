@@ -5883,6 +5883,12 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
   if (payloadEnum != nullptr && !payloadEnum->payload) {
     payloadEnum = nullptr;
   }
+  if (stmt.isIfCase() && payloadEnum == nullptr) {
+    diagnostics.emplace_back(
+        makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
+                       "An if case subject must have a payload enum type."));
+    return;
+  }
   // A payload switch over a consumed value (a prvalue or an explicit
   // std::move) consumes it: one hidden subject binding owns the enum until
   // the selected arm's entry, where by-value bindings take their fields by
@@ -5996,8 +6002,10 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
   bool invalidPayloadPattern = false;
   bool hasDefault = false;
 
-  ++switchDepth;
-  beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
+  if (!stmt.isIfCase()) {
+    ++switchDepth;
+    beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
+  }
   for (std::size_t armIndex = 0; armIndex < stmt.arms().size(); ++armIndex) {
     const SwitchArm &arm = stmt.arms()[armIndex];
     std::vector<std::pair<const Expr *, ResolvedPayloadPatternInfo>>
@@ -6438,7 +6446,7 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
     endScope();
     const FlowSummary flow = summarizeFlow(arm.statements);
     armResults.emplace_back(scopes, flow);
-    if (flow.canFallThrough) {
+    if (!stmt.isIfCase() && flow.canFallThrough) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2037", DiagnosticPhase::Semantics,
           arm.labels.empty() ? stmt.keyword() : arm.labels.back().keyword,
@@ -6505,15 +6513,19 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
     }
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  ValueControlFlowContext valueFlow = endValueControlFlow();
-  --switchDepth;
+  ValueControlFlowContext valueFlow{};
+  if (!stmt.isIfCase()) {
+    valueFlow = endValueControlFlow();
+    --switchDepth;
+  }
 
   std::vector<ScopeStack> loanExitStates;
   if (!hasDefault && !exhaustivePayload) {
     loanExitStates.push_back(beforeSwitch);
   }
   for (const auto &[armScopes, flow] : armResults) {
-    if (flow.canFallThrough || flow.breaksEnclosingControl) {
+    if (flow.canFallThrough ||
+        (!stmt.isIfCase() && flow.breaksEnclosingControl)) {
       loanExitStates.push_back(armScopes);
     }
   }
@@ -16852,6 +16864,7 @@ auto SemanticVisitor::Impl::summarizeFlow(
         semanticModel.isExhaustiveSwitch(*switchStatement) ||
         requestSession.recoveredExhaustiveSwitches.contains(switchStatement);
     bool reachesAfterSwitch = false;
+    bool breaksOuter = false;
     bool continuesEnclosingLoop = false;
     const ReturnStmt *normalReturn = nullptr;
     for (const SwitchArm &arm : switchStatement->arms()) {
@@ -16863,12 +16876,16 @@ auto SemanticVisitor::Impl::summarizeFlow(
       if (normalReturn == nullptr) {
         normalReturn = armFlow.normalReturn;
       }
-      reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
-                           armFlow.breaksEnclosingControl;
+      reachesAfterSwitch =
+          reachesAfterSwitch || armFlow.canFallThrough ||
+          (!switchStatement->isIfCase() && armFlow.breaksEnclosingControl);
+      breaksOuter |=
+          switchStatement->isIfCase() && armFlow.breaksEnclosingControl;
       continuesEnclosingLoop =
           continuesEnclosingLoop || armFlow.continuesEnclosingLoop;
     }
     return {.canFallThrough = !coversEveryValue || reachesAfterSwitch,
+            .breaksEnclosingControl = breaksOuter,
             .continuesEnclosingLoop = continuesEnclosingLoop,
             .normalReturn = normalReturn};
   }
