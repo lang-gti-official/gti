@@ -148,7 +148,8 @@ public:
           break;
         }
         if (lexeme.kind == Kind::Word &&
-            (lexeme.text == "case" ||
+            ((lexeme.text == "case" &&
+              (previous == nullptr || previous->kind != Kind::LeftParen)) ||
              (lexeme.text == "default" && next != nullptr &&
               next->kind == Kind::Colon))) {
           state.beginCaseLabel();
@@ -2601,7 +2602,8 @@ private:
       }
       if (candidate.kind == Kind::Word &&
           (candidate.text == "case" || candidate.text == "default")) {
-        return true;
+        const Lexeme *before = previousSignificant(lexemes, current);
+        return before == nullptr || before->kind != Kind::LeftParen;
       }
       if (candidate.kind == Kind::Colon || candidate.kind == Kind::Semicolon ||
           candidate.kind == Kind::LeftBrace ||

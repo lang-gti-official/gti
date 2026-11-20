@@ -1,13 +1,16 @@
 // Conditional payload matches preserve the surrounding loop targets.
 //@ run-pass
 enum Period { seconds(int value), minutes(int value) };
-struct Entry { Period period; };
+struct Entry {
+  Entry() : period(Period::seconds(7)) {}
+  Period period;
+};
 Period sample(mut int& calls) {
   calls++;
   return Period::minutes(8);
 }
 int main() {
-  Entry entry{Period::seconds(7)};
+  Entry entry{};
   mut int calls = 0;
   while (true) {
     if (case Period::minutes(value) = sample(calls)) {
