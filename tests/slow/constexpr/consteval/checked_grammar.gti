@@ -1,4 +1,5 @@
 // A malformed format pattern is rejected at compile time.
+//@ slow
 //@ check-fail
 //@ snapshot: diagnostics
 import std.format;

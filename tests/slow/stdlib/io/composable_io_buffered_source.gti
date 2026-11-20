@@ -1,4 +1,5 @@
 // Checked mutable slices and generic buffered transports execute through MIR.
+//@ slow
 //@ run-pass
 //@ revisions: default overrun
 //@[overrun] run-fail
