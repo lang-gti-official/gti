@@ -1,0 +1,21 @@
+// A constrained error converter can format two owned results inside a transform_error callback.
+//@ run-pass
+import std.format;
+import std.string;
+enum Error { bad };
+enum Context { io };
+std::string error_message(Error& error) { return std::string("bad"); }
+std::string error_message(Context& error) { return std::string("io"); }
+concept described_error<E> = requires(E& error) {
+  { error_message(error) } -> std::string;
+};
+expected<T, std::string> checked<T, E>(expected<T, E> result, Context code) requires described_error<E> {
+  return std::move(result).transform_error([code = std::move(code)](E error) -> std::string {
+    return std::format("{}: {}", error_message(code), error_message(error));
+  });
+}
+int main() {
+  expected<int, Error> failure = unexpected(Error::bad);
+  auto result = checked(std::move(failure), Context::io);
+  return !result && result.error().view() == "io: bad" ? 0 : 1;
+}

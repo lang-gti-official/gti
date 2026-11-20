@@ -1,0 +1,19 @@
+// Constrained free calls can supply multiple owned string temporaries to formatting.
+//@ run-pass
+import std.format;
+import std.string;
+enum Error { bad };
+enum Other { missing };
+std::string error_message(Error& error) { return std::string("bad"); }
+std::string error_message(Other& error) { return std::string("missing"); }
+concept described_error<E> = requires(E& error) {
+  { error_message(error) } -> std::string;
+};
+std::string describe<E>(E error) requires described_error<E> {
+  return std::format("{}: {}", error_message(error), error_message(error));
+}
+int main() {
+  auto text = describe(Error::bad);
+  auto other = describe(Other::missing);
+  return text.view() == "bad: bad" && other.view() == "missing: missing" ? 0 : 1;
+}

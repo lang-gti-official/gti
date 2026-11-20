@@ -3059,7 +3059,16 @@ construction relationship. Only these bounded guaranteed facts admit
 operations in an open generic body. Arbitrary compound expressions are concrete
 filters, not inferred proofs of their subexpressions. The selected concrete
 instance still resolves every executable call/constructor normally. Query
-recursion is bounded to 64 active checks. Re-entering the same in-flight query
+results from guaranteed free-function and member requirements carry
+`ResolvedCallInfo::provisionalRequirement` until concrete reanalysis replaces
+the signature with an ordinary target. The shared fresh-value query admits
+such a result only after its concrete value type and absence of stored borrows
+are established. This lets a required owned result compose with the existing
+temporary read-borrow rules without recognizing library names. HIR rejects a
+remaining provisional marker, even if other target fields are populated;
+neither it nor MIR treats the open-body signature as executable proof.
+
+Query recursion is bounded to 64 active checks. Re-entering the same in-flight query
 with identical syntax, resolved argument types and exact type/value-generic
 substitutions fails immediately rather than expanding a branching probe tree.
 Isolated query workers and typed-macro selection probes inherit that active

@@ -1,0 +1,22 @@
+// Constrained temporary results evaluate left to right and drop in reverse order after the call.
+//@ run-pass
+mut int trace = 0;
+struct Value {
+  int n;
+  Value(int n) : n(n) { trace = trace * 10 + n; }
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  ~Value() { trace = trace * 10 + this.n; }
+};
+struct Source { int n; Source(int n) : n(n) {} };
+Value produce(Source& source) { return Value(source.n); }
+concept produces<S> = requires(S& source) { { produce(source) } -> Value; };
+int sum(Value& a, Value& b) { trace = trace * 10 + 8; return a.n + b.n; }
+int run<S>(S& a, S& b) requires produces<S> {
+  return sum(produce(a), produce(b));
+}
+int main() {
+  Source a{1}; Source b{2};
+  int result = run(a, b);
+  return result == 3 && trace == 12821 ? 0 : 1;
+}
