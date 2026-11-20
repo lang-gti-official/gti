@@ -1861,7 +1861,11 @@ def archive_contract(root, cmake):
                 directory = stage / "share/gti/precompiled-stdlib" / triple / profile
                 directory.mkdir(parents=True)
                 for module in modules:
-                    (directory / f"{module}.gtilib").write_bytes(b"compiled stdlib fixture")
+                    payload = b"compiled stdlib fixture"
+                    (directory / f"{module}.gtilib").write_bytes(payload)
+                    if not modules[module].get("functions"):
+                        (directory / f"{module}.gtilib.sha256").write_text(
+                            hashlib.sha256(payload).hexdigest() + "\n")
         for relative in required_files:
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)

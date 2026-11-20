@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Build target-specific stdlib objects with the staged compiler and runtime."""
 import argparse
+import hashlib
 import json
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -10,30 +12,39 @@ import tempfile
 import tomllib
 
 
+@dataclass(frozen=True)
+class InstalledModule:
+    entry: Path
+    facade: Path | None  # The generic producer supplies its own declarations.
+
+
 def catalog(source):
     directory = source / "cmake/stdlib-bundles"
     with (directory / "gti.toml").open("rb") as manifest:
         targets = tomllib.load(manifest)["targets"]
     facades = {path.stem for path in (directory / "facades").glob("*.gti")}
-    if not targets or targets.keys() != facades:
-        raise ValueError("each installed library target needs exactly one matching source facade")
+    native = {name for name, target in targets.items() if target.get("functions")}
+    if not targets or native != facades:
+        raise ValueError("each native library needs one source facade; generic libraries carry their declarations")
     modules = {}
     for name, target in targets.items():
         entry = Path(target["root"]).relative_to("stdlib")
-        if target["kind"] != "gti-library" or ".." in entry.parts or entry in modules.values():
+        if target["kind"] != "gti-library" or ".." in entry.parts or entry in {m.entry for m in modules.values()}:
             raise ValueError(f"invalid or duplicate installed library entry for {name}")
-        modules[name] = entry
+        modules[name] = InstalledModule(entry, directory / "facades" / f"{name}.gti" if name in native else None)
     return modules
 
 
-def write_registry(source, modules, output):
+def write_registry(modules, output):
     # The compiler embeds only this reviewed toolchain catalog. Consumer
     # projects cannot supply module overlays or require a runtime manifest read.
     lines = []
-    for name, entry in modules.items():
-        facade = (source / "cmake/stdlib-bundles/facades" / f"{name}.gti").read_text()
+    for name, module in modules.items():
+        facade = module.facade.read_text() if module.facade else ""
+        if module.facade and not facade.strip():
+            raise ValueError(f"empty native facade for {name}")
         fields = ", ".join(json.dumps(value, ensure_ascii=False)
-                           for value in (name, entry.as_posix(), facade))
+                           for value in (name, module.entry.as_posix(), facade))
         lines.append("    {" + fields + "},")
     contents = "\n".join(lines) + "\n"
     if not output.exists() or output.read_text() != contents:
@@ -67,12 +78,16 @@ def build(stage, source, modules):
                 candidate.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(bundle, candidate)
                 outputs.append((candidate, data / relative))
+                if modules[name].facade is None:
+                    receipt = candidate.with_suffix(".gtilib.sha256")
+                    receipt.write_text(hashlib.sha256(candidate.read_bytes()).hexdigest() + "\n")
+                    outputs.append((receipt, (data / relative).with_suffix(".gtilib.sha256")))
 
         # Exercise normal named import and re-export from a separate package.
         # Only the scratch copy of the implementation is removed. The source
         # companion still provides constexpr and the ordinary toolchain
         # retains sources for editors and unsupported configurations.
-        for entry in modules.values():
+        for entry in {m.entry for m in modules.values()}:
             (package / "stdlib" / entry).unlink()
         consumer = package / "consumer"
         shutil.copytree(source / "tests/project/standard_library_bundle", consumer)
@@ -81,6 +96,12 @@ def build(stage, source, modules):
             for command in ("check", "run"):
                 subprocess.run([compiler, command, "--offline", *profile],
                                cwd=consumer, env=env, check=True)
+        # Compile and execute a consumer-owned substitution after its producer
+        # root has been removed from the toolchain used by the application.
+        shutil.copyfile(consumer / "array_consumer.gti", consumer / "src/main.gti")
+        for profile in ([], ["--release"]):
+            subprocess.run([compiler, "run", "--offline", *profile],
+                           cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:
@@ -100,12 +121,15 @@ if __name__ == "__main__":
     action.add_argument("--stage", type=Path)
     action.add_argument("--write-registry", type=Path)
     action.add_argument("--list-targets", action="store_true")
+    action.add_argument("--list-template-targets", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
     modules = catalog(source)
     if args.stage:
         build(args.stage, source, modules)
     elif args.write_registry:
-        write_registry(source, modules, args.write_registry)
+        write_registry(modules, args.write_registry)
+    elif args.list_template_targets:
+        print(";".join(name for name, module in modules.items() if module.facade is None))
     else:
         print(";".join(modules))

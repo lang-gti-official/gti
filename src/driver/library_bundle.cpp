@@ -64,7 +64,9 @@ void validateDependencies(const std::vector<LibraryBundleDependency> &deps,
 std::size_t validate(const LibraryBundle &bundle) {
   validateIdentity(bundle.identity);
   validateDependencies(bundle.dependencies, bundle.identity.library);
-  if (bundle.objects.empty() || bundle.objects.size() > libraryBundleEntryLimit)
+  if ((bundle.templateOnly && !bundle.optimizationBodies.empty()) ||
+      bundle.objects.empty() != bundle.templateOnly ||
+      bundle.objects.size() > libraryBundleEntryLimit)
     reject(Kind::ResourceLimit, "invalid library object count");
   if (bundle.interfaceMetadata.size() > 1024U * 1024U)
     reject(Kind::ResourceLimit, "library interface exceeds byte limit");
@@ -150,10 +152,9 @@ std::string encodeLibraryBundle(const LibraryBundle &bundle) {
   std::string result;
   result.reserve(size);
   result.append(magic);
-  // Preserve the original bytes and dependency digests of native-only bundles.
   number(result,
          bundle.optimizationBodies.empty() ? 2 : libraryBundleFormatVersion);
-  number(result, 1); // Envelope schema, independent of container framing.
+  number(result, bundle.templateOnly ? 2 : 1);
   for (auto field : fields(bundle.identity))
     blob(result, field);
   blob(result, bundle.interfaceMetadata);
@@ -187,8 +188,9 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
   if (reader.take(magic.size()) != magic)
     reject(Kind::InvalidFormat, "invalid library bundle magic");
   const auto version = reader.number();
-  if ((version != 2 && version != libraryBundleFormatVersion) ||
-      reader.number() != 1)
+  const auto envelope = reader.number();
+  if (!((version == 2 && (envelope == 1 || envelope == 2)) ||
+        (version == libraryBundleFormatVersion && envelope == 1)))
     reject(Kind::UnsupportedVersion,
            "unsupported library container or envelope version");
   if (reader.remaining.size() < 64)
@@ -198,6 +200,7 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
     reject(Kind::Integrity, "library bundle checksum mismatch");
   reader.remaining.remove_suffix(64);
   LibraryBundle result;
+  result.templateOnly = envelope == 2;
   auto &id = result.identity;
   id.toolchain = reader.blob(64);
   id.target = reader.blob(255);
