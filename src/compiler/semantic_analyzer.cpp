@@ -156,11 +156,17 @@ SemanticVisitor::Impl::diagnoseEditedBody(
     const std::atomic<bool> *cancellation) const {
   const auto *function = input.model.findFunction(input.declaration);
   if (!function || function->declaration != &input.declaration ||
-      function->bodyDeclaration() != &input.declaration ||
-      !function->requirements.empty() ||
-      function->returnType.kind == SemanticType::Reference ||
-      function->returnBorrowOrigin != BorrowOriginKind::None ||
-      !function->returnBorrowFields.empty() || function->dependentTextReturn)
+      function->bodyDeclaration() != &input.declaration)
+    return std::nullopt;
+  const bool generic =
+      !function->genericParameters.empty() ||
+      (function->ownerClass &&
+       !classInfo(function->ownerClass).genericParameters.empty());
+  if (!generic &&
+      (!function->requirements.empty() ||
+       function->returnType.kind == SemanticType::Reference ||
+       function->returnBorrowOrigin != BorrowOriginKind::None ||
+       !function->returnBorrowFields.empty() || function->dependentTextReturn))
     return std::nullopt;
   auto worker = unevaluatedExpressionWorker(&input.model);
   worker->sourceGraph = &input.graph;
@@ -170,12 +176,17 @@ SemanticVisitor::Impl::diagnoseEditedBody(
   const std::optional<ClassId> owner =
       function->ownerClass ? std::optional<ClassId>(function->ownerClass)
                            : std::nullopt;
-  if (owner && !worker->classInfo(*owner).genericParameters.empty())
-    return std::nullopt;
   worker->enterDeclarationContext(function->namespaceScope,
                                   function->sourceUnit, owner);
   Impl::DeclarationOrderScope order(*worker, input.declaration);
   try {
+    if (generic) {
+      worker->beginTypeParameterScope(
+          definitionOwnerParametersFor(input.declaration));
+      worker->beginTypeParameterScope(genericParametersFor(input.declaration));
+      if (!worker->beginRequirementScope(function))
+        return std::nullopt;
+    }
     worker->analyzeFunctionBody(input.declaration, function, false, true, false,
                                 &input.body);
   } catch (const Impl::AnalysisCancelled &) {
@@ -184,6 +195,21 @@ SemanticVisitor::Impl::diagnoseEditedBody(
     return std::nullopt;
   }
   const auto &checked = *input.body.extent();
+  if (generic) {
+    // An open generic can diagnose failed lexical lookup. Only a concrete
+    // instance can establish that its instantiated body passes verification.
+    std::vector<Diagnostic> missing;
+    for (const auto &d : worker->diagnostics) {
+      if (d.code == "GTI-S2001" && d.severity == DiagnosticSeverity::Error &&
+          d.primary.source == checked.source &&
+          d.primary.start >= checked.start && d.primary.end <= checked.end &&
+          d.related.empty() && d.fixes.empty())
+        missing.push_back(d);
+    }
+    if (missing.empty())
+      return std::nullopt;
+    return missing;
+  }
   // Some body checks point at the function name (for example a path
   // that falls through). The declaration header has identical source.
   const auto &name = input.declaration.operatorName()

@@ -2143,7 +2143,7 @@ std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
   if (!snapshot)
     return {};
   if (!snapshot->bodyQueryContext || !snapshot->canGenerateCode() ||
-      !snapshot->diagnostics.empty() || snapshot->cancelled) {
+      hasErrorDiagnostics(snapshot->diagnostics) || snapshot->cancelled) {
     snapshot->bodyQueryContext.reset();
     return {};
   }
@@ -2285,8 +2285,7 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
   }
   const auto *prior =
       editedFunction(baseline->program.declarations(), path, first, past);
-  if (!prior || prior->isConstexpr() || prior->isProceduralMacro() ||
-      !prior->genericParameters().empty())
+  if (!prior || prior->isConstexpr() || prior->isProceduralMacro())
     return std::nullopt;
   const auto &span = *prior->body()->extent();
   if (span.end > original->size())
