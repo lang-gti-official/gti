@@ -3340,13 +3340,26 @@ whole-program inlining or complete F5 performance acceptance.
 
 ### Precompiled standard library
 
-The native Linux x64 and macOS arm64 toolchains ship two libraries in
+The native Linux x64 and macOS arm64 toolchains ship compiled libraries in
 `share/gti/precompiled-stdlib/<target>/<profile>/`. `cmath.gtilib` contains
 the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64 seed expansion
 for `std::random_engine`. It returns the four-word state by value. The public
 class keeps the xoshiro256++ transition in source so an optimized draw loop
 can carry that state in registers.
 `std::random_device` retains its source implementation and OS entropy backend.
+The installed `array.gtilib` carries the declarations of `std.array` and its
+dependent method bodies. The producer encodes the parsed statements and
+expressions before any application type or extent exists. At import the
+frontend restores the bodies onto the declaration skeleton. Its usual generic,
+constant evaluation, MIR borrow checking and LLVM code generation paths then
+handle each requested substitution. Private helpers and iterator types defined
+in the array module travel with it. Imports of other modules retain their
+ordinary source and visibility rules. The template envelope has no native
+object or producer-side concrete substitution. Only the toolchain's installed
+module provider can admit it; an independent packaging receipt covers its
+complete bytes before the source loader can resolve its imports. The full
+artifact digest also participates in the consumer's build identity.
+
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release object when an import or re-export reaches the
 module. An executable can link the installed object alongside inferred or

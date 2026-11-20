@@ -19,3 +19,7 @@ functions = [
 kind = "gti-library"
 root = "stdlib/std/detail/random_engine.gti"
 functions = ["std::detail::seed_random_engine"]
+
+[targets.array]
+kind = "gti-library"
+root = "stdlib/std/array.gti"

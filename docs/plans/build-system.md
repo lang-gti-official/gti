@@ -1734,7 +1734,7 @@ semantic and production-promotion goals remain open.
 | F0 container / driver — implemented | Versioned `.gtilib` codec, compatibility envelope, deterministic object/dependency inventory; no CLI or semantic importer | Round trips, order independence, corruption/truncation/version/limit/path rejection and exact identity/dependency mismatch tests; affected driver regressions. |
 | F1 identity and interface / frontend + semantics — identity foundation in progress | Finalize declaration-key grammar and metadata schema; export/private closure, module ownership, complete type/lifetime/borrow/callable contracts, generic declaration recipes and diagnostic provenance; import into existing semantic domains | Export/re-export visibility equals source mode; unrelated user-defined borrowed type and private layout dependencies; ID remapping across separate processes and reordered inputs; malformed references, incomplete summaries and untrusted private-capability declarations rejected. |
 | F2 unit lowering/linkage / HIR + MIR + LLVM — typed vertical slice implemented | F1; imported declaration/body distinction, stable symbol plan, selected runtime closure, per-library initialization/retirement, object verification; immutable driver target request distinct from C embedding | Multiple modules in one library, independent consumer links/runs with no library implementation source; correct cleanup/failure and exactly-once globals/TLS; no duplicate main/symbols; retained exports; platform object/ABI and runtime mismatch gates. C++ receives no new feature work. |
-| F3 generics and early constants / semantics + staged HIR/MIR | F1/F2; generic recipe importer and instance inventory, shared consumer instantiation owner, query-driven completed constexpr closures | New consumer substitution, constraints/defaults/specializations, early array extent/value argument/static assertion/branch shaping, resource/cycle errors and compile-time/runtime parity; no requirement to seal whole-program MIR before these queries. Private generic dependencies and unrelated user types included. |
+| F3 generics and early constants / semantics + staged HIR/MIR — installed array class templates implemented | F1/F2; generic recipe importer and instance inventory, shared consumer instantiation owner, query-driven completed constexpr closures | New consumer substitution, constraints/defaults/specializations, early array extent/value argument/static assertion/branch shaping, resource/cycle errors and compile-time/runtime parity; no requirement to seal whole-program MIR before these queries. Private generic dependencies and unrelated user types included. |
 | F4 reusable target graph / driver — package and same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
 | F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
 
@@ -1742,6 +1742,13 @@ The installed standard library exercises this boundary with `std.cmath` and
 seed expansion for the deterministic engine in `std.random`. The latter returns
 four-word state by value at construction and keeps the draw loop in source. See the
 [installed module contract](../architecture/build-and-driver.md#precompiled-standard-library).
+
+The installed array fixture compiles a previously unseen application-defined
+element type and extent from `array.gtilib` after removing `std/array.gti`.
+It also checks constraints, borrow rejection, constant evaluation and reuse of
+the same artifact for different substitutions. General project and third-party
+template artifacts, lifetime-rich method bodies and the remainder of F3 are
+still open.
 
 The end-to-end fixture must build a library target containing an exported API,
 a second module and private implementation files; a separate executable package

@@ -694,6 +694,7 @@ add_library(
   "src/compiler/semantic_model.cpp"
   "src/compiler/persistent_declaration.cpp"
   "src/compiler/compiled_scalar_unit.cpp"
+  "src/compiler/compiled_template_body.cpp"
   "src/compiler/compiled_interface_types.cpp"
   "src/compiler/semantic_instance_reuse.cpp"
   "src/compiler/semantic_preamble.cpp"

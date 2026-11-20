@@ -2354,8 +2354,7 @@ private:
           nullptr, std::nullopt, std::nullopt, std::move(attributes));
     }
 
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
+    auto body = functionBody();
     return std::make_shared<ConstructorDecl>(
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
@@ -2521,8 +2520,7 @@ private:
                                  .kind = kind},
           nullptr, std::move(attributes));
     }
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
+    auto body = functionBody();
     return std::make_shared<DestructorDecl>(std::move(tilde), std::move(name),
                                             std::nullopt, std::move(body),
                                             std::move(attributes));

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build target-specific stdlib objects with the staged compiler and runtime."""
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -37,6 +38,10 @@ def build(stage, source):
                 candidate.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(bundle, candidate)
                 outputs.append((candidate, data / relative))
+                if not targets[name].get("functions"):
+                    receipt = candidate.with_suffix(".gtilib.sha256")
+                    receipt.write_text(hashlib.sha256(candidate.read_bytes()).hexdigest() + "\n")
+                    outputs.append((receipt, (data / relative).with_suffix(".gtilib.sha256")))
 
         # Exercise normal named import and re-export from a separate package.
         # Only the scratch copy of the implementation is removed. The source
@@ -51,6 +56,12 @@ def build(stage, source):
             for command in ("check", "run"):
                 subprocess.run([compiler, command, "--offline", *profile],
                                cwd=consumer, env=env, check=True)
+        # Compile and execute a consumer-owned substitution after its producer
+        # root has been removed from the toolchain used by the application.
+        shutil.copyfile(consumer / "array_consumer.gti", consumer / "src/main.gti")
+        for profile in ([], ["--release"]):
+            subprocess.run([compiler, "run", "--offline", *profile],
+                           cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:

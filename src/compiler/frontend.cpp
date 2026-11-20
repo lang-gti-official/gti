@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "diagnostic_registry.h"
+#include "gti/compiled_template_body.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
@@ -1176,7 +1177,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                            ? 0
                            : dependencyDigest->second);
       std::optional<CachedParsedUnit> cached =
-          options.cache ? options.cache->lookupParsed(key) : std::nullopt;
+          options.cache && !unit->compiledTemplate
+              ? options.cache->lookupParsed(key)
+              : std::nullopt;
       if (cached) {
         unitDeclarations = std::move(cached->declarations);
         unit->lifetimeNames = cached->lifetimeNames;
@@ -1226,11 +1229,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
+        if (unit->compiledTemplate && !parser.hadError())
+          restoreTemplateBodies(unitDeclarations, *unit->compiledTemplate,
+                                unit->path.string());
         unit->lifetimeNames =
             parser.lifetimeNames().empty()
                 ? nullptr
                 : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
-        if (options.cache &&
+        if (options.cache && !unit->compiledTemplate &&
             !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(
               key, estimatedInputBytes,

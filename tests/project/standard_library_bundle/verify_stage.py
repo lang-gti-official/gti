@@ -65,6 +65,32 @@ def verify(stage):
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
+        array_bundle, = bundles.glob("*/release/array.gtilib")
+        array_receipt = array_bundle.with_suffix(".gtilib.sha256")
+        digest = hashlib.sha256(array_bundle.read_bytes()).hexdigest()
+        if array_receipt.read_text() != digest + "\n":
+            raise RuntimeError("installed array receipt does not identify its artifact")
+        # Exercise different substitutions of the same independently built bytes,
+        # early evaluation, a private helper, and the empty array.
+        array_cases = fixture.parents[1] / "ui/stdlib/array/comparison"
+        for example in ("constexpr_ordering.gti", "ordering.gti", "readonly_elements.gti"):
+            shutil.copyfile(array_cases / example, source)
+            run("run", "--release")
+        shutil.copyfile(array_cases / "equality_only.gti", source)
+        run("check", rejection="GTI-S2029")
+        source.write_text("import std.array;\nstd::array<int, 7>::iterator dangling() { "
+                          "mut std::array<int, 7> x{}; return x.begin_mut(); }\n"
+                          "int main() { return 0; }\n")
+        run("check", rejection="GTI-S2045")
+        if hashlib.sha256(array_bundle.read_bytes()).hexdigest() != digest:
+            raise RuntimeError("instantiating consumer types modified the installed library")
+        # Reaching the same module from a warm executable must still validate
+        # the installation receipt before restoring executable cache entries.
+        shutil.copyfile(fixture / "array_consumer.gti", source)
+        run("run", "--release")
+        array_receipt.write_text("0" * 64 + "\n")
+        run("build", "--release", rejection="installed generic library receipt mismatch")
+        array_receipt.write_text(digest + "\n")
         # Check the reference sequences, independent state and entropy-device
         # API through the public module with the engine implementation absent.
         shutil.copyfile(fixture.parents[1] / "ui/stdlib/random/engine.gti", source)
@@ -135,7 +161,7 @@ def verify(stage):
 
         # A toolchain-owned module whose transitive source depends on a flag
         # must never be stamped as independent of the application's flags.
-        for implementation in ("std/cmath.gti", "std/detail/random_engine.gti"):
+        for implementation in ("std/array.gti", "std/cmath.gti", "std/detail/random_engine.gti"):
             shutil.copyfile(stage / "share/gti/stdlib" / implementation, stdlib / implementation)
         shutil.copyfile(fixture.parents[2] / "cmake/stdlib-bundles/gti.toml", root / "gti.toml")
         companion = stdlib / "std/detail/cmath_declarations.gti"

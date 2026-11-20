@@ -47,6 +47,8 @@ struct LibraryBundle {
   std::vector<LibraryBundleMember> objects;
   std::string interfaceMetadata; // Versioned compiler metadata; opaque to the
                                  // container.
+  bool templateOnly =
+      false; // Declaration and dependent bodies, no concrete object yet.
   friend bool operator==(const LibraryBundle &,
                          const LibraryBundle &) = default;
 };
