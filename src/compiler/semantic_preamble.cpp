@@ -242,7 +242,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
             .count());
   }
 
-  if (registrationObserver && !hadError())
+  if (registrationObserver)
     (*registrationObserver)();
 
   // The body phase adds only this program's own bodies (and the trusted

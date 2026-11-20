@@ -1,0 +1,24 @@
+// A zoned value retains its parsed rules after both database and zone owners die.
+//@ run-pass
+//@ slow
+//@ reason: Named-zone construction crosses the complete TZif/data pipeline.
+import std.chrono;
+namespace c = std::chrono;
+c::time_zone independent_zone() {
+  auto database = c::tzdb::load_default();
+  return database.locate("America/New_York");
+}
+c::zoned_time independent_time() {
+  auto zone = independent_zone();
+  return zone.at(c::timestamp(1795170633i64));
+}
+int main() {
+  auto original = independent_time();
+  auto retained = original.clone();
+  if (retained.zone_name() != "America/New_York") return 1;
+  if (retained.database_version() != "2026f") return 2;
+  if (retained.offset_seconds() != -18000) return 3;
+  auto local = retained.local();
+  if (local.year() != 2026) return 4;
+  return 0;
+}

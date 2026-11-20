@@ -1,0 +1,17 @@
+// A complete Gregorian era round-trips days and civil components.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  auto first = std::chrono::date::create(2000, 1, 1);
+  int64_t start = first.days_since_epoch();
+  for (mut int64_t i = 0i64; i < 146097i64; i++) {
+    auto d = std::chrono::date::from_days(start + i);
+    if (d.days_since_epoch() != start + i) { return 1; }
+    auto reconstructed = std::chrono::date::create(d.year(), d.month(), d.day());
+    if (!(d == reconstructed)) { return 2; }
+    if (d.weekday() < 0 || d.weekday() > 6) { return 3; }
+    if (d.day_of_year() < 1 || d.day_of_year() > 366) { return 4; }
+  }
+  return 0;
+}

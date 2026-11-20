@@ -1,0 +1,27 @@
+// Zones preserve non-hour transitions, skipped dates and historical seconds.
+//@ run-pass
+//@ slow
+import std.chrono;
+namespace c = std::chrono;
+c::time_zone retained_zone() {
+  auto db = c::tzdb::load_default();
+  return db.locate("Australia/Lord_Howe");
+}
+int main() {
+  auto lord_howe = retained_zone();
+  auto gap = c::local_datetime::create(2026, 10, 4, 2, 15, 0);
+  auto rejected = lord_howe.try_resolve(gap);
+  if (rejected || rejected.error() != c::errc::nonexistent_time) return 1;
+  auto next = lord_howe.resolve(gap, c::resolve_policy(c::fold_policy::reject, c::gap_policy::next_valid));
+  if (next.local().hour() != 2 || next.local().minute() != 30) return 2;
+  auto db = c::tzdb::load_default();
+  auto apia = db.locate("Pacific/Apia");
+  auto skipped = apia.try_resolve(c::local_datetime::create(2011, 12, 30, 12, 0, 0));
+  if (skipped || skipped.error() != c::errc::nonexistent_time) return 3;
+  auto paris = db.locate("Europe/Paris");
+  auto historical = paris.resolve(c::local_datetime::create(1890, 1, 1, 0, 0, 0));
+  if (historical.offset_seconds() != 561) return 4;
+  auto nanos = paris.at(c::timestamp::create(-1i64, 999999999i64));
+  if (nanos.local().subsecond_nanoseconds() != 999999999) return 5;
+  return 0;
+}

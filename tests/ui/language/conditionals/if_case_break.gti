@@ -1,0 +1,9 @@
+// A conditional pattern does not introduce a break target.
+enum Period { seconds(int value) };
+int main() {
+  Period period = Period::seconds(1);
+  if (case Period::seconds(auto& seconds) = period) {
+    break; //~ ERROR GTI-S2010
+  }
+  return 0;
+}

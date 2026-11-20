@@ -1,0 +1,5 @@
+import "public.gti";
+int main() {
+  if (assets::size(0) != 1048593u64) return 1;
+  return int(assets::first(0));
+}

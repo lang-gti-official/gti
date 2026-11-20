@@ -211,6 +211,13 @@ private:
   diagnoseEditedBody(const EditedFunctionBody &input,
                      const std::atomic<bool> *cancellation) const;
 
+  // A scoped lookup yields one missing name or an observed binding (empty).
+  // Missing evidence returns nullopt. Neither result certifies a body.
+  std::optional<std::vector<Diagnostic>>
+  diagnoseRegisteredLookup(const Program &, const SourceManager &,
+                           const Token &, const FunctionDecl *,
+                           const std::atomic<bool> *cancellation) const;
+
   class Impl;
   friend class SemanticPreamble;
   std::unique_ptr<Impl> impl;

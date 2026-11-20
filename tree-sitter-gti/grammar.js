@@ -1119,10 +1119,13 @@ module.exports = grammar({
       prec.right(
         seq(
           "if",
-          optional(field("constant", "constexpr")),
-          "(",
-          optional(field("initializer", $._init_statement)),
-          field("condition", $.expression),
+          choice(
+            seq(optional(field("constant", "constexpr")), "(",
+                optional(field("initializer", $._init_statement)),
+                field("condition", $.expression)),
+            seq("(", "case", field("pattern", $.call_expression), "=",
+                field("value", $.expression)),
+          ),
           ")",
           field("consequence", $.statement),
           optional(seq("else", field("alternative", $.statement))),

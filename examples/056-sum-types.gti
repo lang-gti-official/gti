@@ -24,6 +24,14 @@ Command next_command(mut int32_t& calls) {
 
 int main() {
   Command stopped = Command::stop;
+  Command result = Command::exit_code(42);
+  if (case Command::exit_code(auto& code) = result) {
+    if (code != 42) {
+      return 1;
+    }
+  } else {
+    return 1;
+  }
   switch (stopped) {
   case Command::stop:
     break;

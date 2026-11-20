@@ -42,6 +42,13 @@ enum class FrontendPhase {
   Mir,
 };
 
+struct EditedLookupRange {
+  std::size_t start;
+  std::size_t end;
+  // The full replacement for a name reported by this partial query.
+  bool recheck = false;
+};
+
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   ProgramRequest program;
@@ -60,6 +67,9 @@ struct FrontendOptions {
   // Retain the declaration environment for isolated editor queries on a
   // subsequently edited body. Batch compilation releases it as usual.
   bool retainBodyQueryContext = false;
+  // New-source byte interval. Only an observed lookup on these bytes may be
+  // published before the ordinary declaration walk.
+  std::optional<EditedLookupRange> editedRange;
   // Editor-only partial snapshots may inspect available units after a load
   // failure. The graph stays invalid and never reaches HIR or code generation.
   bool analyzeRecoveredSourceGraph = false;
@@ -244,6 +254,13 @@ struct FrontendResult {
   }
 
 private:
+  struct LookupCandidate {
+    Token token;
+    bool uniqueSpelling;
+    bool recheck;
+    const FunctionDecl *function = nullptr;
+  };
+  std::optional<LookupCandidate> editedLookup;
   friend class Frontend;
   friend class EditorBodyDiagnostics;
   bool parsingComplete = false;
@@ -311,7 +328,7 @@ public:
   // diagnostics, and the primary type-check result. Generic discovery and MIR
   // may add further diagnostics. The observer is invocation-local and cannot
   // escape through frontend caches.
-  enum class DiagnosticStage { Registered, Declaration, TypeChecking };
+  enum class DiagnosticStage { Registered, Lookup, Declaration, TypeChecking };
   using DiagnosticCheckpoint =
       std::function<void(DiagnosticStage, const FrontendResult &,
                          const SemanticModel &, std::span<const Diagnostic>)>;

@@ -1,0 +1,10 @@
+// Zone discovery returns an explicit environment identifier without changing it.
+//@ run-pass
+//@ env: TZ=Australia/Perth
+import std.chrono;
+import std.string;
+int main() {
+  auto value = std::chrono::try_current_zone_id();
+  if (!value || value.value() != "Australia/Perth") { return 1; }
+  return 0;
+}

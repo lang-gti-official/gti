@@ -388,6 +388,7 @@ struct HirStatement {
   std::vector<HirStatementId> statements;
   std::vector<HirSwitchArm> switchArms;
   bool exhaustiveSwitch = false;
+  bool conditionalPattern = false;
   std::vector<HirStructuredBindingElement> structuredBindings;
   std::optional<HirRangeIteration> rangeIteration;
 };

@@ -1238,7 +1238,7 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
+        "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "codeql.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
         "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
@@ -2180,6 +2180,33 @@ def fast_runtime_relocation_contract(root, fast):
         assert sentinel.read_bytes() == b"unchanged"
 
 
+def security_scanning_contract(root):
+    """Restore-only jobs cannot poison caches; scans survive newer main pushes."""
+    workflows = root / ".github/workflows"
+    for name in ("beta", "sanitizers", "slow"):
+        text = (workflows / f"{name}.yml").read_text()
+        assert re.findall(r"(?m)^ *cache-mode: (.+)$", text) == ["read"], name
+        assert "actions/cache/restore@" in text and "actions/cache/save@" not in text, name
+    text = (workflows / "codeql.yml").read_text()
+    assert "  push:\n    branches: [main]" in text
+    assert "  pull_request:\n    branches: [main]" in text
+    assert "  schedule:" in text and "  workflow_dispatch:" in text
+    assert "pull_request_target" not in text and "secrets." not in text
+    assert "cache-mode: none" in text
+    assert "group: gti-codeql-${{ github.ref }}" in text
+    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in text
+    scan = jobs(text)["analyze"]
+    assert "fail-fast: false" in scan
+    assert "language: [actions, c-cpp, javascript-typescript, python, rust]" in scan
+    assert "persist-credentials: false" in scan
+    assert "build-mode: none" in scan and "dependency-caching: false" in scan
+    assert "run:" not in scan, "no repository scripts execute with the scan upload token"
+    assert re.findall(r"^      ([a-z-]+): write$", scan, re.M) == ["security-events"]
+    for action in ("init", "analyze"):
+        assert re.search(rf"github/codeql-action/{action}@[0-9a-f]{{40}}\b", scan), action
+    assert 'category: "/language:${{ matrix.language }}"' in scan
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=pathlib.Path)
@@ -2201,6 +2228,7 @@ def main():
     slow_tier_contract(root)
     gti_test_tiers_contract(root)
     runner_label_contract(root)
+    security_scanning_contract(root)
     retry_contract(root)
     auto_revert_contract(root)
     train_contract(root)

@@ -1,0 +1,6 @@
+// Validated date fields cannot be bypassed by calling its raw constructor.
+import std.chrono;
+int main() {
+  auto invalid = std::chrono::date(2026, 2, 31); //~ ERROR GTI-S2007
+  return invalid.day();
+}

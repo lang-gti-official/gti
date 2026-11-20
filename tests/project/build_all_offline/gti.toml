@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "offline-app"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[dependencies]
+dep = { git = "file:///gti-test-absent-offline-dependency", rev = "1111111111111111111111111111111111111111" }

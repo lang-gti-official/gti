@@ -1,0 +1,13 @@
+import "public.gti";
+
+struct Reading {
+  mut int value;
+  Reading(int v) : value(v) {}
+};
+
+int main() {
+  mut auto rack = instruments::Rack<Reading, 3>({Reading(10), Reading(20), Reading(30)});
+  rack.edit(1).value = 73;
+  if (rack.stamp() != 314159 || rack.capacity() != 3 || rack.peek(1).value != 73) { return 1; }
+  return 0;
+}

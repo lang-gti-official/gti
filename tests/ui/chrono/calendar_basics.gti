@@ -1,0 +1,11 @@
+// Gregorian calendar and negative fractional timestamps execute correctly.
+//@ run-pass
+import std.chrono;
+int main() {
+  auto d = std::chrono::date::create(2026, 11, 20);
+  auto t = std::chrono::timestamp::create(-1i64, 500000000i64);
+  if (d.weekday() != 5) { return 1; }
+  auto p = t.to_system_time_point();
+  if (p.nanoseconds_since_unix_epoch() != -500000000i64) { return 2; }
+  return 0;
+}

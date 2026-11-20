@@ -671,7 +671,7 @@ The current implemented foundation includes:
   scalar decoding, validation, encoding, append and a borrowed decoder cursor
   with byte-offset errors, without changing byte-oriented string semantics;
   see [Text and binary encoding](encoding.md); and
-- `std.chrono` signed duration units from nanoseconds through hours, constexpr
+- `std.chrono` signed duration units from nanoseconds through days, constexpr
   `try_cast`/`cast`, same-unit comparisons and checked arithmetic, duration
   formatting, distinct monotonic and Unix-wall-clock time points, recoverable
   clock reads, checked elapsed subtraction, and normalized pre-epoch Unix

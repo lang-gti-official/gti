@@ -1,0 +1,16 @@
+// Temporal patterns and default formatting preserve civil components and fractions.
+//@ run-pass
+import std.chrono;
+import std.format;
+int main() {
+  auto local = std::chrono::local_datetime::create(2026, 11, 20, 10, 30, 33);
+  auto text = std::chrono::format(local, "%I:%M:%S %P on %d %b %Y");
+  if (text != "10:30:33 am on 20 Nov 2026") { return 1; }
+  auto full = std::chrono::format(local, "%A %B %% %H:%M:%S.%f");
+  if (full != "Friday November % 10:30:33.000000000") { return 2; }
+  auto d = std::chrono::date::create(2000, 2, 29);
+  if (std::format("{}", d) != "2000-02-29") { return 3; }
+  auto instant = std::chrono::timestamp::create(-1i64, 500000000i64);
+  if (std::format("{}", instant) != "1969-12-31T23:59:59.500000000Z") { return 4; }
+  return 0;
+}

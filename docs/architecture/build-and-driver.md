@@ -1402,8 +1402,9 @@ profile selected by `settings.gti.profile`/initialization options, or the normal
 driver default when none is selected. Defines, execution model, raw-pointer
 audit and warning policy change together without invoking a build.
 
-`gti build --all` builds every declared executable and test target of the
-selected package for one profile. Each target is delegated to a child
+`gti build --all` builds every declared target of the selected package for one
+profile, including compiled libraries. Both target discovery and child builds
+respect `--offline` and `--locked`. Each target is delegated to a child
 `gti build <target>` invocation carrying the parent's resolved options, so
 every target remains an independent whole-program build; `--jobs <count>`
 bounds how many children run concurrently (defaulting to the host's hardware
@@ -3091,11 +3092,15 @@ permission, host-width integer or native structure dump. The complete layout is:
 
 1. Eight bytes `GTILIB\r\n`, followed by the container version and envelope schema.
    Native libraries use version `2`, schema `1`. Native libraries with optimization
-   MIR use version `3`, schema `1`. Installed generic modules use version `2`,
-   schema `2` and store their declaration interface and dependent bodies in field 3.
+   MIR use version `3`, schema `1`. Generic modules use version `2`, schema `2`. Field 3 contains the declaration
+   interface, dependent bodies and lifetime bindings. The project variant also
+   carries the lexical evidence checked by the consumer.
 2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
    runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
-3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
+3. One interface-metadata blob, limited to 1 MiB for native envelopes and
+   68 MiB for generic envelopes carrying archived embedded inputs; empty for
+   opaque container-only use. The generic recipe separately bounds syntax and
+   embedded payloads as described below.
 4. Dependency count, then pairs of logical library SHA-256 and complete dependency
    bundle SHA-256, sorted strictly by logical library identity.
 5. Object count, then name/data blob pairs sorted strictly by name.
@@ -3378,23 +3383,52 @@ the 21 runtime functions of `std.cmath`. `random.gtilib` contains the SplitMix64
 seed expansion and the xoshiro256++ draw. Seeding returns four words by value.
 The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
-`std::random_device` retains its source implementation and OS entropy backend.
-The installed `array.gtilib` carries the declarations of `std.array` and its
-dependent method bodies. The producer encodes the parsed statements and
+`std::random_device` uses the OS entropy backend. The public random module ships
+its GTI definitions in `std_random.gtilib`.
+The catalog packages 77 standard-library modules per target and profile.
+Alongside the two native libraries, 75 bundles carry parsed declarations
+and bodies, including the private dependencies of public modules. `std.assert`
+is loaded from source so the application's `NDEBUG` setting controls its debug
+assertions. The prelude and top-level re-export interface also load from source.
+The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,
 constant evaluation, MIR borrow checking and LLVM code generation paths then
 handle each requested substitution. Private helpers and iterator types defined
-in the array module travel with it. Imports of other modules retain their
+in the same module travel with it. Imports of other modules retain their
 ordinary source and visibility rules. The template envelope has no native
-object or producer-side concrete substitution. Only the toolchain's installed
-module provider can admit it; an independent packaging receipt covers its
+object or producer-side concrete substitution. The installed module provider
+checks an independent packaging receipt covering its
 complete bytes before the source loader can resolve its imports. The full
 artifact digest also participates in the consumer's build identity.
 
+The inner `gti.template-unit.3` recipe also snapshots `embed_bytes` inputs.
+Each record retains its authored keyword offset and literal spelling; repeated
+uses share one archived payload. Records must be ordered and bounded; aliases
+refer only to earlier validated storage. The source loader supplies producer bytes
+under its usual ownership and containment checks. Project consumers reparse
+the lexical witness and attest each record against an ordinary literal call.
+Installed modules retain their independent packaging receipt. Neither path
+resolves an archived asset name against the consumer filesystem: archived
+bytes become the same compiler-owned static arrays as source-loaded inputs.
+This also applies to declaration initializers visible in the skeleton. Removing
+producer source and assets therefore does not change a valid consumer build.
+
+Syntax metadata remains bounded to 1 MiB. Embedded payloads retain the source
+limits of 16 MiB per input and 64 MiB per compilation, with storage aliases
+counted once. The inner archive is bounded to 66 MiB and the project witness
+and outer template interface to 68 MiB. Native scalar interface metadata keeps
+its 1 MiB bound. Asset-only producer edits change the archived bytes and bundle
+digest, invalidating consumer caches without changing source declarations.
+The outer template envelope remains version 2, schema 2; older inner recipes are rejected
+by the versioned decoder and rebuilt by the owning toolchain.
+
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release bundle when an import or re-export reaches the
-module. An executable can link installed native objects alongside inferred or
+module. The CLI selects bundles stamped for its executable. Applications that
+embed the driver use the installed sources by default. An embedding host can
+set `StandardLibraryLayout::useInstalledBundles` for bundles it produced;
+the same identity and receipt checks apply. An executable can link installed native objects alongside inferred or
 explicit project libraries. Each project library producer still compiles its
 own standard-library implementation dependencies from source. A producer can
 use the installed-module configuration identity only
@@ -3404,12 +3438,14 @@ still participate in the consumer build's cache key. The compiler reads the
 checked callable signatures and links the target object. The distributed
 macOS arm64 object uses macOS 11.0, the first arm64 deployment target, for both
 native code generation and bundle compatibility. An OS update therefore does
-not invalidate that object. The shared source companion supplies `constexpr std::abs` and
+not invalidate that object. The shared declarations module supplies `constexpr std::abs` and
 the runtime declarations in both modes. Toolchains retain the implementation
 source for other profiles and source-based tooling.
 
-Staging builds these bundles using its final compiler and runtime, then checks
-and runs an independent project with the implementation sources removed. A
+Staging uses the installed compiler and runtime to build all targets offline,
+one profile at a time, with up to four parallel target builds. After both
+profiles succeed, it checks and runs an independent project with the
+implementation sources removed. A
 source-only toolchain repack rebuilds the bundles from the replacement library.
 Bundle compatibility and the checks for each envelope apply before executable cache reuse;
 the names and digests of the reached bundles participate in the cache key in
@@ -3430,6 +3466,23 @@ public module with the implementation source removed. For a hot function,
 also check optimized code generation or compare source and packaged execution.
 
 ### Compiled-library project requests
+
+A project library whose root exports a generic class or function can supply its
+interface and dependent bodies in the `.gtilib`. Its root declares an exported
+module and can import named standard-library modules. Other project source
+units, compiled dependency closures and configuration directives require
+additional packaging support. Explicit native function targets keep their
+native interface.
+
+For project imports the artifact carries the source spelling erased from the
+interface alongside the serialized body recipe. This includes comments and
+whitespace that a macro can observe in its arguments. The ordinary parser
+reads the reconstructed spelling in the consumer and retains its lifetime
+bindings. The compiler compares that parse with the recipe before using it. The virtual
+interface has application provenance and receives the same type, visibility
+and borrow checks as application source. The installed toolchain can instead
+restore its independently authenticated recipes directly. Neither route
+requires the library’s implementation files or a list of future element types.
 
 A registered interface at `<source-root>/lib.gti` supplies the default GTI
 library. The target takes the package name, or the package name with a

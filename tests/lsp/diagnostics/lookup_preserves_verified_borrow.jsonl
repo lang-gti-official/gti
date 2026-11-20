@@ -1,0 +1,18 @@
+// A cold scoped lookup cannot replace a verified borrow diagnostic from earlier source bytes.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "void keep(int& x) {}\nint resolve(int x) { return x; }\nint value<T>(T x) requires std::integral<T> { return resolve(int(x)); }\nint main() { mut int n = 1; mut int& parent = n; mut int& child = parent; keep(parent); keep(child); return value(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "void keep(int& x) {}\nint resolve(int x) { return x; }\nint value<T>(T x) requires std::integral<T> { return resolve(int(x)); }\nint main() { mut int n = 1; mut int& parent = n; mut int& child = parent; keep(parent); keep(child); return value(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 5}}
+{"expect": {"id": 5, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "void keep(int& x) {}\nint resolve(int x) { return x; }\nint value<T>(T x) requires std::integral<T> { return esolve(int(x)); }\nint main() { mut int n = 1; mut int& parent = n; mut int& child = parent; keep(parent); keep(child); return value(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": {"$contains": [{"code": "GTI-S2001"}]}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "void keep(int& x) {}\nint resolve(int x) { return x; }\nint value<T>(T x) requires std::integral<T> { return resolve(int(x)); }\nint main() { mut int n = 1; mut int& parent = n; mut int& child = parent; keep(parent); keep(child); return value(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": {"$contains": [{"code": "GTI-S2017"}]}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 7}}
+{"expect": {"id": 7, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}
