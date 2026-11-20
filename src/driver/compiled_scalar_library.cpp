@@ -1287,6 +1287,7 @@ loadExecutableInputs(const CompilationRequest &request,
       request.llvmInstrumentation() != LlvmInstrumentationMode::None ||
       request.program().kind != ProgramKind::Executable ||
       request.program().testSuite ||
+      !request.standardLibrary().useInstalledBundles ||
       request.rawPointerAudit() != RawPointerAuditMode::Off ||
       request.optimizationOutputs().requested() ||
       target.executionProfile != ExecutionProfile::SingleThreaded ||

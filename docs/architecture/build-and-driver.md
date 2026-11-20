@@ -3397,7 +3397,10 @@ artifact digest also participates in the consumer's build identity.
 
 Ordinary single-threaded, hosted LLVM project checks and builds select the
 development or release bundle when an import or re-export reaches the
-module. An executable can link installed native objects alongside inferred or
+module. The CLI selects bundles stamped for its executable. Applications that
+embed the driver use the installed sources by default. An embedding host can
+set `StandardLibraryLayout::useInstalledBundles` for bundles it produced;
+the same identity and receipt checks apply. An executable can link installed native objects alongside inferred or
 explicit project libraries. Each project library producer still compiles its
 own standard-library implementation dependencies from source. A producer can
 use the installed-module configuration identity only
