@@ -1,7 +1,7 @@
 export module detail_chrono_discovery_impl;
 import "chrono_calendar.gti";
 import "environment_snapshot.gti";
-import std.filesystem;
+import "filesystem_result.gti";
 import std.string;
 import "panic.gti";
 
@@ -41,10 +41,14 @@ export expected<std::string, errc> try_current_zone_id() {
     if (!detail::zone_identifier(name)) { return unexpected(errc::unknown_zone); }
     return std::string(name);
   }
-  auto resolved = std::filesystem::canonical("/etc/localtime");
-  if (!resolved) { return unexpected(errc::unavailable); }
-  auto path = std::move(resolved).value();
-  auto name = path.string();
+  mut int64_t path_handle = 0;
+  mut uint32_t path_status = 0;
+  unsafe {
+    path_status = gti_internal::filesystem_runtime::gti_rt_fs_path_v1(uint32_t(2), "/etc/localtime", &path_handle);
+  }
+  if (path_status != uint32_t(0)) { return unexpected(errc::unavailable); }
+  auto path = gti_internal::filesystem_result(path_handle);
+  auto name = path.text();
   std::size_t position = name.find("/zoneinfo/");
   if (position == std::string::npos) { return unexpected(errc::unknown_zone); }
   auto suffix = name.view().substr(position + 10);

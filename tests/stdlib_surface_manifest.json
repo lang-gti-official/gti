@@ -4757,6 +4757,24 @@
       ]
     },
     {
+      "id": "filesystem.result",
+      "source": "stdlib/std/detail/filesystem_result.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::filesystem_result"
+      ],
+      "case_ids": [
+        "filesystem-operations"
+      ],
+      "required_instantiations": [
+        "Shared immutable native result owner; directory and path operations preserve cleanup."
+      ],
+      "evidence": [
+        "tests/ui/chrono/discovery.gti",
+        "stdlib/std/filesystem.gti"
+      ]
+    },
+    {
       "id": "format.cpp-temporary-references",
       "source": "stdlib/std/format.gti",
       "status": "unsupported",

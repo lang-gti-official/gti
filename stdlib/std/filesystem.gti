@@ -23,53 +23,7 @@ export module filesystem;
 // joining is available through append()/append_path() and operator/()/operator/=().
 import std.string;
 import std.vector;
-namespace gti_internal {
-namespace filesystem_runtime {
-export extern "C" {
-uint32_t gti_rt_fs_status_v1(text_view path, uint32_t follow, uint32_t* type);
-uint32_t gti_rt_fs_measure_v1(text_view path, uint32_t operation, uint64_t* value);
-uint32_t gti_rt_fs_equivalent_v1(text_view left, text_view right, uint32_t* value);
-uint32_t gti_rt_fs_mutate_v1(uint32_t operation, text_view first, text_view second, uint32_t option, uint64_t* value);
-uint32_t gti_rt_fs_path_v1(uint32_t operation, text_view input, int64_t* result);
-uint32_t gti_rt_fs_directory_open_v1(text_view path, int64_t* result);
-uint32_t gti_rt_fs_directory_next_v1(int64_t result, uint32_t* available);
-uint64_t gti_rt_fs_result_size_v1(int64_t result);
-uint64_t gti_rt_fs_result_read_v1(int64_t result, uint64_t offset, uint8_t* output, uint64_t capacity);
-void gti_rt_fs_result_destroy_v1(int64_t result);
-}
-}
-
-// Unique source-defined ownership; ordinary MIR movement retires the source.
-export [[no_transfer, no_share]] class filesystem_result {
-  mut int64_t handle;
-public:
-  filesystem_result(int64_t value) : handle(value) {}
-  filesystem_result(filesystem_result& other) = delete;
-  filesystem_result(filesystem_result&& other) = default;
-  ~filesystem_result() {
-    filesystem_runtime::gti_rt_fs_result_destroy_v1(this.handle);
-  }
-  int64_t get() { return this.handle; }
-  std::string text() {
-    mut std::string output = std::string();
-    uint64_t length = filesystem_runtime::gti_rt_fs_result_size_v1(this.handle);
-    mut uint64_t offset = 0;
-    mut uint8_t buffer[4096] = {};
-    while (offset < length) {
-      mut uint64_t count = 0;
-      unsafe {
-        count = filesystem_runtime::gti_rt_fs_result_read_v1(
-            this.handle, offset, &buffer[0], uint64_t(4096));
-      }
-      for (mut uint64_t index = 0; index < count; index++) {
-        output.push_back(char(buffer[std::size_t(index)]));
-      }
-      offset = offset + count;
-    }
-    return std::move(output);
-  }
-};
-}
+import "detail/filesystem_result.gti";
 
 namespace std {
   namespace filesystem {

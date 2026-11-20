@@ -1091,8 +1091,8 @@ folds/gaps according to explicit policy. A pinned IANA bundle is embedded with
 no default runtime resource-path dependency. Explicit `tzdb::try_load(path)`
 loads replacement snapshots without mutating existing handles. Build packaging
 must install the resource alongside its source module. Local-zone discovery
-reuses the private native environment snapshot owner and existing filesystem
-capabilities; unsupported discovery targets return an error without importing
+reuses private native environment snapshot and filesystem result owners
+without importing the public path manipulation module; unsupported discovery targets return an error without importing
 the POSIX-only public environment facade. It never changes global
 `TZ` or infers zone identities from display abbreviations.
 
