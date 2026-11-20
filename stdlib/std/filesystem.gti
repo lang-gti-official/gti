@@ -611,7 +611,8 @@ namespace std {
 #if target.os == "windows"
         if (this.text.size() >= 2 && this.text[1] == ':') {
           char drive = this.text[0];
-          if ((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')) {
+          if ((uint8_t(drive) >= uint8_t('A') && uint8_t(drive) <= uint8_t('Z')) ||
+              (uint8_t(drive) >= uint8_t('a') && uint8_t(drive) <= uint8_t('z'))) {
             return std::size_t(2);
           }
         }

@@ -169,6 +169,10 @@ Bundle input is limited to 64 MiB and 4096 entries; individual zone files are
 limited to 4 MiB, 200,000 transitions, 256 local types and 65,536 designation
 bytes. Malformed sizes, duplicate names and invalid indices are rejected.
 
+Calendar arithmetic and explicit zones remain available independently of host
+discovery. On Windows and unknown targets, `try_current_zone_id()` reports
+`errc::unavailable`; it does not prevent importing `std.chrono`.
+
 ## Zoned Instants And Daylight-Saving Resolution
 
 `zone.try_at(timestamp)`/`at(timestamp)` convert an instant into `zoned_time`.
@@ -202,7 +206,9 @@ should be allowed to change a scheduled instant.
 or a `/etc/localtime` link into a `zoneinfo` directory on supported hosts. They
 do not change `TZ`, parse arbitrary POSIX rule strings, or infer an identity
 from a display abbreviation. Failure to discover an identifier is explicit;
-lookup in the chosen database is a separate operation.
+lookup in the chosen database is a separate operation. Windows and unknown
+targets return `unavailable` for host-zone discovery; calendar arithmetic,
+fixed zones and explicitly loaded zone data do not require that discovery.
 
 ## Formatting
 

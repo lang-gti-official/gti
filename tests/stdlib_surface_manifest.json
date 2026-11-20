@@ -3934,7 +3934,8 @@
         "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
       ],
       "evidence": [
-        "tests/ui/chrono/discovery.gti"
+        "tests/ui/chrono/discovery.gti",
+        "tests/ui/chrono/calendar_windows.gti"
       ]
     },
     {
@@ -4595,7 +4596,27 @@
         "tests/fixtures/stdlib_surface_environment.gti",
         "tests/fixtures/environment_lookup.gti",
         "tests/environment_runtime_test.py",
-        "tests/runtime_environment_tests.cpp"
+        "tests/runtime_environment_tests.cpp",
+        "stdlib/std/detail/environment_snapshot.gti"
+      ]
+    },
+    {
+      "id": "environment.snapshot",
+      "source": "stdlib/std/detail/environment_snapshot.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::environment_snapshot"
+      ],
+      "case_ids": [
+        "environment"
+      ],
+      "required_instantiations": [
+        "Shared native snapshot ownership reused by environment lookup and optional chrono discovery."
+      ],
+      "evidence": [
+        "tests/ui/chrono/discovery.gti",
+        "tests/ui/chrono/calendar_windows.gti",
+        "stdlib/std/environment.gti"
       ]
     },
     {
@@ -4680,7 +4701,8 @@
       "evidence": [
         "tests/fixtures/filesystem_path.gti",
         "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
-        "stdlib/std/filesystem.gti"
+        "stdlib/std/filesystem.gti",
+        "tests/ui/filesystem/windows_drive.gti"
       ]
     },
     {

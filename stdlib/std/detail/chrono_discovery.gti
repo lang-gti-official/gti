@@ -1,6 +1,6 @@
 export module detail_chrono_discovery_impl;
 import "chrono_calendar.gti";
-import std.environment;
+import "environment_snapshot.gti";
 import std.filesystem;
 import std.string;
 import "panic.gti";
@@ -23,11 +23,18 @@ bool zone_identifier(std::string_view value) {
 /// Observes an explicit TZ identifier or the host's localtime zoneinfo link.
 /// Never changes process state or guesses an identifier from an abbreviation.
 export expected<std::string, errc> try_current_zone_id() {
-  auto setting = std::environment::get("TZ");
-  if (!setting) { return unexpected(errc::unavailable); }
-  auto optional = std::move(setting).value();
-  if (optional.has_value()) {
-    auto& text = optional.value();
+#if target.os == "windows" || target.os == "unknown"
+  return unexpected(errc::unavailable);
+#else
+  mut int64_t handle = 0;
+  mut uint32_t status = 0;
+  unsafe {
+    status = gti_internal::environment_runtime::gti_rt_environment_get_v1("TZ", &handle);
+  }
+  if (status != uint32_t(0)) { return unexpected(errc::unavailable); }
+  if (handle != 0) {
+    auto snapshot = gti_internal::environment_snapshot(handle);
+    auto text = std::string(snapshot.view());
     mut std::size_t start = 0;
     if (!text.empty() && text[0] == ':') { start = 1; }
     auto name = text.view().substr(start);
@@ -43,6 +50,7 @@ export expected<std::string, errc> try_current_zone_id() {
   auto suffix = name.view().substr(position + 10);
   if (!detail::zone_identifier(suffix)) { return unexpected(errc::unknown_zone); }
   return std::string(suffix);
+#endif
 }
 export std::string current_zone_id() {
   auto result = try_current_zone_id();

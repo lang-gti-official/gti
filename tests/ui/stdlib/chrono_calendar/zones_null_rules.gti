@@ -13,5 +13,10 @@ import std.memory;
 export int check_empty_rules() {
   std::shared_ptr<std::chrono::detail::zone_rules> empty{};
   auto result = std::chrono::zoned_time::try_from_rules(std::move(empty), std::chrono::timestamp(0i64));
-  return !result && result.error() == std::chrono::errc::invalid_data ? 0 : 1;
+  if (result || result.error() != std::chrono::errc::invalid_data) return 1;
+  auto rules = std::chrono::detail::zone_rules::try_fixed(0).expect("fixed rules");
+  mut auto handle = std::make_shared<std::chrono::detail::zone_rules>(std::move(rules));
+  handle.reset();
+  auto reset_result = std::chrono::zoned_time::try_from_rules(std::move(handle), std::chrono::timestamp(0i64));
+  return !reset_result && reset_result.error() == std::chrono::errc::invalid_data ? 0 : 2;
 }
