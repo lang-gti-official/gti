@@ -1,4 +1,4 @@
-// Protocol concepts: rejected with GTI-S2123.
+// Bare parameters in a locally owned protocol conformance are accepted.
 concept adds_to<Left, Right> {
   typename sum_type;
   sum_type add(Left& left, Right& right);
@@ -48,7 +48,7 @@ for <V, std::numeric K> concept adds_to<Pair<K, V>, Pair<K, K>> {
   }
 };
 
-for <T> concept adds_to<T, Meters> {  //~ ERROR GTI-S2123
+for <T> concept adds_to<T, Meters> {
   using sum_type = Meters;
   Meters add(T& left, Meters& right) { return Meters(right.value); }
 };

@@ -527,15 +527,15 @@ void runChecks(const std::filesystem::path &self) {
   require(first.cache.status == BuildCacheStatus::Miss && first.nativeProcess,
           "first native-object build must miss and link");
   require(
-      first.cache.entry.parent_path().filename() == "v5" &&
+      first.cache.entry.parent_path().filename() == "v6" &&
           read(first.cache.entry / "metadata")
-              .starts_with("gti-build-cache-v5\n") &&
+              .starts_with("gti-build-cache-v6\n") &&
           read(first.cache.entry / "metadata").find("\nartifact object .o\n") !=
               std::string::npos,
       "native cache must record its exact binary artifact schema");
   const auto object = read(first.cache.entry / "artifact.o");
   require(object.find('\0') != std::string::npos &&
-              first.compilation.artifact->contents == object,
+              first.compilation.artifact->singleObject() == object,
           "real object bytes must include NUL and survive storage exactly");
   const auto executable = read(output);
   const auto executableMode = std::filesystem::status(output).permissions();
@@ -645,7 +645,7 @@ void runChecks(const std::filesystem::path &self) {
           hit.cache.key == first.cache.key &&
           hit.compilation.artifact->kind == BackendArtifactKind::Object &&
           hit.compilation.artifact->extension == ".o" &&
-          hit.compilation.artifact->contents == object &&
+          hit.compilation.artifact->singleObject() == object &&
           read(representation) == object && read(output) == executable &&
           std::filesystem::status(output).permissions() == executableMode,
       "cache hit must restore exact object, executable and executable mode");
@@ -839,7 +839,7 @@ void runChecks(const std::filesystem::path &self) {
               read(outside) == "preserve",
           "symlink cache leaf must not be trusted or overwrite its referent");
 
-  // LLVM/C++ cache-schema isolation (v5 objects beside C++ v4 sources) is
+  // LLVM/C++ cache-schema isolation (v6 objects beside C++ v4 sources) is
   // covered by cpp_mir_driver (tests/cpp_mir_driver_tests.cpp).
   const auto validSource = read(project / "main.gti");
   const auto validMetadata = read(first.cache.entry / "metadata");

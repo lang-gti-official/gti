@@ -398,6 +398,10 @@ void writeProjectMetadata(std::ostream &stream,
         const auto &dependency = projectTarget.compiledDependencies[index];
         stream << "{\"target\": ";
         writeJsonString(stream, dependency.target);
+        if (dependency.packageAlias) {
+          stream << ", \"package\": ";
+          writeJsonString(stream, *dependency.packageAlias);
+        }
         stream << ", \"interface\": ";
         writeJsonString(stream, dependency.interfacePath.string());
         stream << "}";

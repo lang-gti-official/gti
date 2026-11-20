@@ -362,7 +362,7 @@ void check(const std::filesystem::path &root) {
     const auto artifact =
         LlvmBackend({.optimization = level}).generate(input->program());
     auto object = llvm::object::ObjectFile::createObjectFile(
-        llvm::MemoryBufferRef(artifact.contents, "atomic-contract.o"));
+        llvm::MemoryBufferRef(artifact.singleObject(), "atomic-contract.o"));
     if (!object)
       throw std::runtime_error(llvm::toString(object.takeError()));
     for (const auto &symbol : (*object)->symbols()) {

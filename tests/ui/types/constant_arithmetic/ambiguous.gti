@@ -1,0 +1,4 @@
+// Fitting arithmetic constants do not rank destination integer types.
+int pick(uint8_t value) { return 1; }
+int pick(uint16_t value) { return 2; }
+int main() { return pick(5 * 5); } //~ ERROR GTI-S2013

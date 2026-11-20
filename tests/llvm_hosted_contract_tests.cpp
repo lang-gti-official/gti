@@ -1436,7 +1436,7 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
       (optimization == LlvmCodegenOptimization::None ? "O0" : "O3");
   std::filesystem::create_directories(directory);
   const auto object = directory / "program.o";
-  require(driver::writeArtifact(object, session.emitObject().contents) ==
+  require(driver::writeArtifact(object, session.emitObject().singleObject()) ==
               driver::ArtifactWriteStatus::Success,
           "owned-argument object publishes through normal emission");
   const auto shim = directory / "caller.c";
@@ -1829,7 +1829,7 @@ void run(const std::filesystem::path &repository,
       (optimization == LlvmCodegenOptimization::None ? "O0" : "O3");
   std::filesystem::create_directories(directory);
   const auto object = directory / "program.o";
-  require(driver::writeArtifact(object, session.emitObject().contents) ==
+  require(driver::writeArtifact(object, session.emitObject().singleObject()) ==
               driver::ArtifactWriteStatus::Success,
           "verified hosted object is published");
   const auto shim = directory / "observer.c";

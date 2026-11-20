@@ -114,7 +114,7 @@ extern "C" { int foreign(int value); void install(Unary value); }
   const auto *privateFunction = session.module().getFunction(privateName);
   const bool privateInternal =
       !privateFunction || privateFunction->hasInternalLinkage();
-  if (artifact.contents.empty() || privateInternal == library ||
+  if (artifact.singleObject().empty() || privateInternal == library ||
       !functions.at("addressed")->hasExternalLinkage() ||
       !functions.at("callback")->hasExternalLinkage() ||
       !functions.at("foreign")->hasExternalLinkage() ||

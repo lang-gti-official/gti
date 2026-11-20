@@ -1,0 +1,20 @@
+manifest-version = 1
+[package]
+name = "consumer"
+version = "1.0.0"
+[dependencies]
+lhs = { path = "../left" }
+rhs = { path = "../right" }
+[package.native]
+c-sources = ["native.c"]
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+[[targets.app.compiled-dependencies]]
+package = "lhs"
+target = "api"
+interface = "api/left.gti"
+[[targets.app.compiled-dependencies]]
+package = "rhs"
+target = "api"
+interface = "api/right.gti"

@@ -1,0 +1,27 @@
+// An unrelated carrier converts its residual through the same std::from rule.
+//@ run-pass
+struct Rejected { int code; constexpr Rejected(int n) : code(n) {} };
+struct Checked { int code; constexpr Checked(int n) : code(n) {} };
+enum Outcome { value(int n), failure(int n) };
+for concept std::tryable<Checked> {
+  using value_type = int;
+  using residual_type = Rejected;
+  constexpr bool has_value(Checked& value) { return value.code == 0; }
+  constexpr int take_value(Checked value) { return 42; }
+  constexpr Rejected take_residual(Checked value) { return Rejected(value.code); }
+};
+for concept std::from<Outcome, Rejected> {
+  constexpr Outcome from(Rejected error) { return Outcome::failure(error.code); }
+};
+constexpr Outcome calculate(bool fail) {
+  return Outcome::value(?Checked(fail ? 7 : 0));
+}
+constexpr int code(Outcome result) {
+  switch (result) {
+    case Outcome::value(n): return n;
+    case Outcome::failure(n): return n;
+  }
+}
+static_assert(code(calculate(false)) == 42);
+static_assert(code(calculate(true)) == 7);
+int main() { return code(calculate(false)) + code(calculate(true)) == 49 ? 0 : 1; }

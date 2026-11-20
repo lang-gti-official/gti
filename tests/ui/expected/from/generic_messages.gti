@@ -1,0 +1,31 @@
+// A gtiup-style generic conversion preserves owned error messages.
+//@ run-pass
+import std.string;
+enum FileError { missing };
+enum ParseError { invalid };
+enum AppError { detail(std::string message) };
+std::string error_message(FileError& error) { return std::string("missing file"); }
+std::string error_message(ParseError& error) { return std::string("invalid input"); }
+concept described_error<E> = requires(E& error) {
+  { error_message(error) } -> std::string;
+};
+for <E> concept std::from<AppError, E> requires described_error<E> {
+  AppError from(E error) { return AppError::detail(error_message(error)); }
+};
+expected<int, FileError> read() { return unexpected(FileError::missing); }
+expected<int, ParseError> parse() { return unexpected(ParseError::invalid); }
+expected<int, AppError> run(bool file) {
+  if (file) return ?read();
+  return ?parse();
+}
+bool matches(AppError& error, std::string_view text) {
+  switch (error) {
+    case AppError::detail(auto& message): return message.view() == text;
+  }
+}
+int main() {
+  auto file = run(true);
+  auto parse = run(false);
+  return matches(file.error(), "missing file") &&
+         matches(parse.error(), "invalid input") ? 0 : 1;
+}

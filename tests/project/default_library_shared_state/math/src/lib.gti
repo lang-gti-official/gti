@@ -1,0 +1,3 @@
+export module numbers;
+import "detail.gti";
+export int answer() { return helper(); }

@@ -1,0 +1,128 @@
+// A read-only cursor or span yields element references tied to the container
+// it views, not to the cursor or span object: they survive advancing, outlive
+// a temporary cursor or span, and can be returned through a reference formal.
+//@ slow
+//@ run-pass
+//@ stdout: vector 1 2 7 9
+//@ stdout: span 7 3 9
+//@ stdout: list 1 2
+//@ stdout: forward_list 3
+//@ stdout: deque 5 6
+//@ stdout: string a
+//@ stdout: map 1 10
+//@ stdout: set 1
+//@ stdout: unordered 4 40 4
+//@ stdout: sparse 10 30
+//@ stdout: arena 1
+//@ stdout: simd 2 true
+//@ stdout: relay 3
+import std.algorithm;
+import std.deque;
+import std.format;
+import std.forward_list;
+import std.list;
+import std.map;
+import std.memory;
+import std.set;
+import std.simd;
+import std.span;
+import std.string;
+import std.unordered_map;
+import std.unordered_set;
+import std.vector;
+
+int& first_of(std::vector<int>& values) { return *values.begin(); }
+
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(9);
+  values.push_back(7);
+  mut auto cursor = values.begin();
+  int& first = *cursor;            // kept while the cursor advances
+  ++cursor;
+  int& second = *cursor;
+  int& last = *values.rbegin();    // a temporary reverse cursor
+  int& largest = *std::max_element(values.begin(), values.end());
+  std::println("vector {} {} {} {}", first, second, last, largest);
+
+  int& front = values.as_span()[3];  // a temporary span
+  std::span<int> view = values.as_span();
+  std::span<int> part = view.subspan(std::size_t(1), std::size_t(2));
+  int& middle = part.front();
+  std::span<int> prefix = view.first(std::size_t(3));
+  int& back = prefix.back();
+  std::println("span {} {} {}", front, middle + 1, back);
+
+  std::list<int> chain = {1, 2};
+  mut auto link = chain.begin();
+  int& one = *link;
+  ++link;
+  std::println("list {} {}", one, *link);
+
+  mut std::forward_list<int> jobs{};
+  jobs.push_front(3);
+  int& job = *jobs.begin();
+  std::println("forward_list {}", job);
+
+  mut std::deque<int> queue{};
+  queue.push_back(5);
+  queue.push_back(6);
+  int& qhead = *queue.begin();
+  int& qnext = queue.begin()[1];
+  std::println("deque {} {}", qhead, qnext);
+
+  std::string word{"abc"};
+  char& letter = *word.begin();
+  std::println("string {}", letter);
+
+  mut std::map<int, int> priorities{};
+  priorities.insert(1, 10);
+  priorities.insert(2, 20);
+  auto& entry = *priorities.begin();
+  std::println("map {} {}", entry.first, entry.second);
+
+  std::set<int> ordered = {2, 1, 3};
+  int& smallest = *ordered.begin();
+  std::println("set {}", smallest);
+
+  mut std::unordered_map<int, int> table{};
+  table.insert(4, 40);
+  auto& cell = *table.begin();
+  mut std::unordered_set<int> keys{};
+  keys.insert(4);
+  int& key = *keys.begin();
+  std::println("unordered {} {} {}", cell.first, cell.second, key);
+
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int>(std::size_t(5));
+  if (!allocated) { return 1; }
+  mut auto sparse = std::move(allocated).value();
+  sparse.construct(std::size_t(1), 10);
+  sparse.construct(std::size_t(3), 30);
+  mut auto slot = sparse.begin();
+  int& low = *slot;
+  ++slot;
+  std::println("sparse {} {}", low, *slot);
+
+  mut auto arena_result = std::try_make_arena<int>(std::size_t(4));
+  if (!arena_result) { return 2; }
+  mut auto arena = std::move(arena_result).value();
+  [[discard]] arena.try_insert(1);
+  int& item = *arena.begin();
+  std::println("arena {}", item);
+
+  std::simd<float, 4> lanes{2.0};
+  float& lane = *lanes.begin();
+  mut std::simd_mask<4> mask{};
+  for (mut bool& bit : mask) { bit = true; }
+  bool& flag = *mask.begin();
+  std::println("simd {} {}", int(lane), flag);
+
+  mut std::vector<int> other{};
+  other.push_back(3);
+  int& relayed = first_of(other);
+  std::println("relay {}", relayed);
+  return 0;
+}

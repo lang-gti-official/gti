@@ -1638,7 +1638,24 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
                                              {"version", document.version}}},
                {"contentChanges",
                 json::Array{json::Object{{"text", document.text}}}}}}});
-      const auto published = publication(document);
+      // An edit may publish syntax or body-local results before the complete
+      // diagnostics these annotations describe. A semantic request waits for
+      // the current snapshot. Raw protocol transcripts test the earlier stages.
+      auto published = publication(document);
+      if (published) {
+        const auto symbols = server.request(
+            "textDocument/documentSymbol",
+            json::Object{{"textDocument", json::Object{{"uri", document.uri}}}},
+            deadline());
+        if (!symbols || !symbols->get("result")) {
+          fail("no current semantic snapshot for " + document.name);
+          break;
+        }
+        if (auto complete = server.latest([&](const json::Object &message) {
+              return isPublication(message, document);
+            }))
+          published = std::move(complete);
+      }
       if (!published) {
         timeout(test.sections[step.section].name + ": published diagnostics");
         break;

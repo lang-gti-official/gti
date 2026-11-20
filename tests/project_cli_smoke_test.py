@@ -784,8 +784,8 @@ def main():
         )
 
         # The dev profile's keep-cpp selects the C++ backend's schema-v4
-        # cache; LLVM builds use the schema-v5 object cache.
-        cache_executables = list((project / "build/gti/cache" / ("v4" if CPP else "v5")).glob(
+        # cache; LLVM builds use the schema-v6 object cache.
+        cache_executables = list((project / "build/gti/cache" / ("v4" if CPP else "v6")).glob(
             "*/executable"
         ))
         assert len(cache_executables) == 1
@@ -2079,7 +2079,7 @@ def main():
             )
 
             # These checks exercise the C++ backend's schema-v4 cache entries;
-            # LLVM's schema-v5 object cache has its own round-trip tests.
+            # LLVM's schema-v6 object cache has its own round-trip tests.
             def cache_native_build(expected=0, extra=(), env=None):
                 return run(
                     [

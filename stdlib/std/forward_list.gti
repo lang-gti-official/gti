@@ -41,12 +41,12 @@ namespace std {
       forward_list_sentinel() = default;
     };
 
-    class forward_list_iterator<T> {
-      std::unique_ptr<forward_list_node<T>>& root;
+    class forward_list_iterator<T, lifetime owner> {
+      std::unique_ptr<forward_list_node<T>>&<owner> root;
       mut const forward_list_node<T>* current = nullptr;
 
     public:
-      forward_list_iterator(std::unique_ptr<forward_list_node<T>>& root,
+      forward_list_iterator(std::unique_ptr<forward_list_node<T>>&<owner> root,
                             bool at_end = false)
           : root(root) {
         if (!at_end && root != nullptr) {
@@ -54,14 +54,14 @@ namespace std {
         }
       }
 
-      T& operator*() {
+      T&<owner> operator*() {
         gti_internal::require_container_argument(this.current != nullptr);
         // The retained root owns every node reached through next. Its shared
         // checked loan excludes unlinking, mutation, movement and destruction.
         unsafe { return std::assume_ref(&this.current->value, this.root); }
       }
 
-      T& operator->() { return *this; }
+      T&<owner> operator->() { return *this; }
 
       void operator++() mut {
         gti_internal::require_container_argument(this.current != nullptr);

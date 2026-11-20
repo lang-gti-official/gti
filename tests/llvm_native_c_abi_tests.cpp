@@ -1646,7 +1646,7 @@ int main(int argc, char **argv) {
     ir.close();
     const auto object = session.emitObject();
     std::ofstream output(argv[2], std::ios::binary);
-    output.write(object.contents.data(), object.contents.size());
+    output.write(object.singleObject().data(), object.singleObject().size());
     require(output.good(), "cannot write object output");
     std::cout
         << "classifier/oracle object O" << level
@@ -1660,9 +1660,9 @@ int main(int argc, char **argv) {
             : argc == 6
                 ? ": isolated callback boundary test bodies; "
                 : ": 25 records, 3 pressure signatures, explicit rejections; ")
-        << object.contents.size() << " bytes; LLVM " << LLVM_VERSION_STRING
-        << "; " << llvm::Triple(session.module().getTargetTriple()).str()
-        << '\n';
+        << object.singleObject().size() << " bytes; LLVM "
+        << LLVM_VERSION_STRING << "; "
+        << llvm::Triple(session.module().getTargetTriple()).str() << '\n';
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

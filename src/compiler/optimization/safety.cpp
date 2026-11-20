@@ -5635,9 +5635,12 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
                                                     SymbolId field) {
   if (!program || !type || type->kind != SemanticType::Class)
     return nullptr;
-  const auto record = std::find_if(
-      program->classInstances().begin(), program->classInstances().end(),
-      [&](const auto &candidate) { return candidate.type == *type; });
+  const auto record =
+      std::find_if(program->classInstances().begin(),
+                   program->classInstances().end(), [&](const auto &candidate) {
+                     return candidate.type.classId == type->classId &&
+                            candidate.type == *type;
+                   });
   if (record == program->classInstances().end() ||
       record->kind == ClassKind::Union ||
       record->compilerCapability != CompilerCapabilityTypeKind::None)
@@ -8805,34 +8808,54 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   return incoming;
 }
 
-[[nodiscard]] std::vector<AbstractState>
-solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
-            const AbstractState *entryState = nullptr,
-            ClosedCallRound *closedCalls = nullptr,
-            MirBodyAddress address = {}) {
-  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
-  const std::optional<MirLoopAnalysis> loops =
-      dominance ? std::optional{analyzeMirLoops(body, *dominance)}
-                : std::nullopt;
-  std::vector<bool> headers;
-  if (loops && !loops->hasIrreducibleControlFlow) {
-    headers.assign(body.blocks.size(), false);
-    for (const MirNaturalLoop &loop : loops->loops)
-      if (loop.header != 0 && loop.header <= headers.size())
-        headers[loop.header - 1] = true;
+// These inputs depend only on the body of the immutable program being
+// analyzed. Context updates and proof replay still solve their own fact states.
+struct SafetyControlFlow {
+  explicit SafetyControlFlow(const MirBody &body)
+      : dominance(computeMirDominance(body)),
+        loops(dominance ? analyzeMirLoops(body, *dominance)
+                        : MirLoopAnalysis{}) {
+    if (dominance && !loops.hasIrreducibleControlFlow) {
+      headers.assign(body.blocks.size(), false);
+      for (const MirNaturalLoop &loop : loops.loops)
+        if (loop.header != 0 && loop.header <= headers.size())
+          headers[loop.header - 1] = true;
+    }
   }
-  const std::vector<bool> *wideningBlocks =
-      headers.empty() ? nullptr : &headers;
+
+  std::optional<MirDominanceInfo> dominance;
+  MirLoopAnalysis loops;
+  std::vector<bool> headers;
+};
+
+struct SafetyBodyInputs {
+  SafetyBodyInputs(const MirProgram &program, MirBodyAddress address,
+                   const MirBody &body)
+      : aliases(analyzeMirPlaceAliasEscape(program, address)), flow(body) {}
+
+  MirPlaceAliasEscapeAnalysis aliases;
+  SafetyControlFlow flow;
+};
+
+using SafetyBodyInputCache =
+    std::map<MirBodyAddress, SafetyBodyInputs, MirBodyAddressLess>;
+
+[[nodiscard]] std::vector<AbstractState> solveStates(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const SafetyControlFlow &flow, const AbstractState *entryState = nullptr,
+    ClosedCallRound *closedCalls = nullptr, MirBodyAddress address = {}) {
+  const auto *wideningBlocks = flow.headers.empty() ? nullptr : &flow.headers;
   std::vector<AbstractState> initial = solveStatesOnce(
       body, aliases, nullptr, entryState, closedCalls, address, wideningBlocks);
   if (initial.empty()) {
     return {};
   }
-  if (!dominance) {
+  if (!flow.dominance) {
     return initial;
   }
-  const PlaceThresholds thresholds = recurrenceThresholds(
-      body, aliases, *dominance, *loops, initial, closedCalls, address);
+  const PlaceThresholds thresholds =
+      recurrenceThresholds(body, aliases, *flow.dominance, flow.loops, initial,
+                           closedCalls, address);
   if (thresholds.empty()) {
     return initial;
   }
@@ -8898,102 +8921,129 @@ void appendProof(MirSafetyAnalysis &analysis, MirBodyAddress address,
        .relatedPlaces = std::move(ids.places)});
 }
 
+// appendProof needs a unique local failure origin. Contextual collection still
+// transfers every instruction to discover calls, even if no proof can be
+// emitted.
+[[nodiscard]] auto proofEnd(const MirBlock &block) {
+  return std::find_if(block.instructions.rbegin(), block.instructions.rend(),
+                      [](const MirInstruction &instruction) {
+                        return !instruction.tombstone &&
+                               !instruction.definedFailure.localOrigins.empty();
+                      })
+      .base();
+}
+
+[[nodiscard]] bool hasProofSites(const MirBody &body) {
+  return std::any_of(body.blocks.begin(), body.blocks.end(),
+                     [](const MirBlock &block) {
+                       return proofEnd(block) != block.instructions.begin();
+                     });
+}
+
+void collectInstructionProofs(MirBodyAddress address, const MirBody &body,
+                              const MirPlaceAliasEscapeAnalysis &aliases,
+                              const MirProgram *program, const MirBlock &block,
+                              const MirInstruction &instruction,
+                              const AbstractState &state,
+                              MirSafetyAnalysis &analysis) {
+  if (instruction.kind == MirInstructionKind::Call &&
+      instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
+      instruction.operands.size() == 2) {
+    const std::optional<IntegerFact> index =
+        integerForOperand(body, state, instruction.operands[0]);
+    const std::optional<IntegerFact> length =
+        integerForOperand(body, state, instruction.operands[1]);
+    const std::optional<DefinedFailureOutcome> outcome =
+        uniqueOutcomeForCode(instruction, DefinedFailureCode::IndexOutOfBounds);
+    if (index && length && outcome && within(*index, *length)) {
+      appendProof(analysis, address, block, instruction,
+                  MirSafetyCheckFamily::Bounds, *outcome,
+                  merged(index->evidence, length->evidence));
+    } else if (outcome &&
+               instruction.operands[0].type == SemanticType::UInt64) {
+      // An unsigned index is never negative, so `index < length` from
+      // a dominating comparison is the whole check.
+      if (std::optional<Evidence> ordered = strictlyOrdered(
+              body, state, instruction.operands[0], instruction.operands[1])) {
+        appendProof(analysis, address, block, instruction,
+                    MirSafetyCheckFamily::Bounds, *outcome,
+                    std::move(*ordered));
+      }
+    }
+  }
+  const FixedArrayIndex fixed = fixedArrayIndex(body, state, instruction);
+  if (fixed.index && fixed.parentsProven &&
+      fixedArrayDimensionWithin(*fixed.index, fixed.length)) {
+    Evidence evidence = fixed.index->evidence;
+    addPlace(evidence, fixed.arrayPlace);
+    addPlace(evidence, fixed.elementPlace);
+    appendProof(analysis, address, block, instruction,
+                MirSafetyCheckFamily::Bounds,
+                {.code = DefinedFailureCode::IndexOutOfBounds,
+                 .detail = DefinedFailureDetail::FixedArray},
+                std::move(evidence));
+  }
+
+  if (instruction.kind == MirInstructionKind::Compute ||
+      instruction.kind == MirInstructionKind::Assign ||
+      instruction.kind == MirInstructionKind::Modify) {
+    const std::optional<IntegerFact> result =
+        instruction.kind == MirInstructionKind::Compute
+            ? computeIntegerFact(body, state, instruction)
+            : compoundIntegerFact(body, program, address, aliases, state,
+                                  instruction);
+    DefinedFailureDetail detail = DefinedFailureDetail::None;
+    if (instruction.operation == MirOperation::Add ||
+        instruction.operation == MirOperation::AddAssign) {
+      detail = DefinedFailureDetail::Addition;
+    } else if (instruction.operation == MirOperation::Subtract ||
+               instruction.operation == MirOperation::SubtractAssign) {
+      detail = DefinedFailureDetail::Subtraction;
+    } else if (instruction.operation == MirOperation::Multiply ||
+               instruction.operation == MirOperation::MultiplyAssign) {
+      detail = DefinedFailureDetail::Multiplication;
+    } else if (instruction.operation == MirOperation::Negate) {
+      detail = DefinedFailureDetail::Negation;
+    }
+    if (result && detail != DefinedFailureDetail::None) {
+      appendProof(
+          analysis, address, block, instruction,
+          MirSafetyCheckFamily::ArithmeticOverflow,
+          {.code = DefinedFailureCode::IntegerOverflow, .detail = detail},
+          result->evidence);
+    }
+    if (result && instruction.operation == MirOperation::Remainder) {
+      appendProof(analysis, address, block, instruction,
+                  MirSafetyCheckFamily::ArithmeticDomain,
+                  {.code = DefinedFailureCode::ModuloByZero,
+                   .detail = DefinedFailureDetail::IntegerModulo},
+                  result->evidence);
+    }
+  }
+}
+
 void collectProofs(MirBodyAddress address, const MirBody &body,
                    const MirPlaceAliasEscapeAnalysis &aliases,
                    const std::vector<AbstractState> &incoming,
                    MirSafetyAnalysis &analysis,
                    ClosedCallRound *closedCalls = nullptr) {
-  const MirProgram *program =
-      closedCalls == nullptr ? nullptr : &closedCalls->program;
+  const MirProgram *program = closedCalls ? &closedCalls->program : nullptr;
   for (const MirBlock &block : body.blocks) {
     if (block.id == 0 || block.id > incoming.size() ||
-        !incoming[block.id - 1].reachable) {
+        !incoming[block.id - 1].reachable)
       continue;
-    }
+    const auto end = closedCalls ? block.instructions.end() : proofEnd(block);
+    if (end == block.instructions.begin())
+      continue;
     AbstractState state = incoming[block.id - 1];
-    for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.tombstone) {
+    for (auto it = block.instructions.begin(); it != end; ++it) {
+      if (it->tombstone)
         continue;
-      }
-      if (instruction.kind == MirInstructionKind::Call &&
-          instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
-          instruction.operands.size() == 2) {
-        const std::optional<IntegerFact> index =
-            integerForOperand(body, state, instruction.operands[0]);
-        const std::optional<IntegerFact> length =
-            integerForOperand(body, state, instruction.operands[1]);
-        const std::optional<DefinedFailureOutcome> outcome =
-            uniqueOutcomeForCode(instruction,
-                                 DefinedFailureCode::IndexOutOfBounds);
-        if (index && length && outcome && within(*index, *length)) {
-          appendProof(analysis, address, block, instruction,
-                      MirSafetyCheckFamily::Bounds, *outcome,
-                      merged(index->evidence, length->evidence));
-        } else if (outcome &&
-                   instruction.operands[0].type == SemanticType::UInt64) {
-          // An unsigned index is never negative, so `index < length` from
-          // a dominating comparison is the whole check.
-          if (std::optional<Evidence> ordered =
-                  strictlyOrdered(body, state, instruction.operands[0],
-                                  instruction.operands[1])) {
-            appendProof(analysis, address, block, instruction,
-                        MirSafetyCheckFamily::Bounds, *outcome,
-                        std::move(*ordered));
-          }
-        }
-      }
-      const FixedArrayIndex fixed = fixedArrayIndex(body, state, instruction);
-      if (fixed.index && fixed.parentsProven &&
-          fixedArrayDimensionWithin(*fixed.index, fixed.length)) {
-        Evidence evidence = fixed.index->evidence;
-        addPlace(evidence, fixed.arrayPlace);
-        addPlace(evidence, fixed.elementPlace);
-        appendProof(analysis, address, block, instruction,
-                    MirSafetyCheckFamily::Bounds,
-                    {.code = DefinedFailureCode::IndexOutOfBounds,
-                     .detail = DefinedFailureDetail::FixedArray},
-                    std::move(evidence));
-      }
-
-      if (instruction.kind == MirInstructionKind::Compute ||
-          instruction.kind == MirInstructionKind::Assign ||
-          instruction.kind == MirInstructionKind::Modify) {
-        const std::optional<IntegerFact> result =
-            instruction.kind == MirInstructionKind::Compute
-                ? computeIntegerFact(body, state, instruction)
-                : compoundIntegerFact(body, program, address, aliases, state,
-                                      instruction);
-        DefinedFailureDetail detail = DefinedFailureDetail::None;
-        if (instruction.operation == MirOperation::Add ||
-            instruction.operation == MirOperation::AddAssign) {
-          detail = DefinedFailureDetail::Addition;
-        } else if (instruction.operation == MirOperation::Subtract ||
-                   instruction.operation == MirOperation::SubtractAssign) {
-          detail = DefinedFailureDetail::Subtraction;
-        } else if (instruction.operation == MirOperation::Multiply ||
-                   instruction.operation == MirOperation::MultiplyAssign) {
-          detail = DefinedFailureDetail::Multiplication;
-        } else if (instruction.operation == MirOperation::Negate) {
-          detail = DefinedFailureDetail::Negation;
-        }
-        if (result && detail != DefinedFailureDetail::None) {
-          appendProof(
-              analysis, address, block, instruction,
-              MirSafetyCheckFamily::ArithmeticOverflow,
-              {.code = DefinedFailureCode::IntegerOverflow, .detail = detail},
-              result->evidence);
-        }
-        if (result && instruction.operation == MirOperation::Remainder) {
-          appendProof(analysis, address, block, instruction,
-                      MirSafetyCheckFamily::ArithmeticDomain,
-                      {.code = DefinedFailureCode::ModuloByZero,
-                       .detail = DefinedFailureDetail::IntegerModulo},
-                      result->evidence);
-        }
-      }
-
-      applyInstruction(body, aliases, block, instruction, state, nullptr,
-                       closedCalls, address);
+      if (!it->definedFailure.localOrigins.empty())
+        collectInstructionProofs(address, body, aliases, program, block, *it,
+                                 state, analysis);
+      applyInstruction(body, aliases, block, *it, state, nullptr, closedCalls,
+                       address);
     }
   }
 }
@@ -9676,7 +9726,8 @@ struct ContextualBodyResult {
 // passive records transport tokens; tokens are not memory or ownership facts.
 [[nodiscard]] FreshStorageProfile
 freshStorageProfile(const MirProgram &program, MirBodyAddress address,
-                    const MirBody &body, const ClosedCallRound &round) {
+                    const MirBody &body, const SafetyControlFlow &flow,
+                    const ClosedCallRound &round) {
   FreshStorageProfile result;
   const auto *function = address.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(address.owner)
@@ -9808,11 +9859,9 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
            (instruction.kind == MirInstructionKind::Initialize ||
             instruction.kind == MirInstructionKind::Assign);
   };
-  const auto dominance = computeMirDominance(body);
-  if (!dominance)
-    return result;
-  const auto loops = analyzeMirLoops(body, *dominance);
-  if (!loops.loops.empty() || loops.hasIrreducibleControlFlow)
+  const auto &dominance = flow.dominance;
+  if (!dominance || !flow.loops.loops.empty() ||
+      flow.loops.hasIrreducibleControlFlow)
     return result;
   using Origins = FreshPointerOrigins;
   std::map<HirBindingId, std::vector<InstructionSite>> stores;
@@ -10961,14 +11010,13 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
 [[nodiscard]] std::optional<RelocatedPrefixSummary> summarizeRelocatedPrefix(
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases,
-    const std::vector<AbstractState> &incoming, ClosedCallRound &round) {
+    const std::vector<AbstractState> &incoming, const SafetyControlFlow &flow,
+    ClosedCallRound &round) {
   if (address.kind != MirBodyKind::Function || body.blocks.size() > 96)
     return std::nullopt;
-  const auto dominance = computeMirDominance(body);
-  if (!dominance)
-    return std::nullopt;
-  const auto loops = analyzeMirLoops(body, *dominance);
-  if (!loops.loops.empty() || loops.hasIrreducibleControlFlow)
+  const auto &dominance = flow.dominance;
+  if (!dominance || !flow.loops.loops.empty() ||
+      flow.loops.hasIrreducibleControlFlow)
     return std::nullopt;
   const auto precedes = [&](InstructionSite left, InstructionSite right) {
     if (left.block != right.block)
@@ -11454,14 +11502,16 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
 [[nodiscard]] ContextualBodyResult
 analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                       const ClosedCallContext &context,
+                      SafetyBodyInputCache &bodyInputs,
                       ClosedCallRound &round) {
   ContextualBodyResult result;
   const MirBody *body = findMirBody(program, address);
   if (body == nullptr || !context.reached) {
     return result;
   }
-  const MirPlaceAliasEscapeAnalysis aliases =
-      analyzeMirPlaceAliasEscape(program, address);
+  const auto &inputs =
+      bodyInputs.try_emplace(address, program, address, *body).first->second;
+  const auto &aliases = inputs.aliases;
   // Capture facts depend only on the program, so one analysis per body
   // serves every context.
   if (round.captures != nullptr && round.localCaptureCache != nullptr) {
@@ -11527,7 +11577,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     }
   }
   const std::vector<AbstractState> incoming =
-      solveStates(*body, aliases, &entry, &round, address);
+      solveStates(*body, aliases, inputs.flow, &entry, &round, address);
   if (incoming.empty()) {
     return result;
   }
@@ -11619,10 +11669,10 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   }
   result.summary.complete = true;
   result.summary.freshStorage =
-      freshStorageProfile(program, address, *body, round);
+      freshStorageProfile(program, address, *body, inputs.flow, round);
 
   result.summary.relocatedPrefix = summarizeRelocatedPrefix(
-      program, address, *body, aliases, incoming, round);
+      program, address, *body, aliases, incoming, inputs.flow, round);
   const auto scalarStores = scalarStoreProfile(program, address, *body, round);
   result.summary.scalarStoresOnly = scalarStores.supported;
   result.summary.receiverLocalWritesOnly =
@@ -11901,18 +11951,15 @@ rootClosedCallContexts(const MirProgram &program) {
 }
 
 [[nodiscard]] MirSafetyAnalysis
-analyzeBodyLocalSafety(const MirProgram &program, MirBodyAddress address,
-                       const MirPlaceAliasEscapeAnalysis &aliases) {
+analyzeBodyLocalSafety(const MirBody &body, MirBodyAddress address,
+                       const MirPlaceAliasEscapeAnalysis &aliases,
+                       const SafetyControlFlow &flow) {
   MirSafetyAnalysis result;
-  const MirBody *body = findMirBody(program, address);
-  if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
-    return result;
-  }
-  const std::vector<AbstractState> incoming = solveStates(*body, aliases);
+  const std::vector<AbstractState> incoming = solveStates(body, aliases, flow);
   if (incoming.empty()) {
     return result;
   }
-  collectProofs(address, *body, aliases, incoming, result);
+  collectProofs(address, body, aliases, incoming, result);
   std::sort(result.proofs.begin(), result.proofs.end(), proofLess);
   result.proofs.erase(std::unique(result.proofs.begin(), result.proofs.end()),
                       result.proofs.end());
@@ -12000,6 +12047,7 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
       deriveMirProgramCaptureSummaries(program);
   std::map<MirBodyAddress, MirLocalCaptureAnalysis, MirBodyAddressLess>
       localCaptureCache;
+  SafetyBodyInputCache bodyInputs;
   MirClosedCallSafetyAnalysis result;
   while (!work.empty()) {
     const auto address = work.front();
@@ -12028,8 +12076,8 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
                           .rejected = rejected,
                           .captures = &captureSummaries,
                           .localCaptureCache = &localCaptureCache};
-    auto body =
-        analyzeContextualBody(program, address, contexts.at(address), round);
+    auto body = analyzeContextualBody(program, address, contexts.at(address),
+                                      bodyInputs, round);
     contextualSafety.insert_or_assign(address, std::move(body.safety));
     const auto previous = summaries.find(address);
     const bool changed =
@@ -12070,8 +12118,14 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
     body.closed = result.converged && !rejected.contains(address) &&
                   summary != summaries.end() && summary->second.complete &&
                   !summary->second.hasOpaqueEffects;
-    body.safety = analyzeBodyLocalSafety(
-        program, address, analyzeMirPlaceAliasEscape(program, address));
+    const auto &source = *findMirBody(program, address);
+    if (hasProofSites(source)) {
+      const auto &inputs =
+          bodyInputs.try_emplace(address, program, address, source)
+              .first->second;
+      body.safety =
+          analyzeBodyLocalSafety(source, address, inputs.aliases, inputs.flow);
+    }
     if (result.converged) {
       if (const auto contextual = contextualSafety.find(address);
           contextual != contextualSafety.end()) {
@@ -12109,7 +12163,12 @@ MirSafetyAnalysis analyzeMirSafetyChecks(const MirProgram &program,
 MirSafetyAnalysis
 analyzeMirSafetyChecks(const MirProgram &program, MirBodyAddress address,
                        const MirPlaceAliasEscapeAnalysis &aliases) {
-  return analyzeBodyLocalSafety(program, address, aliases);
+  const MirBody *body = findMirBody(program, address);
+  if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid() ||
+      !hasProofSites(*body))
+    return {};
+  return analyzeBodyLocalSafety(*body, address, aliases,
+                                SafetyControlFlow(*body));
 }
 
 } // namespace lang

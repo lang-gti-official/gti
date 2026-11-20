@@ -58,12 +58,12 @@ The following boundaries are mandatory:
 - Native target and assembly-printer initialization belongs to
   `LlvmBackend`, is idempotent, and occurs only after the lowered contract and
   host-target restriction pass. It is not frontend or driver global state.
-- `BackendArtifactKind::Object` is the backend-neutral handoff for
-  LLVM-produced relocatable object bytes. The driver owns atomic publication,
-  native linking, runtime/native inputs, diagnostics, caches, and final output.
-  `NativeLinkRequest` links that object without C++ source-language,
-  preprocessing, or code-generation flags. Admitted native programs use this
-  handoff; infrastructure and real-program execution gates test it separately.
+- `BackendArtifactKind::Object` hands off an ordered list of relocatable
+  objects. The driver owns atomic publication, caches, runtime and native
+  inputs, and passes the list to `NativeLinkRequest` in order. Compiled-scalar
+  and embedding libraries require exactly one object. This extends the original
+  single-object handoff for [RFC 0006](https://github.com/lang-gti-official/rfcs/pull/7)
+  while preserving file names and link arguments for single-object builds.
 - `CompilationRequest` owns executable-backend selection. `cpp` remains the
   default; direct CLI compilation exposes `--backend cpp|llvm`. Explicit C++
   representation options are rejected with `llvm` rather than being silently

@@ -1,0 +1,15 @@
+// Read-only view text operations work in constant evaluation with only std.string_view.
+//@ check-pass
+import std.string_view;
+
+constexpr std::string_view text = "ab\0ab!";
+constexpr std::string_view empty = "";
+static_assert(text.find("ab", 1) == 3);
+static_assert(text.rfind("ab") == 3 && text.rfind('a', 2) == 0);
+static_assert(text.contains('\0') && text.starts_with("ab") && text.ends_with("b!"));
+static_assert(text.find('z') == std::string_view::npos);
+static_assert(empty.find("") == 0 && empty.rfind('a') == std::string_view::npos);
+static_assert(empty.starts_with("") && empty.ends_with(""));
+static_assert(text.front() == 'a' && text.back() == '!');
+static_assert(text.at(2) == '\0' && text.at(text.size() - 1) == '!');
+static_assert(text.substr().compare(text) == 0 && empty < text);

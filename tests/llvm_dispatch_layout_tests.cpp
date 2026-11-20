@@ -3576,7 +3576,7 @@ int inspect(int input) { Value value{input}; return value.read(); }
       "the class-use witness does not promote the global pending family row");
   const auto object = LlvmBackend().generate(lowered);
   expect(object.kind == BackendArtifactKind::Object &&
-             object.contents.size() > 100,
+             object.singleObject().size() > 100,
          "the real public object API lowers retained declaration inventory");
   Session session(*verified, {});
   lowerScalarProgram(session, planLlvmAdmission(*verified));
@@ -4972,7 +4972,7 @@ int main(void) { return gti_relocation_probe(); }
            "inert relocation module verifies");
     session.requireDefinition(*probe);
     const auto object = temporary / "probe.o";
-    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+    expect(driver::writeArtifact(object, session.emitObject().singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write relocation native object");
     driver::NativeInputs inputs;
@@ -5227,7 +5227,7 @@ int main(void) {
     const auto object =
         temporary /
         (level == LlvmCodegenOptimization::None ? "plain.o" : "promoted.o");
-    expect(driver::writeArtifact(object, artifact.contents) ==
+    expect(driver::writeArtifact(object, artifact.singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write guarded dispatch object");
     driver::NativeInputs inputs;

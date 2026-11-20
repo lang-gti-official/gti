@@ -1097,9 +1097,13 @@ public:
         if (cfg->reachable[index]) {
           continue;
         }
-        ++outcome.report.candidates;
         MirBody replay = *body;
         if (rewriteMirUnreachableBlock(replay, index + 1)) {
+          // A block may already be inert. Include derived facts and debug
+          // metadata in the comparison because the rewrite also repairs them.
+          if (replay == *body) {
+            continue;
+          }
           editor.queueUnreachableBlockRemoval(address, index + 1);
         } else {
           ++outcome.report.missed;
@@ -1111,6 +1115,7 @@ public:
                .body = address,
                .block = index + 1});
         }
+        ++outcome.report.candidates;
       }
     }
     if (editor.pendingUnreachableBlockCount() == 0) {
@@ -1228,7 +1233,8 @@ public:
               continue;
             }
             if (!programVerified) {
-              programVerified = verifyMirProgram(context.program).valid();
+              programVerified =
+                  analyses.verifyEditedProgram(context.program).valid();
             }
             if (*programVerified &&
                 mir_detail::canRewriteVerifiedMirDeadInstruction(
@@ -1342,7 +1348,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
 
   if (request.options.verifyMir) {
     const PhaseTimeScope timeScope("mir-verify-input");
-    result.report.inputVerification = verifyMirProgram(result.mir);
+    result.report.inputVerification = verifyMirProgram(result.sourceMir);
     if (!result.report.inputVerification.valid()) {
       return result;
     }
@@ -1357,6 +1363,8 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
       compatibility = &localCompatibility;
     }
     MirBodyAnalysisManager analyses;
+    if (request.options.verifyMir)
+      analyses.verifiedInput = &result.sourceMir;
     MirPassContext context{
         .hir = request.hir, .program = result.mir, .target = request.target};
     const auto execute = [&](MirPass &pass) {

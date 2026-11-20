@@ -679,20 +679,20 @@ int main(void) {
                              "gti_llvm_object_probe");
     const auto object = session.emitObject();
     expect(object.kind == BackendArtifactKind::Object &&
-               object.extension == ".o" && object.contents.size() > 100 &&
-               object.contents.find('\0') != std::string::npos,
+               object.extension == ".o" && object.singleObject().size() > 100 &&
+               object.singleObject().find('\0') != std::string::npos,
            "target machine emits actual binary object data at every "
            "optimization level");
     const auto staged = root / "probe.staged";
     const auto published = root / "probe.o";
-    expect(driver::writeArtifact(staged, object.contents) ==
+    expect(driver::writeArtifact(staged, object.singleObject()) ==
                    driver::ArtifactWriteStatus::Success &&
                driver::publishArtifact(staged, published).succeeded(),
            "driver atomically publishes object bytes");
     std::ifstream stream(published, std::ios::binary);
     const std::string restored{std::istreambuf_iterator<char>(stream), {}};
     expect(
-        restored == object.contents,
+        restored == object.singleObject(),
         "object handoff preserves every byte including NUL and high-bit bytes");
     driver::NativeInputs inputs;
     inputs.libraryFiles.push_back(root / "consumer.o");
@@ -831,7 +831,7 @@ int inspect(int input) { Value value{input}; return value.read(); }
     published = root / (level == LlvmCodegenOptimization::None ? "source-O0.o"
                                                                : "source-O3.o");
     expect(object.kind == BackendArtifactKind::Object &&
-               driver::writeArtifact(published, object.contents) ==
+               driver::writeArtifact(published, object.singleObject()) ==
                    driver::ArtifactWriteStatus::Success,
            "publish the actual public backend's ordinary-class object");
     driver::NativeInputs inputs;
@@ -856,7 +856,7 @@ int inspect(int input) { Value value{input}; return value.read(); }
       expect(run.succeeded() && run.output.empty(),
              "O0/O3 execute actual constructor/getter observations 25 and -7");
     }
-    previous = object.contents;
+    previous = object.singleObject();
   }
   const auto unsupported =
       Frontend().analyze("llvm-rootless-pending-payload.gti", R"(
@@ -894,7 +894,8 @@ int inspect(int input) { Value value{input}; return value.read(); }
     rejects<BackendUnsupportedError>(
         [&] {
           const auto object = LlvmBackend().generate(bad);
-          static_cast<void>(driver::writeArtifact(published, object.contents));
+          static_cast<void>(
+              driver::writeArtifact(published, object.singleObject()));
         },
         "pending payload generation rejects before replacing an existing "
         "object");
@@ -1148,7 +1149,7 @@ int main() {
            "rollback function was found by sealed declaration identity");
     const auto object = session.emitObject();
     const auto path = root / "probe.o";
-    expect(driver::writeArtifact(path, object.contents) ==
+    expect(driver::writeArtifact(path, object.singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write class component object");
     driver::NativeInputs inputs;
@@ -1291,7 +1292,7 @@ int main() { Pair value = create<Pair>(20, 22); return value.sum() == 42 ? 0 : 1
         lowerScalarProgram(session, admission);
         const auto object = session.emitObject();
         const auto path = root / "probe.o";
-        expect(driver::writeArtifact(path, object.contents) ==
+        expect(driver::writeArtifact(path, object.singleObject()) ==
                    driver::ArtifactWriteStatus::Success,
                "write concrete pack alias object");
         driver::NativeInputs inputs;
@@ -1525,7 +1526,7 @@ int main(void) { return gti_slot_probe(); }
     native.requireDefinition(*probe);
     const auto object = native.emitObject();
     const auto path = root / "probe.o";
-    expect(driver::writeArtifact(path, object.contents) ==
+    expect(driver::writeArtifact(path, object.singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write native inline slot layout object");
     driver::NativeInputs inputs;
@@ -1748,7 +1749,7 @@ void gti_rt_posix_free_v1(void *address) {
                                 global, &session.module());
     }
     const auto object = root / "probe.o";
-    expect(driver::writeArtifact(object, session.emitObject().contents) ==
+    expect(driver::writeArtifact(object, session.emitObject().singleObject()) ==
                driver::ArtifactWriteStatus::Success,
            "write real scalar-owner payload body object");
     driver::NativeInputs inputs;

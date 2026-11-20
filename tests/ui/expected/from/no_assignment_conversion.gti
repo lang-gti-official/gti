@@ -1,0 +1,10 @@
+// Registering from does not make ordinary initialization implicitly convert.
+enum Source { failed };
+enum Target { failed };
+for concept std::from<Target, Source> {
+  Target from(Source error) { return Target::failed; }
+};
+int main() {
+  Target value = Source::failed;  //~ ERROR GTI-S2003
+  return 0;
+}

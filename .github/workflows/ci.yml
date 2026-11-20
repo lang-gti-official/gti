@@ -314,6 +314,9 @@ jobs:
           ctest --test-dir "${RUNNER_TEMP}/gti-system-library-smoke" -C Release \
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
           python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
+      - name: Verify the installed precompiled standard library
+        if: matrix.platform == 'linux'
+        run: python3 tests/project/standard_library_bundle/verify_stage.py "${RUNNER_TEMP}/gti-system-stage"
       - name: Package this run's source-test tools
         env:
           GTI_PLATFORM: ${{ matrix.platform }}

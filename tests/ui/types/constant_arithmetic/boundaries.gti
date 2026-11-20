@@ -1,0 +1,9 @@
+// Signed boundaries and large unsigned intermediates retain exact integer values.
+//@ run-pass
+int8_t signed_byte(int8_t value) { return value; }
+uint8_t byte(uint8_t value) { return value; }
+int main() {
+  return signed_byte(-(64 * 2)) == -128 && signed_byte(64 + 63) == 127 &&
+    signed_byte(~0) == -1 &&
+    byte(9223372036854775808 - 9223372036854775807) == 1 ? 0 : 1;
+}

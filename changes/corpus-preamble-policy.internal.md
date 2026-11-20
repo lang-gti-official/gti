@@ -1,0 +1,1 @@
+Check cold and warm semantic preamble reuse independently for reachable editor analysis and complete analysis. Their prefixes can differ when application modules are imported; retain exact application diagnostics, complete library diagnostics, reachable library subsets and valid HIR in both configurations.

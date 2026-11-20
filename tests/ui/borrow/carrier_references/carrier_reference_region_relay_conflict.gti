@@ -1,0 +1,16 @@
+// A T&<o> relay through a carrier reference still protects the region's owner and cannot outlive it (#568).
+struct Box { mut int value = 0; public: Box() = default; };
+class View<lifetime o> {
+  Box&<o> box;
+public:
+  View(Box&<o> b) : box(b) {}
+  int&<o> get() { return this.box.value; }
+};
+int&<o> pick<lifetime o>(View<o>& view) { return view.get(); }
+int main() {
+  mut Box b{};
+  View v = View(b);
+  int& value = pick(v);
+  b.value = 5; //~ ERROR GTI-S2017
+  return value;
+}

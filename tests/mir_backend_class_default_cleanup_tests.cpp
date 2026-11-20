@@ -312,8 +312,9 @@ void testFamily(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "class-default-cleanup MIR should verify at O0, O1, and O3");
     if (optimized.valid() && lang::verifyMirProgram(optimized.mir).valid()) {
-      expect(!emit(frontend, optimized.mir, compatibility).contents.empty(),
-             "the shipped backend should accept class-default-cleanup MIR");
+      expect(
+          !emit(frontend, optimized.mir, compatibility).singleObject().empty(),
+          "the shipped backend should accept class-default-cleanup MIR");
       // Ordinary lifetimes construct and drop through explicit MIR
       // operations; the field owner constructs through its failure form.
       for (const std::string_view name :

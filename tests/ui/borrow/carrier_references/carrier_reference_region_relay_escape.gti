@@ -1,0 +1,15 @@
+// A T&<o> relayed through a carrier reference cannot outlive the region's owner (#568).
+struct Box { mut int value = 0; public: Box() = default; };
+class View<lifetime o> {
+  Box&<o> box;
+public:
+  View(Box&<o> b) : box(b) {}
+  int&<o> get() { return this.box.value; }
+};
+int&<o> pick<lifetime o>(View<o>& view) { return view.get(); }
+int& escape() { //~ ERROR GTI-S2017
+  Box b{};
+  View v = View(b);
+  return pick(v);
+}
+int main() { return escape(); }

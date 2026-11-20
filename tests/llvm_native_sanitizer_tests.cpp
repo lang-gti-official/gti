@@ -184,8 +184,8 @@ unsafe void write(int* address, int offset, int value) { unsafe { address[offset
   ir.flush();
   const auto artifact = session.emitObject();
   std::ofstream object(path, std::ios::binary);
-  object.write(artifact.contents.data(), artifact.contents.size());
-  if (!object || artifact.contents.empty())
+  object.write(artifact.singleObject().data(), artifact.singleObject().size());
+  if (!object || artifact.singleObject().empty())
     throw std::runtime_error("failed sanitizer object publication");
   std::cout << "real GTI load/store object: mode=" << argv[2] << " IR-O"
             << level << " undefined-memory-sites=" << memoryChecks << '\n';

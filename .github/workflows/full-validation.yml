@@ -167,6 +167,7 @@ jobs:
           python3 "${source}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${source}/tests/cli_smoke_test.py" gti
           python3 "${source}/tests/project_cli_smoke_test.py" gti
+          python3 "${source}/tests/project/standard_library_bundle/verify_stage.py" "${GTI_STAGE_DIRECTORY}"
           python3 "${source}/tests/process_resource_policy_test.py" gti --installed
           python3 "${source}/tests/managed_thread_runtime_test.py" gti
           python3 "${source}/tests/atomic_runtime_test.py" gti \

@@ -1,0 +1,16 @@
+// Methods, constructors, field/base initializers, call operators and lambdas share the rule.
+//@ run-pass
+class Base { public: uint64_t value; Base(uint64_t x) : value(x) {} };
+class Derived : public Base { public: Derived() : Base(32 * 32) {} };
+class Field { public: uint64_t value; Field() : value(16 * 16) {} };
+struct Callable {
+  Callable() = default;
+  uint64_t method(uint64_t x) { return x; }
+  uint64_t operator()(uint64_t x) { return x; }
+};
+int main() {
+  Base base{16 * 16}; Derived derived{}; Field field{}; Callable callable{};
+  auto lambda = [](uint64_t x) -> uint64_t { return x; };
+  return base.value == 256 && derived.value == 1024 && field.value == 256 &&
+    callable.method(8 * 8) == 64 && callable(4 * 4) == 16 && lambda(2 * 2) == 4 ? 0 : 1;
+}

@@ -1,0 +1,14 @@
+export module api;
+import "../api/shared.gti";
+import std.string;
+import std.memory;
+
+export int left_value() {
+  std::string empty{};
+  unsafe {
+    if (std::c_string_bytes(empty.c_string())[std::size_t(0)] != uint8_t(0)) {
+      return -1;
+    }
+  }
+  return right_value() / 2;
+}

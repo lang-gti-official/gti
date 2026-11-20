@@ -1,0 +1,14 @@
+// Literal arithmetic converts only after checked evaluation, preserving intermediate types.
+//@ run-pass
+uint64_t take(uint64_t value) { return value; }
+uint8_t small(uint8_t value) { return value; }
+int main() {
+  if (take(32 * 32) != 1024) return 1;
+  if (small((200 + 100) - 200) != 100) return 2;
+  if (small((4 - 5) + 2) != 1) return 3;
+  if (small((1 << 8) - 1) != 255) return 4;
+  if (small((90 / 3) % 7) != 2) return 5;
+  if (small((15 & 7) ^ (1 | 2)) != 4) return 6;
+  if (small(128 >> 2) != 32) return 7;
+  return 0;
+}

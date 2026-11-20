@@ -1,0 +1,22 @@
+// Fallible calls that borrow temporaries can still share the remaining owners' failure cleanup.
+//@ snapshot: mir
+//@ mir-function: main
+// CHECK: kind=continuation
+
+class Ticket {
+  int value;
+public:
+  Ticket(int n) : value(n) {}
+  ~Ticket() { int checked = 12 / this.value; }
+  int read() { return this.value; }
+};
+
+int checked(Ticket& ticket, int divisor) { return ticket.read() / divisor; }
+int divisor(int n) { return 12 / n; }
+
+int main() {
+  Ticket keep{7};
+  int a = checked(Ticket(2), divisor(12));
+  int b = checked(Ticket(3), divisor(12));
+  return a + b + keep.read() == 12 ? 0 : 1;
+}

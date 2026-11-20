@@ -1,0 +1,22 @@
+// A local fallible carrier holds the reference selected by chained accessors.
+//@ run-pass
+enum class LookupError { missing };
+
+struct Record {
+  int first = 11;
+  int selected = 37;
+  Record() = default;
+  int& get() { return this.selected; }
+};
+
+struct Owner {
+  Record record;
+  Owner() = default;
+  Record& get() { return this.record; }
+};
+
+int main() {
+  Owner owner{};
+  expected<int&, LookupError> found = owner.get().get();
+  return found.value() - 37;
+}

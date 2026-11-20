@@ -157,7 +157,7 @@ int writeAdmissionEvidence(const char *self, const fs::path &source,
               lang::LlvmBackend(options).generate(program).contents);
         options.textualIr = false;
         write("module.o",
-              lang::LlvmBackend(options).generate(program).contents);
+              lang::LlvmBackend(options).generate(program).singleObject());
         write("outcome.txt", "admitted\n");
       } catch (const lang::BackendUnsupportedError &failure) {
         // Rejections thrown while planning are evidence too. Other failures,

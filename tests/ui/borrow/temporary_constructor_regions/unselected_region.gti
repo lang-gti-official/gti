@@ -1,0 +1,12 @@
+// A different unselected stored region does not constrain the returned reference.
+class Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+public:
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() && { return this.first; }
+};
+int&<a> relay<lifetime a, lifetime b>(int&<a> keep, int&<b> other) {
+  return Pair(keep, other).left();
+}
+int main() { int a = 1; int b = 2; return relay(a, b) - 1; }

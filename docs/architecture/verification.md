@@ -22,6 +22,14 @@ per-entry census and CPU times in its `--json` report are information only.
 `--only`, `--shard I/N`, `--jobs N` and entry substrings narrow a run. Those
 binaries' own fixtures stay as the `*_fixtures` entries.
 
+The trusted check proves one cold preamble build and a warm adoption separately
+for the reachable editor and complete configurations. Reachable entry-unit
+analysis can include imported application modules in its reusable prefix;
+complete analysis uses only the compiler-trusted prefix. A policy switch may
+therefore require a different preamble. Both configurations must still preserve
+application diagnostics and valid HIR; complete analysis preserves all library
+diagnostics, while reachable analysis may report a subset.
+
 ## C++ unit tests
 
 C++ tests of library code that need no GTI program (runtime ABI boundaries,
@@ -10163,6 +10171,12 @@ reject wrong source/run/attempt/platform/configuration, incomplete or expired
 artifact sets and altered archives/checksums; orchestration-only success does
 not establish release evidence. Main-only full CI dispatch is the commissioning
 and artifact-recovery route, with the same required integration gates.
+`ci_release` exercises the CI apt retry wrapper with fake privileged commands:
+interrupted package configuration is repaired before retrying, both apt and dpkg
+have time and kill bounds, a failed repair never becomes installation success,
+and successful installs and index refreshes do not run recovery. Install attempts
+allow 900 seconds for downloading, unpacking and configuration; index refreshes
+and recovery allow 300 seconds, with 30 seconds before forced termination.
 `ci_release` additionally
 archives a staged fixture through the real packaging script and compares both
 channels' contents and checksums. The cache test's optional `--ccache` mode

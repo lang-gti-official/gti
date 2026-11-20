@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "base": "e87181c6ec422b2c28ce942e57a984ed9c25486f",
+  "members": [
+    {
+      "pr": 625,
+      "head": "c695ee4df1943e14481decd94dd5d9c4e3fc9c70",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #625: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "module_semantic_identity",
+          "module_preamble_identity"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #625; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "module_semantic_identity",
+          "module_preamble_identity"
+        ]
+      }
+    },
+    {
+      "pr": 628,
+      "head": "09683fe1f7f911f094dd20d9ff62e3b3311cbc02",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #628: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "semantic_header_boundary",
+          "semantic_header_self_containment",
+          "protocol_requirements_runtime"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #628; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "semantic_header_boundary",
+          "semantic_header_self_containment",
+          "protocol_requirements_runtime"
+        ]
+      }
+    }
+  ]
+}

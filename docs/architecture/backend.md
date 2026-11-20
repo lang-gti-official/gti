@@ -231,6 +231,14 @@ A backend returns an in-memory `BackendArtifact`; file publication, native
 compiler invocation, process handling, and final artifact replacement belong
 to the reusable driver.
 
+Native object bytes live in `BackendArtifact::objects`, in link order;
+`contents` holds source representations such as LLVM IR, MIR and native
+headers. Consumers that explicitly require one compilation unit use
+`singleObject()`, which rejects a non-object artifact or any object count
+other than one. Native linking consumes the complete ordered object list.
+Test harnesses and evidence exporters follow the same contract: an empty
+source field is not evidence that native generation failed.
+
 `BackendInput` no longer exists. `CppBackend`, `MirBackend`, and
 `NativeHeaderBackend` all verify and consume only `LoweredProgram`.
 
@@ -6615,6 +6623,24 @@ storage and externally observes addresses/values; it does not substitute for
 ordinary source construction, publication, transfer and cleanup integration.
 Cleanup-bearing structural relocation, boxed dynamic cleanup, and full callable
 execution remain prerequisites before admitting existing source wrappers.
+
+### LLVM code generation units
+
+[RFC 0006](https://github.com/lang-gti-official/rfcs/pull/7) places code
+generation units after the final whole-module LLVM verification. LLVM's
+name-based partitioner assigns definitions to a fixed number of ordered units.
+Private or internal definitions referenced across units get stable reserved
+names and hidden external linkage. Local-only definitions keep their original
+linkage and name. The partition keeps a single definition for text literals,
+TLS, and startup and shutdown data.
+
+The owning thread serializes each partition to bitcode. Bounded workers parse
+one unit at a time into their own LLVM contexts and create their own target
+machines. They run machine-code generation without a second IR optimization
+pipeline. The driver links and caches the resulting objects in unit order.
+Failures are reported in unit order after joining all workers, with no
+partial backend artifact returned. Compiler validation checks definition
+coverage, linkage and the LLVM verifier for each partition.
 
 ### Source function optimization policy
 

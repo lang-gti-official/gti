@@ -1,0 +1,19 @@
+// A nested carrier cannot let a reference to a function-local owner escape.
+class Inner<T, lifetime owner> {
+  T&<owner> value;
+public:
+  Inner(T&<owner> value) : value(value) {}
+  T&<owner> get() { return this.value; }
+};
+class Outer<T, lifetime owner> {
+  Inner<T, owner> inner;
+public:
+  Outer(T&<owner> value) : inner(Inner<T>(value)) {}
+  T&<owner> get() { return this.inner.get(); }
+};
+Outer<T> make<T>(T& value) { return Outer<T>(value); }
+int& bad(int& owner) {
+  int value = 7;
+  return make(value).get(); //~ ERROR GTI-S2017
+}
+int main() { return 0; }

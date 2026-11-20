@@ -1,0 +1,15 @@
+// A by-value carrier formal relays only its exact stored referent, even under a named region (#568).
+struct Box { mut int value = 0; public: Box() = default; };
+class View<lifetime o> {
+public:
+  Box&<o> box;
+  View(Box&<o> b) : box(b) {}
+  int&<o> get() { return this.box.value; }
+};
+Box&<o> whole<lifetime o>(View<o> view) { return view.box; }
+int&<o> pick<lifetime o>(View<o> view) { return view.get(); } //~ ERROR GTI-S2085
+int main() {
+  Box b{};
+  View v = View(b);
+  return pick(v) + whole(v).value;
+}

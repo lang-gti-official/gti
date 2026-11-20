@@ -9,11 +9,11 @@ public:
     return this.y;
   }
 };
-int&<a> by_value<lifetime a>(int&<a> keep, int value) {  //~ ERROR GTI-S2017
-  return Two(keep, value).pick(false);
+int&<a> by_value<lifetime a>(int&<a> keep, int value) {
+  return Two(keep, value).pick(false);  //~ ERROR GTI-S2017
 }
-int&<a> local<lifetime a>(int&<a> keep) {  //~ ERROR GTI-S2017
+int&<a> local<lifetime a>(int&<a> keep) {
   int value = 42;
-  return Two(keep, value).pick(false);
+  return Two(keep, value).pick(false);  //~ ERROR GTI-S2017
 }
 int main() { return 0; }

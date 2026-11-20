@@ -1,0 +1,11 @@
+// A foreign protocol cannot be implemented with an uncovered prefix parameter.
+// --- main.gti
+import "foreign.gti";
+struct Local { Local() = default; };
+for <T> concept reading<T, Local> {  //~ ERROR GTI-S2123 uncovered type parameter
+  int read(T a, Local b) { return 1; }
+};
+int main() { return 0; }
+// --- foreign.gti
+export module foreign;
+export concept reading<A, B> { int read(A a, B b); };

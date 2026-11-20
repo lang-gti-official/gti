@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
@@ -1006,7 +1007,7 @@ bool isMirStructuralValueType(const MirProgram &program,
       return false;
     const MirClassInstance *owner = nullptr;
     for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
+      if (candidate.type.classId == type.classId && candidate.type == type) {
         if (owner)
           return false;
         owner = &candidate;
@@ -1963,18 +1964,6 @@ struct EffectNode {
   bool unknownBoundary = false;
 };
 
-[[nodiscard]] std::optional<std::size_t>
-findNode(const std::vector<EffectNode> &nodes, MirBodyAddress address) {
-  const auto found =
-      std::find_if(nodes.begin(), nodes.end(), [&](const EffectNode &node) {
-        return node.address == address;
-      });
-  return found == nodes.end()
-             ? std::nullopt
-             : std::optional<std::size_t>{static_cast<std::size_t>(
-                   std::distance(nodes.begin(), found))};
-}
-
 [[nodiscard]] MirEffectSummary conservativeSummary(std::size_t arguments,
                                                    bool hasReceiver) {
   MirEffectSummary result;
@@ -2032,7 +2021,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   const auto classFor =
       [&](const SemanticType &selected) -> const MirClassInstance * {
     for (const auto &candidate : program.classInstances())
-      if (candidate.type == selected)
+      if (candidate.type.classId == selected.classId &&
+          candidate.type == selected)
         return &candidate;
     return nullptr;
   };
@@ -2066,9 +2056,9 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*child},
                          .requiresActiveCleanup = true};
     }
-    if (const auto *owner =
-            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
-        owner != nullptr &&
+    const auto *owner =
+        selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
+    if (owner != nullptr &&
         owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
       if (selected.arguments.size() != 1)
         return std::nullopt;
@@ -2083,9 +2073,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*pointee},
                          .requiresActiveCleanup = true};
     }
-    if (const auto *owner =
-            selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
-        owner != nullptr && (owner->compilerCapability ==
+    if (owner != nullptr && (owner->compilerCapability ==
                                  CompilerCapabilityTypeKind::MutexStorage ||
                              owner->compilerCapability ==
                                  CompilerCapabilityTypeKind::OptionalStorage)) {
@@ -2237,8 +2225,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*child},
                          .requiresActiveCleanup = true};
     }
-    const auto *owner =
-        selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
     if (owner != nullptr && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(
@@ -2863,6 +2849,12 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
                      .body = &storage.initializer,
                      .exactDefinition = true});
 
+  std::map<std::pair<MirBodyKind, std::size_t>, std::size_t> nodeIndices;
+  for (std::size_t index = 0; index < nodes.size(); ++index) {
+    const MirBodyAddress address = nodes[index].address;
+    nodeIndices.emplace(std::pair{address.kind, address.owner}, index);
+  }
+
   for (EffectNode &node : nodes) {
     node.local.traits = harmless();
     node.local.argumentsEscape.assign(node.parameterCount, false);
@@ -2983,13 +2975,13 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
           capturingUnknownWrite |= invocationEffects.writesUnknownMemory;
           node.local.traits = merge(node.local.traits, invocationEffects);
           for (const MirBodyAddress target : targets.addresses) {
-            const std::optional<std::size_t> targetNode =
-                findNode(nodes, target);
-            if (!targetNode) {
+            const auto targetNode =
+                nodeIndices.find({target.kind, target.owner});
+            if (targetNode == nodeIndices.end()) {
               node.unknownBoundary = true;
               continue;
             }
-            node.callees.push_back(*targetNode);
+            node.callees.push_back(targetNode->second);
           }
         } else {
           const auto structural =

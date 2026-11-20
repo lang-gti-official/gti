@@ -84,6 +84,22 @@ foreach(required_file
   endif()
 endforeach()
 
+if(GTI_PLATFORM STREQUAL "darwin-arm64")
+  set(stdlib_target "arm64-apple-macos")
+elseif(GTI_PLATFORM STREQUAL "linux-x64")
+  set(stdlib_target "x86_64-unknown-linux")
+endif()
+if(DEFINED stdlib_target)
+  foreach(profile IN ITEMS dev release)
+    foreach(module IN ITEMS cmath random)
+      set(bundle "${GTI_STAGE_DIR}/share/gti/precompiled-stdlib/${stdlib_target}/${profile}/${module}.gtilib")
+      if(NOT EXISTS "${bundle}" OR IS_DIRECTORY "${bundle}" OR IS_SYMLINK "${bundle}")
+        message(FATAL_ERROR "Release staging is missing a regular compiled stdlib: ${bundle}")
+      endif()
+    endforeach()
+  endforeach()
+endif()
+
 file(STRINGS "${GTI_STAGE_DIR}/share/gti/llvm-backend-archives.txt"
      GTI_LLVM_BACKEND_ARCHIVES)
 if(GTI_LLVM_BACKEND_ARCHIVES STREQUAL "")
