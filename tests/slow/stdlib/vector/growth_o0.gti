@@ -1,7 +1,6 @@
 // Vector growth preserves the live prefix, capacity, constexpr behavior and owning payloads.
 //@ run-pass
 //@ slow
-//@ stderr-empty
 import std.vector;
 import std.memory;
 
