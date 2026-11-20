@@ -295,7 +295,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
-  if (registrationObserver && !hadError())
+  if (registrationObserver)
     (*registrationObserver)();
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
@@ -13024,6 +13024,7 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
                "Unknown enumerator '" + expr.name().last().lexeme +
                    "' in scoped enum '" + pathSpelling(ownerPath) + "'.",
                "GTI-S2036");
+        diagnostics.back().missingEnumerator = true;
         currentType = SemanticType::Unknown;
         return;
       }

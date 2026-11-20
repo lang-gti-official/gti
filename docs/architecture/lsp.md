@@ -169,6 +169,23 @@ this point means primary type checking found no issue in the open file.
 Generic instantiation, cross-function effects and MIR borrow and lifetime
 verification can still report errors for the same version.
 
+After an edit, the same opt-in lets the compiler query a name in the edited
+declaration as soon as it registers the current project's signatures. An
+isolated semantic worker checks the enclosing function with its type parameters
+and requirements, or uses the conformance validator for a pattern or associated
+type. A `nameLookup` notification reports the compiler's error at the edited
+identifier. Before the lexical walk has established namespace values, the
+query admits a missing name only when its spelling occurs nowhere else in the
+active input tokens. Compiled inputs without that evidence, source macros and
+potentially discarded compile-time paths use the ordinary checks.
+
+When an edit replaces that identifier and the compiler observes a binding at
+the same occurrence, the server can withdraw its own provisional error. Each
+retained finding must still have current primary, related and fix-it source
+text. Verified errors stay under the full check's ownership. A corrected name
+can therefore disappear from the editor before MIR checks the document and its
+callers. Exact restoration of a verified buffer still restores its warnings.
+
 The worker performs the ordinary configured analysis and its verification
 fallbacks. It hands an owned diagnostic list to a publisher outside crash
 recovery and continues checking. On open, once the compiler registers the
@@ -203,7 +220,8 @@ checks the document generation.
 
 In a generic function or method, the query enters the same type-parameter
 and requirement scopes used to check the original definition. It can report
-an undefined name in the edited body, including inside a lambda. A successful
+an undefined name in the edited body, including inside a lambda, and a missing
+member of an enum whose qualifier resolved. A successful
 lookup alone cannot withdraw an error or certify a concrete instantiation.
 
 A clean local result for an eligible concrete body can retract the query's own

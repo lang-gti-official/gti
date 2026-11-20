@@ -233,6 +233,7 @@ struct LspDiagnostic {
   std::vector<LspRelatedDiagnostic> related;
   std::vector<LspFixIt> fixes;
   std::string repairSnapshot;
+  bool provisionalLookup = false;
 };
 
 struct CodeActionCandidate {
@@ -1797,6 +1798,8 @@ struct AnalysisRequest {
   // A raw-pointer audit of an already published generation; see
   // `runAuditWorker`. Ordinary analyses never run the audit.
   bool audit = false;
+  std::optional<lang::EditedLookupRange> editedRange;
+  std::optional<lang::Diagnostic> priorLookup;
   unsigned remainingCompleteMirEdits = 0;
   SteadyClock::time_point scheduledAt{};
   std::uint64_t includeDiscoveryGeneration = 0;
@@ -2392,6 +2395,36 @@ private:
         }
         clientUris[uri] = clientUri;
         openClientUris[uri].insert(clientUri);
+        const auto before = documents.find(uri);
+        std::optional<lang::EditedLookupRange> editedRange;
+        std::optional<lang::Diagnostic> priorLookup;
+        if (progressiveOpenDiagnostics && before != documents.end()) {
+          const auto &old = before->second;
+          const auto first = static_cast<std::size_t>(
+              std::ranges::mismatch(old, source).in2 - source.begin());
+          std::size_t end = source.size(), oldEnd = old.size();
+          while (first < end && first < oldEnd &&
+                 source[end - 1] == old[oldEnd - 1]) {
+            --end;
+            --oldEnd;
+          }
+          if (end != first || oldEnd != first) {
+            editedRange.emplace(first, end);
+            const auto prior = diagnosticsByRoot.find(uri);
+            if (prior != diagnosticsByRoot.end()) {
+              for (const auto &d : prior->second) {
+                const auto &span = d.diagnostic.primary;
+                if (d.provisionalLookup && d.uri == uri && d.source == old &&
+                    span.start <= first && oldEnd <= span.end) {
+                  editedRange.emplace(span.start, span.end - oldEnd + end,
+                                      true);
+                  priorLookup = d.diagnostic;
+                  break;
+                }
+              }
+            }
+          }
+        }
         documents[uri] = source;
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(uri)) {
@@ -2406,6 +2439,8 @@ private:
         requests.push_back(makeAnalysisRequestLocked(
             uri, version, advanceAnalysisGenerationLocked(uri),
             AnalysisTrigger::DocumentChanged));
+        requests.back().editedRange = editedRange;
+        requests.back().priorLookup = std::move(priorLookup);
         invalidateDependentsLocked(uri, requests);
       }
       // Nothing is published here. The client keeps the diagnostics it has
@@ -3579,6 +3614,8 @@ private:
     // `FrontendResult::diagnostics` like every other phase's.
     frontendOptions.stopAfter = lang::FrontendPhase::Mir;
     frontendOptions.retainBodyQueryContext = !request.audit;
+    if (!request.audit)
+      frontendOptions.editedRange = request.editedRange;
     frontendOptions.cancellation = request.cancellation.get();
     frontendOptions.lowerEntryUnitOnly = true;
     // The editor does not need the bodies of library-only instances (trusted
@@ -4741,12 +4778,14 @@ private:
             }
             if (checkpoint ||
                 (stage == lang::Frontend::DiagnosticStage::Declaration &&
-                 (!opening || !progressiveOpenDiagnostics)))
+                 !progressiveOpenDiagnostics))
               return;
             auto packet = std::make_unique<DocumentAnalysis>();
             packet->rootPath = syntax.analysis->rootPath;
             collectDocumentDiagnostics(*packet, checked, project, request,
                                        diagnostics);
+            const bool lookup =
+                stage == lang::Frontend::DiagnosticStage::Lookup;
             const bool declaration =
                 stage == lang::Frontend::DiagnosticStage::Declaration;
             if (declaration &&
@@ -4757,11 +4796,13 @@ private:
                                  lang::DiagnosticSeverity::Error;
                     }))
               return;
-            if (!declaration && checked.semanticValid) {
+            if (!declaration && !lookup && checked.semanticValid) {
               packet->declarationHovers =
                   lang::LanguageQueries().declarationHovers(checked, model);
             }
-            stageName = declaration ? "declaration" : "typeChecking";
+            stageName = lookup        ? "nameLookup"
+                        : declaration ? "declaration"
+                                      : "typeChecking";
             checkpoint = std::move(packet);
             signal();
           });
@@ -4981,15 +5022,54 @@ private:
           ++it;
         }
       }
-      if (diagnosticStage && request.trigger == AnalysisTrigger::Opened &&
-          progressiveOpenDiagnostics &&
-          !analysisSnapshots.contains(request.uri)) {
+      if (diagnosticStage && progressiveOpenDiagnostics) {
         auto &previous = diagnosticsByRoot[request.uri];
-        if (previous.empty()) {
-          for (const auto &diagnostic : checked.diagnostics)
-            if (diagnostic.uri == request.uri)
-              previous.push_back(diagnostic);
-          publications = publicationsForLocked({request.uri});
+        const bool initial = request.trigger == AnalysisTrigger::Opened &&
+                             !analysisSnapshots.contains(request.uri) &&
+                             previous.empty();
+        const bool lookup = *diagnosticStage == "nameLookup";
+        const auto owned = [&](const LspDiagnostic &d) {
+          return lookup && request.priorLookup && d.provisionalLookup &&
+                 d.diagnostic == *request.priorLookup;
+        };
+        const auto currentRange = [&](const auto &location) {
+          if (location.uri == request.uri)
+            return location.source == request.source;
+          const auto dependency = checked.dependencies.find(location.uri);
+          return dependency != checked.dependencies.end() &&
+                 dependency->second == lang::sourceTextDigest(location.source);
+        };
+        const bool compatible =
+            std::ranges::all_of(previous, [&](const LspDiagnostic &d) {
+              return owned(d) ||
+                     (currentRange(d) &&
+                      std::ranges::all_of(d.related, currentRange) &&
+                      std::ranges::all_of(d.fixes, currentRange));
+            });
+        const bool editError =
+            request.trigger == AnalysisTrigger::DocumentChanged &&
+            std::ranges::any_of(checked.diagnostics,
+                                [&](const LspDiagnostic &d) {
+                                  return d.uri == request.uri &&
+                                         d.diagnostic.severity ==
+                                             lang::DiagnosticSeverity::Error;
+                                });
+        // Removing a provisional finding requires a checked replacement for
+        // that same occurrence. No other provider's evidence can be withdrawn.
+        if (initial || (compatible &&
+                        (editError || std::ranges::any_of(previous, owned)))) {
+          bool changed = std::erase_if(previous, owned) != 0;
+          for (auto &d : checked.diagnostics) {
+            if (d.uri != request.uri ||
+                std::ranges::find(previous, d.diagnostic,
+                                  &LspDiagnostic::diagnostic) != previous.end())
+              continue;
+            d.provisionalLookup = lookup;
+            previous.push_back(std::move(d));
+            changed = true;
+          }
+          if (initial || changed)
+            publications = publicationsForLocked({request.uri});
         }
       }
     }
