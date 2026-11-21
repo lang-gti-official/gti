@@ -38,8 +38,13 @@ std::string compiledInterfaceTypeSource(std::string_view,
 // Complete facade projection chooses collision-free private aliases so source
 // namespace lookup cannot capture an already resolved nominal type.
 std::string compiledInterfaceSource(std::span<const CompiledScalarSignature>);
-std::string compiledInterfaceNamespaceSource(std::string_view qualifiedName,
-                                             std::string declaration);
+void appendCompiledInterfaceSource(std::string &source,
+                                   std::span<const CompiledScalarSignature>,
+                                   std::vector<std::size_t> &noAmbientStorage);
+std::string
+compiledInterfaceNamespaceSource(std::string_view qualifiedName,
+                                 std::string declaration,
+                                 std::size_t *declarationStart = nullptr);
 std::string compiledInterfaceTypeSpelling(const SemanticType &,
                                           const PersistentTypeRegistry &,
                                           std::string_view aliasPrefix = {});

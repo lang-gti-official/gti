@@ -1,0 +1,5 @@
+[targets.app.compiled-library]
+package = "meter"
+target = "meter"
+path = "meter.gtilib"
+interface = "api.gti"

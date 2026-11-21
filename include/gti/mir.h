@@ -1971,6 +1971,10 @@ public:
   [[nodiscard]] std::uint64_t semanticSnapshot() const {
     return semanticSnapshot_;
   }
+  [[nodiscard]] bool
+  importedWithoutAmbientStorage(HirFunctionInstanceId id) const {
+    return noAmbientStorageImports_.contains(id);
+  }
   [[nodiscard]] bool requiresNativeObjectLayout() const {
     return nativeObjectLayout_;
   }
@@ -2189,6 +2193,8 @@ private:
   std::vector<MirPayloadEnum> payloadEnums_;
   std::vector<MirIntegralEnum> integralEnums_;
   std::vector<MirClassInstance> classes;
+  // Only authenticated bodyless declarations may carry this contract.
+  std::unordered_set<HirFunctionInstanceId> noAmbientStorageImports_;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;
   std::vector<MirThreadTaskAdapter> threadTasks;

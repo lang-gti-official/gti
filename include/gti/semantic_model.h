@@ -2098,6 +2098,8 @@ struct SemanticSourceUnitSeal {
   bool entry = false;
   bool prelude = false;
   bool compiledScalarInterface = false;
+  // Sorted function-name byte offsets in the admitted, generated facade.
+  std::vector<std::size_t> noAmbientStorageDeclarations;
 
   friend bool operator==(const SemanticSourceUnitSeal &,
                          const SemanticSourceUnitSeal &) = default;

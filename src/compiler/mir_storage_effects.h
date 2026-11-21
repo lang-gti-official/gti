@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <span>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
@@ -40,5 +41,9 @@ using MirPersistentStorageEffectQuery =
 
 [[nodiscard]] MirVerificationResult
 verifyMirPersistentStorageEffects(const MirProgram &program);
+
+// Project only closed source-call graphs which cannot access ambient storage.
+[[nodiscard]] std::unordered_set<HirFunctionInstanceId>
+functionsWithoutAmbientStorage(const MirProgram &program);
 
 } // namespace lang
