@@ -1,2 +1,2 @@
-// Negative: Block-scope static.
-#macro wrong() { static int value = 1; }  //~ ERROR GTI-P0001
+// A typed macro body cannot define static storage.
+#macro wrong() { static int value = 1; }  //~ ERROR GTI-S2099

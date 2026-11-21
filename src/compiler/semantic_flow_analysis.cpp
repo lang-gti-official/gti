@@ -2437,6 +2437,8 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
   ProgramInitializationPlan plan;
   plan.unitOrder = programInitializationUnitOrder();
   if (sourceGraph == nullptr) {
+    for (const auto &entry : requestSession.localStaticSteps)
+      plan.steps.push_back(entry.second);
     for (const StmtPtr &statement : program.declarations()) {
       collectProgramInitializationStatement(*statement, 0, std::nullopt,
                                             plan.steps);
@@ -2456,6 +2458,9 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
                                               sourceUnit, std::nullopt,
                                               unitSteps);
       }
+      for (const auto &entry : requestSession.localStaticSteps)
+        if (entry.second.sourceUnit == sourceUnit)
+          unitSteps.push_back(entry.second);
       std::stable_sort(unitSteps.begin(), unitSteps.end(),
                        [](const ProgramInitializationStep &left,
                           const ProgramInitializationStep &right) {

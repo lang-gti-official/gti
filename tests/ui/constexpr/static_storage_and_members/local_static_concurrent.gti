@@ -1,0 +1,11 @@
+// The concurrent profile admits read-only share-capable local statics and rejects mutable storage.
+//@ execution-profile: concurrent
+int read() {
+  static int shared = 42;
+  return shared;
+}
+int main() {
+  static mut int count = 0;  //~ ERROR GTI-S2060 requires function-local static
+  count += read();
+  return count;
+}

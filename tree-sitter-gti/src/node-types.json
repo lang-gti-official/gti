@@ -2962,6 +2962,10 @@
             "named": true
           },
           {
+            "type": "static_variable_declaration",
+            "named": true
+          },
+          {
             "type": "structured_binding_declaration",
             "named": true
           },
@@ -3687,6 +3691,10 @@
         "types": [
           {
             "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "static_variable_declaration",
             "named": true
           },
           {
@@ -6112,6 +6120,10 @@
         "types": [
           {
             "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "static_variable_declaration",
             "named": true
           },
           {

@@ -689,6 +689,7 @@ struct ProgramInitializationStep {
   FunctionId ownerFunction = 0;
   DefinedFailureOperation ensureFailure;
   SourceSpan declarationSpan;
+  std::optional<ConstantValue> dataConstant;
 
   friend bool operator==(const ProgramInitializationStep &left,
                          const ProgramInitializationStep &right) {
@@ -702,6 +703,7 @@ struct ProgramInitializationStep {
            left.threadLocal == right.threadLocal &&
            left.ownerFunction == right.ownerFunction &&
            left.ensureFailure == right.ensureFailure &&
+           left.dataConstant == right.dataConstant &&
            left.declarationSpan.source == right.declarationSpan.source &&
            left.declarationSpan.start == right.declarationSpan.start &&
            left.declarationSpan.end == right.declarationSpan.end &&

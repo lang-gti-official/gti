@@ -891,16 +891,6 @@ module.exports = grammar({
         $._variable_declaration_body,
       ),
 
-    _block_thread_local_declaration: ($) =>
-      seq(
-        choice(
-          seq(field("storage", "static"), field("thread_storage", "thread_local")),
-          seq(field("thread_storage", "thread_local"), field("storage", "static")),
-        ),
-        optional(field("constant", "constexpr")),
-        $._variable_declaration_body,
-      ),
-
     _variable_declaration_body: ($) =>
       seq(
         optional(field("mutable", "mut")),
@@ -1077,7 +1067,7 @@ module.exports = grammar({
         $.static_assert_declaration,
         $.structured_binding_declaration,
         $.variable_declaration,
-        alias($._block_thread_local_declaration, $.static_variable_declaration),
+        $.static_variable_declaration,
         $.statement,
       ),
 
@@ -1175,6 +1165,7 @@ module.exports = grammar({
     _init_statement: ($) =>
       choice(
         $.variable_declaration,
+        $.static_variable_declaration,
         $.structured_binding_declaration,
         $.expression_statement,
       ),
