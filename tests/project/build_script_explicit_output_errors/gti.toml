@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "script_output"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+[package.build-script]
+command = ["python3", "generate.py"]
+inputs = ["generate.py", "mode"]

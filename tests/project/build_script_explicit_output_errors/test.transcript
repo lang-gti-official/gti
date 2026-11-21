@@ -1,0 +1,18 @@
+// Optional output never hides explicit invalid manifests or a failed build script.
+$ gti build
+? 65
+stderr: error[GTI-B2004]
+stderr: requires integer 'version = 1'
+$ python3 set_mode.py invalid
+$ gti build
+? 65
+stderr: error[GTI-B2004]
+$ python3 set_mode.py dangling
+$ gti build
+? 65
+stderr: error[GTI-B2004]
+$ python3 set_mode.py fail
+$ gti build
+? 65
+stderr: error[GTI-B2003]
+stderr: failed with exit code 7

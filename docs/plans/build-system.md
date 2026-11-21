@@ -1122,7 +1122,10 @@ GTI-authored `build.gti` programs and the original external-command form.
 
 The implemented hook accepts exactly one GTI source file or exact argv command,
 declared contained inputs, content-based cache identity, a managed output
-directory, and a versioned TOML output contract. GTI programs use the ordinary
+directory, and a versioned TOML output contract. Successful scripts with no
+native outputs need no explicit publication: the driver records the empty
+manifest and validates it on cache reuse. Explicit output remains validated.
+GTI programs use the ordinary
 compiler and the source-defined `<std/build>` context, exact-command, and
 structured-output API; external commands remain compatible. Dependency scripts
 require an exact `name@version` entry in
