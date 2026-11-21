@@ -243,7 +243,6 @@ SourceGraph SourceLoader::load(
   }
   // Each package receives a distinct ordinary module, so the same qualified
   // constant spelling has the owning package's identity and visibility.
-  std::vector<SourceOwnerDescriptor> metadataOwners;
   for (const auto &owner : owners) {
     if (owner.kind != SourceOwnerKind::Package || !owner.packageVersion)
       continue;
@@ -256,23 +255,17 @@ SourceGraph SourceLoader::load(
       return text;
     };
     packageMetadataSources.emplace(
-        path.string(), "export module package;\nimport std.string;\n"
-                       "export namespace std { namespace package {\n"
-                       "/// Name from this source package's manifest.\n"
-                       "constexpr std::string_view name = " +
-                           literal(owner.name) +
-                           ";\n"
-                           "/// Version from this source package's manifest.\n"
-                           "constexpr std::string_view version = " +
-                           literal(*owner.packageVersion) + ";\n} }\n");
-    metadataOwners.push_back({.identity = "package-metadata:" + owner.identity,
-                              .name = owner.name + " metadata",
-                              .packageRoot = root,
-                              .sourceRoot = root,
-                              .modules = {{"package", path}},
-                              .kind = SourceOwnerKind::Generated});
+        path.string(),
+        "export module gti_package_metadata;\nimport std.string;\n"
+        "export namespace std { namespace package {\n"
+        "/// Name from this source package's manifest.\n"
+        "constexpr std::string_view name = " +
+            literal(owner.name) +
+            ";\n"
+            "/// Version from this source package's manifest.\n"
+            "constexpr std::string_view version = " +
+            literal(*owner.packageVersion) + ";\n} }\n");
   }
-  owners.insert(owners.end(), metadataOwners.begin(), metadataOwners.end());
   sourceOwners = std::make_shared<const SourceOwnerRegistry>(std::move(owners),
                                                              directMode);
   const auto invalidOwner = [&](std::string message) {
@@ -1428,12 +1421,8 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
         !owner->packageVersion)
       return reject("std.package requires resolved package metadata; use a "
                     "project command with a gti.toml package manifest.");
-    const auto *metadata =
-        packageByIdentity("package-metadata:" + owner->identity);
-    if (!metadata)
-      return reject("Package metadata module is unavailable.");
-    path = metadata->modules.front().second;
-    expectedName = "package";
+    path = owner->packageRoot / ".gti-package-metadata" / "package.gti";
+    expectedName = "gti_package_metadata";
   } else if (quoted) {
     const auto *spelling = std::get_if<std::string>(&tokens[index + 1].literal);
     if (spelling == nullptr || spelling->empty() ||

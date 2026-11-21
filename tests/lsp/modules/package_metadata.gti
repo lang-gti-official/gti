@@ -13,6 +13,6 @@ source-root = "."
 kind = "executable"
 root = "main.gti"
 // --- step 2 app/main.gti
-//@ completion @member: name, version
+//@ completion @member: name version
 import std.package;
-int main() { return std::package::/*^member*/; }
+int main() { return std::package::/*^member*/name.empty() ? 1 : 0; }

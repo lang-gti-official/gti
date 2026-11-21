@@ -146,7 +146,7 @@ alias prefix; a collision is diagnosed rather than guessed.
 
 Resolved package descriptors also carry the manifest version. Together with
 the owner's manifest name this supplies `std.package`. The source loader creates
-one generated owner/module per package and resolves that contextual import to
+one private generated module per package and resolves that contextual import to
 ordinary `constexpr std::string_view` declarations. Their declaration owners
 keep identically spelled constants separate across dependencies. Generated text
 is authoritative over disk/overlay bytes, participates in source hashing, and

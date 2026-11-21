@@ -1,0 +1,14 @@
+// Manifest changes invalidate package constants in an unchanged open document.
+{"file": {"name": "gti.toml", "text": "manifest-version = 1\n[package]\nname = \"reload-package\"\nversion = \"1.0.0\"\n[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n"}}
+{"file": {"name": "main.gti", "text": "import std.package;\nstatic_assert(std::package::version == \"1.0.0\");\nint main() { return 0; }\n"}}
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.package;\nstatic_assert(std::package::version == \"1.0.0\");\nint main() { return 0; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"file": {"name": "gti.toml", "text": "manifest-version = 1\n[package]\nname = \"reload-package\"\nversion = \"2.0.0\"\n[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n"}}
+{"send": {"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": {"changes": [{"uri": "$DIR_URI/gti.toml", "type": 2}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2079"}]}}}
+{"file": {"name": "gti.toml", "text": "manifest-version = 1\n[package]\nname = \"reload-package\"\nversion = \"1.0.0\"\n[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n"}}
+{"send": {"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": {"changes": [{"uri": "$DIR_URI/gti.toml", "type": 2}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}

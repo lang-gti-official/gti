@@ -1,4 +1,6 @@
 // Package constants and build contexts preserve owner identity and manifest cache changes.
+env GTI_BUILD_PACKAGE_NAME=ambient-spoof
+env GTI_BUILD_PACKAGE_VERSION=99.99.99
 $ cd app
 $ gti check
 $ gti run

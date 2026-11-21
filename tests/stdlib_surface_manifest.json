@@ -3836,7 +3836,8 @@
         "tests/project_cli_smoke_test.py",
         "stdlib/std/build.gti",
         "runtime/src/process.cpp",
-        "tests/project/package_metadata/test.transcript"
+        "tests/project/package_metadata/test.transcript",
+        "tests/ui/stdlib/build_context_metadata.gti"
       ]
     },
     {
@@ -6823,7 +6824,9 @@
         "src/compiler/source_loader.cpp",
         "tests/project/package_metadata/test.transcript",
         "tests/ui/modules/package_without_manifest.gti",
-        "tests/lsp/modules/package_metadata.gti"
+        "tests/lsp/modules/package_metadata.gti",
+        "tests/project/package_metadata_compiled/test.transcript",
+        "tests/lsp/modules/package_metadata_reload.jsonl"
       ]
     },
     {
