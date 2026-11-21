@@ -1,0 +1,6 @@
+import "api.gti";
+import std.package;
+int main() {
+  return producer_metadata() && std::package::name == "metadata-consumer" &&
+         std::package::version == "2.0.0" ? 0 : 1;
+}

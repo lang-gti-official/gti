@@ -149,15 +149,16 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   std::vector<PackageSourceRoot> roots;
   roots.reserve(resolvedPackages.size());
   for (const ResolvedProjectPackage &package : resolvedPackages) {
-    PackageSourceRoot root{.identity = package.identity(),
-                           .name = package.manifest.package().name,
-                           .packageRoot = package.manifest.packageRoot(),
-                           .sourceRoot = package.manifest.package().sourceRoot,
-                           .modules = package.manifest.package().modules,
-                           .moduleImplementations =
-                               package.manifest.package().moduleImplementations,
-                           .moduleLookupPaths =
-                               package.manifest.package().moduleLookupPaths};
+    PackageSourceRoot root{
+        .identity = package.identity(),
+        .name = package.manifest.package().name,
+        .packageRoot = package.manifest.packageRoot(),
+        .sourceRoot = package.manifest.package().sourceRoot,
+        .modules = package.manifest.package().modules,
+        .moduleImplementations =
+            package.manifest.package().moduleImplementations,
+        .moduleLookupPaths = package.manifest.package().moduleLookupPaths,
+        .packageVersion = package.manifest.package().version};
     if (const auto &name = package.manifest.package().defaultLibrary) {
       const auto *library = package.manifest.findTarget(*name);
       if (!library->libraryModule.empty()) {

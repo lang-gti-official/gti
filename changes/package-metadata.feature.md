@@ -1,0 +1,1 @@
+Expose constexpr `std::package::name` and `std::package::version` through `import std.package` in project code, scoped to each package. Build contexts expose matching `package_name()` and `package_version()` values without changing the build-script argument protocol.

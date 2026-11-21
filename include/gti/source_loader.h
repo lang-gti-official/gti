@@ -144,6 +144,9 @@ private:
   std::vector<std::filesystem::path> standardLibraryRoots;
   std::shared_ptr<const SourceOwnerRegistry> sourceOwners;
   std::unordered_map<std::string, std::function<std::string()>> deferredSources;
+  // Compiler-owned package modules use ordinary source semantics, but cannot
+  // be replaced by filesystem contents or editor overlays.
+  std::unordered_map<std::string, std::string> packageMetadataSources;
   std::unordered_set<std::string> installedProviders;
   std::unordered_set<std::string> archivedEmbeddedInputs;
   bool entrySourceConsumed = false;

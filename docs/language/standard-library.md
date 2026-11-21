@@ -1,5 +1,15 @@
 # 7. Standard Library
 
+`import std.package;` exposes immutable `constexpr std::string_view` constants
+`std::package::name` and `std::package::version` from the source package's
+resolved manifest. Dependencies observe their own package, and build programs
+observe the package whose script is running. The spelling is preserved exactly;
+these are strings, not semantic-version comparison objects. The import requires
+a project/package compilation (`GTI-I0012` otherwise) and remains explicit
+rather than joining the portable `std` aggregate. Build scripts additionally
+have `std::build::context::package_name()` and `package_version()` accessors.
+
+
 Status: Partial normative draft
 
 ## 7.1 Library Boundary

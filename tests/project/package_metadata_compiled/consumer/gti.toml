@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "metadata-consumer"
+version = "2.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "metadata-provider"
+target = "provider"
+path = "provider.gtilib"
+interface = "api.gti"
