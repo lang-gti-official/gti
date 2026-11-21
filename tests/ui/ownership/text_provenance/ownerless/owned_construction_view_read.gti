@@ -1,0 +1,17 @@
+// Owned construction view read: constructed borrowed records preserve their external owners on read.
+//@ check-pass
+import std.memory;
+import std.string;
+int main() {
+  std::string owner{"borrowed"};
+  mut std::string_view selected = "";
+  {
+    mut std::uninitialized<std::string_view> storage{};
+    unsafe {
+      std::string_view* address = storage.data();
+      std::construct_owned_at(address, storage, owner.view());
+      selected = std::borrow_owned_at(address, storage);
+    }
+  }
+  return selected == "borrowed" ? 0 : 1;
+}

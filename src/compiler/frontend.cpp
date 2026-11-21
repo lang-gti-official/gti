@@ -7,6 +7,7 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/parser.h"
+#include "gti/project_template.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
@@ -33,6 +34,63 @@
 
 namespace lang {
 namespace {
+
+const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
+                                   std::size_t start, std::size_t end) {
+  for (const auto &item : items) {
+    if (!item)
+      continue;
+    if (const auto *fn = stmtAs<FunctionDecl>(item.get())) {
+      if (!fn->body() || !fn->body()->extent())
+        continue;
+      const auto &span = *fn->body()->extent();
+      if (span.source == path && span.start < start && end < span.end)
+        return fn;
+    } else if (const auto *space = stmtAs<NamespaceDecl>(item.get())) {
+      if (const auto *fn =
+              editedFunction(space->declarations(), path, start, end))
+        return fn;
+    } else if (const auto *owner = stmtAs<ClassDecl>(item.get())) {
+      if (const auto *fn = editedFunction(owner->members(), path, start, end))
+        return fn;
+    }
+  }
+  return nullptr;
+}
+
+// A never-before-seen identifier is a cheap candidate for lookup in the
+// registered declaration environment. A spelling elsewhere in the parsed
+// inputs could introduce a lexical value during body checking. Leave those
+// cases to the ordinary walk. Membership alone never produces a diagnostic.
+const Token *editedLookupToken(const SourceGraph &graph, EditedLookupRange edit,
+                               bool &uniqueSpelling) {
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  if (!entry || !entry->tokens)
+    return nullptr;
+  const auto &tokens = *entry->tokens;
+  for (auto it = tokens.begin(); it != tokens.end(); ++it) {
+    if (it->position > edit.start || it->kind != TokenKind::IDENTIFIER ||
+        it->generated || it->position + it->lexeme.size() < edit.end)
+      continue;
+    if (edit.recheck && (it->position != edit.start ||
+                         it->position + it->lexeme.size() != edit.end))
+      continue;
+    uniqueSpelling = true;
+    for (const auto id : graph.compilationOrder()) {
+      const auto *unit = graph.findUnit(id);
+      if (!unit || !unit->tokens || unit->compiledTemplate)
+        return nullptr;
+      if (std::ranges::any_of(*unit->tokens, [&](const Token &other) {
+            return &other != &*it && other.lexeme == it->lexeme;
+          })) {
+        uniqueSpelling = false;
+        break;
+      }
+    }
+    return uniqueSpelling || edit.recheck ? &*it : nullptr;
+  }
+  return nullptr;
+}
 
 // The source diagnostics of MIR's borrow rejections. `internal` reports that
 // some error was not a classified borrow rejection.
@@ -385,6 +443,31 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       return {nullptr, nullptr};
     }
   };
+  const auto ownerlessRequirement = [&](MirBodyKind kind, std::size_t owner,
+                                        MirBlockId blockId,
+                                        MirInstructionId site) {
+    const auto [lowered, source] = bodiesOf(kind, owner);
+    const auto *block = lowered ? lowered->findBlock(blockId) : nullptr;
+    if (!block || !source)
+      return false;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id != site)
+        continue;
+      const auto *value = source->findValue(
+          instruction.hirValue ? instruction.hirValue : instruction.callSite);
+      if (!value || !value->source)
+        return false;
+      const Token token = expressionAnchorToken(*value->source);
+      if (token.lexeme.empty())
+        return false;
+      add(tokenSpan(token),
+          "This storage or call requires an ownerless value, but the supplied "
+          "value retains an external owner.",
+          "GTI-S2017");
+      return true;
+    }
+    return false;
+  };
   // Explain only concrete storage retained by the rejected return loan. A
   // reference binding is an alias, not evidence that its referent dies here.
   const auto addExplainedEscape = [&](SourceSpan span, MirBodyKind kind,
@@ -457,7 +540,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     auto &related = check.diagnostics.back().related;
     if (related.empty())
       related.push_back(
-          {tokenSpan(token), "The overlapping borrow originates here."});
+          {tokenSpan(token),
+           borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement
+               ? "The retained borrow originates here."
+               : "The overlapping borrow originates here."});
   };
   // A body's user rejection explains why its construction stopped; any
   // structural failure it caused in the same body is a consequence of that
@@ -467,6 +553,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (error.borrow.kind != MirBorrowRejectionKind::None && error.source)
       rejectedBodies.push_back(error.body);
   for (const MirLoweringError &error : mir.errors) {
+    if (error.borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement &&
+        ownerlessRequirement(error.body.kind, error.body.owner, error.block,
+                             error.instruction)) {
+      relateLoan(error.body, error.borrow);
+      continue;
+    }
     if (error.borrow.kind == MirBorrowRejectionKind::None &&
         std::any_of(rejectedBodies.begin(), rejectedBodies.end(),
                     [&](const MirBodyAddress &body) {
@@ -474,6 +566,37 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                              body.owner == error.body.owner;
                     }))
       continue;
+    if (error.borrow.kind == MirBorrowRejectionKind::UnrepresentedRetention ||
+        error.borrow.kind == MirBorrowRejectionKind::ErasedRetention) {
+      std::optional<SourceSpan> span = error.source;
+      const auto [lowered, source] =
+          bodiesOf(error.body.kind, error.body.owner);
+      if (!span && lowered && source)
+        if (const auto *block = lowered->findBlock(error.block))
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == error.instruction) {
+              const auto *value = source->findValue(instruction.hirValue
+                                                        ? instruction.hirValue
+                                                        : instruction.callSite);
+              if (value && value->source) {
+                const Token token = expressionAnchorToken(*value->source);
+                if (!token.lexeme.empty())
+                  span = tokenSpan(token);
+              }
+            }
+      if (span) {
+        add(*span,
+            error.borrow.kind == MirBorrowRejectionKind::ErasedRetention
+                ? "This callable type cannot represent the input lifetimes "
+                  "retained by its target. Use a direct call that preserves "
+                  "the target's retention contract."
+                : "This call stores borrowed text, but its input has no "
+                  "represented "
+                  "owner lifetime or proof that it is ownerless.",
+            "GTI-S2045");
+        continue;
+      }
+    }
     // The provisional program proof reports an escape without a body source.
     if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
          error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
@@ -507,6 +630,11 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           "A consuming borrowed payload requires one exact active carrier "
           "with independently transferable dependencies.",
           "GTI-S2067");
+    } else if (error.borrow.kind == MirBorrowRejectionKind::ExpiredDependency) {
+      add(*error.source,
+          "Cannot use a borrowed value after its owner or retained dependency "
+          "has become unavailable.",
+          "GTI-S2017", &error);
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addExplainedEscape(*error.source, error.body.kind, error.body.owner,
                          error.borrow);
@@ -645,6 +773,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     return check;
   for (const MirVerificationError &error : verifyMirProgram(program).errors) {
     if (error.message == "MIR program is marked invalid")
+      continue;
+    if (error.borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement &&
+        ownerlessRequirement(error.bodyKind, error.owner, error.block,
+                             error.instruction))
       continue;
     const auto span =
         error.borrow.kind == MirBorrowRejectionKind::Escape ||
@@ -1176,6 +1308,19 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const std::string syntaxContext = syntaxCacheContext(options);
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
+  // The parser consumes unshared unit tokens. Retain only the candidate
+  // and the entry tokens until its enclosing declaration is known.
+  std::shared_ptr<const std::vector<Token>> lookupTokens;
+  if (options.editedRange) {
+    bool uniqueSpelling = false;
+    if (const auto *token = editedLookupToken(
+            result.sourceGraph, *options.editedRange, uniqueSpelling)) {
+      result.editedLookup.emplace(*token, uniqueSpelling,
+                                  options.editedRange->recheck);
+      lookupTokens =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit())->tokens;
+    }
+  }
   const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
@@ -1234,9 +1379,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                 ? std::move(const_cast<std::vector<Token> &>(*unit->tokens))
                 : unitTokens;
         unit->tokens.reset();
-        Parser parser(std::move(parserTokens), source == nullptr
-                                                   ? std::string_view{}
-                                                   : std::string_view{*source});
+        const auto &recipe = unit->compiledTemplate;
+        if (recipe && recipe->projectSyntax) {
+          parserTokens =
+              projectTemplateTokens(*recipe, parserTokens, unit->path.string());
+          source = &*recipe->projectSyntax;
+        }
+        Parser parser(std::move(parserTokens),
+                      source ? std::string_view(*source) : std::string_view{});
         const std::size_t parseErrorLimit =
             options.limits.errorLimit == 0
                 ? 0
@@ -1251,9 +1401,29 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
-        if (unit->compiledTemplate && !parser.hadError())
-          restoreTemplateBodies(unitDeclarations, *unit->compiledTemplate,
-                                unit->path.string());
+        if (recipe && !parser.hadError()) {
+          if (recipe->projectSyntax) {
+            verifyProjectTemplate(*recipe, unitDeclarations,
+                                  parser.lifetimeNames());
+            result.sources.set(unit->path.string(), *recipe->projectSyntax);
+          } else if (auto spelling = restoreTemplateBodies(
+                         unitDeclarations, *recipe, unit->path.string())) {
+            result.sources.set(unit->path.string(), std::move(*spelling));
+          }
+        }
+        if (recipe && !recipe->projectSyntax && !parser.hadError()) {
+          auto names =
+              compiledTemplateLifetimeNames(*recipe, unit->path.string());
+          unit->lifetimeNames =
+              names.empty()
+                  ? nullptr
+                  : std::make_shared<const LifetimeNames>(std::move(names));
+        } else {
+          unit->lifetimeNames = parser.lifetimeNames().empty()
+                                    ? nullptr
+                                    : std::make_shared<const LifetimeNames>(
+                                          parser.lifetimeNames());
+        }
         StmtList embeddedDeclarations;
         for (const auto &file : unit->embeddedFiles) {
           if (!file.bytes || file.storageOffset != file.keyword.position)
@@ -1265,10 +1435,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             unitDeclarations.begin(),
             std::make_move_iterator(embeddedDeclarations.begin()),
             std::make_move_iterator(embeddedDeclarations.end()));
-        unit->lifetimeNames =
-            parser.lifetimeNames().empty()
-                ? nullptr
-                : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
         if (options.cache && !unit->compiledTemplate &&
             !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(
@@ -1305,6 +1471,31 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             .count());
   }
   result.program = Program(std::move(declarations));
+  if (result.editedLookup) {
+    // Until the lexical walk reaches this declaration, a discarded branch or
+    // source macro may depend on body facts that are still unavailable.
+    const Token &token = result.editedLookup->token;
+    result.editedLookup->function =
+        editedFunction(result.program.declarations(), token.source,
+                       token.position, token.position + token.lexeme.size());
+    if (const auto *fn = result.editedLookup->function) {
+      const auto &extent = *fn->body()->extent();
+      for (auto it = lookupTokens->begin(); it != lookupTokens->end(); ++it) {
+        if (it->position < extent.start || it->position >= extent.end)
+          continue;
+        const bool macroCall = it->kind == TokenKind::BANG &&
+                               it != lookupTokens->begin() &&
+                               (std::prev(it)->kind == TokenKind::IDENTIFIER ||
+                                std::prev(it)->kind == TokenKind::GREATER);
+        if (it->kind == TokenKind::CONSTEXPR ||
+            it->kind == TokenKind::HASH_MACRO || macroCall) {
+          result.editedLookup.reset();
+          break;
+        }
+      }
+    }
+  }
+
   result.syntaxValid = syntaxValid;
   if (options.stopAfter == FrontendPhase::Parsing) {
     result.parsingComplete = true;
@@ -1379,8 +1570,11 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
   // cannot stay equivalent to analysing the body in the pass, discovery
   // requests a fresh, more complete analysis instead.
   for (const auto &unit : result.sourceGraph.sourceUnits())
-    if (unit.compiledScalarInterface)
+    if (unit.compiledScalarInterface) {
       frontendCacheContext += "\ncompiled-scalar:" + std::to_string(unit.id);
+      for (const auto offset : unit.noAmbientStorageDeclarations)
+        frontendCacheContext += ":" + std::to_string(offset);
+    }
   const std::size_t preSemanticDiagnostics = result.diagnostics.size();
   // Trusted prefix preamble: the leading compiler-trusted units of the
   // compilation order, analysed once per configuration and shared through
@@ -1536,8 +1730,23 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
                        diagnostics);
             },
             [&] {
-              observer(DiagnosticStage::Registered, result, semantic.model(),
-                       {});
+              if (hasErrorDiagnostics(semantic.errors()))
+                observer(DiagnosticStage::Declaration, result, semantic.model(),
+                         semantic.errors());
+              else {
+                observer(DiagnosticStage::Registered, result, semantic.model(),
+                         {});
+                if (const auto &candidate = result.editedLookup) {
+                  const auto &token = candidate->token;
+                  const auto lookup = semantic.diagnoseRegisteredLookup(
+                      result.program, result.sources, token,
+                      candidate->function, options.cancellation);
+                  if (lookup && (lookup->empty() ? candidate->recheck
+                                                 : candidate->uniqueSpelling))
+                    observer(DiagnosticStage::Lookup, result, semantic.model(),
+                             *lookup);
+                }
+              }
             });
       } else {
         result.semanticValid = semantic.check(result.program);
@@ -2185,29 +2394,6 @@ std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
 }
 
 namespace {
-const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
-                                   std::size_t start, std::size_t end) {
-  for (const auto &item : items) {
-    if (!item)
-      continue;
-    if (const auto *fn = stmtAs<FunctionDecl>(item.get())) {
-      if (!fn->body() || !fn->body()->extent())
-        continue;
-      const auto &span = *fn->body()->extent();
-      if (span.source == path && span.start < start && end < span.end)
-        return fn;
-    } else if (const auto *space = stmtAs<NamespaceDecl>(item.get())) {
-      if (const auto *fn =
-              editedFunction(space->declarations(), path, start, end))
-        return fn;
-    } else if (const auto *owner = stmtAs<ClassDecl>(item.get())) {
-      if (const auto *fn = editedFunction(owner->members(), path, start, end))
-        return fn;
-    }
-  }
-  return nullptr;
-}
-
 // Only the edited declaration has current statement locations. Check its
 // concrete call closure, then publish solely diagnostics owned by this body.
 // The background pass owns callers, program storage and cross-body findings.

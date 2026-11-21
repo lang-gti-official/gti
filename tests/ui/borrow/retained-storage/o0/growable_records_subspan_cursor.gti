@@ -1,0 +1,25 @@
+// A subspan cursor reads the exact borrowed element and releases storage after its last use.
+//@ run-pass
+import std.span;
+import std.vector;
+
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+
+int main() {
+  int first = 11;
+  int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  std::span<Reading> tail = values.as_span().subspan(1, 1);
+  auto cursor = tail.cbegin();
+  auto element = *cursor;
+  int observed = element.read();
+  values.clear();
+  return observed == 22 ? 0 : 1;
+}

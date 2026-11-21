@@ -1,0 +1,12 @@
+// Inline array call supplier set: array return contracts retain actual suppliers including an ownerless primary.
+//@ check-pass
+import std.string;
+std::string_view<a>[2] paired<lifetime a>(std::string_view<a> first,
+                                        std::string_view<a> second) {
+  return {"first", "second"};
+}
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  auto values = paired("first", second.view());
+  return values[0] == "first" ? 0 : 1;
+}

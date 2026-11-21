@@ -1,0 +1,1 @@
+The language server can report missing names in edited functions and conformance declarations before the first whole-project check finishes. Correcting a provisionally reported name clears that finding once the compiler resolves its replacement. Borrow and lifetime verification continues in the background.

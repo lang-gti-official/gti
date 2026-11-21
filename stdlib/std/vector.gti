@@ -10,8 +10,11 @@ import "detail/iterator.gti";
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
 namespace std {
 // Capacity changes and shifts use generated, failure-free relocation, never
-// custom movement or assignment. Independent storage excludes checked borrows.
-export concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;
+// custom movement or assignment. Every element transfer carries explicit
+// storage-owner witnesses, including types whose instances may be ownerless.
+export concept vector_element<T> = std::layout_queryable<T> &&
+    std::move_constructible<T> &&
+    (std::relocatable<T> || std::detail::has_borrowed_payload<T>());
 namespace detail {
 // Owns one allocation and a remaining live interval, never a vector with holes.
 // A range loop takes this value into an exclusive hidden cursor before calling
@@ -31,7 +34,7 @@ public:
   vector_consuming_range(vector_consuming_range<T>& other) = delete;
   vector_consuming_range(vector_consuming_range<T>&& other) = default;
   bool has_next() { return this.first < this.last; }
-  T take_next() mut {
+  T take_next() mut requires std::relocatable<T> {
     gti_internal::index_bounds_check(this.first, this.last);
     size_t index = this.first;
     this.first = gti_internal::integer_wrapping_add(this.first, size_t(1));
@@ -57,7 +60,7 @@ public:
   }
 };
 
-class vector_iterator<std::storage_element T, uint64_t Reverse = 0, lifetime owner> {
+class vector_iterator<std::layout_queryable T, uint64_t Reverse = 0, lifetime owner> {
   // The whole-owner loan keeps this inclusive bound stable. Cache it before
   // retaining the owner; it is movement state, never element-read authority.
   size_t final_position;
@@ -138,7 +141,7 @@ public:
 // and by-value algorithm transport keep that same checked loan; copying or
 // overlapping owner access is rejected. Range-for adds its traversal loans.
 // Movement, including reverse movement, never creates independent access.
-class vector_mut_iterator<std::storage_element T, uint64_t Reverse = 0> {
+class vector_mut_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   // Element writes do not change the loan-protected owner length. Capturing
   // it before retaining the exclusive owner avoids reloading it per step.
   size_t final_position;
@@ -246,7 +249,9 @@ public:
   /// Consumes this vector without copying elements or reallocating storage.
   /// The returned range yields owned elements in order and destroys any
   /// remaining elements when iteration ends, including an early exit.
-  detail::vector_consuming_range<T> into_range() && {
+  /// Borrowed elements require owner-aware value extraction, which this
+  /// consuming range does not yet provide. Ordinary indexed reads remain available.
+  detail::vector_consuming_range<T> into_range() && requires std::relocatable<T> {
     return detail::vector_consuming_range<T>(std::move(this.data));
   }
 
@@ -294,7 +299,7 @@ public:
 
   /// Check both live indices before mutation; equal valid indices are a no-op.
   void swap_elements(size_t left, size_t right) mut
-    requires std::relocatable<T> {
+    requires std::move_constructible<T> {
     gti_internal::index_bounds_check(left, this.size());
     gti_internal::index_bounds_check(right, this.size());
     unsafe { this.swap_elements_unchecked(left, right); }
@@ -303,7 +308,7 @@ public:
   /// Restoring swap with caller-proven live indices. Both indices must be
   /// less than size(), even when equal. No element loan may survive the call.
   unsafe void swap_elements_unchecked(size_t left, size_t right) mut
-    requires std::relocatable<T> {
+    requires std::move_constructible<T> {
     unsafe { this.data.swap_elements_unchecked(left, right); }
   }
 
@@ -424,7 +429,7 @@ public:
   /// Returns a checked read-only view tied to this vector's storage.
   constexpr span<T> as_span() {
     unsafe {
-      return gti_internal::make_span(this, this.data.address(), size_t(0), this.data.length());
+      return gti_internal::make_prefix_span(this.data, size_t(0), this.data.length());
     }
   }
 

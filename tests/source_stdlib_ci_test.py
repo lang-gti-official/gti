@@ -286,7 +286,7 @@ class SourceStdlibCI(unittest.TestCase):
                 destination.parent.mkdir(parents=True)
                 destination.write_bytes((stage / "share/gti/stdlib/std/new.gti").read_bytes())
 
-            with patch('build_stdlib_bundles.build', side_effect=build_fixture), \
+            with patch('build_stdlib_bundles.build', autospec=True, side_effect=build_fixture), \
                  patch.object(lsp_compatibility, 'identity', return_value='e' * 64), patch.object(source, 'ensure_checkout'), \
                  patch.object(source, 'git', return_value=plan['head']), \
                  patch.object(source, 'changed', return_value=['stdlib/std/new.gti']), \

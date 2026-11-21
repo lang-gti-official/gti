@@ -42,9 +42,8 @@ void SemanticVisitor::Impl::finishLimitedAnalysis() {
 bool SemanticVisitor::check(const Program &program,
                             const EntryDiagnosticObserver &observer,
                             const std::function<void()> &onRegistered) {
-  // A rejected preamble can restart the lexical walk. Only stream from a
-  // fresh registration, and never retain a listener in a query snapshot.
-  if (!impl->adoptedPreamble && observer)
+  // The lexical pass starts only after a preamble has passed admission.
+  if (observer)
     impl->entryDiagnosticObserver = &observer;
   if (onRegistered)
     impl->registrationObserver = &onRegistered;
@@ -151,9 +150,77 @@ std::optional<std::vector<Diagnostic>> SemanticVisitor::diagnoseEditedBody(
 }
 
 std::optional<std::vector<Diagnostic>>
-SemanticVisitor::Impl::diagnoseEditedBody(
-    const EditedFunctionBody &input,
-    const std::atomic<bool> *cancellation) const {
+SemanticVisitor::diagnoseRegisteredLookup(
+    const Program &program, const SourceManager &sources, const Token &token,
+    const FunctionDecl *function, const std::atomic<bool> *cancellation) const {
+  return impl->diagnoseRegisteredLookup(program, sources, token, function,
+                                        cancellation);
+}
+
+std::optional<std::vector<Diagnostic>>
+SemanticVisitor::Impl::diagnoseRegisteredLookup(
+    const Program &program, const SourceManager &sources, const Token &token,
+    const FunctionDecl *function, const std::atomic<bool> *cancellation) const {
+  if (function) {
+    if (function->isConstexpr() || function->isMacro() ||
+        function->isProceduralMacro())
+      return std::nullopt;
+    EditedFunctionBody input{program, model(),   *sourceGraph,
+                             sources, *function, *function->body(),
+                             {}};
+    return diagnoseEditedBody(input, cancellation, &token);
+  }
+  for (const auto &check : conformanceTypeChecks) {
+    const auto &extent = check.declaration->extent();
+    if (check.sourceUnit != sourceGraph->entryUnit() || !extent ||
+        token.position < extent->start || token.position >= extent->end)
+      continue;
+    // The ordinary validator establishes this block's binders, enclosing
+    // namespace, requirements and associated types in the isolated worker.
+    auto worker = unevaluatedExpressionWorker(&model());
+    worker->conformanceTypeChecks = {check};
+    worker->cancellation = cancellation;
+    DeclarationOrderScope order(*worker, *check.declaration);
+    try {
+      worker->validateConformanceTypes(*check.declaration);
+    } catch (const AnalysisCancelled &) {
+      return std::nullopt;
+    } catch (const ErrorLimitReached &) {
+      return std::nullopt;
+    }
+    return worker->lookupDiagnosticAt(token, check.sourceUnit);
+  }
+  return std::nullopt;
+}
+
+std::optional<std::vector<Diagnostic>>
+SemanticVisitor::Impl::lookupDiagnosticAt(const Token &token,
+                                          SourceUnitId unit) {
+  if (!unmetBodyDemandList().empty())
+    return std::nullopt;
+  const auto site = tokenSpan(token);
+  const auto first = std::ranges::find(diagnostics, DiagnosticSeverity::Error,
+                                       &Diagnostic::severity);
+  // Recovery from an earlier error can change which expression is checked.
+  if (first != diagnostics.end() && first->primary == site &&
+      (first->missingIncludeName == token.lexeme || first->missingEnumerator) &&
+      first->related.empty() && first->fixes.empty())
+    return std::vector<Diagnostic>{*first};
+  // A resolved reference can withdraw only a missing-name finding for this
+  // occurrence. Later errors, including pending consteval work, belong to
+  // their own expressions and the ordinary full check.
+  semanticModel.finalizeOccurrences();
+  const auto *bound = model().database().findOccurrence(unit, token.position);
+  if (bound && bound->span == site && bound->symbol &&
+      hasRole(bound->roles, OccurrenceRole::Reference))
+    return std::vector<Diagnostic>{};
+  return std::nullopt;
+}
+
+std::optional<std::vector<Diagnostic>>
+SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
+                                          const std::atomic<bool> *cancellation,
+                                          const Token *lookup) const {
   const auto *function = input.model.findFunction(input.declaration);
   if (!function || function->declaration != &input.declaration ||
       function->bodyDeclaration() != &input.declaration)
@@ -194,13 +261,16 @@ SemanticVisitor::Impl::diagnoseEditedBody(
   } catch (const Impl::ErrorLimitReached &) {
     return std::nullopt;
   }
+  if (lookup)
+    return worker->lookupDiagnosticAt(*lookup, function->sourceUnit);
   const auto &checked = *input.body.extent();
   if (generic) {
     // An open generic can diagnose failed lexical lookup. Only a concrete
     // instance can establish that its instantiated body passes verification.
     std::vector<Diagnostic> missing;
     for (const auto &d : worker->diagnostics) {
-      if (d.code == "GTI-S2001" && d.severity == DiagnosticSeverity::Error &&
+      if ((d.code == "GTI-S2001" || d.missingEnumerator) &&
+          d.severity == DiagnosticSeverity::Error &&
           d.primary.source == checked.source &&
           d.primary.start >= checked.start && d.primary.end <= checked.end &&
           d.related.empty() && d.fixes.empty())

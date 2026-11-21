@@ -861,6 +861,7 @@ struct CompiledScalarBinding {
   // Exported source policy, or authenticated interface policy for an import.
   FunctionCodegenAttributes codegenAttributes;
   std::shared_ptr<const CompiledMirBody> optimizationBody;
+  bool noAmbientStorage = false;
 };
 class CompiledScalarUnitBuilder;
 

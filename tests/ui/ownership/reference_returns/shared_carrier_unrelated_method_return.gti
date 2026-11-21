@@ -1,0 +1,14 @@
+// Returning a shared carrier from a method must satisfy its owner relay contract.
+//@ check-fail
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+class WrongFactory {
+public:
+  WrongFactory() = default;
+  View make(int& source) { return View(source); } //~ ERROR GTI-S2085 exact external owner dependency
+};
+int main() { WrongFactory factory{}; int source = 2; View view = factory.make(source); return view.get(); }

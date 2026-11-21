@@ -1,0 +1,37 @@
+// Dynamic text cleanup capacity: cleanup capacity preserves literal-only record construction.
+//@ check-pass
+import std.string;
+import std.panic;
+struct Observing {
+  std::string_view text;
+  Observing() : text("literal") {}
+  ~Observing() { if (this.text != "literal") { std::panic("bad text"); } }
+};
+struct Passive {
+  std::string_view text;
+  std::string owned;
+  Passive() : text("literal"), owned("owned") {}
+};
+struct OwnedOnly {
+  int value;
+  OwnedOnly() : value(1) {}
+  ~OwnedOnly() {}
+};
+enum PassiveChoice { text(std::string_view view), owned(std::string value), none };
+enum ObservingChoice { value(Observing item), none };
+struct PassiveEnum {
+  PassiveChoice choice;
+  PassiveEnum() : choice(PassiveChoice::none) {}
+};
+struct ObservingEnum {
+  ObservingChoice choice;
+  ObservingEnum() : choice(ObservingChoice::none) {}
+};
+int main() {
+  PassiveEnum passive_enum{};
+  ObservingEnum observing_enum{};
+  Observing observing{};
+  Passive passive{};
+  OwnedOnly owned{};
+  return observing.text == passive.text && owned.value == 1 ? 0 : 1;
+}

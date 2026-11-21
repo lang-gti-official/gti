@@ -1,0 +1,18 @@
+// Opaque owner unknown retention: explicit owner publication remains visible even without nominal storage fields.
+import std.string;
+import std.memory;
+extern "C" { void opaque_effect(); }
+class Owner {
+public:
+  Owner() = default;
+  unsafe void write(std::string_view* address, std::string_view value) mut {
+    unsafe { opaque_effect(); std::initialize_owned_at(address, this, value); }
+  }
+};
+int main() {
+  std::string text{"borrowed"};
+  mut std::uninitialized<std::string_view> slot{};
+  mut Owner owner{};
+  unsafe { owner.write(slot.data(), text.view()); }  //~ ERROR GTI-S2045
+  return 0;
+}

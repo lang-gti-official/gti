@@ -1,0 +1,19 @@
+// Borrowed storage: fixed array helper reference outlives storage.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+std::string_view<a> select_view<lifetime a, lifetime shell>(std::string_view<a>[2]&<shell> values, int index) {
+  return values[index];
+}
+int check(bool choose) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view selected = "";
+  {
+    std::string_view values[2] = {first.view(), second.view()};
+    selected = select_view(values, choose ? 1 : 0);
+  }
+  if (choose) { return selected == "second" ? 0 : 1; }
+  return selected == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

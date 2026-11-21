@@ -1,0 +1,17 @@
+// Borrowed storage: fixed array destructor protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+mut int witness = 0;
+class Observed {
+  int& source;
+public:
+  Observed(int& input) : source(input) {}
+  ~Observed() { witness += this.source; }
+};
+int main() {
+  mut int owner = 11;
+  { Observed values[1] = {Observed(owner)}; owner = 22; }  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+  return witness;
+}

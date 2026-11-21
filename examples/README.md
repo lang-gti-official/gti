@@ -321,7 +321,7 @@ the modules other examples import.
 | `053-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 | `054-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
 | `055-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport, including source-defined string captures and exactly-once cleanup |
-| `056-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
+| `056-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive switches and conditional payload matching |
 | `057-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 | `058-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
 | `059-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
@@ -453,6 +453,7 @@ the modules other examples import.
 | `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary views and their owners, constrained mutable packs and per-element exclusive access (LLVM). |
 | `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, stored-region results also supplied by a parameter, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers, fixed lambda environment premises and class-region method results relayed from carrier parameters and temporaries; ordinary callers infer lifetime arguments (LLVM). |
 | `193-tcp-line-server.gti` | A loopback line service: `std::tcp::listen`/`connect` by host and port, `serve` driving an application type through the `connection_handler` protocol concept, and `buffered_stream` frames borrowed in place (`span<uint8_t, this>`) until `consume` (LLVM). |
+| `194-borrowed-containers.gti` | Multiple external owners in vectors of text views and shared-reference records; direct indexed copies preserve owners independently of container growth and scope (LLVM). |
 | `194-string-view-subviews.gti` | Counted sub-views: `substr` with clamped counts, in-place `remove_prefix`/`remove_suffix` trimming, owner relay through a by-value `mut` view parameter, and the `GTI-R0007` boundary (LLVM). |
 | `197-borrowed-yield-cursors.gti` | Cursors whose read-only `operator*` yields a borrow carrier in the cursor's own lifetime parameter: `std::span` frames and an application view type, kept across `++`, bound by value and `auto&` in range-for, `std::input_iterator`/`std::forward_iterator` and a generic algorithm (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |

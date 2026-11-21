@@ -1,4 +1,4 @@
-// Move construction capability: deleted construction and unavailable assignment must remain distinct source-level constraint failures.
+// Move construction capability: deleted construction and cleanup-bound assignment remain distinct constraint failures.
 class Frozen {
 public:
   Frozen() {}
@@ -8,6 +8,7 @@ class Cursor {
   int& source;
 public:
   Cursor(int& value) : source(value) {}
+  ~Cursor() { int observed = this.source; }
 };
 bool constructible<T>(T& value) requires std::move_constructible<T> { return true; }
 bool assignable<T>(T& value) requires std::movable<T> { return true; }

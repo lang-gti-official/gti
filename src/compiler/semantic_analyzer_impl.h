@@ -566,8 +566,12 @@ public:
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
   std::optional<std::vector<Diagnostic>>
-  diagnoseEditedBody(const EditedFunctionBody &,
-                     const std::atomic<bool> *) const;
+  diagnoseRegisteredLookup(const Program &, const SourceManager &,
+                           const Token &, const FunctionDecl *,
+                           const std::atomic<bool> *cancellation) const;
+  std::optional<std::vector<Diagnostic>>
+  diagnoseEditedBody(const EditedFunctionBody &, const std::atomic<bool> *,
+                     const Token *lookup = nullptr) const;
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
   [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
@@ -2878,6 +2882,7 @@ private:
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
+  [[nodiscard]] bool hasMirRetainingReceiver(const SemanticPlace &place) const;
   [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
   // Whether `result`, this function's returned value of type `type`, relays
   // the formal `argument` names at its text field `field` (L-OWN-02),
@@ -4544,7 +4549,7 @@ private:
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
       std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
-      bool checkedArgument = false);
+      bool checkedArgument = false, bool ownerTrackedStorage = false);
 
   void selectConstructorCallArguments(
       const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
@@ -4553,7 +4558,7 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
       std::vector<const ConstructorInfo *> *candidateProbe,
-      bool checkedArgument = false);
+      bool checkedArgument = false, bool ownerTrackedStorage = false);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -5240,6 +5245,8 @@ private:
     ++constexprAvailabilityObservations();
   }
   void validateConformanceTypes(const ConformanceDecl &declaration);
+  std::optional<std::vector<Diagnostic>> lookupDiagnosticAt(const Token &,
+                                                            SourceUnitId);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
                    const std::vector<SemanticType> &arguments) const;

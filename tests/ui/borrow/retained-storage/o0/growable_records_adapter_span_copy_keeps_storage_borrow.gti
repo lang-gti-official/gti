@@ -1,0 +1,22 @@
+// Borrowed storage: growable records adapter span copy keeps storage borrow.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  values.reserve(32);
+  auto adapter = values.as_span();
+  auto selected = adapter[0];
+  values.reserve(64);  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return selected.read() == 11 ? 0 : 1;
+}

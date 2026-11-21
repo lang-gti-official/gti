@@ -1,0 +1,16 @@
+// Borrowed storage: constructor owned copy outlives input.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.string;
+class Owned {
+  std::string text;
+public:
+  Owned(std::string_view input) : text(std::string(input)) {}
+  std::size_t size() { return this.text.size(); }
+};
+Owned make_owned() { std::string local{"kept"}; return Owned(local.view()); }
+int main() { Owned value = make_owned(); return value.size() == 4 ? 0 : 1; }

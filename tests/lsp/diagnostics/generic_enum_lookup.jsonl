@@ -1,0 +1,18 @@
+// A missing member of a resolved enum is reported from the verified generic body environment.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "enum state { ready };\nint visit<T>(T value) { auto choice = state::ready; return 1; }\nint main() { return visit(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "enum state { ready };\nint visit<T>(T value) { auto choice = state::ready; return 1; }\nint main() { return visit(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 6}}
+{"expect": {"id": 6, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "enum state { ready };\nint visit<T>(T value) { auto choice = state::eady; return 1; }\nint main() { return visit(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2036", "message": {"$contains": "Unknown enumerator 'eady'"}}], "gtiDiagnosticStage": "bodyChecking"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "enum state { ready };\nint visit<T>(T value) { auto choice = state::ready; return 1; }\nint main() { return visit(1); }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 7}}
+{"expect": {"id": 7, "result": {}}}
+{"analysisTrace": {"generation": 3, "mirVerified": true}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

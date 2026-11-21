@@ -87,6 +87,8 @@ struct Diagnostic {
   // name to find candidates, but only ordinary frontend reanalysis can prove
   // an include fixes the lookup in its actual scope. Never parse message text.
   std::string missingIncludeName;
+  // The qualifier resolved to an enum whose declaration lacks this member.
+  bool missingEnumerator = false;
 
   friend bool operator==(const Diagnostic &, const Diagnostic &) = default;
 };

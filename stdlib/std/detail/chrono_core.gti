@@ -1,0 +1,343 @@
+export module detail_chrono_core_impl;
+
+// <std/chrono> -- signed duration units, checked conversion and clock readings.
+//
+// Monotonic and wall-clock points remain distinct nominal types. The public
+// chrono facade adds calendar, named-zone and temporal-formatting modules.
+import std.numeric;
+import std.meta;
+import std.format;
+import std.string;
+import "panic.gti";
+namespace gti_internal {
+namespace chrono_runtime {
+export extern "C" {
+int32_t gti_rt_chrono_steady_now_v1(int64_t* output_nanoseconds);
+int32_t gti_rt_chrono_system_now_v1(int64_t* output_nanoseconds);
+}
+}
+}
+
+namespace std {
+namespace chrono {
+
+/// Recoverable clock-read and duration-arithmetic outcomes.
+export enum class clock_errc {
+  unavailable,
+  out_of_range,
+};
+
+namespace detail {
+// Elapsed subtraction deliberately maps arithmetic overflow into the clock
+// domain; an exact typed mapper keeps that conversion explicit.
+clock_errc elapsed_error(std::arithmetic_errc error) {
+  return clock_errc::out_of_range;
+}
+}
+
+/// Recoverable duration conversion and arithmetic failures.
+export enum class duration_errc { out_of_range };
+
+namespace detail {
+// Unit metadata is type-only: a duration never stores this descriptor.
+class unit<uint64_t Tick> {
+public:
+  constexpr unit() {}
+  constexpr int64_t tick_nanoseconds() { return int64_t(Tick); }
+};
+}
+
+export using nanosecond_unit = detail::unit<1>;
+export using microsecond_unit = detail::unit<1000>;
+export using millisecond_unit = detail::unit<1000000>;
+export using second_unit = detail::unit<1000000000>;
+export using minute_unit = detail::unit<60000000000>;
+export using hour_unit = detail::unit<3600000000000>;
+export using day_unit = detail::unit<86400000000000>;
+
+namespace detail {
+constexpr bool supported_unit<U>() {
+  return std::meta::is_same<U, nanosecond_unit>() ||
+         std::meta::is_same<U, microsecond_unit>() ||
+         std::meta::is_same<U, millisecond_unit>() ||
+         std::meta::is_same<U, second_unit>() ||
+         std::meta::is_same<U, minute_unit>() ||
+         std::meta::is_same<U, hour_unit>() ||
+         std::meta::is_same<U, day_unit>();
+}
+}
+
+/// The seven supported integer time units. Arbitrary rational units are excluded.
+export concept duration_unit<U> =
+    requires(U& unit) {
+      { U() } -> U;
+      { unit.tick_nanoseconds() } -> int64_t;
+    } && detail::supported_unit<U>();
+
+/// A signed count in Unit, with no runtime unit tag or allocation.
+export class duration<duration_unit Unit> {
+  int64_t value;
+
+public:
+  constexpr duration() : value(0i64) {}
+  constexpr duration(int64_t count) : value(count) {}
+
+  constexpr int64_t count() { return this.value; }
+  constexpr int64_t tick_nanoseconds() {
+    auto unit = Unit();
+    return unit.tick_nanoseconds();
+  }
+  constexpr std::string_view unit_symbol() {
+    auto unit = Unit();
+    int64_t scale = unit.tick_nanoseconds();
+    if (scale == 1i64) { return "ns"; }
+    if (scale == 1000i64) { return "us"; }
+    if (scale == 1000000i64) { return "ms"; }
+    if (scale == 1000000000i64) { return "s"; }
+    if (scale == 60000000000i64) { return "min"; }
+    if (scale == 3600000000000i64) { return "h"; }
+    return "d";
+  }
+
+  /// Truncates toward zero; returns out_of_range if the destination cannot fit.
+  constexpr expected<To, duration_errc> try_cast<duration_type To>() {
+    int64_t zero = 0i64;
+    auto target = To(zero);
+    int64_t source_tick = this.tick_nanoseconds();
+    int64_t target_tick = target.tick_nanoseconds();
+    if (source_tick <= target_tick) {
+      int64_t count = this.value / (target_tick / source_tick);
+      return To(count);
+    }
+    auto scaled = std::checked_mul(this.value, source_tick / target_tick);
+    if (!scaled) { return unexpected(duration_errc::out_of_range); }
+    int64_t count = scaled.value();
+    return To(count);
+  }
+
+  /// Like try_cast, but an overflowing result is a cleanup-preserving panic.
+  [[track_caller]]
+  constexpr To cast<duration_type To>() {
+    auto result = this.try_cast<To>();
+    if (!result) { std::detail::panic("Duration cast out of range"); }
+    return result.value();
+  }
+
+  constexpr bool operator==(duration<Unit>& other) { return this.value == other.value; }
+  constexpr bool operator!=(duration<Unit>& other) { return this.value != other.value; }
+  constexpr bool operator<(duration<Unit>& other) { return this.value < other.value; }
+  constexpr bool operator<=(duration<Unit>& other) { return this.value <= other.value; }
+  constexpr bool operator>(duration<Unit>& other) { return this.value > other.value; }
+  constexpr bool operator>=(duration<Unit>& other) { return this.value >= other.value; }
+
+  constexpr expected<duration<Unit>, duration_errc> checked_add(duration<Unit>& other) {
+    auto sum = std::checked_add(this.value, other.value);
+    if (!sum) { return unexpected(duration_errc::out_of_range); }
+    return duration<Unit>(sum.value());
+  }
+  constexpr expected<duration<Unit>, duration_errc> checked_sub(duration<Unit>& other) {
+    auto difference = std::checked_sub(this.value, other.value);
+    if (!difference) { return unexpected(duration_errc::out_of_range); }
+    return duration<Unit>(difference.value());
+  }
+  constexpr expected<duration<Unit>, duration_errc> try_add(duration<Unit>& other) {
+    return this.checked_add(other);
+  }
+  [[track_caller]]
+  constexpr duration<Unit> add(duration<Unit>& other) {
+    auto result = this.try_add(other);
+    if (!result) { std::detail::panic("Duration arithmetic out of range"); }
+    return result.value();
+  }
+
+  constexpr expected<duration<Unit>, duration_errc> try_sub(duration<Unit>& other) {
+    return this.checked_sub(other);
+  }
+  [[track_caller]]
+  constexpr duration<Unit> sub(duration<Unit>& other) {
+    auto result = this.try_sub(other);
+    if (!result) { std::detail::panic("Duration arithmetic out of range"); }
+    return result.value();
+  }
+
+};
+
+export using nanoseconds = duration<nanosecond_unit>;
+export using microseconds = duration<microsecond_unit>;
+export using milliseconds = duration<millisecond_unit>;
+export using seconds = duration<second_unit>;
+export using minutes = duration<minute_unit>;
+export using hours = duration<hour_unit>;
+/// A fixed elapsed day of exactly 86400 seconds, distinct from calendar_days.
+export using days = duration<day_unit>;
+
+namespace detail {
+constexpr bool supported_duration<T>() {
+  return std::meta::is_same<T, nanoseconds>() ||
+         std::meta::is_same<T, microseconds>() ||
+         std::meta::is_same<T, milliseconds>() ||
+         std::meta::is_same<T, seconds>() ||
+         std::meta::is_same<T, minutes>() ||
+         std::meta::is_same<T, hours>() ||
+         std::meta::is_same<T, days>();
+}
+}
+
+/// An exact supported duration, constructible from its signed count.
+export concept duration_type<T> =
+    requires(T& value, int64_t& count) {
+      { T(count) } -> T;
+      { value.count() } -> int64_t;
+      { value.tick_nanoseconds() } -> int64_t;
+    } && detail::supported_duration<T>();
+
+/// One reading from the process-local monotonic clock.
+///
+/// Its epoch has no portable meaning. Use only `elapsed_since`, ordering, or
+/// another point from the same process; use `system_time_point` for timestamps.
+export class steady_time_point {
+  nanoseconds since_origin;
+
+public:
+  constexpr steady_time_point(nanoseconds value) : since_origin(value) {}
+
+  /// Returns this implementation's opaque monotonic reading.
+  constexpr nanoseconds time_since_origin() {
+    return nanoseconds(this.since_origin.count());
+  }
+
+  /// Computes `this - earlier`, reporting signed-range overflow explicitly.
+  expected<nanoseconds, clock_errc>
+  elapsed_since(steady_time_point& earlier) {
+    int64_t difference = ?std::checked_sub(this.since_origin.count(),
+                                         earlier.since_origin.count())
+                              .transform_error(detail::elapsed_error);
+    return nanoseconds(difference);
+  }
+
+  constexpr bool before(steady_time_point& other) {
+    return this.since_origin.count() < other.since_origin.count();
+  }
+
+  constexpr bool after(steady_time_point& other) {
+    return this.since_origin.count() > other.since_origin.count();
+  }
+
+  constexpr bool equals(steady_time_point& other) {
+    return this.since_origin.count() == other.since_origin.count();
+  }
+};
+
+/// One wall-clock reading measured against the Unix epoch.
+///
+/// Leap seconds are excluded. The signed nanosecond representation covers
+/// 1677-09-21 through 2262-04-11.
+export class system_time_point {
+  nanoseconds since_epoch;
+
+public:
+  constexpr system_time_point(nanoseconds value) : since_epoch(value) {}
+
+  /// Returns the exact signed count since 1970-01-01T00:00:00Z.
+  constexpr int64_t nanoseconds_since_unix_epoch() {
+    return this.since_epoch.count();
+  }
+
+  /// Returns floor-based Unix seconds, including for pre-epoch values.
+  constexpr int64_t unix_seconds() {
+    int64_t value = this.since_epoch.count();
+    mut int64_t result = value / int64_t(1000000000);
+    if (value < int64_t(0) && value % int64_t(1000000000) != int64_t(0)) {
+      result--;
+    }
+    return result;
+  }
+
+  /// Returns the normalized fractional second in [0, 1,000,000,000).
+  constexpr int32_t subsecond_nanoseconds() {
+    mut int64_t value =
+        this.since_epoch.count() % int64_t(1000000000);
+    if (value < int64_t(0)) {
+      value += int64_t(1000000000);
+    }
+    return int32_t(value);
+  }
+
+  /// Computes `this - earlier`, reporting signed-range overflow explicitly.
+  expected<nanoseconds, clock_errc>
+  elapsed_since(system_time_point& earlier) {
+    int64_t difference = ?std::checked_sub(this.since_epoch.count(),
+                                         earlier.since_epoch.count())
+                              .transform_error(detail::elapsed_error);
+    return nanoseconds(difference);
+  }
+
+  constexpr bool before(system_time_point& other) {
+    return this.since_epoch.count() < other.since_epoch.count();
+  }
+
+  constexpr bool after(system_time_point& other) {
+    return this.since_epoch.count() > other.since_epoch.count();
+  }
+
+  constexpr bool equals(system_time_point& other) {
+    return this.since_epoch.count() == other.since_epoch.count();
+  }
+};
+
+/// Process-local monotonic clock for elapsed-time measurement.
+export class steady_clock {
+public:
+  /// Reads a nondecreasing clock unaffected by wall-clock adjustment.
+  static expected<steady_time_point, clock_errc> now() {
+    mut int64_t value = int64_t(0);
+    mut int32_t status = int32_t(0);
+    unsafe {
+      status = gti_internal::chrono_runtime::gti_rt_chrono_steady_now_v1(
+          &value);
+    }
+    if (status == int32_t(1)) {
+      return unexpected(clock_errc::unavailable);
+    }
+    if (status != int32_t(0)) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return steady_time_point(nanoseconds(value));
+  }
+};
+
+/// Adjustable UTC wall clock for Unix timestamps.
+export class system_clock {
+public:
+  /// Reads signed Unix time, excluding leap seconds.
+  static expected<system_time_point, clock_errc> now() {
+    mut int64_t value = int64_t(0);
+    mut int32_t status = int32_t(0);
+    unsafe {
+      status = gti_internal::chrono_runtime::gti_rt_chrono_system_now_v1(
+          &value);
+    }
+    if (status == int32_t(1)) {
+      return unexpected(clock_errc::unavailable);
+    }
+    if (status != int32_t(0)) {
+      return unexpected(clock_errc::out_of_range);
+    }
+    return system_time_point(nanoseconds(value));
+  }
+};
+
+}
+}
+
+// Formatting is ordinary source protocol composition, shared by all units.
+for <std::chrono::duration_unit Unit>
+concept std::formatting<std::chrono::duration<Unit>> {
+  expected<void, std::format_errc> format(std::chrono::duration<Unit>& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto count = value.count();
+    ?std::formatting<int64_t>::format(count, output, spec);
+    output.append(value.unit_symbol());
+    return;
+  }
+};

@@ -9361,6 +9361,11 @@ prerequisite checkpoints as full acceptance.
 
 ### L-OWN-02: Owner-Tracked View Fields
 
+The local RFC 0003 shared-container extension is tracked separately in
+[its implementation and acceptance ledger](borrowed-container-elements.md).
+That ledger distinguishes implemented candidate behavior, pending validation
+and the remaining container/cleanup boundaries from the historical phases below.
+
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
   question in the 0.449.0 follow-ups). Phase 1 is implemented: 1a (local class
   and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload

@@ -1,4 +1,5 @@
 #include "gti/source_graph.h"
+#include "gti/compiled_template_body.h"
 #include <stdexcept>
 
 #include <algorithm>
@@ -23,16 +24,57 @@ Token EmbeddedFile::storageName() const {
 void SourceGraph::attachCompiledTemplate(
     SourceUnitId id, std::shared_ptr<const CompiledTemplateModule> module) {
   auto *unit = findUnit(id);
-  if (!unit || unit->role != SourceUnitRole::StandardLibrary || !module)
-    throw std::invalid_argument("invalid installed template unit");
+  if (!unit || !module ||
+      (module->projectSyntax ? unit->prelude || unit->entry ||
+                                   unit->role != SourceUnitRole::Application ||
+                                   isCompilerTrusted(id)
+                             : unit->role != SourceUnitRole::StandardLibrary))
+    throw std::invalid_argument("invalid compiled template unit provenance");
+  // Archived input is static data, not authority to read a path on this host.
+  // Installed recipes have an independent receipt; project recipes are also
+  // reparsed and lexically attested before semantic analysis.
+  std::unordered_set<const std::string *> seen;
+  std::size_t total = 0;
+  for (const auto &other : units) {
+    if (other.id == id)
+      continue;
+    for (const auto &file : other.embeddedFiles)
+      if (file.bytes && seen.insert(file.bytes.get()).second) {
+        if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
+          throw std::invalid_argument(
+              "embedded files exceed the compilation limit");
+        total += file.bytes->size();
+      }
+  }
+  std::vector<EmbeddedFile> restored;
+  for (const auto &file : module->embeddedFiles) {
+    if (!file.bytes)
+      throw std::invalid_argument("missing compiled embedded input");
+    if (seen.insert(file.bytes.get()).second) {
+      if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
+        throw std::invalid_argument(
+            "embedded files exceed the compilation limit");
+      total += file.bytes->size();
+    }
+    auto keyword = file.keyword;
+    keyword.source = unit->path.string();
+    restored.push_back({.keyword = std::move(keyword),
+                        .storageOffset = file.storageOffset,
+                        .spelling = file.spelling,
+                        .bytes = file.bytes,
+                        .digest = sourceTextDigest(*file.bytes)});
+  }
+  unit->embeddedFiles = std::move(restored);
   unit->compiledTemplate = std::move(module);
 }
 
-void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
+void SourceGraph::markCompiledScalarInterface(
+    SourceUnitId id, std::vector<std::size_t> noAmbientStorage) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
     throw std::invalid_argument("invalid compiled scalar interface unit");
   unit->compiledScalarInterface = true;
+  unit->noAmbientStorageDeclarations = std::move(noAmbientStorage);
 }
 
 std::uint64_t sourceTextDigest(std::string_view source) {

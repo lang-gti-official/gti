@@ -1,0 +1,11 @@
+// A vector of borrowed records (RFC 0003) keeps each element's owner borrowed:
+// changing the owner while the element is still read is rejected.
+import std.vector;
+struct View { int& value; View(int& source) : value(source) {} };
+int main() {
+  mut int owner = 1;
+  mut std::vector<View> values{};
+  values.push_back(View(owner));
+  owner = 2;  //~ ERROR GTI-S2017
+  return values[std::size_t(0)].value;
+}

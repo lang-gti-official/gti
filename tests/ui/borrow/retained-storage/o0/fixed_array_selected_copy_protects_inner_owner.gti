@@ -1,0 +1,14 @@
+// Borrowed storage: fixed array selected copy protects inner owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+int main() {
+  mut std::string_view selected = "";
+  {
+    std::string first{"first"}; std::string second{"second"};
+    std::string_view views[2] = {first.view(), second.view()};
+    selected = views[0];
+  }
+  return selected == "first" ? 0 : 1;  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+}

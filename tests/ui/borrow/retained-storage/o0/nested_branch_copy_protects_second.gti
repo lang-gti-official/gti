@@ -1,0 +1,18 @@
+// Borrowed storage: nested branch copy protects second.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+int check(bool choose) {
+  std::string first{"first"}; mut std::string second{"second"};
+  mut std::string_view outer = "";
+  {
+    mut std::string_view inner = first.view();
+    if (choose) { inner = second.view(); }
+    outer = inner;
+  }
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  if (choose) { return outer == "second" ? 0 : 1; }
+  return outer == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

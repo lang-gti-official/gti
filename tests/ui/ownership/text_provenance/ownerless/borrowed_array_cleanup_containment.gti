@@ -1,0 +1,15 @@
+// Borrowed array cleanup containment: borrowed array elements retain dependencies through observing cleanup.
+//@ check-pass
+mut int witness = 0;
+class Observed {
+  int& source;
+public:
+  Observed(int& input) : source(input) {}
+  ~Observed() { witness += this.source; }
+};
+int main() {
+  int first = 11;
+  int second = 22;
+  Observed values[2] = {Observed(first), Observed(second)};
+  return 0;
+}

@@ -17,6 +17,15 @@ set(gti_heavy_case_suites
   stdlib_surface
   )
 
+# These tests install gti_toolchain, which builds up to four stdlib targets
+# concurrently. Charge the workers to CTest when it schedules the install.
+foreach(suite IN ITEMS llvm_cache_installed_toolchain lsp_sdk macos_installed_runtime
+                       procedural_html_installed scoped_concurrency_installed)
+  if(TEST "${suite}")
+    set_tests_properties("${suite}" PROPERTIES PROCESSORS 4)
+  endif()
+endforeach()
+
 # Every gate has a bound, so a hung test fails at a known point instead of at
 # CTest's implicit 1500 seconds. A test without its own TIMEOUT gets the
 # default. Single-process gates measured near or past it get explicit
@@ -275,6 +284,8 @@ set(gti_slow_test_patterns
   "^lowered_program_corpus_census$"
   # gti-test's tests/slow cases and its --isolate run (tests/gti_test.cmake).
   "^gti_test_(slow|isolate)$"
+  # Unit cases over about 2 s each (tests/gti_test.cmake).
+  "^gti_unit_tests_slow$"
   # Raw-pointer-audit independence, including the >20-minute std import.
   "^allocator_raw_audit_independence(_.+)?$"
   # Whole-program MIR mutation loops.

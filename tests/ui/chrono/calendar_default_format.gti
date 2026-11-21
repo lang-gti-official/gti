@@ -1,0 +1,19 @@
+// Default temporal format is deterministic, fraction-preserving and zone-explicit.
+//@ run-pass
+import std.chrono;
+import std.format;
+namespace c = std::chrono;
+int main() {
+  auto d = c::date::create(2026, 11, 20);
+  auto t = c::time_of_day::create(10, 30, 33, 123);
+  auto local = c::local_datetime(d, t);
+  auto stamp = c::timestamp::create(local.unix_seconds(), 123i64);
+  if (std::format("{}", d) != "2026-11-20") { return 1; }
+  if (std::format("{}", t) != "10:30:33.000000123") { return 2; }
+  if (std::format("{}", local) != "2026-11-20T10:30:33.000000123") { return 3; }
+  if (std::format("{}", stamp) != "2026-11-20T10:30:33.000000123Z") { return 4; }
+  if (std::format("{:>12}", d) != "  2026-11-20") { return 5; }
+  auto far = c::timestamp(9223372036854775807i64);
+  if (std::try_format("{}", far)) { return 6; }
+  return 0;
+}

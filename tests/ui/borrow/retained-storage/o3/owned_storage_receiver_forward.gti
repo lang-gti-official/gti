@@ -1,0 +1,26 @@
+// Borrowed storage: owned storage receiver forward.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.memory;
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe T& read() { unsafe { return this.read_inner(); } }
+  unsafe T& read_inner() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut RawBox<std::string_view> box{};
+  unsafe {
+    std::initialize_owned_at(box.slot.data(), box, owner.view());
+    std::string_view selected = box.read();
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

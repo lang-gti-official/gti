@@ -1,0 +1,20 @@
+// Retaining callable escape: an invocation pointer storing ownerless text has no retaining-input contract.
+//@ check-pass
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{
+    [](mut Holder& target, std::string_view input) -> void {
+      target.put("literal");
+    }
+  };
+  mut Holder holder{};
+
+  store(holder, "literal");
+  return holder.value == "literal" ? 0 : 1;
+}

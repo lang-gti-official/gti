@@ -1,0 +1,29 @@
+// Borrowed storage: owned storage nested receiver.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe T& read() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+class RawEnvelope<std::layout_queryable T> {
+public:
+  mut RawBox<T> inner{};
+  RawEnvelope() = default;
+  unsafe T& read() { unsafe { return this.inner.read(); } }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut RawEnvelope<std::string_view> box{};
+  unsafe {
+    std::initialize_owned_at(box.inner.slot.data(), box, owner.view());
+    std::string_view selected = box.read();
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

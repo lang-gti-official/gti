@@ -4494,7 +4494,8 @@ private:
            .binding = consumedSubject,
            .value = subject,
            .switchArms = std::move(arms),
-           .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement)},
+           .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement),
+           .conditionalPattern = switchStatement->isIfCase()},
           body);
     }
     if (const auto *structured = stmtAs<StructuredBindingDecl>(statement)) {
@@ -7115,9 +7116,11 @@ private:
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
              value.intrinsic == IntrinsicKind::ObjectRelocateRange ||
              value.intrinsic == IntrinsicKind::ObjectTake ||
-             value.intrinsic == IntrinsicKind::ObjectConstruct) &&
-            resolved->typeArguments.size() == 1)
-          (void)seedConcreteDeclarationType(resolved->typeArguments.front());
+             (value.intrinsic == IntrinsicKind::ObjectConstruct ||
+              value.intrinsic == IntrinsicKind::ObjectConstructOwned)) &&
+            !resolved->typeArguments.empty())
+          for (const auto &type : resolved->typeArguments)
+            (void)seedConcreteDeclarationType(type);
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
              value.intrinsic == IntrinsicKind::ObjectAlignment) &&
             resolved->typeArguments.size() == 1) {
@@ -7538,7 +7541,8 @@ private:
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
-          value.intrinsic == IntrinsicKind::ObjectConstruct ||
+          (value.intrinsic == IntrinsicKind::ObjectConstruct ||
+           value.intrinsic == IntrinsicKind::ObjectConstructOwned) ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
       if (!inPlaceStorageConstruction) {
         value.parameterTypes = construction->parameterTypes;
@@ -7549,6 +7553,14 @@ private:
       value.borrowFields = construction->borrowFields;
       value.dependentTextPublication = construction->dependentTextPublication;
       value.borrowAccess = construction->borrowAccess;
+      if (value.intrinsic == IntrinsicKind::ObjectConstructOwned) {
+        value.borrowOrigin = BorrowOriginKind::None;
+        value.borrowArgument = 0;
+        value.borrowArguments.clear();
+        value.borrowFields.clear();
+        value.dependentTextPublication = false;
+        value.borrowAccess = AccessMode::ReadOnly;
+      }
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
       if (const auto *call = exprAs<Call>(raw)) {
@@ -7923,7 +7935,8 @@ private:
       else
         lifecycleValid = false;
     }
-    if (value.intrinsic == IntrinsicKind::ObjectConstruct &&
+    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+         value.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
          (!value.constructorTarget &&

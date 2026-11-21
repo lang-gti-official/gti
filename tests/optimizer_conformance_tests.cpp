@@ -261,6 +261,78 @@ void testComputeEffects(const lang::FrontendResult &frontend) {
          "interpretation");
 }
 
+void testOwnedPassiveConstructionProfile() {
+  using namespace lang;
+  const auto stdlib =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      Frontend().analyze("optimizer-owned-passive.gti", R"(
+import std.memory;
+struct Item { int value; Item(int value) : value(value) {} };
+int main() {
+  mut std::uninitialized<int> default_slot{};
+  mut std::uninitialized<int> scalar_slot{};
+  mut std::uninitialized<Item> record_slot{};
+  unsafe {
+    [[discard]] std::construct_owned_at(default_slot.data(), default_slot);
+    std::initialize_owned_at(scalar_slot.data(), scalar_slot, 7);
+    std::initialize_owned_at(record_slot.data(), record_slot, Item(9));
+    std::destroy_at(record_slot.data());
+    std::destroy_at(scalar_slot.data());
+    std::destroy_at(default_slot.data());
+  }
+  return 0;
+}
+)",
+                         {stdlib / "prelude.gti"}, {}, {stdlib});
+  expect(frontend.canGenerateCode(),
+         "owned passive construction fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t defaults = 0, scalarValues = 0, recordValues = 0;
+  for (const auto address : enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions) {
+        const bool initialize =
+            instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned;
+        if ((!initialize &&
+             instruction.intrinsic != IntrinsicKind::ObjectConstructOwned) ||
+            !isMirStructuralFinalAddressConstruction(frontend.mir, instruction))
+          continue;
+        if (!initialize)
+          ++defaults;
+        else if (instruction.operands.back().type.kind == SemanticType::Class)
+          ++recordValues;
+        else
+          ++scalarValues;
+        auto malformed = instruction;
+        malformed.operands[1].type.referenceAccess = AccessMode::ReadOnly;
+        malformed.parameterTypes[1] = malformed.operands[1].type;
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "a read-only owner is not a writable placement witness");
+        malformed = instruction;
+        malformed.parameterTypes[1].referenceAccess = AccessMode::ReadOnly;
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "an owner signature mismatch cannot acquire a passive profile");
+        malformed = instruction;
+        malformed.operands.erase(malformed.operands.begin() + 1);
+        malformed.parameterTypes.erase(malformed.parameterTypes.begin() + 1);
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "omitting the owner cannot shift a payload into its place");
+        malformed = instruction;
+        malformed.lifecycle.push_back({.kind = MirLifecycleEventKind::Replace});
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "replacement cannot claim the vacant-storage profile");
+      }
+  expect(defaults && scalarValues && recordValues,
+         "profiles cover default, scalar-value and generated record "
+         "initialization");
+}
+
 void testInPlaceConstructorEffects() {
   using namespace lang;
   const auto stdlib =
@@ -269,6 +341,7 @@ void testInPlaceConstructorEffects() {
       Frontend().analyze("optimizer-in-place-constructor.gti", R"(
 import std.string;
 import std.vector;
+import std.memory;
 class Item {
   std::string text;
 public:
@@ -276,6 +349,11 @@ public:
 };
 int main() {
   std::vector<Item> values{std::size_t(2)};
+  mut std::uninitialized<Item> slot{};
+  unsafe {
+    [[discard]] std::construct_at(slot.data());
+    std::destroy_at(slot.data());
+  }
   return 0;
 }
 )",
@@ -292,15 +370,22 @@ int main() {
     return;
   }
 
-  std::size_t checked = 0;
+  std::size_t checked = 0, checkedOwned = 0;
   for (const auto address : enumerateMirBodyAddresses(frontend.mir)) {
     const auto &ownerBody = *findMirBody(frontend.mir, address);
     for (const auto &block : ownerBody.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
-            !instruction.constructorTarget || instruction.operands.size() != 1)
+        const bool owned =
+            instruction.intrinsic == IntrinsicKind::ObjectConstructOwned;
+        if ((!owned &&
+             instruction.intrinsic != IntrinsicKind::ObjectConstruct) ||
+            !instruction.constructorTarget ||
+            instruction.operands.size() != (owned ? 2u : 1u))
           continue;
-        ++checked;
+        if (owned)
+          ++checkedOwned;
+        else
+          ++checked;
         const auto *target = frontend.mir.findConstructorInstance(
             *instruction.constructorTarget);
         const auto traits = effects(frontend.mir, instruction);
@@ -325,11 +410,11 @@ int main() {
                    caller->traits.writesUnknownMemory &&
                    caller->traits.initializesValue,
                "caller fixed-point summary retains both effect families");
-        expect(
-            summary && target && target->parameterTypes.empty() &&
-                *summary == target->effectSummary,
-            "exact raw-construction query retains the selected zero-argument "
-            "constructor summary, not a private storage parameter");
+        expect(summary && target && target->parameterTypes.empty() &&
+                   *summary == target->effectSummary,
+               "exact placement-construction query retains the selected "
+               "zero-argument "
+               "constructor summary, not a private storage parameter");
 
         MirProgram changed = frontend.mir;
         auto *body = findMirBody(changed, address);
@@ -342,7 +427,8 @@ int main() {
             }
           }
         }
-        expect(lostTarget != nullptr, "copied append instruction must exist");
+        expect(lostTarget != nullptr,
+               "copied placement instruction must exist");
         if (lostTarget == nullptr)
           continue;
         lostTarget->constructorTarget.reset();
@@ -353,7 +439,8 @@ int main() {
       }
     }
   }
-  expect(checked != 0, "fixture must exercise selected in-place construction");
+  expect(checked != 0 && checkedOwned != 0,
+         "fixture exercises both raw and owner-aware selected construction");
   for (const auto level :
        {OptimizationLevel::O0, OptimizationLevel::O2, OptimizationLevel::O3}) {
     const auto optimized = OptimizationPipeline().run(
@@ -511,6 +598,7 @@ void testKnownBarriers(const lang::FrontendResult &frontend) {
 
 int main() {
   testCensus();
+  testOwnedPassiveConstructionProfile();
   testInPlaceConstructorEffects();
   testCallableBodySignatures();
   const auto frontend =

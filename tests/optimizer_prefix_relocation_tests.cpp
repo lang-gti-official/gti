@@ -151,7 +151,14 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
       source.replace(call, std::string("  fresh_scratch();").size(),
                      "  write_reference(parcel.edit());");
     }
-    auto fixture = gti_test::analyzeTrustedPrivateMemoryFixture(name, source);
+    // Each control roots fresh_probe in main. Use the artifact-build closure
+    // rather than re-lowering unrelated trusted library bodies for every
+    // mutation. The checked multiply below must still exist for negatives.
+    lang::FrontendOptions options;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = true;
+    auto fixture =
+        gti_test::analyzeTrustedPrivateMemoryFixture(name, source, options);
     if (!fixture.canGenerateCode()) {
       for (const auto &d : fixture.diagnostics)
         std::cerr << d.code << ": " << d.message << '\n';
@@ -229,7 +236,18 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     }
     const auto analysis = lang::analyzeMirClosedCallSafetyChecks(fixture.mir);
     const auto count = countDischarges(fixture, analysis, "fresh_probe");
-    if (!analysis.converged || count != std::size_t(shouldProve)) {
+    bool hasProbeMultiply = false;
+    for (const auto &function : fixture.hir.functionInstances()) {
+      if (!function.source || function.source->name().lexeme != "fresh_probe")
+        continue;
+      if (const auto *mir = fixture.mir.findFunctionInstance(function.id))
+        for (const auto &block : mir->body.blocks)
+          for (const auto &instruction : block.instructions)
+            hasProbeMultiply |=
+                instruction.operation == lang::MirOperation::Multiply;
+    }
+    if (!hasProbeMultiply || !analysis.converged ||
+        count != std::size_t(shouldProve)) {
       std::cerr << "fresh-storage noninterference " << name
                 << ": multiply=" << count << '\n';
       return false;

@@ -1,0 +1,18 @@
+// An edited concrete type in a conformance pattern is looked up with the registered binders and namespace.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "concept read<C> { int get(C c); };\nenum state { ready };\nfor concept read<state> { int get(state c) { return 1; } };\nint main() { return read<state>::get(state::ready); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "concept read<C> { int get(C c); };\nenum state { ready };\nfor concept read<state> { int get(state c) { return 1; } };\nint main() { return read<state>::get(state::ready); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 6}}
+{"expect": {"id": 6, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "concept read<C> { int get(C c); };\nenum state { ready };\nfor concept read<tate> { int get(state c) { return 1; } };\nint main() { return read<state>::get(state::ready); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2000", "range": {"start": {"line": 2, "character": 17}}}], "gtiDiagnosticStage": "nameLookup"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "concept read<C> { int get(C c); };\nenum state { ready };\nfor concept read<state> { int get(state c) { return 1; } };\nint main() { return read<state>::get(state::ready); }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}, "id": 7}}
+{"expect": {"id": 7, "result": {}}}
+{"analysisTrace": {"generation": 3, "mirVerified": true}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

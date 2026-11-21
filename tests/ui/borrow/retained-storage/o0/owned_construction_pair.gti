@@ -1,0 +1,25 @@
+// Borrowed storage: owned construction pair.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+class PairReading {
+  int& first;
+  int& second;
+public:
+  PairReading(int& left, int& right) : first(left), second(right) {}
+  int read() { return this.first + this.second; }
+};
+int main() {
+  int first = 11;
+  int second = 22;
+  mut std::uninitialized<PairReading> storage{};
+  unsafe {
+    PairReading* address = storage.data();
+    std::construct_owned_at<PairReading, std::uninitialized<PairReading>, int&, int&>(address, storage, first, second);
+    auto selected = std::borrow_owned_at(address, storage);
+    std::destroy_at(address);
+    return selected.read() == 33 ? 0 : 1;
+  }
+}

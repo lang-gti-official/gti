@@ -52,7 +52,8 @@ def write_registry(modules, output):
         output.write_text(contents)
 
 
-def build(stage, source, modules):
+def build(stage, source):
+    modules = catalog(source)
     stage = stage.resolve()
     data = stage / "share/gti"
     # A library producer's entry must be in its package. Use a private package
@@ -65,13 +66,16 @@ def build(stage, source, modules):
         env = dict(os.environ, GTI_STDLIB_PATH=str(package / "stdlib"),
                    GTI_RUNTIME_LIBRARY=str(stage / "lib/libgti_runtime.a"),
                    GTI_RUNTIME_INCLUDE=str(stage / "include"))
+        # Each manifest target has its own output. Let the project builder
+        # schedule them, then collect artifacts only after the whole profile succeeds.
+        cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+        jobs = min(4, cpus)
         outputs = []
         for profile in ("dev", "release"):
+            subprocess.run([str(stage / "bin/gti"), "build", "--all", "--offline",
+                            "--profile", profile, "--jobs", str(jobs)],
+                           cwd=package, env=env, check=True)
             for name in modules:
-                command = [str(stage / "bin/gti"), "build", name, "--offline"]
-                if profile == "release":
-                    command.append("--release")
-                subprocess.run(command, cwd=package, env=env, check=True)
                 bundle, = (package / "build/gti" / profile).glob(f"*/{name}.gtilib")
                 relative = Path("precompiled-stdlib") / bundle.parent.name / profile / bundle.name
                 candidate = package / relative
@@ -98,10 +102,13 @@ def build(stage, source, modules):
                                cwd=consumer, env=env, check=True)
         # Compile and execute a consumer-owned substitution after its producer
         # root has been removed from the toolchain used by the application.
-        shutil.copyfile(consumer / "array_consumer.gti", consumer / "src/main.gti")
-        for profile in ([], ["--release"]):
-            subprocess.run([compiler, "run", "--offline", *profile],
-                           cwd=consumer, env=env, check=True)
+        cases = (consumer / "array_consumer.gti",
+                 source / "tests/slow/stdlib/vector/constexpr_range_for_views.gti",
+                 source / "tests/ui/callables/borrowing_captures/borrowing_captures_19.gti")
+        for case in cases:
+            shutil.copyfile(case, consumer / "src/main.gti")
+            for profile in ([], ["--release"]):
+                subprocess.run([compiler, "run", "--offline", *profile], cwd=consumer, env=env, check=True)
         for bundle, destination in outputs:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temp:
@@ -124,12 +131,13 @@ if __name__ == "__main__":
     action.add_argument("--list-template-targets", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
-    modules = catalog(source)
     if args.stage:
-        build(args.stage, source, modules)
-    elif args.write_registry:
-        write_registry(modules, args.write_registry)
-    elif args.list_template_targets:
-        print(";".join(name for name, module in modules.items() if module.facade is None))
+        build(args.stage, source)
     else:
-        print(";".join(modules))
+        modules = catalog(source)
+        if args.write_registry:
+            write_registry(modules, args.write_registry)
+        elif args.list_template_targets:
+            print(";".join(name for name, module in modules.items() if module.facade is None))
+        else:
+            print(";".join(modules))

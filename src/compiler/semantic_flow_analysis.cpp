@@ -3528,6 +3528,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             uniqueOwnerAccessDetail());
           break;
         case IntrinsicKind::ObjectConstruct:
+        case IntrinsicKind::ObjectConstructOwned:
           // Raw validity is the unsafe caller's obligation. Only the selected
           // GTI constructor may fail; there is no allocation or slot preflight.
           if (selectedConstructor())
@@ -3572,6 +3573,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::ObjectTake:
+        case IntrinsicKind::ObjectInitializeOwned:
+        case IntrinsicKind::ObjectRelocateOwned:
         case IntrinsicKind::SyntaxSize:
         case IntrinsicKind::SyntaxText:
         case IntrinsicKind::SyntaxKind:
@@ -3669,6 +3672,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::EnumUnderlyingValue:
         case IntrinsicKind::ObjectSize:
         case IntrinsicKind::ObjectAlignment:
+        case IntrinsicKind::ObjectBorrowOwned:
+        case IntrinsicKind::ObjectBorrowOwnedMut:
         case IntrinsicKind::RawBorrow:
         case IntrinsicKind::RawBorrowMut:
         case IntrinsicKind::UniqueOwnerUpcast:
@@ -12404,6 +12409,8 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   // an object lifetime. A source-defined borrow-returning method is not proof
   // of purity: it may replace its allocation before returning the new object.
   switch (resolved->intrinsic) {
+  case IntrinsicKind::ObjectBorrowOwned:
+  case IntrinsicKind::ObjectBorrowOwnedMut:
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::EraseReference:
   case IntrinsicKind::EraseReferenceMut:

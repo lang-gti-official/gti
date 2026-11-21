@@ -27,7 +27,20 @@ public:
   constexpr std::erased_object&<source> referent() { return this.witness; }
 };
 
-class span_iterator<std::storage_element T, uint64_t Reverse, lifetime source> {
+// Borrow-free arrays may have any owner. A range of borrowed elements is
+// constructed from a typed prefix owner, which supplies the stored loans.
+unsafe constexpr T&<source> borrow_span_element<T, lifetime source>(
+    const T* address, size_t position, std::erased_object&<source> owner) {
+  unsafe {
+    if constexpr (std::storage_element<T>) {
+      return std::assume_ref(address + position, owner);
+    } else {
+      return std::borrow_owned_at(address + position, owner);
+    }
+  }
+}
+
+class span_iterator<std::layout_queryable T, uint64_t Reverse, lifetime source> {
   span_owner<source> owner;
   const T* address = nullptr;
   mut size_t current_position;
@@ -47,7 +60,7 @@ public:
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return std::assume_ref(this.address + position, this.owner.referent()); }
+    unsafe { return detail::borrow_span_element(this.address, position, this.owner.referent()); }
   }
 
   constexpr T&<source> operator->() { return *this; }
@@ -80,7 +93,7 @@ public:
                                                    this.final_position, ptrdiff_t(-1));
     }
     gti_internal::index_bounds_check(position, this.final_position);
-    unsafe { return std::assume_ref(this.address + position, this.owner.referent()); }
+    unsafe { return detail::borrow_span_element(this.address, position, this.owner.referent()); }
   }
 
   constexpr ptrdiff_t operator-(span_sentinel sentinel) {
@@ -111,7 +124,7 @@ public:
 };
 
 constexpr span_iterator<T, Reverse, source>
-make_prefix_span_iterator<std::storage_element T, uint64_t Reverse, lifetime source>(
+make_prefix_span_iterator<std::layout_queryable T, uint64_t Reverse, lifetime source>(
     prefix_owner<T>&<source> prefix, size_t begin, size_t position, size_t end) {
   unsafe {
     return span_iterator<T, Reverse, source>(span_owner<source>(prefix),
@@ -119,7 +132,7 @@ make_prefix_span_iterator<std::storage_element T, uint64_t Reverse, lifetime sou
   }
 }
 
-class mutable_span_iterator<std::storage_element T, uint64_t Reverse = 0> {
+class mutable_span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
   size_t first_position;
@@ -218,7 +231,7 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-export class span<std::storage_element T, lifetime source> {
+export class span<std::layout_queryable T, lifetime source> {
   detail::span_owner<source> owner;
   const T* address = nullptr;
   size_t first_position;
@@ -275,7 +288,7 @@ public:
   unsafe constexpr T&<source> get_unchecked(size_t index) {
     unsafe {
       size_t position = gti_internal::integer_wrapping_add(this.first_position, index);
-      return std::assume_ref(this.address + position, this.owner.referent());
+      return detail::borrow_span_element(this.address, position, this.owner.referent());
     }
   }
 
@@ -335,6 +348,14 @@ constexpr std::span<T, source> make_span<std::storage_element T, Owner, lifetime
   return std::span<T, source>(std::detail::span_owner<source>(owner), address, offset, count);
 }
 
+// A borrowed element is read through its exact typed storage owner.
+constexpr std::span<T, source> make_prefix_span<std::layout_queryable T, lifetime source>(
+    std::detail::prefix_owner<T>&<source> owner, std::size_t offset, std::size_t count) {
+  unsafe {
+    return std::span<T, source>(std::detail::span_owner<source>(owner), owner.address(), offset, count);
+  }
+}
+
 /// Views the entire fixed array while retaining its read-only owner borrow.
 constexpr std::span<T, source> array_as_span<std::storage_element T, uint64_t N, lifetime source>(
     T[N]&<source> values) {
@@ -351,7 +372,7 @@ namespace std {
 
 /// An exclusive, move-only view of initialized contiguous elements.
 /// Reborrowing a subspan suspends access through its parent until the child ends.
-export class mutable_span<std::storage_element T> {
+export class mutable_span<std::layout_queryable T> {
   mut std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;
@@ -433,7 +454,7 @@ public:
   }
   constexpr span<T> as_span() {
     unsafe {
-      return gti_internal::make_span(this.data, this.data.address(),
+      return gti_internal::make_prefix_span(this.data,
                                      this.first_position, this.element_count);
     }
   }

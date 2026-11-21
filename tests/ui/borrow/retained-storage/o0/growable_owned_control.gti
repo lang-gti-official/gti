@@ -1,0 +1,12 @@
+// Borrowed storage: growable owned control.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(11); values.push_back(22);
+  values.reserve(32);
+  return values.size() == 2 && values[0] == 11 && values[1] == 22 ? 0 : 1;
+}

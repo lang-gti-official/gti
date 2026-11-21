@@ -2189,7 +2189,9 @@ private:
               // A guard read selects the complete payload inside the shell.
               stage.intrinsic == IntrinsicKind::MutexGuardRead ||
               stage.intrinsic == IntrinsicKind::MutexGuardReadMut ||
-              ((stage.intrinsic == IntrinsicKind::RawBorrow ||
+              ((stage.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+                stage.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut ||
+                stage.intrinsic == IntrinsicKind::RawBorrow ||
                 stage.intrinsic == IntrinsicKind::RawBorrowMut) &&
                mir_detail::rawBorrowResultLoan(body, stage) == loan));
     }
@@ -3584,9 +3586,12 @@ public:
           return false;
       return !stage.loan && stage.info.type == SemanticType::Void;
     }
-    if (stage.intrinsic == IntrinsicKind::ObjectConstruct) {
+    if ((stage.intrinsic == IntrinsicKind::ObjectConstruct ||
+         stage.intrinsic == IntrinsicKind::ObjectConstructOwned)) {
       if (!native_llvm::nativeObjectConstructionShape(program, stage))
         return false;
+      const std::size_t argumentOffset =
+          stage.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
       const auto &type = stage.parameterTypes[0].arguments[0];
       if (nativeValue(type))
         return true;
@@ -3596,8 +3601,8 @@ public:
       if (mutexShape(type).has_value())
         return stage.constructorTarget ||
                (stage.constructorKind == ConstructorKind::Move &&
-                stage.operands.size() == 2 &&
-                stage.operands[1].kind == MirOperandKind::Value);
+                stage.operands.size() == argumentOffset + 1 &&
+                stage.operands[argumentOffset].kind == MirOperandKind::Value);
       // Hierarchy storage is constructed by its selected constructor, by
       // relocating a moved owned argument, or by the generated field copy.
       if (!dispatchProofs.contains(type) ||
@@ -3605,8 +3610,8 @@ public:
         return false;
       if (stage.constructorTarget)
         return true;
-      if (stage.operands.size() != 2 ||
-          stage.operands[1].kind != MirOperandKind::Value)
+      if (stage.operands.size() != argumentOffset + 1 ||
+          stage.operands[argumentOffset].kind != MirOperandKind::Value)
         return false;
       if (stage.constructorKind == ConstructorKind::Move)
         return dispatchProofs.generatedRelocation(type);
@@ -3629,6 +3634,12 @@ public:
         stage.intrinsic == IntrinsicKind::ObjectRelocateRange)
       return mir_detail::objectRelocate(program, stage) &&
              relocatableRepresentation(stage.parameterTypes[0].arguments[0]);
+    if (stage.intrinsic == IntrinsicKind::ObjectRelocateOwned)
+      return mir_detail::objectRelocateOwned(program, stage) &&
+             relocatableRepresentation(stage.parameterTypes[0].arguments[0]);
+    if (stage.intrinsic == IntrinsicKind::ObjectInitializeOwned)
+      return mir_detail::objectInitializeOwned(program, stage) &&
+             relocatableRepresentation(stage.parameterTypes[2]);
     if (stage.intrinsic == IntrinsicKind::ObjectTake)
       return mir_detail::objectTake(program, stage) &&
              relocatableRepresentation(stage.info.type);
@@ -4400,6 +4411,26 @@ public:
 
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
+    // Owner-aware access publishes the already verified typed address. Its
+    // contents can carry loans even when the pointee is not a passive scalar
+    // (text views and borrowed records, for example). Both native layouts
+    // must exist; this neither constructs nor loads the pointee here.
+    if (stage.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+        stage.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
+      const auto representedAddress = [&](const SemanticType &type) {
+        return nativeValue(type) || (dispatchProofs.contains(type) &&
+                                     dispatchProofs.metadata(type).has_value());
+      };
+      // Like a raw borrow, this publishes an already adjusted address. A
+      // hierarchy view needs its dispatch layout, not by-value transport.
+      // The independently verified loan still owns the source and access.
+      const auto &witness = stage.parameterTypes[1];
+      return stage.info.type == pointer.arguments.front() &&
+             representedAddress(stage.info.type) &&
+             (representedAddress(witness.arguments.front()) ||
+              (witness.referenceAccess == AccessMode::ReadOnly &&
+               opaqueReferent(witness.arguments.front())));
+    }
     // Borrowing a text-view object transports its address, not its counted
     // bytes. rawBorrowResultLoan already proves the exact typed pointer and
     // owner witness; keep ordinary raw loads/arithmetic separately gated.

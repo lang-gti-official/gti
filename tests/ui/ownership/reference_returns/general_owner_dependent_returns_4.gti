@@ -27,17 +27,8 @@ int& local_source(int& source) {
 
 int& global_source(int& source) { return global_value; }
 
-View local_view(int& source) {
-  int local = 1;
-  return View(local);  //~ ERROR GTI-S2045
-}
-
-class WrongFactory {
-public:
-  View make(int& source) { return View(source); }  //~ ERROR GTI-S2045
-public:
-  WrongFactory() = default;
-};
+// Carrier-return failures are isolated in shared_carrier_*return.gti so these
+// earlier signature errors cannot mask their MIR lifetime checks.
 
 class Owner {
   mut int value;

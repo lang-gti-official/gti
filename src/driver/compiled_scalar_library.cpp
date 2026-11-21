@@ -7,6 +7,7 @@
 #include "gti/compiled_template_body.h"
 #include "gti/driver/project.h"
 #include "gti/persistent_declaration.h"
+#include "gti/project_template.h"
 #include "gti/source_loader.h"
 #include "sha256.h"
 #include <algorithm>
@@ -188,7 +189,11 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
   auto sorted = signatures;
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
-  std::string out = "gti.callable-interface.4\n", previous;
+  const bool hasStorageContracts =
+      std::ranges::any_of(sorted, &CompiledScalarSignature::noAmbientStorage);
+  std::string out = hasStorageContracts ? "gti.callable-interface.5\n"
+                                        : "gti.callable-interface.4\n";
+  std::string previous;
   for (const auto &signature : sorted) {
     if (signature.key == previous)
       throw std::invalid_argument("duplicate callable interface declaration");
@@ -208,6 +213,8 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
                    ? "hint"
                    : "never");
     field(out, signature.codegenAttributes.cold ? "1" : "0");
+    if (hasStorageContracts)
+      field(out, signature.noAmbientStorage ? "none" : "unknown");
     out += '\n';
     if (out.size() > 1024U * 1024U)
       throw std::invalid_argument("callable interface exceeds metadata limit");
@@ -230,7 +237,11 @@ std::string_view takeField(std::string_view &bytes) {
   return result;
 }
 std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
-  constexpr std::string_view header = "gti.callable-interface.4\n";
+  const bool hasStorageContracts =
+      bytes.starts_with("gti.callable-interface.5\n");
+  const std::string_view header = hasStorageContracts
+                                      ? "gti.callable-interface.5\n"
+                                      : "gti.callable-interface.4\n";
   if (bytes.size() > 1024U * 1024U || !bytes.starts_with(header))
     throw std::invalid_argument("unsupported compiled interface profile");
   auto rest = bytes.substr(header.size());
@@ -273,6 +284,13 @@ std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
     if (cold != "0" && cold != "1")
       throw std::invalid_argument("invalid compiled cold policy");
     signature.codegenAttributes.cold = cold == "1";
+    if (hasStorageContracts) {
+      const auto storage = takeField(rest);
+      if (storage != "none" && storage != "unknown")
+        throw std::invalid_argument(
+            "invalid compiled persistent storage contract");
+      signature.noAmbientStorage = storage == "none";
+    }
     if (rest.empty() || rest.front() != '\n')
       throw std::invalid_argument("malformed callable interface");
     rest.remove_prefix(1);
@@ -473,6 +491,64 @@ std::string templateLibraryIdentity(const CompiledLibraryTarget &target) {
   return hash(identity);
 }
 
+bool exportsGeneric(std::span<const StmtPtr> declarations,
+                    bool exported = false) {
+  for (const auto &declaration : declarations) {
+    const bool visible = exported || declaration->exportKeyword().has_value();
+    if (const auto *ns = stmtAs<NamespaceDecl>(declaration.get())) {
+      if (exportsGeneric(ns->declarations(), visible))
+        return true;
+    } else if (visible) {
+      if (const auto *type = stmtAs<ClassDecl>(declaration.get());
+          type && !type->genericParameters().empty())
+        return true;
+      if (const auto *function = stmtAs<FunctionDecl>(declaration.get());
+          function && !function->genericParameters().empty())
+        return true;
+    }
+  }
+  return false;
+}
+
+std::optional<std::string>
+projectModuleMetadata(const FrontendResult &frontend,
+                      const CompiledLibraryTarget *target,
+                      LibraryProfile profile, bool compiledDependencies) {
+  if (!target || !target->functions.empty() || !frontend.canGenerateCode())
+    return {};
+  const auto &graph = frontend.sourceGraph;
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  if (!entry)
+    return {};
+  auto declarations =
+      std::span(frontend.program.declarations())
+          .subspan(entry->declarationStart, entry->declarationCount);
+  if (profile == LibraryProfile::Project && !exportsGeneric(declarations))
+    return {};
+  if (!entry->moduleDeclaration)
+    throw std::invalid_argument(
+        "compiled library root must declare a module interface");
+  if (compiledDependencies)
+    throw std::invalid_argument(
+        "dependent module requires a separately packaged dependency closure");
+  if (profile == LibraryProfile::Project &&
+      std::ranges::any_of(graph.sourceUnits(), [&](const auto &unit) {
+        return unit.id != entry->id && unit.role == SourceUnitRole::Application;
+      }))
+    throw std::invalid_argument(
+        "generic module requires a separately packaged project source closure");
+  const auto *source = frontend.sources.find(entry->path.string());
+  if (!source)
+    throw std::invalid_argument("missing generic library source snapshot");
+  auto recipe = compileTemplateModule(
+      declarations, *source,
+      entry->lifetimeNames ? *entry->lifetimeNames : LifetimeNames{},
+      entry->embeddedFiles);
+  return profile == LibraryProfile::InstalledStdlib
+             ? encodeTemplateModule(recipe)
+             : encodeProjectTemplate(recipe, *source);
+}
+
 std::optional<ScalarSelection>
 producerSelection(const FrontendResult &frontend,
                   const CompiledLibraryTarget *target, LibraryProfile profile) {
@@ -527,7 +603,8 @@ enum class StandardLibraryInput { Source, Installed };
 CompiledLibraryInputs
 loadExecutableInputs(const CompilationRequest &, const std::filesystem::path &,
                      ProgressObserver *,
-                     std::unordered_map<std::string, std::string> overlays);
+                     std::unordered_map<std::string, std::string> overlays,
+                     std::span<const std::string> archivedInputs = {});
 CompiledLibraryInputs prepareScalarConsumer(
     const CompilationRequest &, std::span<const CompiledLibraryImport>,
     const std::filesystem::path &, ProgressObserver *progress = nullptr,
@@ -543,7 +620,7 @@ producerImplementations(const SourceGraph &graph) {
 }
 std::string producerSources(const CompilationInputs &inputs,
                             const CompiledLibraryTarget *target) {
-  std::string sources = "gti.compiled-source-graph.2";
+  std::string sources = "gti.compiled-source-graph.3";
   const auto &graph = inputs.sourceGraph;
   field(sources, graph.sourceOwners()
                      ? graph.sourceOwners()->resolutionIdentity()
@@ -562,6 +639,17 @@ std::string producerSources(const CompilationInputs &inputs,
           unit && unit->compiledScalarInterface ? "compiled" : "source");
     field(sources, unit && unit->entry ? "entry" : "dependency");
     field(sources, unit && unit->prelude ? "prelude" : "ordinary");
+    // Embedded inputs are producer dependencies even when the GTI source and
+    // configured tokens are unchanged. Hash the immutable loader snapshot,
+    // never reopen the path after checking it.
+    field(sources, std::to_string(unit ? unit->embeddedFiles.size() : 0));
+    if (unit)
+      for (const auto &file : unit->embeddedFiles) {
+        field(sources, std::to_string(file.keyword.position));
+        field(sources, std::to_string(file.storageOffset));
+        field(sources, file.spelling);
+        field(sources, file.bytes ? hash(*file.bytes) : "missing");
+      }
     // Include the actual configured token stream, not a lossy cache digest.
     field(sources,
           std::to_string(unit && unit->tokens ? unit->tokens->size() : 0));
@@ -601,28 +689,10 @@ CompiledScalarLibraryResult buildScalarLibrary(
   const auto producerRequest = request.withApplicationBodies();
   auto frontend =
       detail::analyzeForArtifact(producerRequest, std::move(inputs), nullptr);
-  if (target && profile == LibraryProfile::InstalledStdlib &&
-      target->functions.empty() &&
-      std::ranges::any_of(installedModules,
-                          [&](const auto &module) {
-                            return module.target == target->target &&
-                                   module.facade.empty();
-                          }) &&
-      frontend.canGenerateCode()) {
-    // Only the staged toolchain can export a trusted generic module. Projects
-    // continue to import data through the checked, unprivileged interface.
-    const auto &graph = std::as_const(frontend.sourceGraph);
-    const auto *entry = graph.findUnit(graph.entryUnit());
-    if (!entry || !entry->moduleDeclaration || !prepared.dependencies.empty())
-      throw std::invalid_argument("invalid installed generic library root");
-    auto declarations =
-        std::span(frontend.program.declarations())
-            .subspan(entry->declarationStart, entry->declarationCount);
-    const auto *source = frontend.sources.find(entry->path.string());
-    if (!source)
-      throw std::invalid_argument("missing generic library source snapshot");
-    auto recipe = compileTemplateModule(declarations, *source);
-    auto metadata = encodeTemplateModule(recipe);
+  if (auto projected = projectModuleMetadata(frontend, target, profile,
+                                             !prepared.dependencies.empty())) {
+    const auto &graph = frontend.sourceGraph;
+    auto metadata = std::move(*projected);
     id.library = templateLibraryIdentity(*target);
     auto current = loadCompilationInputs(request);
     if (!current.succeeded() ||
@@ -783,6 +853,8 @@ struct LibraryFacade {
   std::string path;
   std::string source;
   std::vector<CompiledScalarSignature> signatures;
+  std::shared_ptr<const CompiledTemplateModule> recipe;
+  std::vector<std::size_t> noAmbientStorage;
 };
 struct AdmittedLibraries {
   std::vector<PackageSourceRoot> packageSources;
@@ -799,7 +871,12 @@ struct AdmittedLibraries {
       const auto unit = graph.sourceUnitForPath(facade.path);
       if (!unit)
         continue;
-      graph.markCompiledScalarInterface(unit);
+      if (facade.recipe) {
+        graph.attachCompiledTemplate(unit, std::move(facade.recipe));
+        continue;
+      }
+      graph.markCompiledScalarInterface(unit,
+                                        std::move(facade.noAmbientStorage));
       for (auto &signature : facade.signatures) {
         auto found = optimizationBodies.find(compiledScalarSymbol(signature));
         inputs.imports.push_back(
@@ -836,12 +913,42 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
     std::vector<std::string> symbols;
     std::string library;
     PersistentDeclarationOwner owner;
+    std::shared_ptr<const CompiledTemplateModule> recipe;
   };
   std::vector<Admission> admitted;
   std::map<std::string, std::size_t> libraries;
   std::size_t declarationCount = 0;
   CompiledMirBodies optimizationBodies;
   for (auto &input : bundles) {
+    if (input.bundle.templateOnly) {
+      if (!input.selected || !input.bundle.dependencies.empty())
+        throw std::invalid_argument(
+            "project template requires a selected package and target with a "
+            "closed interface");
+      const auto &selection = *input.selected;
+      auto identity =
+          templateLibraryIdentity({selection.package, selection.target, {}});
+      auto expected = system.identity;
+      expected.library = identity;
+      expected.sources = input.bundle.identity.sources;
+      requireLibraryBundleCompatibility(input.bundle, expected, {});
+      auto recipe = std::make_shared<CompiledTemplateModule>(
+          decodeProjectTemplate(input.bundle.interfaceMetadata));
+      auto name = projectTemplateModuleName(recipe->declarations);
+      if (!selection.moduleName.empty() && name != selection.moduleName)
+        throw std::invalid_argument(
+            "compiled project template module name does not match selection");
+      if (!libraries.emplace(identity, admitted.size()).second)
+        throw std::invalid_argument(
+            "duplicate compiled library package/target");
+      admitted.push_back(
+          {{},
+           {},
+           std::move(identity),
+           {selection.package, selection.target, std::move(name), ""},
+           std::move(recipe)});
+      continue;
+    }
     auto signatures = readInterface(input.bundle.interfaceMetadata);
     declarationCount += signatures.size();
     if (declarationCount > 256)
@@ -921,6 +1028,13 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
     path = std::filesystem::weakly_canonical(path);
     if (!distinctPaths.insert(path.string()).second)
       throw std::invalid_argument("duplicate compiled library interface path");
+    if (admitted[i].recipe) {
+      auto relative = path.lexically_relative(
+          std::filesystem::weakly_canonical(request.standardLibrary().root));
+      if (!relative.empty() && *relative.begin() != "..")
+        throw std::invalid_argument(
+            "project template overlaps installed resources");
+    }
     interfacePaths.push_back(std::move(path));
   }
   struct Facade {
@@ -1007,6 +1121,24 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
     expected.library = metadata.library;
     expected.sources = bundle.identity.sources;
     requireLibraryBundleCompatibility(bundle, expected, expectedDependencies);
+    if (metadata.recipe) {
+      const auto &root = interfacePaths[index];
+      facades.push_back({root.string(),
+                         metadata.recipe->declarations +
+                             "\n// compiled project template " + input.digest +
+                             "\n",
+                         {},
+                         metadata.recipe});
+      if (input.selected->directDependency)
+        direct.push_back({metadata.library, input.digest});
+      for (auto &source : sources)
+        if (registered(root, metadata.owner.module) &&
+            owners.ownerForPath(root)->identity == source.identity)
+          std::erase_if(source.moduleImplementations, [&](const auto &member) {
+            return member.first == metadata.owner.module;
+          });
+      continue;
+    }
     if (bundle.objects.size() != 1 || bundle.objects.front().name != "unit.o")
       throw std::invalid_argument(
           "unsupported compiled scalar object inventory");
@@ -1054,9 +1186,11 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
         }
       for (const auto &dependency : typePaths)
         source += "import " + importPath(group.path, dependency) + ";\n";
-      source += compiledInterfaceSource(group.signatures);
+      std::vector<std::size_t> noAmbientStorage;
+      appendCompiledInterfaceSource(source, group.signatures, noAmbientStorage);
       facades.push_back({group.path.string(), std::move(source),
-                         std::move(group.signatures)});
+                         std::move(group.signatures), nullptr,
+                         std::move(noAmbientStorage)});
       for (auto &owner : sources)
         if (registered(group.path, name) &&
             owners.ownerForPath(group.path)->identity == owner.identity)
@@ -1081,18 +1215,25 @@ CompiledLibraryInputs prepareScalarConsumer(
       request, bundles,
       admissionEnvironment(request, runtime, LibraryProfile::Project));
   std::unordered_map<std::string, std::string> overlays;
-  for (auto &facade : admitted.facades)
+  std::vector<std::string> archivedInputs;
+  SourceLoader sourceLoader;
+  for (auto &facade : admitted.facades) {
+    if (facade.recipe) {
+      archivedInputs.push_back(facade.path);
+      sourceLoader.useArchivedEmbeddedInputs(facade.path);
+    }
     if (!overlays.emplace(facade.path, std::move(facade.source)).second)
       throw std::invalid_argument("duplicate compiled module interface path");
+  }
   auto effective =
       request.withPackageSources(std::move(admitted.packageSources));
   // A library producer owns its implementation dependencies. A final consumer
   // can link the installed standard library alongside its project libraries.
   auto loaded = standardLibrary == StandardLibraryInput::Installed
                     ? loadExecutableInputs(effective, runtime, progress,
-                                           std::move(overlays))
-                    : CompiledLibraryInputs{
-                          loadCompilationInputs(effective, progress, overlays)};
+                                           std::move(overlays), archivedInputs)
+                    : CompiledLibraryInputs{loadCompilationInputs(
+                          effective, sourceLoader, progress, overlays)};
   CompiledLibraryInputs inputs{std::move(loaded.compilation)};
   std::move(admitted).bind(inputs);
   std::ranges::move(loaded.imports, std::back_inserter(inputs.imports));
@@ -1107,7 +1248,7 @@ CompiledLibraryInputs prepareScalarConsumer(
     for (const auto &source : selection.sourceFiles) {
       const auto *unit = consumerGraph.findUnit(
           consumerGraph.sourceUnitForPath(source.string()));
-      if (unit && !unit->compiledScalarInterface) {
+      if (unit && !unit->compiledScalarInterface && !unit->compiledTemplate) {
         const auto &owners = consumerGraph.sourceOwners();
         const auto *owner =
             owners ? owners->ownerForPath(selection.interfacePath) : nullptr;
@@ -1177,16 +1318,21 @@ CompiledLibraryInputs
 loadExecutableInputs(const CompilationRequest &request,
                      const std::filesystem::path &runtime,
                      ProgressObserver *progress,
-                     std::unordered_map<std::string, std::string> overlays) {
+                     std::unordered_map<std::string, std::string> overlays,
+                     std::span<const std::string> archivedInputs) {
+  SourceLoader loader;
+  for (const auto &path : archivedInputs)
+    loader.useArchivedEmbeddedInputs(path);
   const auto source = [&] {
     return CompiledLibraryInputs{
-        loadCompilationInputs(request, progress, overlays)};
+        loadCompilationInputs(request, loader, progress, overlays)};
   };
   const auto &target = request.target();
   if (request.backend() != BackendKind::Llvm || request.debugInfo() ||
       request.llvmInstrumentation() != LlvmInstrumentationMode::None ||
       request.program().kind != ProgramKind::Executable ||
       request.program().testSuite ||
+      !request.standardLibrary().useInstalledBundles ||
       request.rawPointerAudit() != RawPointerAuditMode::Off ||
       request.optimizationOutputs().requested() ||
       target.executionProfile != ExecutionProfile::SingleThreaded ||
@@ -1217,7 +1363,6 @@ loadExecutableInputs(const CompilationRequest &request,
   std::map<std::string, LoadedModule> loaded;
   std::size_t totalBytes = 0;
   std::size_t declarations = 0;
-  SourceLoader loader;
   // Recipe modules expose their own declaration and import skeleton at their
   // public path. The ordinary source loader still resolves its dependencies.
   for (const auto &module : installedModules) {
@@ -1227,6 +1372,7 @@ loadExecutableInputs(const CompilationRequest &request,
       if (overlays.contains(entry.string()))
         throw std::invalid_argument(
             "project interface overlaps the installed standard library");
+      loader.useArchivedEmbeddedInputs(entry.string());
       loader.deferInstalledModule(entry.string(), [&, name, entry] {
         const auto artifact = directory / (name + ".gtilib");
         const auto bytes = readCompiledLibraryFileBounded(
@@ -1422,15 +1568,17 @@ CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
       if (!imports.empty() || !target.functions.empty())
         return {};
       auto inputs = loadCompilationInputs(request);
-      if (!inputs.succeeded() || producerProfile(inputs.sourceGraph, &target) !=
-                                     LibraryProfile::InstalledStdlib)
+      if (!inputs.succeeded())
         return {};
-      auto expected =
-          environment(request, runtime, LibraryProfile::InstalledStdlib);
+      const auto profile = producerProfile(inputs.sourceGraph, &target);
+      auto expected = environment(request, runtime, profile);
       expected.library = templateLibraryIdentity(target);
       expected.sources = producerSources(inputs, &target);
       requireLibraryBundleCompatibility(bundle, expected, {});
-      (void)decodeTemplateModule(bundle.interfaceMetadata);
+      if (profile == LibraryProfile::Project)
+        (void)decodeProjectTemplate(bundle.interfaceMetadata);
+      else
+        (void)decodeTemplateModule(bundle.interfaceMetadata);
       if (sourceFiles)
         *sourceFiles = producerImplementations(inputs.sourceGraph);
       return bytes;
@@ -1525,6 +1673,14 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
       const auto producerRequest = request.withApplicationBodies();
       auto frontend = detail::analyzeForArtifact(producerRequest,
                                                  std::move(inputs), progress);
+      if (projectModuleMetadata(frontend, &*producer, profile,
+                                !prepared.dependencies.empty())) {
+        CheckResult checked;
+        checked.status = CheckStatus::Success;
+        checked.sources = std::move(frontend.sources);
+        checked.diagnostics = std::move(frontend.diagnostics);
+        return checked;
+      }
       auto selection = producerSelection(frontend, &*producer, profile);
       ScalarBackend backend({}, frontend.sourceGraph.entryUnit(), sink,
                             std::move(selection), std::move(prepared.imports));

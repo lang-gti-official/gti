@@ -1,0 +1,12 @@
+// Returned text retention: returned borrowed text can enter retaining storage.
+//@ check-pass
+import std.string;
+import std.utility;
+T relay<T>(T input) { return std::move(input); }
+class Holder {
+  mut std::string_view text = "";
+public:
+  Holder() = default;
+  void set(std::string_view input) mut { this.text = relay(input); }
+};
+int main() { mut Holder holder{}; holder.set("borrowed"); return 0; }

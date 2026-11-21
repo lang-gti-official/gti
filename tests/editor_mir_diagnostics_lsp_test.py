@@ -75,6 +75,69 @@ int main() { mut int owner = 1; mut int& parent = owner;
   mut int& child = parent; keep(parent); keep(child); return 0; }
 """
 
+# Shared-container and array owner protection must survive editor omission
+# and fallback analysis, including clearing diagnostics after a repair.
+BORROWED_STORAGE_CASES = [
+    ("""import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  values.reserve(32);
+  return values.size() == 2 && values[0].read() == 11 && values[1].read() == 22 ? 0 : 1;
+}
+""", """import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  mut int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  values.reserve(32);
+  first = 99;
+  return values.size() == 2 && values[0].read() == 11 && values[1].read() == 22 ? 0 : 1;
+}
+"""),
+    ("""class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; int second = 22;
+  Reading values[2] = {Reading(first), Reading(second)};
+  auto copied = values;
+  return copied[0].read() == 11 && copied[1].read() == 22 ? 0 : 1;
+}
+""", """class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; mut int second = 22;
+  Reading values[2] = {Reading(first), Reading(second)};
+  auto copied = values;
+  second = 99;
+  return copied[0].read() == 11 && copied[1].read() == 22 ? 0 : 1;
+}
+"""),
+]
+
 LOCATION = re.compile(r"^(?P<path>.+?):(?P<line>\d+):(?P<column>\d+): "
                       r"(?P<kind>error|warning|note)(?:\[(?P<code>GTI-[A-Z]\d+)\])?:")
 
@@ -202,6 +265,15 @@ def main():
                                         "keep(child); keep(parent);")
             assert publish(repaired) == []
             assert analysis_record(5)["mirMicroseconds"] > 0
+
+            for valid, invalid in BORROWED_STORAGE_CASES:
+                assert publish(valid) == []
+                path.write_text(invalid)
+                expected = compiler_diagnostics(compiler, path, root)
+                assert expected and all(item[0] == "GTI-S2017" for item in expected), expected
+                published = publish(invalid)
+                assert editor_diagnostics(published) == expected, (published, expected)
+                assert publish(valid) == [], "repair must clear borrowed-storage diagnostics"
         finally:
             session.close()
 

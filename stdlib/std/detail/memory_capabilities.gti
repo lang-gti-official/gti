@@ -27,6 +27,13 @@ export uint64_t object_size<T>();
 export uint64_t object_alignment<T>();
 export void object_destroy<T>(T* address);
 export void object_construct<T, Args...>(T* address, Args... args);
+export void object_construct_owned<T, Owner, Args...>(T* address, mut Owner& owner, Args... args);
+// The unsafe caller proves that address is vacant storage covered by owner.
+// The value's checked dependencies are retained by owner, not by the pointer.
+export void object_initialize_owned<T, Owner>(T* address, mut Owner& owner, T value);
+export void object_relocate_owned<T, Destination, Source>(T* destination, mut Destination& destination_owner, T* source, mut Source& source_owner);
+export T& object_borrow_owned<T, Owner>(const T* address, Owner& owner);
+export mut T& object_borrow_owned_mut<T, Owner>(T* address, mut Owner& owner);
 export void object_relocate<T>(T* destination, T* source);
 export void object_relocate_range<T>(T* destination, T* source, uint64_t count);
 export T object_take<T>(T* source);

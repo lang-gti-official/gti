@@ -1,12 +1,13 @@
-// The restoring APIs (swap, exchange, swap_elements) show their relocatable
-// requirement; a deleted move fails it, a self-swap is an overlapping
+// The restoring APIs show their requirements (swap and exchange: relocatable;
+// swap_elements: move_constructible, since RFC 0003 relocates elements through
+// owner-aware moves); a deleted move fails them, a self-swap is an overlapping
 // loan, and an incomplete call recovers. (From restoring_exchange_lsp_test.py.)
 //@ hover @swap: swap
 //@ hover @swap: relocatable
 //@ hover @exchange: exchange
 //@ hover @exchange: relocatable
 //@ hover @swap_elements: swap_elements
-//@ hover @swap_elements: relocatable
+//@ hover @swap_elements: move_constructible
 import std.utility;
 import std.vector;
 class Resource {

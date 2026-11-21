@@ -1,0 +1,13 @@
+export module meter;
+
+namespace api {
+mut int private_state;
+int private_read(int& value) { return value + 2; }
+export [[noinline]] int observe(int& value) { return private_read(value); }
+export [[noinline]] void replace(mut int& value, int next) { value = next; }
+
+int bump_state() { private_state = private_state + 1; return private_state; }
+export [[noinline]] int observe(int& value, int extra) {
+    return value + extra + bump_state();
+}
+}
