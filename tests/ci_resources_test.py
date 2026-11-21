@@ -143,7 +143,8 @@ def main():
         sysctl.chmod(0o755)
         environment["GTI_MEMORY_PER_TEST_MIB"] = "3072"
         for reported, expected in (("7516192768", (3, 2)), ("invalid", (12, 12))):
-            environment["TEST_HW_MEMSIZE"] = reported
+            output = root / f"sysctl-memory-{reported}"
+            environment.update(TEST_HW_MEMSIZE=reported, GITHUB_ENV=str(output))
             subprocess.run([bash, str(script)], env=environment, check=True,
                            capture_output=True, text=True, timeout=10)
             assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n"
