@@ -1401,6 +1401,11 @@ the action supplies scaffolding, while payload access and case behavior remain
 author decisions. The existing version/source checks also protect these edits;
 the adapter neither computes enum coverage nor parses diagnostic text.
 
+For ordinary enums, the editor requests a hint on a switch that omits named
+values. The same reviewed edit works for variables, fields and call results.
+On an empty switch, placing the cursor between the braces selects the hint.
+Completing the named cases or adding a default removes it.
+
 Equal nonempty repair IDs group edits atomically; different IDs and legacy
 singletons remain alternatives. This first profile supports one open target
 document per group. It rejects unknown or inconsistent source text, cross-file

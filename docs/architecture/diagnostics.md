@@ -1758,6 +1758,14 @@ declaration-visibility diagnostic (`GTI-S2024`) when its declaration is known
 but not visible, including its declaration note and direct-import or export
 guidance. A visible wrong variant retains `GTI-S2067`.
 
+For an ordinary enum, the editor offers `Insert missing switch cases` when a
+switch omits named values and has no default. The hint applies to the resolved
+subject type, including a method result such as `result.error()`. It generates
+one arm per distinct missing value in declaration order. In an empty switch,
+the action is available inside the braces. Ordinary enum switches may be
+partial, and listing every named value still leaves a possible unnamed value.
+Command-line checks and return-flow analysis follow those language rules.
+
 A non-exhaustive payload-enum switch offers `Insert missing switch cases` as
 a nonpreferred, `RequiresReview` repair. It inserts tag-only arms in declaration
 order, each containing a TODO comment and `break`; choosing payload bindings

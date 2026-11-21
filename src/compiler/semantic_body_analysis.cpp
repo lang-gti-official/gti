@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #include <iterator>
+#include <set>
 
 namespace lang {
 
@@ -5849,6 +5850,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
 
 auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
     -> void {
+  const auto firstSwitchDiagnostic = diagnostics.size();
   semanticModel.recordFullExpression(stmt, stmt.expression());
   // A payload-enum field subject is observed in place, not copied out.
   const Expr *subject = stmt.expression().get();
@@ -5876,13 +5878,12 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
       return;
     }
   }
-  const EnumTypeInfo *payloadEnum =
+  const EnumTypeInfo *switchEnum =
       subjectType.kind == SemanticType::Enum
           ? semanticModel.findEnumType(subjectType.enumId)
           : nullptr;
-  if (payloadEnum != nullptr && !payloadEnum->payload) {
-    payloadEnum = nullptr;
-  }
+  const EnumTypeInfo *payloadEnum =
+      switchEnum && switchEnum->payload ? switchEnum : nullptr;
   if (stmt.isIfCase() && payloadEnum == nullptr) {
     diagnostics.emplace_back(
         makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
@@ -6468,50 +6469,75 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
   if (hasDefault || exhaustivePayload) {
     semanticModel.recordExhaustiveSwitch(stmt);
   }
-  if (payloadEnum != nullptr && !hasDefault && !invalidPayloadPattern &&
-      !exhaustivePayload) {
-    std::string missing;
+  const bool missingPayload = payloadEnum && !hasDefault &&
+                              !invalidPayloadPattern && !exhaustivePayload;
+  const bool suggestScalar =
+      suggestEnumSwitchCases && switchEnum && !switchEnum->compilerPrivate &&
+      !payloadEnum && !stmt.isIfCase() && !hasDefault &&
+      !instanceAnalysisActive && !macroExpansionDepth && sourceGraph &&
+      sourceUnitFor(stmt.keyword()) == sourceGraph->entryUnit() &&
+      !hasErrorDiagnostics(
+          std::span(diagnostics).subspan(firstSwitchDiagnostic));
+  if (missingPayload || suggestScalar) {
     std::vector<std::string> missingVariants;
-    for (const EnumeratorInfo &enumerator : payloadEnum->enumerators) {
-      if (coveredPayloadVariants.contains(enumerator.variantIndex) ||
-          enumerator.declaration == nullptr) {
+    std::string missing;
+    // Distinct names may denote the same scalar value. One case handles all
+    // its aliases, and the first declaration supplies the scaffold spelling.
+    std::set<std::pair<bool, std::uint64_t>> scalarValues;
+    if (suggestScalar)
+      for (const auto &[value, label] : seenCases)
+        scalarValues.emplace(value.value.negative, value.value.magnitude);
+    for (const EnumeratorInfo &enumerator : switchEnum->enumerators) {
+      if (!enumerator.declaration ||
+          (payloadEnum &&
+           coveredPayloadVariants.contains(enumerator.variantIndex)) ||
+          (suggestScalar &&
+           !scalarValues
+                .emplace(enumerator.value.negative, enumerator.value.magnitude)
+                .second))
         continue;
+      const auto &name = enumerator.declaration->name.lexeme;
+      if (missingPayload) {
+        if (!missing.empty())
+          missing += ", ";
+        missing += switchEnum->qualifiedName + "::" + name;
       }
-      if (!missing.empty()) {
-        missing += ", ";
-      }
-      missing += payloadEnum->qualifiedName +
-                 "::" + enumerator.declaration->name.lexeme;
-      missingVariants.push_back(typeSpelling(subjectType) +
-                                "::" + enumerator.declaration->name.lexeme);
+      missingVariants.push_back(typeSpelling(subjectType) + "::" + name);
     }
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
-        "Payload-enum switch is not exhaustive; missing " + missing + ".");
-    diagnostic.hints.emplace_back(
-        "Handle every variant explicitly or add a 'default' arm.");
-    // Tag-only arms do not guess payload bindings or ownership. These are
-    // explicit-review scaffolds, never an automatic behavior-preserving fix.
+    std::optional<FixIt> fix;
     const auto &owner = enums[subjectType.enumId - 1];
-    // A concrete instance's owner may not be the written generic owner's
-    // spelling, and one definition can be instantiated with several enums.
-    if (macroExpansionDepth == 0 && !instanceAnalysisActive &&
+    // The ordinary resolver must prove that the generated spelling still
+    // denotes this exact enum in the switch's lexical scope.
+    if (!macroExpansionDepth && !instanceAnalysisActive &&
         declarationVisible(owner.sourceUnit, owner.name) &&
         !missingVariants.empty()) {
-      // Diagnostic type spelling is not necessarily a usable source name in
-      // this scope (namespace shadowing, aliases, or unnamed type arguments).
-      // Prove the proposed owner with the ordinary parser and exact lookup;
-      // never offer an edit naming a different concrete enum instance.
       const auto expression =
           parseRepairExpression(missingVariants.front(), stmt.keyword().source);
       const auto *qualified = exprAs<QualifiedName>(expression.get());
       const auto resolved =
           qualified ? resolveEnumerator(*qualified) : std::nullopt;
       if (resolved && resolved->symbol.type == subjectType)
-        if (auto fix = missingSwitchCasesFix(stmt, sources, missingVariants))
-          diagnostic.fixes.push_back(std::move(*fix));
+        fix = missingSwitchCasesFix(stmt, sources, missingVariants);
     }
-    diagnostics.emplace_back(std::move(diagnostic));
+    if (missingPayload || fix) {
+      Diagnostic diagnostic =
+          missingPayload
+              ? makeDiagnostic(
+                    "GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
+                    "Payload-enum switch is not exhaustive; missing " +
+                        missing + ".")
+              : makeDiagnostic(DiagnosticId::MissingEnumSwitchCases,
+                               stmt.keyword(), {});
+      if (missingPayload)
+        diagnostic.hints.emplace_back(
+            "Handle every variant explicitly or add a 'default' arm.");
+      else if (stmt.arms().empty())
+        // Make the action available on the blank line where the author types.
+        diagnostic.primary.end = tokenSpan(stmt.closingBrace()).end;
+      if (fix)
+        diagnostic.fixes.push_back(std::move(*fix));
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
   }
   ValueControlFlowContext valueFlow{};
   if (!stmt.isIfCase()) {

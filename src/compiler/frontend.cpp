@@ -1691,6 +1691,7 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
         semanticLimits);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
+    semantic.setEnumSwitchCaseSuggestions(options.suggestEnumSwitchCases);
     semantic.setCancellation(options.cancellation);
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
