@@ -3878,8 +3878,69 @@
       ]
     },
     {
+      "id": "chrono.calendar",
+      "source": "stdlib/std/detail/chrono_calendar.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::calendar_days",
+        "std::chrono::date",
+        "std::chrono::local_datetime",
+        "std::chrono::months",
+        "std::chrono::time_of_day",
+        "std::chrono::timestamp",
+        "std::chrono::years"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/ui/chrono/calendar_cycle.gti",
+        "tests/ui/chrono/calendar_duration_arithmetic.gti",
+        "tests/ui/chrono/calendar_bounds.gti"
+      ]
+    },
+    {
+      "id": "chrono.data",
+      "source": "stdlib/std/detail/chrono_data.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::detail::try_default_tzdb_bytes"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "stdlib/std/detail/tzdb/README.md"
+      ]
+    },
+    {
+      "id": "chrono.discovery",
+      "source": "stdlib/std/detail/chrono_discovery.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::current_zone_id",
+        "std::chrono::try_current_zone_id"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/ui/chrono/discovery.gti",
+        "tests/ui/chrono/calendar_windows.gti"
+      ]
+    },
+    {
       "id": "chrono.executable",
-      "source": "stdlib/std/chrono.gti",
+      "source": "stdlib/std/detail/chrono_core.gti",
       "status": "executable",
       "operations": [
         "std::chrono::clock_errc",
@@ -3910,7 +3971,8 @@
       "required_instantiations": [
         "int64 minimum/maximum elapsed subtraction",
         "negative Unix nanosecond decomposition",
-        "steady and system host clock reads"
+        "steady and system host clock reads",
+        "fixed-duration units through days and explicit try/non-try arithmetic"
       ],
       "evidence": [
         "docs/language/chrono.md",
@@ -3918,6 +3980,94 @@
         "stdlib/std/chrono.gti",
         "tests/fixtures/stdlib_surface_chrono.gti",
         "tests/unit/runtime_chrono_tests.cpp"
+      ]
+    },
+    {
+      "id": "chrono.facade",
+      "source": "stdlib/std/chrono.gti",
+      "status": "executable",
+      "operations": [
+        "std.chrono module re-exports"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/ui/chrono/calendar_basics.gti"
+      ]
+    },
+    {
+      "id": "chrono.format",
+      "source": "stdlib/std/detail/chrono_format.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::error",
+        "std::chrono::format",
+        "std::chrono::format_error",
+        "std::chrono::format_to",
+        "std::chrono::prepare_time_pattern",
+        "std::chrono::prepared_time_pattern",
+        "std::chrono::runtime_format",
+        "std::chrono::runtime_format_to",
+        "std::chrono::time_pattern",
+        "std::chrono::try_format",
+        "std::chrono::try_format_to",
+        "std::chrono::try_prepare_time_pattern",
+        "std::chrono::try_runtime_format",
+        "std::chrono::try_runtime_format_to"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/ui/chrono/formatting.gti",
+        "tests/slow/chrono/format_runtime.gti"
+      ]
+    },
+    {
+      "id": "chrono.tzif",
+      "source": "stdlib/std/detail/chrono_tzif.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::detail::parse_tzif"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/slow/stdlib/chrono_calendar/zones_malformed.gti",
+        "tests/slow/stdlib/chrono_calendar/zones_database.gti"
+      ]
+    },
+    {
+      "id": "chrono.zones",
+      "source": "stdlib/std/detail/chrono_zones.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::local_mapping",
+        "std::chrono::time_zone",
+        "std::chrono::tzdb",
+        "std::chrono::zoned_time"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Focused source-run regressions in cited UI/slow evidence; chrono case proves facade compatibility."
+      ],
+      "evidence": [
+        "tests/slow/stdlib/chrono_calendar/zones_named.gti",
+        "tests/ui/stdlib/chrono_calendar/zones_name_escape.gti",
+        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti"
       ]
     },
     {
@@ -4446,7 +4596,27 @@
         "tests/fixtures/stdlib_surface_environment.gti",
         "tests/fixtures/environment_lookup.gti",
         "tests/environment_runtime_test.py",
-        "tests/runtime_environment_tests.cpp"
+        "tests/runtime_environment_tests.cpp",
+        "stdlib/std/detail/environment_snapshot.gti"
+      ]
+    },
+    {
+      "id": "environment.snapshot",
+      "source": "stdlib/std/detail/environment_snapshot.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::environment_snapshot"
+      ],
+      "case_ids": [
+        "environment"
+      ],
+      "required_instantiations": [
+        "Shared native snapshot ownership reused by environment lookup and optional chrono discovery."
+      ],
+      "evidence": [
+        "tests/ui/chrono/discovery.gti",
+        "tests/ui/chrono/calendar_windows.gti",
+        "stdlib/std/environment.gti"
       ]
     },
     {
@@ -4531,7 +4701,8 @@
       "evidence": [
         "tests/fixtures/filesystem_path.gti",
         "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
-        "stdlib/std/filesystem.gti"
+        "stdlib/std/filesystem.gti",
+        "tests/ui/filesystem/windows_drive.gti"
       ]
     },
     {
@@ -4583,6 +4754,24 @@
         "tests/ui/stdlib/filesystem/operations.gti",
         "tests/unit/runtime_filesystem_tests.cpp",
         "docs/language/filesystem.md"
+      ]
+    },
+    {
+      "id": "filesystem.result",
+      "source": "stdlib/std/detail/filesystem_result.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::filesystem_result"
+      ],
+      "case_ids": [
+        "filesystem-operations"
+      ],
+      "required_instantiations": [
+        "Shared immutable native result owner; directory and path operations preserve cleanup."
+      ],
+      "evidence": [
+        "tests/ui/chrono/discovery.gti",
+        "stdlib/std/filesystem.gti"
       ]
     },
     {

@@ -80,6 +80,42 @@ root = "stdlib/std/detail/charconv_types.gti"
 kind = "gti-library"
 root = "stdlib/std/detail/cmath_declarations.gti"
 
+[targets.detail_chrono_core]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_core.gti"
+
+[targets.detail_chrono_calendar]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_calendar.gti"
+
+[targets.detail_chrono_data]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_data.gti"
+
+[targets.detail_chrono_discovery]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_discovery.gti"
+
+[targets.detail_chrono_format]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_format.gti"
+
+[targets.detail_chrono_tzif]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_tzif.gti"
+
+[targets.detail_chrono_zones]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_zones.gti"
+
+[targets.detail_environment_snapshot]
+kind = "gti-library"
+root = "stdlib/std/detail/environment_snapshot.gti"
+
+[targets.detail_filesystem_result]
+kind = "gti-library"
+root = "stdlib/std/detail/filesystem_result.gti"
+
 [targets.detail_function_pointer]
 kind = "gti-library"
 root = "stdlib/std/detail/function_pointer.gti"

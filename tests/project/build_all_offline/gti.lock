@@ -1,0 +1,7 @@
+lock-version = 1
+[[package]]
+name = "dep"
+version = "1.0.0"
+source = "git+file:///gti-test-absent-offline-dependency"
+rev = "1111111111111111111111111111111111111111"
+checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"

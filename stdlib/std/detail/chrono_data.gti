@@ -1,0 +1,16 @@
+export module detail_chrono_data_impl;
+import "chrono_calendar.gti";
+import std.vector;
+import std.span;
+
+export namespace std::chrono::detail {
+// A pinned static snapshot gives deployed executables no ambient resource-path
+// dependency. Explicit tzdb::try_load remains available for independent updates.
+expected<std::vector<uint8_t>, errc> try_default_tzdb_bytes() {
+  auto bytes = embed_bytes("tzdb/iana.bin");
+  mut std::vector<uint8_t> result{};
+  result.reserve(bytes.size());
+  for (auto value : bytes) { result.push_back(value); }
+  return std::move(result);
+}
+}

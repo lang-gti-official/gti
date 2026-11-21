@@ -32,6 +32,7 @@ SLOW = ".github/workflows/slow.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 ROLLUP = ".github/workflows/rollup.yml"
 CACHE = ".github/workflows/cache.yml"
+CODEQL = ".github/workflows/codeql.yml"
 LSP = ".github/workflows/lsp.yml"
 TRAIN = ".github/workflows/train.yml"
 BETA = ".github/workflows/beta.yml"
@@ -72,7 +73,7 @@ def main():
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
     expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, SLOW, LLVM_PREBUILT, LSP, NIGHTLY, RELEASE,
-                              ROLLUP, CACHE, SUITE_MEASURES, VALIDATION_RETRY, AUTO_REVERT, *RELEASE_TRAIN},
+                              ROLLUP, CACHE, CODEQL, SUITE_MEASURES, VALIDATION_RETRY, AUTO_REVERT, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",

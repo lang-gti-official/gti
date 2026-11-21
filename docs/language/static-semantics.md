@@ -1987,6 +1987,12 @@ Resource take(Envelope envelope) {
 }
 ```
 
+A conditional match, `if (case Message::owned(auto& item) = message)`,
+evaluates its subject once. A matching tag enters the then branch with the
+same payload binding rules as a switch arm. A mismatch enters the optional
+else branch. The binding is scoped to the then branch. As with ordinary
+`if`, surrounding loops and switches retain their control-flow targets.
+
 `case Message::owned(auto& item)` instead binds an arm-scoped shared reference
 to the original payload; `mut auto& item` binds an exclusive mutable reference
 and requires mutable enum storage. A consumed subject provides neither

@@ -1,0 +1,362 @@
+export module detail_chrono_zones_impl;
+import "chrono_tzif.gti";
+import "chrono_calendar.gti";
+import std.vector;
+import std.memory;
+import std.numeric;
+import std.span;
+import std.string;
+import "chrono_data.gti";
+import std.cstdio;
+import std.format;
+
+export namespace std::chrono {
+/// The missing local interval [begin, end) and its first following instant.
+struct local_gap {
+  local_datetime begin;
+  local_datetime end;
+  timestamp next;
+  local_gap(local_datetime b, local_datetime e, timestamp n) : begin(b), end(e), next(n) {}
+};
+/// A civil reading has no implicit interpretation at an offset transition.
+enum local_mapping {
+  unique(timestamp instant),
+  ambiguous(timestamp earlier, timestamp later),
+  nonexistent(local_gap gap),
+};
+enum class fold_policy { reject, earlier, later };
+enum class gap_policy { reject, next_valid };
+struct resolve_policy {
+  fold_policy fold = fold_policy::reject;
+  gap_policy gap = gap_policy::reject;
+  resolve_policy() {}
+  resolve_policy(fold_policy f, gap_policy g) : fold(f), gap(g) {}
+};
+
+/// An instant retaining its immutable zone rules and validated civil reading.
+class zoned_time {
+  shared_ptr<detail::zone_rules> rules;
+  timestamp point;
+  local_datetime civil;
+  detail::tz_info info;
+  zoned_time(shared_ptr<detail::zone_rules> rules, timestamp point,
+             local_datetime civil, detail::tz_info info)
+      : rules(std::move(rules)), point(point), civil(civil), info(std::move(info)) {}
+public:
+  zoned_time(zoned_time& other) = delete;
+  zoned_time(zoned_time&& other) = default;
+  /// Internal validated construction also checks civil-range overflow.
+  static expected<zoned_time, errc> try_from_rules(shared_ptr<detail::zone_rules> rules, timestamp point) {
+    if (!rules || rules->types().empty()) return unexpected(errc::invalid_data);
+    auto info = ?detail::rules_info(*rules, point.unix_seconds());
+    auto added = std::checked_add(point.unix_seconds(), int64_t(info.offset));
+    if (!added) return unexpected(errc::out_of_range);
+    auto local = ?local_datetime::try_from_unix_seconds(added.value(), point.subsecond_nanoseconds());
+    return zoned_time(std::move(rules), point, local, std::move(info));
+  }
+  static zoned_time from_rules(shared_ptr<detail::zone_rules> rules, timestamp point) {
+    return zoned_time::try_from_rules(std::move(rules), point).expect("Time-zone conversion failed");
+  }
+  zoned_time clone() { return zoned_time(this.rules.clone(), this.point, this.civil,
+      detail::tz_info(this.info.offset, this.info.daylight, this.info.abbreviation.clone())); }
+  timestamp instant() { return this.point; }
+  local_datetime local() { return this.civil; }
+  int32_t offset_seconds() { return this.info.offset; }
+  bool is_daylight_saving() { return this.info.daylight; }
+  string_view abbreviation() { return this.info.abbreviation.view(); }
+  string_view zone_name() { return this.rules->name().view(); }
+  string_view database_version() { return this.rules->version().view(); }
+};
+
+namespace detail {
+expected<local_gap, errc> make_gap(int64_t transition, int32_t before, int32_t after) {
+  auto left = std::checked_add(transition, int64_t(before));
+  auto right = std::checked_add(transition, int64_t(after));
+  if (!left || !right) return unexpected(errc::out_of_range);
+  auto begin = ?local_datetime::try_from_unix_seconds(left.value());
+  auto end = ?local_datetime::try_from_unix_seconds(right.value());
+  return local_gap(begin, end, timestamp(transition));
+}
+bool covers_gap(int64_t local, int64_t transition, int32_t before, int32_t after) {
+  if (after <= before) return false;
+  auto left = std::checked_add(transition, int64_t(before));
+  auto right = std::checked_add(transition, int64_t(after));
+  if (!left || !right) return false;
+  return local >= left.value() && local < right.value();
+}
+expected<local_mapping, errc> map_local(zone_rules& rules, local_datetime local) {
+  int64_t reading = local.unix_seconds();
+  mut vector<int32_t> offsets{};
+  for (auto& type : rules.types()) {
+    mut bool seen = false;
+    for (auto offset : offsets) if (offset == type.offset) seen = true;
+    if (!seen) offsets.push_back(type.offset);
+  }
+  if (rules.footer().present) {
+    offsets.push_back(rules.footer().standard_offset);
+    if (rules.footer().daylight) offsets.push_back(rules.footer().daylight_offset);
+  }
+  mut int32_t count = 0;
+  mut int64_t earlier = 0;
+  mut int64_t later = 0;
+  mut bool unsupported = false;
+  for (auto offset : offsets) {
+    // Civil seconds are bounded to years 1..9999, so subtracting int32 is exact.
+    auto candidate = reading - int64_t(offset);
+    auto info = rules_info(rules, candidate);
+    if (!info) { unsupported = true; continue; }
+    if (info.value().offset != offset) continue;
+    if (count > 0 && (candidate == earlier || candidate == later)) continue;
+    if (count == 0) { earlier = candidate; later = candidate; }
+    else if (count == 1) {
+      if (candidate < earlier) earlier = candidate;
+      else later = candidate;
+    } else return unexpected(errc::unsupported_data);
+    count++;
+  }
+  if (unsupported) return unexpected(errc::unsupported_coverage);
+  if (count == 1) return local_mapping::unique(timestamp::create(earlier, int64_t(local.subsecond_nanoseconds())));
+  if (count == 2) return local_mapping::ambiguous(
+      timestamp::create(earlier, int64_t(local.subsecond_nanoseconds())),
+      timestamp::create(later, int64_t(local.subsecond_nanoseconds())));
+  mut int32_t previous = rules.types()[size_t(0)].offset;
+  mut uint8_t previous_kind = 0;
+  for (auto& transition : rules.transitions()) {
+    auto after = rules.types()[size_t(transition.type)].offset;
+    auto before_name = designation(rules, rules.types()[size_t(previous_kind)].designation);
+    auto after_name = designation(rules, rules.types()[size_t(transition.type)].designation);
+    bool known = bool(before_name) && bool(after_name) &&
+        (rules.footer().present || transition.second != rules.transitions().back().second);
+    if (known && covers_gap(reading, transition.second, previous, after)) {
+      return local_mapping::nonexistent(?make_gap(transition.second, previous, after));
+    }
+    previous = after;
+    previous_kind = transition.type;
+  }
+  if (rules.footer().present && rules.footer().daylight) {
+    for (mut int32_t year = local.year() - 1; year <= local.year() + 1; year++) {
+      if (year < 0 || year > 10000) continue;
+      auto start = rule_second(year, rules.footer().start, rules.footer().standard_offset);
+      auto end = rule_second(year, rules.footer().end, rules.footer().daylight_offset);
+      if ((rules.transitions().empty() || start > rules.transitions().back().second) &&
+          covers_gap(reading, start, rules.footer().standard_offset, rules.footer().daylight_offset)) {
+        return local_mapping::nonexistent(?make_gap(start, rules.footer().standard_offset, rules.footer().daylight_offset));
+      }
+      if ((rules.transitions().empty() || end > rules.transitions().back().second) &&
+          covers_gap(reading, end, rules.footer().daylight_offset, rules.footer().standard_offset)) {
+        return local_mapping::nonexistent(?make_gap(end, rules.footer().daylight_offset, rules.footer().standard_offset));
+      }
+    }
+  }
+  return unexpected(unsupported ? errc::unsupported_coverage : errc::invalid_data);
+}
+}
+
+/// An immutable owning zone handle. Explicit clone keeps an independent handle.
+class time_zone {
+  shared_ptr<detail::zone_rules> rules;
+  time_zone(shared_ptr<detail::zone_rules> rules) : rules(std::move(rules)) {}
+public:
+  time_zone(time_zone& other) = delete;
+  time_zone(time_zone&& other) = default;
+  time_zone clone() { return time_zone(this.rules.clone()); }
+  string_view name() { return this.rules->name().view(); }
+  string_view database_version() { return this.rules->version().view(); }
+  static expected<time_zone, errc> try_from_tzif(std::span<uint8_t>& bytes, string_view name, string_view version = "custom") {
+    auto rules = ?detail::parse_tzif(bytes, name, version);
+    return time_zone(std::make_shared<detail::zone_rules>(std::move(rules)));
+  }
+  static time_zone from_tzif(std::span<uint8_t>& bytes, string_view name, string_view version = "custom") {
+    return time_zone::try_from_tzif(bytes, name, version).expect("Invalid time-zone data");
+  }
+  static expected<time_zone, errc> try_fixed(int32_t offset) {
+    auto rules = ?detail::zone_rules::try_fixed(offset);
+    return time_zone(std::make_shared<detail::zone_rules>(std::move(rules)));
+  }
+  static time_zone fixed(int32_t offset) { return time_zone::try_fixed(offset).expect("Invalid time-zone offset"); }
+  static time_zone utc() { return time_zone::fixed(0); }
+  expected<zoned_time, errc> try_at(timestamp point) {
+    return zoned_time::try_from_rules(this.rules.clone(), point);
+  }
+  zoned_time at(timestamp point) { return this.try_at(point).expect("Time-zone conversion failed"); }
+  expected<local_mapping, errc> try_lookup(local_datetime local) { return detail::map_local(*this.rules, local); }
+  local_mapping lookup(local_datetime local) { return this.try_lookup(local).expect("Local-time lookup failed"); }
+  expected<zoned_time, errc> try_resolve(local_datetime local, resolve_policy policy = resolve_policy()) {
+    auto result = ?this.try_lookup(local);
+    switch (result) {
+      case local_mapping::unique(instant): return this.try_at(instant);
+      case local_mapping::ambiguous(earlier, later):
+        if (policy.fold == fold_policy::earlier) return this.try_at(earlier);
+        if (policy.fold == fold_policy::later) return this.try_at(later);
+        return unexpected(errc::ambiguous_time);
+      case local_mapping::nonexistent(gap):
+        if (policy.gap == gap_policy::next_valid) return this.try_at(gap.next);
+        return unexpected(errc::nonexistent_time);
+    }
+  }
+  zoned_time resolve(local_datetime local, resolve_policy policy = resolve_policy()) {
+    return this.try_resolve(local, policy).expect("Local-time resolution failed");
+  }
+};
+
+namespace detail {
+struct tz_entry {
+  string name;
+  size_t start;
+  size_t length;
+  tz_entry(tz_entry& other) = delete;
+  tz_entry(tz_entry&& other) = default;
+  tz_entry(string name, size_t start, size_t length) : name(std::move(name)), start(start), length(length) {}
+};
+struct tz_database {
+  mut vector<uint8_t> bytes{};
+  mut string version{};
+  mut vector<tz_entry> entries{};
+  tz_database() {}
+  tz_database(tz_database& other) = delete;
+  tz_database(tz_database&& other) = default;
+};
+bool valid_zone_name(string_view name) {
+  if (name.empty() || name.size() > size_t(255)) return false;
+  mut bool component_empty = true;
+  mut int32_t dots = 0;
+  for (mut size_t i = 0; i < name.size(); i++) {
+    auto c = name[i];
+    if (c == '/') {
+      if (component_empty || dots == 1 || dots == 2) return false;
+      component_empty = true;
+      dots = 0;
+    } else {
+      if (!tz_alpha(c) && !tz_digit(c) && c != '_' && c != '-' && c != '+' && c != '.') return false;
+      component_empty = false;
+      dots = c == '.' && dots >= 0 ? dots + 1 : -1;
+    }
+  }
+  return !component_empty && dots != 1 && dots != 2;
+}
+expected<tz_database, errc> parse_database(vector<uint8_t> bytes) {
+  if (bytes.size() > size_t(67108864)) return unexpected(errc::resource_limit);
+  auto view = bytes.as_span();
+  mut tz_reader input{view};
+  auto magic = ?input.text(size_t(8));
+  if (magic != "GTITZDB1") return unexpected(errc::invalid_data);
+  auto version_size = ?input.u32();
+  if (version_size == 0 || version_size > 64) return unexpected(errc::invalid_data);
+  auto version = ?input.text(size_t(version_size));
+  auto count = ?input.u32();
+  if (count > 4096) return unexpected(errc::resource_limit);
+  mut vector<tz_entry> entries{};
+  for (mut uint32_t i = 0; i < count; i++) {
+    auto name_size = ?input.u32();
+    if (name_size > 255) return unexpected(errc::invalid_data);
+    auto name = ?input.text(size_t(name_size));
+    if (!valid_zone_name(name.view())) return unexpected(errc::invalid_data);
+    for (auto& entry : entries) if (entry.name == name) return unexpected(errc::invalid_data);
+    auto size = ?input.u32();
+    if (size > 4194304) return unexpected(errc::resource_limit);
+    entries.push_back(tz_entry(std::move(name), input.tell(), size_t(size)));
+    ?input.skip(size_t(size));
+  }
+  if (input.remaining() != 0) return unexpected(errc::invalid_data);
+  mut tz_database result{};
+  result.version = std::move(version);
+  result.entries = std::move(entries);
+  // All input borrows have ended before transferring the immutable bytes.
+  result.bytes = std::move(bytes);
+  return std::move(result);
+}
+expected<vector<uint8_t>, errc> load_database_bytes(string_view path) {
+  auto opened = std::fopen(path, std::file_mode::read);
+  if (!opened) return unexpected(errc::unavailable);
+  mut auto file = std::move(opened).value();
+  mut vector<uint8_t> result{};
+  while (true) {
+    auto chunk_result = file->read_some(size_t(4096));
+    if (!chunk_result) return unexpected(errc::unavailable);
+    auto chunk = std::move(chunk_result).value();
+    if (chunk.empty()) break;
+    if (chunk.size() > size_t(67108864) - result.size()) return unexpected(errc::resource_limit);
+    for (mut size_t i = 0; i < chunk.size(); i++) result.push_back(uint8_t(chunk[i]));
+  }
+  return std::move(result);
+}
+}
+
+/// An immutable snapshot. Replacing the original file cannot change this object.
+class tzdb {
+  shared_ptr<detail::tz_database> data;
+  tzdb(shared_ptr<detail::tz_database> data) : data(std::move(data)) {}
+public:
+  tzdb(tzdb& other) = delete;
+  tzdb(tzdb&& other) = default;
+  tzdb clone() { return tzdb(this.data.clone()); }
+  string_view version() { return this.data->version.view(); }
+  size_t size() { return this.data->entries.size(); }
+  /// Lists owned identifiers; callers may retain them after this snapshot dies.
+  vector<string> names() {
+    mut vector<string> result{};
+    result.reserve(this.size());
+    for (auto& entry : this.data->entries) result.push_back(entry.name.clone());
+    return std::move(result);
+  }
+  static expected<tzdb, errc> try_from_bytes(vector<uint8_t> bytes) {
+    auto parsed = ?detail::parse_database(std::move(bytes));
+    return tzdb(std::make_shared<detail::tz_database>(std::move(parsed)));
+  }
+  static tzdb from_bytes(vector<uint8_t> bytes) { return tzdb::try_from_bytes(std::move(bytes)).expect("Invalid time-zone database"); }
+  static expected<tzdb, errc> try_load(string_view path) {
+    auto bytes = ?detail::load_database_bytes(path);
+    return tzdb::try_from_bytes(std::move(bytes));
+  }
+  static tzdb load(string_view path) { return tzdb::try_load(path).expect("Cannot load time-zone database"); }
+  static expected<tzdb, errc> try_load_default() {
+    auto bytes = ?detail::try_default_tzdb_bytes();
+    return tzdb::try_from_bytes(std::move(bytes));
+  }
+  static tzdb load_default() { return tzdb::try_load_default().expect("Cannot load default time-zone database"); }
+  expected<time_zone, errc> try_locate(string_view name) {
+    if (!detail::valid_zone_name(name)) return unexpected(errc::unknown_zone);
+    for (auto& entry : this.data->entries) {
+      if (entry.name == name) {
+        auto view = this.data->bytes.as_span();
+        auto zone = view.subspan(entry.start, entry.length);
+        return time_zone::try_from_tzif(zone, entry.name.view(), this.data->version.view());
+      }
+    }
+    return unexpected(errc::unknown_zone);
+  }
+  time_zone locate(string_view name) { return this.try_locate(name).expect("Unknown time zone"); }
+};
+}
+
+// The conformance belongs beside its nominal type, not in the pattern module.
+for concept std::formatting<std::chrono::zoned_time> {
+  expected<void, std::format_errc> format(std::chrono::zoned_time& value,
+      mut std::string& output, std::format_spec& spec) {
+    auto local = value.local();
+    mut auto text = std::format("{}", local);
+    int64_t offset = int64_t(value.offset_seconds());
+    text.push_back(offset < 0i64 ? '-' : '+');
+    int64_t magnitude = offset < 0i64 ? -offset : offset;
+    auto hours = magnitude / 3600i64;
+    auto minutes = (magnitude / 60i64) % 60i64;
+    auto seconds = magnitude % 60i64;
+    if (hours < 10i64) text.push_back('0');
+    auto hour_text = std::to_string(hours);
+    text.append(hour_text.view());
+    text.push_back(':');
+    if (minutes < 10i64) text.push_back('0');
+    auto minute_text = std::to_string(minutes);
+    text.append(minute_text.view());
+    if (seconds != 0i64) {
+      text.push_back(':');
+      if (seconds < 10i64) text.push_back('0');
+      auto second_text = std::to_string(seconds);
+      text.append(second_text.view());
+    }
+    text.push_back('[');
+    text.append(value.zone_name());
+    text.push_back(']');
+    return std::formatting<std::string>::format(text, output, spec);
+  }
+};

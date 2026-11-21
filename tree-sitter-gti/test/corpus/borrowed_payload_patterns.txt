@@ -62,3 +62,48 @@ int main() {
               (primary_expression
                 (literal
                   (integer_literal))))))))))
+
+==================
+Conditional payload reference
+==================
+int main() {
+  if (case Data::seconds(auto& seconds) = dst.period) {
+    return seconds;
+  } else {
+    return 0;
+  }
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (if_statement
+        (call_expression
+          (primary_expression
+            (scoped_identifier
+              (identifier)
+              (identifier)))
+          (argument_list
+            (payload_reference_pattern
+              (identifier))))
+        (member_expression
+          (primary_expression
+            (identifier))
+          (identifier))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))

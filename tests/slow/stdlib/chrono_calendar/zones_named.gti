@@ -1,0 +1,27 @@
+// A named-zone snapshot resolves folds and gaps and applies future POSIX rules.
+//@ run-pass
+//@ slow
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  auto db = c::tzdb::load_default();
+  auto zone = db.locate("America/New_York");
+  auto winter = zone.resolve(c::local_datetime::create(2026, 1, 15, 12, 0, 0));
+  if (winter.offset_seconds() != -18000) return 1;
+  auto summer = zone.resolve(c::local_datetime::create(2026, 7, 15, 12, 0, 0));
+  if (summer.offset_seconds() != -14400) return 2;
+  auto gap = c::local_datetime::create(2026, 3, 8, 2, 30, 0);
+  auto rejected_gap = zone.try_resolve(gap);
+  if (rejected_gap || rejected_gap.error() != c::errc::nonexistent_time) return 3;
+  auto next = zone.resolve(gap, c::resolve_policy(c::fold_policy::reject, c::gap_policy::next_valid));
+  if (next.local().hour() != 3 || next.local().minute() != 0) return 4;
+  auto fold = c::local_datetime::create(2026, 11, 1, 1, 30, 0);
+  auto rejected_fold = zone.try_resolve(fold);
+  if (rejected_fold || rejected_fold.error() != c::errc::ambiguous_time) return 5;
+  auto earlier = zone.resolve(fold, c::resolve_policy(c::fold_policy::earlier, c::gap_policy::reject));
+  auto later = zone.resolve(fold, c::resolve_policy(c::fold_policy::later, c::gap_policy::reject));
+  if (later.instant().unix_seconds() - earlier.instant().unix_seconds() != 3600i64) return 6;
+  auto future = zone.resolve(c::local_datetime::create(2500, 7, 15, 12, 0, 0));
+  if (future.offset_seconds() != -14400) return 7;
+  return 0;
+}

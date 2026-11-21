@@ -550,7 +550,7 @@ void SourceLoader::loadEmbeddedFiles() {
   };
 
   for (SourceUnit &unit : graph.units) {
-    if (!unit.tokens)
+    if (!unit.tokens || archivedEmbeddedInputs.contains(unit.path.string()))
       continue;
     const auto *owner = packageForPath(unit.path);
     const auto allowed = [&](const std::filesystem::path &path) {

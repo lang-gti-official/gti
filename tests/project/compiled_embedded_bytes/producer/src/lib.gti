@@ -1,0 +1,13 @@
+export module asset_bank;
+import std.span;
+namespace assets {
+constexpr std::span<uint8_t, static> shared = embed_bytes("assets/data.bin");
+export uint8_t first<T>(T ignored) {
+  auto bytes = embed_bytes("assets/data.bin");
+  return bytes[0] == shared[0] ? bytes[0] : uint8_t(255);
+}
+export std::size_t size<T>(T ignored) {
+  auto bytes = embed_bytes("assets/data.bin");
+  return bytes.size();
+}
+}
