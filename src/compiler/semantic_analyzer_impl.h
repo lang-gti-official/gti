@@ -6800,8 +6800,9 @@ private:
   [[nodiscard]] const MemberInfo *findMember(const SemanticType &objectType,
                                              const Token &name) const;
 
-  [[nodiscard]] const MemberInfo *resolveMember(const SemanticType &objectType,
-                                                const Token &name);
+  [[nodiscard]] const MemberInfo *
+  resolveMember(const SemanticType &objectType, const Token &name,
+                std::optional<AccessMode> fieldAccess);
 
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const;
 

@@ -10775,7 +10775,9 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     }
     return;
   }
-  const MemberInfo *member = resolveMember(objectType, expr.name());
+  const MemberInfo *member = resolveMember(
+      objectType, expr.name(),
+      analyzingCallCallee ? std::nullopt : std::optional{AccessMode::ReadOnly});
   if (member == nullptr) {
     currentType = SemanticType::Unknown;
     return;
@@ -10804,6 +10806,35 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     report(expr.name(),
            "Function names must be called; function values are not "
            "supported yet.");
+    // An explicit call can have effects, even on a read-only receiver. Offer
+    // it for review only when the declaration itself proves a zero-arg call.
+    if (expr.access().kind == TokenKind::DOT && !expr.name().generated &&
+        !macroExpansionDepth && !macroContext(expr.name()) &&
+        !instanceAnalysisActive &&
+        classInfo(objectType)->kind != ClassKind::Union &&
+        member->symbol.overloads.size() == 1) {
+      const CallableCandidate &method = member->symbol.overloads.front();
+      if (method.declarationRecord && method.declaration &&
+          !method.declaration->isConsteval() &&
+          !method.record().macroExpansion && !method.compilerPrivate &&
+          !method.record().requiresUnsafe && !method.staticMember &&
+          method.receiverMutability == ReceiverMutability::ReadOnly &&
+          method.parameterTypes.empty() && !method.parameterPack &&
+          method.record().genericParameters.empty() &&
+          method.requirements.empty() &&
+          method.returnType != SemanticType::Void &&
+          !semanticModel.isCompilerPrivateType(method.returnType) &&
+          canAccessMember(method.access, method.ownerClass, objectType)) {
+        auto insertion = tokenSpan(expr.name());
+        insertion.start = insertion.end;
+        diagnostics.back().fixes.push_back(
+            {.span = std::move(insertion),
+             .replacement = "()",
+             .message = "Call '" + expr.name().lexeme + "()'",
+             .preferred = false,
+             .applicability = RepairApplicability::RequiresReview});
+      }
+    }
   }
 }
 
@@ -13210,7 +13241,9 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     }
   }
 
-  const MemberInfo *member = resolveMember(objectType, expr.name());
+  const MemberInfo *member = resolveMember(
+      objectType, expr.name(),
+      mutableReceiver ? std::optional{AccessMode::Mutable} : std::nullopt);
   if (member == nullptr) {
     analyze(expr.value());
     currentType = SemanticType::Unknown;

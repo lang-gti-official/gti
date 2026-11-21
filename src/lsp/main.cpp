@@ -226,6 +226,12 @@ struct LspFixIt {
   bool sourceKnown = false;
 };
 
+struct RepairInputs {
+  std::unordered_map<std::string, std::uint64_t> dependencies;
+  std::unordered_map<std::string, std::uint64_t> documentGenerations;
+  lang::lsp::FrontendSourceSnapshot sources;
+};
+
 struct LspDiagnostic {
   lang::Diagnostic diagnostic;
   std::string uri;
@@ -233,8 +239,29 @@ struct LspDiagnostic {
   std::vector<LspRelatedDiagnostic> related;
   std::vector<LspFixIt> fixes;
   std::string repairSnapshot;
+  std::shared_ptr<const RepairInputs> earlyRepairInputs;
   bool provisionalLookup = false;
 };
+
+// Bind only diagnostics proved by this publication. A retained diagnostic
+// alongside them may come from a different edit or a different set of inputs.
+void bindEarlyRepairs(
+    std::span<LspDiagnostic> diagnostics, const std::string &uri,
+    std::uint64_t generation,
+    const std::unordered_map<std::string, std::uint64_t> &dependencies,
+    const std::unordered_map<std::string, std::uint64_t> &documentGenerations,
+    const lang::lsp::FrontendSourceSnapshot &sources) {
+  std::shared_ptr<const RepairInputs> inputs;
+  for (auto &diagnostic : diagnostics) {
+    if (diagnostic.uri != uri || diagnostic.fixes.empty())
+      continue;
+    if (!inputs)
+      inputs = std::make_shared<const RepairInputs>(
+          RepairInputs{dependencies, documentGenerations, sources});
+    diagnostic.repairSnapshot = uri + ":" + std::to_string(generation);
+    diagnostic.earlyRepairInputs = inputs;
+  }
+}
 
 struct CodeActionCandidate {
   LspDiagnostic diagnostic;
@@ -1023,6 +1050,10 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
   if (requestedValues == nullptr) {
     return false;
   }
+  // A range request may precede the client's diagnostic cache. Explicitly
+  // supplied diagnostics still have to match the current publication.
+  if (requestedValues->empty())
+    return true;
   const Position expectedStart =
       positionAt(diagnostic.source, diagnostic.diagnostic.primary.start);
   const Position expectedEnd =
@@ -3446,16 +3477,12 @@ private:
           snapshot != analysisSnapshots.end() &&
           snapshot->second.generation == generation->second &&
           snapshot->second.frontend != nullptr;
-      const auto syntax = syntaxRepairInputs.find(uri);
-      const bool syntaxCurrent =
-          syntax != syntaxRepairInputs.end() &&
-          sourceInputsCurrentLocked(syntax->second.dependencies,
-                                    syntax->second.documentGenerations,
-                                    syntax->second.sources);
       if (document != documents.end() &&
-          generation != analysisGenerations.end() &&
-          (fullCurrent || syntaxCurrent)) {
+          generation != analysisGenerations.end()) {
+        const auto currentRepair =
+            uri + ":" + std::to_string(generation->second);
         std::unordered_set<std::string> seen;
+        std::unordered_map<const RepairInputs *, bool> checkedInputs;
         for (const auto &[root, diagnostics] : diagnosticsByRoot) {
           const auto owner = analysisSnapshots.find(root);
           const auto ownerGeneration = analysisGenerations.find(root);
@@ -3464,21 +3491,26 @@ private:
               owner->second.frontend &&
               ownerGeneration != analysisGenerations.end() &&
               owner->second.generation == ownerGeneration->second;
-          if (!fullOwner && !(syntaxCurrent && root == uri))
+          if (!fullOwner && root != uri)
             continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
-            // Only the parse fixes published for this exact root generation
-            // are actionable before its complete snapshot is available.
-            if (!fullOwner &&
-                diagnostic.repairSnapshot !=
-                    root + ":" + std::to_string(generation->second))
-              continue;
-            if (diagnostic.uri != uri ||
+            if (diagnostic.fixes.empty() || diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
                 !diagnosticRequested(diagnostic, requestedDiagnostics,
-                                     codeActionLiterals, diagnosticData)) {
+                                     codeActionLiterals, diagnosticData))
               continue;
+            if (!fullOwner) {
+              const auto *inputs = diagnostic.earlyRepairInputs.get();
+              if (!inputs || diagnostic.repairSnapshot != currentRepair)
+                continue;
+              auto [it, inserted] = checkedInputs.try_emplace(inputs);
+              if (inserted)
+                it->second = sourceInputsCurrentLocked(
+                    inputs->dependencies, inputs->documentGenerations,
+                    inputs->sources);
+              if (!it->second)
+                continue;
             }
             for (auto group : repairGroups(diagnostic)) {
               if (!validRepairGroup(group))
@@ -4422,6 +4454,9 @@ private:
           affected.insert(d.uri);
           lastBodyDiagnostics.push_back(d.diagnostic);
         }
+        bindEarlyRepairs(current, request.uri, request.generation,
+                         baseline->dependencies, baseline->documentGenerations,
+                         baseline->inputs);
         diagnosticsByRoot[request.uri] = std::move(current);
         publications = publicationsForLocked(affected);
       }
@@ -4966,22 +5001,14 @@ private:
           }))
         return;
       std::erase_if(previous, localSyntax);
-      bool hasRepairs = false;
+      const auto firstNew = previous.size();
       for (const auto &diagnostic : syntax.diagnostics) {
-        if (!localSyntax(diagnostic))
-          continue;
-        auto &published = previous.emplace_back(diagnostic);
-        if (!published.fixes.empty()) {
-          hasRepairs = true;
-          published.repairSnapshot =
-              request.uri + ":" + std::to_string(request.generation);
-        }
+        if (localSyntax(diagnostic))
+          previous.push_back(diagnostic);
       }
-      if (hasRepairs)
-        syntaxRepairInputs.insert_or_assign(
-            request.uri,
-            SyntaxRepairInputs{syntax.dependencies, request.documentGenerations,
-                               request.frontendSources});
+      bindEarlyRepairs(std::span(previous).subspan(firstNew), request.uri,
+                       request.generation, syntax.dependencies,
+                       request.documentGenerations, request.frontendSources);
       publications = publicationsForLocked({request.uri});
     }
     publish(std::move(publications),
@@ -5059,11 +5086,23 @@ private:
         if (initial || (compatible &&
                         (editError || std::ranges::any_of(previous, owned)))) {
           bool changed = std::erase_if(previous, owned) != 0;
+          bindEarlyRepairs(checked.diagnostics, request.uri, request.generation,
+                           checked.dependencies, request.documentGenerations,
+                           request.frontendSources);
           for (auto &d : checked.diagnostics) {
-            if (d.uri != request.uri ||
-                std::ranges::find(previous, d.diagnostic,
-                                  &LspDiagnostic::diagnostic) != previous.end())
+            if (d.uri != request.uri)
               continue;
+            const auto existing = std::ranges::find(previous, d.diagnostic,
+                                                    &LspDiagnostic::diagnostic);
+            if (existing != previous.end()) {
+              if (d.earlyRepairInputs &&
+                  existing->repairSnapshot != d.repairSnapshot) {
+                existing->earlyRepairInputs = std::move(d.earlyRepairInputs);
+                existing->repairSnapshot = std::move(d.repairSnapshot);
+                changed = true;
+              }
+              continue;
+            }
             d.provisionalLookup = lookup;
             previous.push_back(std::move(d));
             changed = true;
@@ -5169,7 +5208,6 @@ private:
             }
           }
         }
-        syntaxRepairInputs.erase(request.uri);
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         const auto rootDigest = lang::sourceTextDigest(request.source);
         // Recovery keeps one last-valid graph for unchanged root text, never
@@ -5472,7 +5510,6 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
-    syntaxRepairInputs.erase(uri);
     for (const auto &[id, active] : activeCompletionRequests) {
       if (active.uri == uri)
         active.cancellation->store(true, std::memory_order_relaxed);
@@ -6091,14 +6128,6 @@ private:
   std::unordered_map<std::string, std::optional<std::uint64_t>>
       savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
-  struct SyntaxRepairInputs {
-    std::unordered_map<std::string, std::uint64_t> dependencies;
-    std::unordered_map<std::string, std::uint64_t> documentGenerations;
-    lang::lsp::FrontendSourceSnapshot sources;
-  };
-  // Exists only from publication of a parse fix until this parse is superseded
-  // or the full analysis publishes. It never authorizes semantic requests.
-  std::unordered_map<std::string, SyntaxRepairInputs> syntaxRepairInputs;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,
                      std::unordered_map<std::string, std::uint64_t>>
