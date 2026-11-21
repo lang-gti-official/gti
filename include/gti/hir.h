@@ -871,6 +871,7 @@ struct HirProgramInitializationStep {
   HirBindingId binding = 0;
   std::optional<HirValueId> initializer;
   HirStatementId statement = 0;
+  std::optional<ConstantValue> dataConstant;
 };
 
 struct HirProgramInitializationPlan {

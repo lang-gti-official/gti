@@ -112,28 +112,27 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
     const VariableDecl &declaration, const SemanticType &type,
     ConstantEvaluationFailure failure, const std::string &failureDetail,
     const Token &location, const std::optional<Token> &libraryLocation) {
-  std::string message = "The initializer for constexpr binding '" +
-                        declaration.name().lexeme +
-                        "' is not a constant expression.";
+  const std::string binding =
+      declaration.isConstexpr() ? "constexpr binding" : "function-local static";
+  const std::string initializer =
+      "The initializer for " + binding + " '" + declaration.name().lexeme + "'";
+  std::string message = initializer + " is not a constant expression.";
   std::string hint =
       "Use literals, earlier constexpr bindings, supported operators and "
       "conversions, fixed-array or structural-field observation, or calls "
       "to available constexpr functions and constructors.";
   switch (failure) {
   case ConstantEvaluationFailure::NonConstantReference:
-    message = "The initializer for constexpr binding '" +
-              declaration.name().lexeme +
-              "' reads a binding that is not constexpr.";
+    message = initializer + " reads a binding that is not constexpr.";
     break;
   case ConstantEvaluationFailure::ResourceLimit:
-    message = "The initializer for constexpr binding '" +
-              declaration.name().lexeme +
-              "' exceeded the compiler's bounded evaluation limit.";
+    message =
+        initializer + " exceeded the compiler's bounded evaluation limit.";
     hint = "Reduce constexpr recursion or loop work, or split the "
            "calculation into smaller constexpr bindings.";
     break;
   case ConstantEvaluationFailure::IntegerOverflow:
-    message = "Integer overflow occurred while evaluating constexpr binding '" +
+    message = "Integer overflow occurred while evaluating " + binding + " '" +
               declaration.name().lexeme + "'.";
     hint = "Use a wider explicit integer type or keep the result within its "
            "declared range.";
@@ -172,9 +171,7 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
               "these operand types.";
     break;
   case ConstantEvaluationFailure::Panicked:
-    message = "The initializer for constexpr binding '" +
-              declaration.name().lexeme + "' failed. " +
-              compileTimePanicText(failureDetail);
+    message = initializer + " failed. " + compileTimePanicText(failureDetail);
     hint = "A panic that executes during compilation fails the request with "
            "its message.";
     break;
@@ -196,8 +193,10 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
       makeDiagnostic("GTI-S2057", DiagnosticPhase::Semantics,
                      location.lexeme.empty() ? declaration.name() : location,
                      std::move(message));
-  diagnostic.related.push_back({tokenSpan(*declaration.constexprKeyword()),
-                                "constexpr binding declared here."});
+  diagnostic.related.push_back(
+      {tokenSpan(declaration.isConstexpr() ? *declaration.constexprKeyword()
+                                           : *declaration.staticKeyword()),
+       binding + " declared here."});
   diagnostic.hints.emplace_back(std::move(hint));
   if (libraryLocation)
     diagnostic.related.insert(diagnostic.related.begin(),

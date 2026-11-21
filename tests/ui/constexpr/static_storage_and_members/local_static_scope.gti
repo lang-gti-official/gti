@@ -1,0 +1,7 @@
+// Function-local static names remain visible only within the declaring block.
+int main() {
+  {
+    static int hidden = 1;
+  }
+  return hidden;  //~ ERROR GTI-S2001
+}

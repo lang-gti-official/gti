@@ -7907,10 +7907,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       program.programInitializationPlan().findStepForSymbol(place.symbol);
   const auto *storage =
       step ? program.module().findPlace(step->storagePlace) : nullptr;
-  return storage != nullptr &&
-         (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
-          step->storageKind == ProgramStorageKind::StaticField) &&
-         storage->access == AccessMode::ReadOnly &&
+  return storage != nullptr && storage->access == AccessMode::ReadOnly &&
          (!storage->traits.containsBorrowedState ||
           findMirConstantStorage(program, place.symbol));
 }
@@ -11966,8 +11963,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
           program.findClassInstance(step.ownerClass) == nullptr) {
         add("static-field initialization step has an invalid class owner");
       }
-    } else {
-      add("program-initialization step has an invalid storage kind");
+    } else if (step.storageKind != ProgramStorageKind::FunctionLocal ||
+               step.ownerClass != 0 || !step.dataConstant ||
+               step.role != ProgramInitializationStepRole::DataOnly ||
+               step.requiresActiveCleanup) {
+      add("program-initialization step has an invalid storage kind or "
+          "function-local initialization");
     }
     HirBindingId previousLocal = 0;
     for (const auto &local : step.locals) {

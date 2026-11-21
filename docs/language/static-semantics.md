@@ -2599,9 +2599,9 @@ body to mark and is constant-eligible with its class.
 - Releasing a region requires every object needing cleanup in it to have been
   destroyed. Every region must be released before the request completes, so an
   owning container never becomes a persistent constant.
-- A `constexpr` class static or namespace variable read during evaluation
-  takes the value its verified initializer computes. Other static storage is
-  not a constant.
+- A `constexpr` static or namespace variable read during evaluation takes
+  the value its verified initializer computes. Constant initialization
+  alone does not make a binding usable in constant expressions.
 - Raw pointers may appear in `constexpr` signatures, locals and fields.
   Every access requires a live object. A null pointer, a pointer into a
   released region or a returned call's local, and arithmetic outside one

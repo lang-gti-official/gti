@@ -1,5 +1,5 @@
 ==================
-Thread-local namespace, static-field and block storage
+Static and thread-local storage
 ==================
 
 thread_local mut int counter = 0;
@@ -11,6 +11,7 @@ class Registry {
 void work() {
   thread_local mut int local = 0;
   static thread_local int other = 1;
+  static mut int calls = 0;
 }
 
 ---
@@ -58,6 +59,14 @@ void work() {
     (parameter_clause)
     (block
       (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (static_variable_declaration
         (type
           (primitive_type))
         (identifier)
