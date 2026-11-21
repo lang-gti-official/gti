@@ -458,6 +458,38 @@ parseOutput(const BuildScriptPlan &plan, const TargetInfo &target,
                : std::nullopt;
 }
 
+// An output-free successful script needs no publication boilerplate. Persist
+// the empty output through the same manifest contract so cache reuse still
+// requires a present, valid manifest (and a removed manifest triggers a rerun).
+bool completeOutput(const BuildScriptPlan &plan,
+                    std::vector<Diagnostic> &diagnostics) {
+  const std::filesystem::path manifest = plan.outputDirectory / outputFilename;
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(manifest, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    diagnostics.push_back(scriptDiagnostic(
+        plan, "GTI-B2003",
+        "Cannot inspect build-script output '" + manifest.string() +
+            "': " + error.message() + "."));
+    return false;
+  }
+  // Do not replace existing output, including a dangling symlink. Parsing and
+  // native-output validation remain authoritative for explicit publication.
+  if (status.type() != std::filesystem::file_type::not_found) {
+    return true;
+  }
+  std::ofstream output(manifest, std::ios::binary | std::ios::trunc);
+  output << "version = 1\n";
+  output.close();
+  if (!output) {
+    diagnostics.push_back(scriptDiagnostic(
+        plan, "GTI-B2003",
+        "Cannot write empty build-script output '" + manifest.string() + "'."));
+    return false;
+  }
+  return true;
+}
+
 void appendOutput(NativeInputs &inputs, const BuildScriptPlan &plan,
                   ScriptNativeOutput output) {
   if (plan.selectedPackage) {
@@ -754,6 +786,9 @@ executeBuildScripts(const ProjectBuildPlan &plan,
                 : process.output.substr(process.output.size() - limit));
       }
       result.diagnostics.push_back(std::move(diagnostic));
+      return result;
+    }
+    if (!completeOutput(script, result.diagnostics)) {
       return result;
     }
     std::optional<ScriptNativeOutput> native =
