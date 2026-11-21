@@ -1,0 +1,9 @@
+// Non-try invalid date construction uses the defined panic path.
+//@ run-fail
+//@ stderr-contains: Invalid calendar date
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  auto date = std::chrono::date::create(2026, 2, 29);
+  return date.day();
+}

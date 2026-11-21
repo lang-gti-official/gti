@@ -1,0 +1,10 @@
+// A provisional owned-result promise cannot bypass the concrete producer body requirement.
+struct Value { Value() = default; };
+struct Source { Source() = default; };
+Value produce(Source& source);
+concept produces<S> = requires(S& source) { { produce(source) } -> Value; };
+int consume(Value& value) { return 0; }
+int run<S>(S& source) requires produces<S> {
+  return consume(produce(source)); //~ ERROR GTI-S2017
+}
+int main() { Source source{}; return run(source); }

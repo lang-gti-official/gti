@@ -1389,7 +1389,8 @@ unsafe-statement       = "unsafe" block ;
    provenance, writable access, and native-call requirements as applicable;
    violating one of those obligations is undefined behavior. *)
 
-if-statement           = "if" [ "constexpr" ] "(" [ init-statement ] expression ")"
+if-statement           = "if" ( [ "constexpr" ] "(" [ init-statement ] expression ")"
+                              | "(" "case" payload-borrow-pattern "=" expression ")" )
                          statement [ "else" statement ] ;
 
 init-statement         = variable-declaration
@@ -1850,6 +1851,7 @@ increment-suffix       = "++" | "--" ;
 primary-expression     = literal
                        | numeric-conversion
                        | layout-query-expression
+                       | embed-bytes-expression
                        | member-requirement
                        | qualified-name
                        | lambda-expression
@@ -1860,6 +1862,8 @@ primary-expression     = literal
                        | pack-fold-expression
                        | unsafe-expression
                        | "(" expression ")" ;
+
+embed-bytes-expression = "embed_bytes" "(" STRING_LITERAL ")" ;
 
 unsafe-expression      = "unsafe" "{" expression "}" ;
 

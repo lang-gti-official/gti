@@ -1,0 +1,6 @@
+// A path must be a literal at the embedding site.
+import std.span;
+
+std::span<uint8_t, static> load(std::string_view name) {
+  return embed_bytes(name);  //~ ERROR GTI-S2129 exactly one string literal path
+}

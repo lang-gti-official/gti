@@ -200,6 +200,7 @@ public:
   [[nodiscard]] StmtPtr stmt(const Stmt &statement) {
     StmtPtr copy = cloneStatement(statement);
     if (copy) {
+      copy->setInterfaceLambdaCount(statement.interfaceLambdaCount());
       if (statement.extent()) {
         copy->setExtent(*statement.extent());
       }
@@ -246,7 +247,8 @@ private:
     case ExprKind::ArrayInitializer: {
       const auto &node = static_cast<const ArrayInitializer &>(expression);
       return std::make_unique<ArrayInitializer>(
-          tok(node.brace()), exprs(node.elements()), tok(node.closingBrace()));
+          tok(node.brace()), exprs(node.elements()), tok(node.closingBrace()),
+          node.packedBytes());
     }
     case ExprKind::Binary: {
       const auto &node = static_cast<const Binary &>(expression);
@@ -337,10 +339,12 @@ private:
       if (!stmts(node.body(), body)) {
         return nullptr;
       }
-      return std::make_unique<Lambda>(tok(node.bracket()), std::move(captures),
-                                      parameters(node.parameters()),
-                                      tok(node.arrow()),
-                                      type(node.returnType()), std::move(body));
+      auto copy = std::make_unique<Lambda>(
+          tok(node.bracket()), std::move(captures),
+          parameters(node.parameters()), tok(node.arrow()),
+          type(node.returnType()), std::move(body));
+      copy->setInterfaceBodySpan(node.interfaceBodySpan());
+      return copy;
     }
     case ExprKind::LayoutQuery: {
       const auto &node = static_cast<const LayoutQuery &>(expression);
@@ -575,7 +579,8 @@ private:
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
           mapped(node.coreLoop()), mapped(node.elementOwnerBinding()),
-          mapped(node.sourceBody()), std::move(initializer));
+          mapped(node.sourceBody()), std::move(initializer),
+          node.syntaxOrdinal());
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);

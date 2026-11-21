@@ -1,0 +1,35 @@
+// Split timestamps preserve negative fractions and exact system-clock endpoints.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  int64_t minimum = -9223372036854775807i64 - 1i64;
+  int64_t maximum = 9223372036854775807i64;
+  auto min_point = c::system_time_point(c::nanoseconds(minimum));
+  auto max_point = c::system_time_point(c::nanoseconds(maximum));
+  auto min_stamp = c::timestamp::from_system_time_point(min_point);
+  auto max_stamp = c::timestamp::from_system_time_point(max_point);
+  auto min_back = min_stamp.to_system_time_point();
+  auto max_back = max_stamp.to_system_time_point();
+  if (min_back.nanoseconds_since_unix_epoch() != minimum || max_back.nanoseconds_since_unix_epoch() != maximum) { return 1; }
+  auto before_min = min_stamp.sub(c::nanoseconds(1i64));
+  auto after_max = max_stamp.add(c::nanoseconds(1i64));
+  if (before_min.try_to_system_time_point() || after_max.try_to_system_time_point()) { return 2; }
+  auto negative = c::timestamp::create(0i64, -1i64);
+  if (negative.unix_seconds() != -1i64 || negative.subsecond_nanoseconds() != 999999999) { return 3; }
+  auto later = negative.add(c::nanoseconds(2i64));
+  auto difference = later.elapsed_since(negative);
+  if (later.unix_seconds() != 0i64 || later.subsecond_nanoseconds() != 1 || difference.count() != 2i64) { return 4; }
+  if (c::timestamp::try_create(minimum, -1i64)) { return 5; }
+  if (c::timestamp::try_create(maximum, 1000000000i64)) { return 6; }
+  auto low = c::timestamp(minimum);
+  auto high = c::timestamp(maximum);
+  if (low.try_elapsed_since(high) || high.try_elapsed_since(low)) { return 7; }
+  if (high.try_add(c::nanoseconds(1000000000i64)) || low.try_sub(c::nanoseconds(1i64))) { return 8; }
+  auto ancient = c::local_datetime::create(1, 1, 1, 0, 0, 0);
+  auto distant = c::local_datetime::create(9999, 12, 31, 23, 59, 59, 999999999);
+  auto ancient_roundtrip = c::local_datetime::from_unix_seconds(ancient.unix_seconds());
+  auto distant_roundtrip = c::local_datetime::from_unix_seconds(distant.unix_seconds(), distant.subsecond_nanoseconds());
+  if (ancient_roundtrip.year() != 1 || distant_roundtrip.year() != 9999) { return 9; }
+  return 0;
+}

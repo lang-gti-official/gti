@@ -1,0 +1,8 @@
+// Windows drive recognition compares ASCII bytes rather than ordering characters.
+//@ target: x86_64-pc-windows-msvc
+import std.filesystem;
+int main() {
+  auto path = std::filesystem::path("C:/folder");
+  auto drive = path.root_name();
+  return drive.string() == "C:" ? 0 : 1;
+}

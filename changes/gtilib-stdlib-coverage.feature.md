@@ -1,0 +1,1 @@
+Compiled libraries can carry generic project containers for source-free consumers, including the original expression text used in macro diagnostics. The toolchain ships 68 precompiled standard-library modules in dev and release. Debug assertions continue to honor each application's configuration.

@@ -295,7 +295,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - registrationStart)
             .count());
   }
-  if (registrationObserver && !hadError())
+  if (registrationObserver)
     (*registrationObserver)();
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
@@ -5926,6 +5926,12 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
   if (payloadEnum != nullptr && !payloadEnum->payload) {
     payloadEnum = nullptr;
   }
+  if (stmt.isIfCase() && payloadEnum == nullptr) {
+    diagnostics.emplace_back(
+        makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
+                       "An if case subject must have a payload enum type."));
+    return;
+  }
   // A payload switch over a consumed value (a prvalue or an explicit
   // std::move) consumes it: one hidden subject binding owns the enum until
   // the selected arm's entry, where by-value bindings take their fields by
@@ -6039,8 +6045,10 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
   bool invalidPayloadPattern = false;
   bool hasDefault = false;
 
-  ++switchDepth;
-  beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
+  if (!stmt.isIfCase()) {
+    ++switchDepth;
+    beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
+  }
   for (std::size_t armIndex = 0; armIndex < stmt.arms().size(); ++armIndex) {
     const SwitchArm &arm = stmt.arms()[armIndex];
     std::vector<std::pair<const Expr *, ResolvedPayloadPatternInfo>>
@@ -6481,7 +6489,7 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
     endScope();
     const FlowSummary flow = summarizeFlow(arm.statements);
     armResults.emplace_back(scopes, flow);
-    if (flow.canFallThrough) {
+    if (!stmt.isIfCase() && flow.canFallThrough) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2037", DiagnosticPhase::Semantics,
           arm.labels.empty() ? stmt.keyword() : arm.labels.back().keyword,
@@ -6548,15 +6556,19 @@ auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
     }
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  ValueControlFlowContext valueFlow = endValueControlFlow();
-  --switchDepth;
+  ValueControlFlowContext valueFlow{};
+  if (!stmt.isIfCase()) {
+    valueFlow = endValueControlFlow();
+    --switchDepth;
+  }
 
   std::vector<ScopeStack> loanExitStates;
   if (!hasDefault && !exhaustivePayload) {
     loanExitStates.push_back(beforeSwitch);
   }
   for (const auto &[armScopes, flow] : armResults) {
-    if (flow.canFallThrough || flow.breaksEnclosingControl) {
+    if (flow.canFallThrough ||
+        (!stmt.isIfCase() && flow.breaksEnclosingControl)) {
       loanExitStates.push_back(armScopes);
     }
   }
@@ -7051,7 +7063,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Unique owners can only be local bindings, function values, or "
            "class fields.",
            "GTI-S2018");
-  } else if (typeTraits(declaredType).containsBorrowedState && globalStorage) {
+  } else if (typeTraits(declaredType).containsBorrowedState && globalStorage &&
+             !(stmt.isConstexpr() && !stmt.isThreadLocal() &&
+               declaredType.kind != SemanticType::Reference &&
+               isSupportedConstexprType(declaredType))) {
     report(stmt.name(),
            "Values carrying stored references cannot have global or static "
            "storage duration.",
@@ -7887,6 +7902,10 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 
   const SemanticType arrayType = *contextualInitializerType;
   const SemanticType elementType = arrayType.arguments[0];
+  if (expr.packedBytes()) {
+    currentType = arrayType;
+    return;
+  }
   if (arrayType.arrayLengthParameterId == 0 && !expr.elements().empty() &&
       expr.elements().size() != arrayType.arrayLength) {
     report(expr.brace(),
@@ -8166,7 +8185,85 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   }
 }
 
+auto SemanticVisitor::Impl::analyzeEmbedBytes(const Call &call,
+                                              const Token &keyword) -> void {
+  currentType = SemanticType::Unknown;
+  const auto *argument = call.arguments().size() == 1
+                             ? exprAs<LiteralExpr>(call.arguments()[0].get())
+                             : nullptr;
+  const auto *spelling =
+      argument ? std::get_if<std::string>(&argument->value()) : nullptr;
+  if (!spelling || !call.typeArguments().empty() ||
+      !call.lifetimeArguments().empty() || call.capturedArguments()) {
+    report(keyword, "embed_bytes requires exactly one string literal path.",
+           "GTI-S2129");
+    return;
+  }
+
+  // The source graph confers the file-input authority. A fabricated macro
+  // token or a different path at the same origin cannot read the host.
+  const auto *unit = sourceGraph
+                         ? sourceGraph->findUnit(
+                               sourceGraph->sourceUnitForPath(keyword.source))
+                         : nullptr;
+  const EmbeddedFile *file = nullptr;
+  if (unit) {
+    const auto found = std::lower_bound(
+        unit->embeddedFiles.begin(), unit->embeddedFiles.end(),
+        keyword.position, [](const EmbeddedFile &input, std::size_t position) {
+          return input.keyword.position < position;
+        });
+    if (found != unit->embeddedFiles.end() &&
+        found->keyword.position == keyword.position &&
+        found->spelling == *spelling)
+      file = &*found;
+  }
+  if (!file || !file->bytes) {
+    report(argument->token(),
+           file ? file->error
+                : "embed_bytes requires a path written directly at this source "
+                  "site.",
+           "GTI-S2129");
+    return;
+  }
+  if (!arraySpanFactory()) {
+    report(keyword, "Import std.span to use embed_bytes.", "GTI-S2129");
+    return;
+  }
+
+  // Reuse the ordinary checked array-to-span call, including the borrow
+  // from immutable static storage and the constexpr evaluation path.
+  auto member = keyword;
+  member.kind = TokenKind::IDENTIFIER;
+  member.sourceLength = static_cast<std::uint32_t>(keyword.lexeme.size());
+  member.lexeme = "as_span";
+  member.generated = true;
+  auto dot = member;
+  dot.kind = TokenKind::DOT;
+  dot.lexeme = ".";
+  auto callee =
+      std::make_unique<Get>(std::make_unique<Variable>(file->storageName()),
+                            std::move(dot), std::move(member));
+  auto alias = std::make_shared<Call>(std::move(callee), std::vector<TypeRef>{},
+                                      call.paren(), ExprList{});
+  const Expr &target = semanticModel.recordExpressionAlias(call, alias);
+  currentType = analyze(target);
+  if (currentType != SemanticType::Unknown)
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(keyword),
+                                    .kind = SemanticOccurrenceKind::Expression,
+                                    .roles = OccurrenceRole::Call,
+                                    .name = keyword.lexeme,
+                                    .type = currentType,
+                                    .traits = typeTraits(currentType)});
+}
+
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  if (const auto *callee = exprAs<Variable>(expr.callee().get());
+      callee && callee->name().kind == TokenKind::EMBED_BYTES) {
+    analyzeEmbedBytes(expr, callee->name());
+    return;
+  }
   if (expr.capturedArguments() && analyzeCapturedCall(expr))
     return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
@@ -8736,6 +8833,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                         expr.paren(), "Calling an unsafe required member");
         }
         ResolvedCallInfo resolved{
+            .provisionalRequirement = true,
             .returnType = selected->arguments[1],
             .parameterTypes = std::vector<SemanticType>(
                 selected->arguments.begin() + 2, selected->arguments.end()),
@@ -10687,7 +10785,8 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
         expr.name().generated &&
         (expr.name().lexeme == "begin" || expr.name().lexeme == "begin_mut" ||
          expr.name().lexeme == "end");
-    if (expr.name().lexeme == "size" || generatedRangeEndpoint) {
+    if (expr.name().lexeme == "size" || expr.name().lexeme == "as_span" ||
+        generatedRangeEndpoint) {
       if (!analyzingCallCallee) {
         report(expr.name(),
                "Function names must be called; function values are not "
@@ -12980,6 +13079,7 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
                "Unknown enumerator '" + expr.name().last().lexeme +
                    "' in scoped enum '" + pathSpelling(ownerPath) + "'.",
                "GTI-S2036");
+        diagnostics.back().missingEnumerator = true;
         currentType = SemanticType::Unknown;
         return;
       }
@@ -13656,6 +13756,12 @@ auto SemanticVisitor::Impl::reportTypeUsedAsValue(const Expr &expression,
 }
 
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
+  if (expr.name().kind == TokenKind::EMBED_BYTES) {
+    report(expr.name(), "Call embed_bytes with a string literal path.",
+           "GTI-S2129");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (expr.isReferencePattern()) {
     report(expr.name(),
            "A borrowed payload binding is only valid directly in a "
@@ -14262,7 +14368,8 @@ auto SemanticVisitor::Impl::constexprValue(
 
 auto SemanticVisitor::Impl::isSupportedConstexprType(
     const SemanticType &type, bool allowDependent,
-    std::vector<SemanticType> *visiting, bool transient) const -> bool {
+    std::vector<SemanticType> *visiting, bool transient, bool *hasAddress) const
+    -> bool {
   if (allowDependent && type.kind == SemanticType::TypeParameter) {
     return true;
   }
@@ -14273,10 +14380,14 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return type.arguments.size() == 1 &&
            isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
                                     true);
-  // A raw pointer is execution-local too: the verified executor checks every
-  // access against its own allocations and never publishes a pointer.
-  if (transient && type.kind == SemanticType::RawPointer)
-    return type.arguments.size() == 1;
+  if (type.kind == SemanticType::Reference ||
+      type.kind == SemanticType::RawPointer) {
+    if (hasAddress)
+      *hasAddress = true;
+    return type.arguments.size() == 1 &&
+           (transient ? type.kind == SemanticType::RawPointer
+                      : isReadOnlyConstantAddressType(type));
+  }
   if (transient && type.kind == SemanticType::TypePack)
     return (!type.concretePack && allowDependent) ||
            (type.concretePack &&
@@ -14305,9 +14416,9 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     bool supported = true;
     for (const auto &variant : enumeration->enumerators)
       for (const auto &payload : variant.payloadTypes)
-        supported &=
-            isSupportedConstexprType(substituteType(payload, substitution),
-                                     allowDependent, visiting, transient);
+        supported &= isSupportedConstexprType(
+            substituteType(payload, substitution), allowDependent, visiting,
+            transient, hasAddress);
     visiting->pop_back();
     return supported;
   }
@@ -14316,19 +14427,16 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     return isSupportedConstexprType(type.arguments.front(), allowDependent,
-                                    visiting, transient);
+                                    visiting, transient, hasAddress);
   }
   if (type.kind != SemanticType::Class) {
     return false;
   }
   const ClassInfo *owner = classInfo(type);
-  // A stored checked reference is execution-local, like a raw pointer: the
-  // verified executor designates the referent it was bound to, checks every
-  // access through it, and never publishes a value that contains it.
   if (owner == nullptr || owner->kind == ClassKind::Interface ||
       owner->kind == ClassKind::Union || !owner->bases.empty() ||
-      owner->polymorphic || (!transient && owner->storedReference) ||
-      (!transient && owner->destructor)) {
+      owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
+      owner->polymorphic || (!transient && owner->destructor)) {
     return false;
   }
   std::vector<SemanticType> localVisiting;
@@ -14353,13 +14461,25 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     if (member == owner->members.end() ||
         !isSupportedConstexprType(
             substituteType(member->second.symbol.type, substitution),
-            allowDependent, visiting, transient)) {
+            allowDependent, visiting, transient, hasAddress)) {
       visiting->pop_back();
       return false;
     }
   }
   visiting->pop_back();
   return true;
+}
+
+auto SemanticVisitor::Impl::isSupportedConstexprSignatureType(
+    const SemanticType &type) const -> bool {
+  if (type.kind != SemanticType::Reference || type.arguments.size() != 1)
+    return isSupportedConstexprType(type, true, nullptr, true);
+  const auto &referent = type.arguments.front();
+  if (const auto *owner = classInfo(referent);
+      owner &&
+      owner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject)
+    return type.referenceAccess == AccessMode::ReadOnly;
+  return isSupportedConstexprType(referent, true, nullptr, true);
 }
 
 auto SemanticVisitor::Impl::validateConstexprFunction(
@@ -14424,18 +14544,11 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
     reject(location, "Polymorphic functions cannot participate in constexpr "
                      "execution.");
   }
-  const auto observedType =
-      [](const SemanticType &type) -> const SemanticType & {
-    return type.kind == SemanticType::Reference && type.arguments.size() == 1
-               ? type.arguments.front()
-               : type;
-  };
   if ((function.returnMutability() == Mutability::Mutable &&
        returnType.kind != SemanticType::Reference) ||
       (!instanceAnalysisActive && returnType != SemanticType::Unknown &&
        returnType != SemanticType::Void &&
-       !isSupportedConstexprType(observedType(returnType), true, nullptr,
-                                 true))) {
+       !isSupportedConstexprSignatureType(returnType))) {
     reject(function.returnType().name.last(),
            "A constexpr function must return void or a supported value: a "
            "fixed-width integer, float, double, bool, char, string_view, "
@@ -14447,8 +14560,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   for (const Parameter &parameter : function.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
     if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-        !isSupportedConstexprType(observedType(parameterType), true, nullptr,
-                                  true)) {
+        !isSupportedConstexprSignatureType(parameterType)) {
       reject(parameter.sourceAnchor(),
              "Constexpr function parameters must be supported "
              "values or checked references to supported values.");
@@ -14483,13 +14595,8 @@ auto SemanticVisitor::Impl::validateConstexprConstructor(
   }
   for (const Parameter &parameter : constructor.parameters()) {
     const SemanticType parameterType = typeOf(parameter);
-    const SemanticType &observed =
-        parameterType.kind == SemanticType::Reference &&
-                parameterType.arguments.size() == 1
-            ? parameterType.arguments[0]
-            : parameterType;
     if (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
-        !isSupportedConstexprType(observed, true, nullptr, true)) {
+        !isSupportedConstexprSignatureType(parameterType)) {
       reject(parameter.name.lexeme.empty() ? parameter.type.name.last()
                                            : parameter.name,
              "Constexpr constructor parameters must be supported "
@@ -15059,7 +15166,24 @@ auto SemanticVisitor::Impl::describeLimitExhaustion(
 
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
     const Expr &source, ConstexprInterpreter &context) -> ConstexprEvaluation {
+  const bool outermost = context.expressionRoot == nullptr;
+  if (outermost)
+    context.expressionRoot = &source;
   ConstexprEvaluation result = evaluateConstexprNode(source, context);
+  if (outermost) {
+    context.expressionRoot = nullptr;
+    if (std::exchange(context.expressionNeedsMir, false) && !result) {
+      // Intermediate borrowed carriers may exist only within one verified
+      // execution. Staging the consumer together with its producer keeps
+      // their loans and backing locations in the same evaluator.
+      if (auto staged = executeStagedConstexpr(
+              static_cast<const FunctionDecl *>(nullptr), {}, {}, {},
+              expressionToken(source), context, &source))
+        result = *staged ? constexprSuccess(source, std::move(*staged->value),
+                                            context)
+                         : std::move(*staged);
+    }
+  }
   if (result.failure == ConstantEvaluationFailure::ResourceLimit)
     describeLimitExhaustion(result, context);
   return result;
@@ -15297,6 +15421,14 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
           member->name(), ConstantEvaluationFailure::UnsupportedExpression,
           "The selected member is not a constexpr structural field.");
     }
+    if (const auto *stored = std::get_if<ConstantAggregateValue>(&found->value);
+        stored && stored->value && stored->value->staticAddress &&
+        stored->value->exactType->kind == SemanticType::Reference) {
+      context.expressionNeedsMir = true;
+      return constexprFailure(
+          member->name(), ConstantEvaluationFailure::UnsupportedExpression,
+          "Reading a constexpr reference requires verified MIR execution.");
+    }
     return constexprSuccess(source, found->value, context);
   }
   if (const auto *indexExpression = exprAs<Index>(&source)) {
@@ -15336,15 +15468,15 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
           "Constexpr indexing requires a fixed array and a non-negative "
           "integer index.");
     }
-    if (*offset >= aggregate->value->elements.size()) {
+    if (*offset >= aggregate->value->elementCount()) {
       return constexprFailure(
           indexExpression->bracket(),
           ConstantEvaluationFailure::InvalidOperands,
           "Constexpr fixed-array index " + std::to_string(*offset) +
               " is outside the bound " +
-              std::to_string(aggregate->value->elements.size()) + ".");
+              std::to_string(aggregate->value->elementCount()) + ".");
     }
-    return constexprSuccess(source, aggregate->value->elements[*offset],
+    return constexprSuccess(source, aggregate->value->elementAt(*offset),
                             context);
   }
   if (const auto *assignment = exprAs<Assign>(&source)) {
@@ -15491,7 +15623,16 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     }
     ConstantAggregate aggregate{
         .kind = ConstantAggregateKind::Array,
-        .exactType = std::make_shared<const SemanticType>(sourceType)};
+        .exactType = std::make_shared<const SemanticType>(sourceType),
+        .packedBytes = array->packedBytes()};
+    if (aggregate.packedBytes) {
+      if (!aggregate.packedBytesMatch(sourceType))
+        return constexprFailure(array->brace(),
+                                ConstantEvaluationFailure::InvalidOperands);
+      return constexprSuccess(
+          source, ConstantValue{makeConstantAggregate(std::move(aggregate))},
+          context);
+    }
     aggregate.elements.reserve(sourceType.arrayLength);
     if (array->elements().empty()) {
       for (std::uint64_t index = 0; index < sourceType.arrayLength; ++index) {
@@ -15784,6 +15925,19 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The constexpr call lost its canonical function identity.");
+  }
+
+  const SemanticType result = constexprType(resolved->returnType, context);
+  if (context.expressionRoot && &source != context.expressionRoot &&
+      !context.executingFunction && !context.executingConstructor &&
+      result.kind == SemanticType::Class &&
+      typeTraits(result).containsBorrowedState &&
+      isSupportedConstexprType(constexprType(
+          semanticModel.typeOf(*context.expressionRoot), context))) {
+    context.expressionNeedsMir = true;
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedType,
+        "A borrowed intermediate needs one verified constexpr execution.");
   }
 
   GenericSubstitution substitution;
@@ -16209,7 +16363,8 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     ConstexprStatementEvaluation result =
         executeConstexprStatements(selected->statements, context);
     context.scopes.pop_back();
-    return result.control == ConstexprControlFlow::Break
+    return !switchStatement->isIfCase() &&
+                   result.control == ConstexprControlFlow::Break
                ? ConstexprStatementEvaluation{}
                : result;
   }
@@ -16468,13 +16623,17 @@ auto SemanticVisitor::Impl::constexprBindingValue(
            "GTI-S2057");
     valid = false;
   }
-  if (!isSupportedConstexprType(type)) {
+  bool hasAddress = false;
+  if (type.kind == SemanticType::Reference ||
+      !isSupportedConstexprType(type, false, nullptr, false, &hasAddress)) {
     report(
         *declaration.constexprKeyword(),
         "The bounded constexpr evaluator supports fixed-width integers, "
         "float, double, bool, char, string_view, and nullptr_t values, "
         "plus scoped enums, concrete fixed arrays, structural "
-        "aggregates, and expected results with supported alternatives; type '" +
+        "aggregates, and expected results with supported alternatives. "
+        "Published borrows must be read-only and refer to immutable constexpr "
+        "program storage. Type '" +
             typeSpelling(type) + "' is not supported yet.",
         "GTI-S2057");
     valid = false;
@@ -16484,8 +16643,23 @@ auto SemanticVisitor::Impl::constexprBindingValue(
   }
 
   ConstexprInterpreter context = makeConstexprInterpreter();
-  ConstexprEvaluation evaluated =
-      evaluateConstexprExpression(declaration.initializer(), context);
+  ConstexprEvaluation evaluated;
+  if (hasAddress) {
+    const auto &source = *declaration.initializer();
+    // Stage the complete initializer so checked references bind to the
+    // original places, including static storage passed into constructors.
+    auto staged = executeStagedConstexpr(
+        static_cast<const FunctionDecl *>(nullptr), {}, {}, {},
+        expressionToken(source), context, &source);
+    evaluated = staged ? std::move(*staged)
+                       : constexprFailure(
+                             expressionToken(source),
+                             ConstantEvaluationFailure::UnsupportedExpression,
+                             "This initializer requires verified constexpr MIR "
+                             "execution to publish its addresses.");
+  } else {
+    evaluated = evaluateConstexprExpression(declaration.initializer(), context);
+  }
   if (!evaluated) {
     reportConstexprFailure(declaration, type, evaluated);
     return std::nullopt;
@@ -16734,6 +16908,7 @@ auto SemanticVisitor::Impl::summarizeFlow(
         semanticModel.isExhaustiveSwitch(*switchStatement) ||
         requestSession.recoveredExhaustiveSwitches.contains(switchStatement);
     bool reachesAfterSwitch = false;
+    bool breaksOuter = false;
     bool continuesEnclosingLoop = false;
     const ReturnStmt *normalReturn = nullptr;
     for (const SwitchArm &arm : switchStatement->arms()) {
@@ -16745,12 +16920,16 @@ auto SemanticVisitor::Impl::summarizeFlow(
       if (normalReturn == nullptr) {
         normalReturn = armFlow.normalReturn;
       }
-      reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
-                           armFlow.breaksEnclosingControl;
+      reachesAfterSwitch =
+          reachesAfterSwitch || armFlow.canFallThrough ||
+          (!switchStatement->isIfCase() && armFlow.breaksEnclosingControl);
+      breaksOuter |=
+          switchStatement->isIfCase() && armFlow.breaksEnclosingControl;
       continuesEnclosingLoop =
           continuesEnclosingLoop || armFlow.continuesEnclosingLoop;
     }
     return {.canFallThrough = !coversEveryValue || reachesAfterSwitch,
+            .breaksEnclosingControl = breaksOuter,
             .continuesEnclosingLoop = continuesEnclosingLoop,
             .normalReturn = normalReturn};
   }

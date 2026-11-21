@@ -1,0 +1,9 @@
+// UTC conversion preserves the epoch without loading a database.
+//@ run-pass
+import std.chrono;
+int main() {
+  auto zone = std::chrono::time_zone::utc();
+  auto point = zone.at(std::chrono::timestamp(0i64));
+  auto local = point.local();
+  return point.offset_seconds() == 0 && local.year() == 1970 ? 0 : 1;
+}

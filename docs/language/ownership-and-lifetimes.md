@@ -842,6 +842,15 @@ borrow dependencies, or a callable result that can retain this argument loan.
 A result whose complete origin excludes this temporary parameter may retain a
 different caller-owned argument.
 
+In an open generic body, a guaranteed free-function or member requirement with
+an exact concrete, self-contained owned result permits the same temporary
+read borrow. For example, a requirement returning an owning string allows
+`format("{}: {}", message(first), message(second))` without named intermediate
+strings. Each concrete instance must resolve and validate the actual calls,
+including producer dependencies and the consumer's non-escaping loan. The
+temporary lifetime, evaluation order, cleanup and mutable-reference exclusions
+remain those of ordinary calls above.
+
 A concrete payload-enum construction with copyable, movable, trivial-drop
 value traits and no stored borrows supports the same ordinary call-only
 read borrow. Its selected alternative remains in the existing temporary
@@ -2145,10 +2154,14 @@ Two general facilities support this ordinary source wrapper:
   storage live as long as the carrier's external owners. The trusted operation
   uses the same input/result lifetime application as ordinary checked calls;
   it does not give ordinary unrelated types an opaque-view conversion.
+  Read-only `std::erase_ref` also works during constant evaluation for
+  supported values, with the same dependency on the original object.
 - `std::restore_ref<T>(erased)` and `std::restore_mut<T>(erased)` require
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime
   dependencies; `unsafe` does not make them disappear.
+  During constant evaluation, `std::restore_ref<T>` checks the original
+  referent type before yielding the same read-only borrow.
   For an inferred output region `a`, restoration requires `outlives<T, a>`
   independently of the opaque reference's storage lifetime. A generic helper
   with only an erased input declares that requirement explicitly; a typed

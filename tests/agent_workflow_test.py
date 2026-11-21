@@ -704,6 +704,8 @@ class Lifecycle(unittest.TestCase):
         result = self.flow.protection(True)
         self.assertEqual(result["enforcement"], "active")
         self.assertEqual(result["bypass_actors"], [])
+        queue = next(rule["parameters"] for rule in result["rules"] if rule["type"] == "merge_queue")
+        self.assertEqual(queue["max_entries_to_build"], 6)
         self.assertEqual({rule["type"] for rule in result["rules"]}, module.Workflow.RULES)
         self.flow.protection()
         self.assertEqual(len(self.api.rulesets), 1)
@@ -1436,7 +1438,7 @@ class ValidationChecks(unittest.TestCase):
 
     def test_ci_gate_requires_fast_checks_and_full_validation_proves_the_suite(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
-        gate = {**lint, "fast": {"result": "success"}}
+        gate = {**lint, "fast": {"result": "success"}, "fast-ui": {"result": "success"}}
         suite = {name: {"result": "success"} for name in validation.FULL_VALIDATION_JOBS}
         # The PR and the merge queue prove the same bounded set.
         validation.admission("full", gate, "pull_request")
@@ -1473,7 +1475,7 @@ class ValidationChecks(unittest.TestCase):
         is the aggregate of the rows the matrix held, so the matrix's platforms
         decide which rows the success covers."""
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
-        gate = {**lint, "fast": {"result": "success"}}
+        gate = {**lint, "fast": {"result": "success"}, "fast-ui": {"result": "success"}}
         rows = [{"os": "ubuntu-24.04", "platform": "linux", "rotate": 0, "gate": "gti_test_ui"},
                 {"os": "macos-26", "platform": "darwin", "rotate": 1, "gate": "gti_test_ui"}]
         both, linux = validation.fast_matrix(rows, "pull_request"), validation.fast_matrix(rows, "merge_group")

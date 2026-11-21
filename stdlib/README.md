@@ -114,15 +114,17 @@ advances its four-word state in GTI; only `random_device` crosses the bounded
 `gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
-`std.chrono` provides exact signed nanoseconds and nominally distinct steady
-and system time points. `steady_clock::now()` supports nondecreasing elapsed
-measurement without giving its epoch portable meaning; `system_clock::now()`
-returns signed Unix nanoseconds and normalizes negative timestamps with
-floor-based seconds. Clock reads and elapsed subtraction are recoverable, and
-the runtime boundary consists only of two versioned scalar-output entries.
-Generic units, sleep, calendars, formatting, and time zones remain outside the
-first slice; see
-[`docs/language/chrono.md`](../docs/language/chrono.md).
+`std.chrono` provides fixed duration units from nanoseconds through days,
+nominally distinct steady/system clocks, wide Unix timestamps, validated
+Gregorian dates and local clock readings, and immutable named time zones.
+Calendar days/months/years remain distinct from elapsed durations. New fallible
+APIs pair recoverable `try_` operations with direct panic-on-failure forms;
+accessors and invariant-preserving operations return values directly. Named
+zones use a pinned IANA snapshot embedded at compilation, with explicit bundle
+loading for updates and explicit fold/gap resolution policies. Default and
+checked custom temporal formatting preserve fractional and offset seconds.
+Existing clock contracts and the two scalar host-clock entries remain unchanged.
+See [`docs/language/chrono.md`](../docs/language/chrono.md).
 
 `std.process` provides a reusable exact-argv `std::process::command`. It does
 not invoke or emulate a shell. `run()` waits synchronously, inherits the current

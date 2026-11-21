@@ -1,4 +1,5 @@
 #include "gti/source_graph.h"
+#include "gti/compiled_template_body.h"
 #include <stdexcept>
 
 #include <algorithm>
@@ -7,6 +8,66 @@
 #include <utility>
 
 namespace lang {
+Token EmbeddedFile::storageName() const {
+  // The name cannot be written as a single GTI identifier. Source-local
+  // storage supplies the unit identity, and the keyword offset supplies
+  // the declaration identity within that unit.
+  Token name = keyword;
+  name.kind = TokenKind::IDENTIFIER;
+  name.sourceLength = static_cast<std::uint32_t>(keyword.lexeme.size());
+  name.position = storageOffset;
+  name.lexeme = "$embed_bytes:" + std::to_string(storageOffset);
+  name.generated = true;
+  return name;
+}
+
+void SourceGraph::attachCompiledTemplate(
+    SourceUnitId id, std::shared_ptr<const CompiledTemplateModule> module) {
+  auto *unit = findUnit(id);
+  if (!unit || !module ||
+      (module->projectSyntax ? unit->prelude || unit->entry ||
+                                   unit->role != SourceUnitRole::Application ||
+                                   isCompilerTrusted(id)
+                             : unit->role != SourceUnitRole::StandardLibrary))
+    throw std::invalid_argument("invalid compiled template unit provenance");
+  // Archived input is static data, not authority to read a path on this host.
+  // Installed recipes have an independent receipt; project recipes are also
+  // reparsed and lexically attested before semantic analysis.
+  std::unordered_set<const std::string *> seen;
+  std::size_t total = 0;
+  for (const auto &other : units) {
+    if (other.id == id)
+      continue;
+    for (const auto &file : other.embeddedFiles)
+      if (file.bytes && seen.insert(file.bytes.get()).second) {
+        if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
+          throw std::invalid_argument(
+              "embedded files exceed the compilation limit");
+        total += file.bytes->size();
+      }
+  }
+  std::vector<EmbeddedFile> restored;
+  for (const auto &file : module->embeddedFiles) {
+    if (!file.bytes)
+      throw std::invalid_argument("missing compiled embedded input");
+    if (seen.insert(file.bytes.get()).second) {
+      if (file.bytes->size() > compiledEmbeddedTotalLimit - total)
+        throw std::invalid_argument(
+            "embedded files exceed the compilation limit");
+      total += file.bytes->size();
+    }
+    auto keyword = file.keyword;
+    keyword.source = unit->path.string();
+    restored.push_back({.keyword = std::move(keyword),
+                        .storageOffset = file.storageOffset,
+                        .spelling = file.spelling,
+                        .bytes = file.bytes,
+                        .digest = sourceTextDigest(*file.bytes)});
+  }
+  unit->embeddedFiles = std::move(restored);
+  unit->compiledTemplate = std::move(module);
+}
+
 void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))

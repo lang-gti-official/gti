@@ -1,0 +1,1 @@
+Allow concrete owned results promised by generic free-function or member requirements to be borrowed as temporary call arguments, including multiple error-message calls inside formatting, while retaining concrete lifetime checks and full-expression cleanup.

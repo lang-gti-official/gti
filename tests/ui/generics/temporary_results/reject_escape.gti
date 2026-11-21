@@ -1,0 +1,10 @@
+// A constrained owned result cannot escape through a reference-returning consumer.
+struct Value { Value() = default; };
+struct Source { Source() = default; };
+Value produce(Source& source) { return Value(); }
+concept produces<S> = requires(S& source) { { produce(source) } -> Value; };
+Value& retain(Value& value) { return value; }
+Value& run<S>(S& source) requires produces<S> {
+  return retain(produce(source)); //~ ERROR GTI-S2017 //~ ERROR GTI-S2017
+}
+int main() { return 0; }

@@ -6634,6 +6634,20 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "size",
          .detail = "uint64_t size()",
          .scopeDistance = 0});
+    if (const auto *factory = arraySpanFactory()) {
+      CallableCandidate selected;
+      std::vector<SemanticType> typeArguments;
+      std::vector<CompileTimeValue> valueArguments;
+      if (tryInstantiateFunction(*factory, {}, {}, {objectType}, {}, selected,
+                                 typeArguments, valueArguments)) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Method,
+             .name = "as_span",
+             .qualifiedName = "as_span",
+             .detail = typeSpelling(selected.returnType) + " as_span()",
+             .scopeDistance = 0});
+      }
+    }
   } else if (objectType.kind == SemanticType::StringView) {
     context.candidates.push_back(
         {.kind = SemanticCompletionCandidateKind::Method,
@@ -8643,6 +8657,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   if (const auto *call = exprAs<Call>(producer)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    // An open-body requirement can promise a concrete, self-contained owned
+    // result before its producer has a target. The type/borrow gates above
+    // still apply. Concrete reanalysis must establish the ordinary producer
+    // and consumer contracts; this signature is never executable evidence.
+    if (resolved != nullptr && resolved->provisionalRequirement &&
+        resolved->function == 0 && resolved->declaration == nullptr &&
+        resolved->intrinsic == IntrinsicKind::None &&
+        resolved->returnType == info->type &&
+        !containsOpenTypeParameter(info->type) &&
+        resolved->borrowOrigin == BorrowOriginKind::None) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
     const FunctionInfo *target =
         resolved == nullptr || resolved->function == 0
             ? nullptr

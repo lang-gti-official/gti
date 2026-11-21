@@ -380,3 +380,5 @@ void explicit_macro_highlight() {
 
 [[inline, cold]] int hinted_highlight() { return 1; }
 [[noinline]] int boundary_highlight() { return hinted_highlight(); }
+
+auto embedded_highlight() { return embed_bytes("assets/logo.bin"); }

@@ -1,0 +1,10 @@
+// An empty file has a valid static span with zero elements.
+// --- main.gti
+import std.span;
+
+constexpr std::span<uint8_t, static> empty() {
+  return embed_bytes("empty.bin");
+}
+
+static_assert(empty().empty());
+// --- empty.bin

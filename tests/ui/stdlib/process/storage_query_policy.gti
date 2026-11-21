@@ -82,10 +82,21 @@ int main() {
         provider_test_releases() != 0 || values[std::size_t(0)] != 42) { return 13; }
     values.reserve(std::size_t(16));
     if (provider_test_size_queries() != 2 || provider_test_calls() != 2 ||
-        provider_test_releases() != 1 || values[std::size_t(0)] != 42) { return 14; }
+        values[std::size_t(0)] != 42) { return 14; }
+#if target.os == "windows"
+    if (provider_test_releases() != 1) { return 14; }
+#else
+    // Byte growth retains the existing process region until final cleanup.
+    if (provider_test_releases() != 0) { return 14; }
+#endif
   }
+#if target.os == "windows"
   if (provider_test_releases() != 2 || provider_test_events() != 2 ||
       provider_test_event_at(0) != -1 || provider_test_event_at(1) != -2) { return 15; }
+#else
+  if (provider_test_releases() != 1 || provider_test_events() != 1 ||
+      provider_test_event_at(0) != -1) { return 15; }
+#endif
 
   provider_test_mode(1);
   {
@@ -267,6 +278,28 @@ extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
   void *address = std::malloc(static_cast<std::size_t>(bytes));
   remember(address);
   return address;
+}
+extern "C" void *gti_rt_realloc_v1(void *address, std::uint64_t bytes) {
+  // Deterministic exhaustion after the old live prefix has been populated.
+  // The source caller must abort without publishing a null region or cleanup.
+  if (std::getenv("GTI_TEST_FAIL_GROWTH"))
+    return nullptr;
+  if (observing) {
+    ++calls;
+    ++ordinary_calls;
+    requested_bytes.at(calls - 1) = bytes;
+  }
+  if (mode >= 2 || (observing && fail_on_call > 0 && calls == fail_on_call))
+    return nullptr;
+  for (auto &region : regions) {
+    if (region.address == address) {
+      void *result = std::realloc(address, static_cast<std::size_t>(bytes));
+      if (result)
+        region.address = result;
+      return result;
+    }
+  }
+  std::abort();
 }
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,

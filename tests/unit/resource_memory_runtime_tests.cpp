@@ -50,6 +50,18 @@ GTI_UNIT_TEST(resource_memory_runtime) {
     for (std::uint64_t i = 0; i < extent; ++i)
       expect(data[i] == static_cast<unsigned char>(i),
              "ordinary extent is writable");
+    void *grown = gti_rt_realloc_v1(address, extent * 3);
+    expect(grown != nullptr, "growth of a malloc region succeeds");
+    if (grown) {
+      auto *grownData = static_cast<unsigned char *>(grown);
+      for (std::uint64_t i = 0; i < extent; ++i)
+        expect(grownData[i] == static_cast<unsigned char>(i),
+               "resizing preserves every old byte");
+      grownData[extent * 3 - 1] = 123;
+      expect(gti_rt_address_is_aligned_v1(grown, alignof(void *)),
+             "resized fitting region retains fundamental alignment");
+      address = grown;
+    }
     gti_rt_posix_free_v1(address);
   }
   expect(gti_rt_posix_pointer_size_v1() == sizeof(void *),

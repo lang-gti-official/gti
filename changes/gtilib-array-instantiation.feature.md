@@ -1,0 +1,1 @@
+Hosted Linux x64 and macOS arm64 toolchains ship an array template library. Development and release project builds can instantiate `std::array<T, N>` for application-defined types and lengths with the array implementation source absent.

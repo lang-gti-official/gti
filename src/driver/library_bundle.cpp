@@ -64,12 +64,20 @@ void validateDependencies(const std::vector<LibraryBundleDependency> &deps,
 std::size_t validate(const LibraryBundle &bundle) {
   validateIdentity(bundle.identity);
   validateDependencies(bundle.dependencies, bundle.identity.library);
-  if (bundle.objects.empty() || bundle.objects.size() > libraryBundleEntryLimit)
+  if ((bundle.templateOnly && !bundle.optimizationBodies.empty()) ||
+      bundle.objects.empty() != bundle.templateOnly ||
+      bundle.objects.size() > libraryBundleEntryLimit)
     reject(Kind::ResourceLimit, "invalid library object count");
-  if (bundle.interfaceMetadata.size() > 1024U * 1024U)
+  if (bundle.interfaceMetadata.size() >
+      (bundle.templateOnly ? libraryBundleTemplateInterfaceLimit
+                           : 1024U * 1024U))
     reject(Kind::ResourceLimit, "library interface exceeds byte limit");
   std::size_t size =
       4 + bundle.interfaceMetadata.size() + magic.size() + 4 + 4 + 4 + 4 + 64;
+  if (bundle.optimizationBodies.size() > libraryBundleMirLimit)
+    reject(Kind::ResourceLimit, "library optimization MIR exceeds byte limit");
+  if (!bundle.optimizationBodies.empty())
+    size += 4 + bundle.optimizationBodies.size();
   for (const auto field : fields(bundle.identity))
     size += 4 + field.size();
   size += bundle.dependencies.size() * (4 + 64 + 4 + 64);
@@ -146,8 +154,9 @@ std::string encodeLibraryBundle(const LibraryBundle &bundle) {
   std::string result;
   result.reserve(size);
   result.append(magic);
-  number(result, libraryBundleFormatVersion);
-  number(result, 1); // Envelope schema, independent of container framing.
+  number(result,
+         bundle.optimizationBodies.empty() ? 2 : libraryBundleFormatVersion);
+  number(result, bundle.templateOnly ? 2 : 1);
   for (auto field : fields(bundle.identity))
     blob(result, field);
   blob(result, bundle.interfaceMetadata);
@@ -169,6 +178,8 @@ std::string encodeLibraryBundle(const LibraryBundle &bundle) {
     blob(result, member->name);
     blob(result, member->bytes);
   }
+  if (!bundle.optimizationBodies.empty())
+    blob(result, bundle.optimizationBodies);
   result += digest(result);
   return result;
 }
@@ -178,7 +189,10 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
   Reader reader{bytes};
   if (reader.take(magic.size()) != magic)
     reject(Kind::InvalidFormat, "invalid library bundle magic");
-  if (reader.number() != libraryBundleFormatVersion || reader.number() != 1)
+  const auto version = reader.number();
+  const auto envelope = reader.number();
+  if (!((version == 2 && (envelope == 1 || envelope == 2)) ||
+        (version == libraryBundleFormatVersion && envelope == 1)))
     reject(Kind::UnsupportedVersion,
            "unsupported library container or envelope version");
   if (reader.remaining.size() < 64)
@@ -188,6 +202,7 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
     reject(Kind::Integrity, "library bundle checksum mismatch");
   reader.remaining.remove_suffix(64);
   LibraryBundle result;
+  result.templateOnly = envelope == 2;
   auto &id = result.identity;
   id.toolchain = reader.blob(64);
   id.target = reader.blob(255);
@@ -196,7 +211,9 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
   id.library = reader.blob(64);
   id.sources = reader.blob(64);
   validateIdentity(id);
-  result.interfaceMetadata = reader.blob(1024U * 1024U);
+  result.interfaceMetadata =
+      reader.blob(result.templateOnly ? libraryBundleTemplateInterfaceLimit
+                                      : 1024U * 1024U);
   const auto depCount = reader.count();
   for (std::uint32_t i = 0; i < depCount; ++i) {
     LibraryBundleDependency dep{reader.blob(64), reader.blob(64)};
@@ -212,6 +229,11 @@ LibraryBundle decodeLibraryBundle(std::string_view bytes) {
     if (!result.objects.empty() && result.objects.back().name >= member.name)
       reject(Kind::InvalidFormat, "noncanonical library object order");
     result.objects.push_back(std::move(member));
+  }
+  if (version == libraryBundleFormatVersion) {
+    result.optimizationBodies = reader.blob(libraryBundleMirLimit);
+    if (result.optimizationBodies.empty())
+      reject(Kind::InvalidFormat, "empty library optimization MIR section");
   }
   if (!reader.remaining.empty())
     reject(Kind::InvalidFormat, "trailing library bundle data");

@@ -3,6 +3,7 @@
 #include "abi.h"
 #include <functional>
 #include <llvm/IR/IRBuilder.h>
+#include <map>
 #include <optional>
 
 namespace lang::native_llvm {
@@ -19,7 +20,8 @@ checkedSquareResultBound(llvm::Value *left, llvm::Value *right,
 class Scalars final {
 public:
   using Guard = std::function<void(llvm::Value *, DefinedFailureOutcome)>;
-  Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard);
+  Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard,
+          const std::map<SymbolId, llvm::GlobalVariable *> &globals);
   [[nodiscard]] llvm::Value *literal(const Literal &literal,
                                      const SemanticType &type);
   [[nodiscard]] llvm::Constant *constant(const ConstantValue &value,
@@ -41,6 +43,10 @@ private:
   Session &session;
   llvm::IRBuilder<> &ir;
   Guard guard;
+  const std::map<SymbolId, llvm::GlobalVariable *> &globals;
+  [[nodiscard]] llvm::Constant *
+  constantAddress(const ConstantStorageAddress &address,
+                  const SemanticType &type);
   [[nodiscard]] llvm::Constant *constantStorage(
       const TypeLayout &layout,
       std::span<const std::pair<std::uint64_t, llvm::Constant *>> fragments);

@@ -1,0 +1,18 @@
+// Erased references preserve the original projected lvalue through constexpr calls.
+//@ run-pass
+import std.memory;
+
+constexpr std::erased_object& forward(std::erased_object& object) {
+  return object;
+}
+
+constexpr int select() {
+  int values[3] = {2, 7, 11};
+  mut int index = 1;
+  std::erased_object& hidden = forward(std::erase_ref(values[index]));
+  index = 2;
+  unsafe { return std::restore_ref<int>(hidden); }
+}
+
+static_assert(select() == 7);
+int main() { return select() == 7 ? 0 : 1; }

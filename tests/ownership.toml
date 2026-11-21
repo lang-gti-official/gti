@@ -1166,6 +1166,11 @@ paths = [
   "include/gti/persistent_declaration.h",
   "src/compiler/compiled_interface_types.cpp",
   "src/compiler/compiled_scalar_unit.cpp",
+  "src/compiler/compiled_template_body.cpp",
+  "src/compiler/project_template.cpp",
+  "include/gti/project_template.h",
+  "src/compiler/compiled_template_nodes.def",
+  "include/gti/compiled_template_body.h",
   "src/compiler/persistent_declaration.cpp",
   "tests/compiled_*",
   "tests/persistent_declaration_tests.cpp",
@@ -1457,6 +1462,7 @@ paths = [
   ".github/",
   ".gitea/",
   "scripts/validation_checks.py",
+  "scripts/fast_ci.py",
   "scripts/source_stdlib_ci.py",
   "scripts/example_gates.py",
   "tests/source_stdlib_ci_test.py",
@@ -1493,6 +1499,8 @@ area = "release-packaging"
 risk = "system"
 paths = [
   "scripts/build_stdlib_bundles.py",
+  "scripts/stdlib_package_coverage.py",
+  "cmake/stdlib-bundles/",
   "scripts/check_release_version.py",
   "scripts/sync_release_assets.py",
   "scripts/resolve_release_source.py",
@@ -1815,3 +1823,7 @@ paths = ["tests/ui/codegen/attributes/*.gti", "examples/llvm/codegen-attributes.
 owners = ["codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"
+
+[[unowned]]
+paths = ["scripts/build_chrono_tzdb.py"]
+reason = "Explicit offline resource maintenance; shipped bundle is validated by chrono database source tests and installation checks."

@@ -1,0 +1,18 @@
+// Fixed zones preserve second offsets and reject invalid offsets or civil overflow.
+//@ run-pass
+//@ slow
+import std.chrono;
+import std.format;
+namespace c = std::chrono;
+int main() {
+  auto zone = c::time_zone::fixed(-561);
+  auto reading = zone.at(c::timestamp::create(0i64, 1i64));
+  if (reading.local().year() != 1969 || reading.offset_seconds() != -561) return 1;
+  auto text = std::format("{}", reading);
+  if (text != "1969-12-31T23:50:39.000000001-00:09:21[UTC-561s]") return 2;
+  auto invalid = c::time_zone::try_fixed(-2147483647 - 1);
+  if (invalid || invalid.error() != c::errc::out_of_range) return 3;
+  auto too_large = zone.try_at(c::timestamp(9223372036854775807i64));
+  if (too_large || too_large.error() != c::errc::out_of_range) return 4;
+  return 0;
+}

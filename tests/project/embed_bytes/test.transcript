@@ -1,0 +1,32 @@
+// Embedded binary bytes reach native execution and changing only the asset invalidates cached builds.
+$ mkdir assets
+$ python3 write_asset.py 7
+$ gti run -v --progress=never
+? 7
+stderr: gti: cache miss
+$ gti run -v --progress=never
+? 7
+stderr: gti: cache hit
+$ python3 write_asset.py 9
+$ gti run -v --progress=never
+? 9
+stderr: gti: cache miss
+$ gti run -v --progress=never
+? 9
+stderr: gti: cache hit
+$ rm assets/data.bin
+$ sh -c "build/gti/dev/*/app"
+? 9
+$ gti build --progress=never
+? 65
+stderr: GTI-S2129
+stderr: Cannot read embedded file
+$ ln -s /etc/hosts assets/data.bin
+$ gti build --progress=never
+? 65
+stderr: Embedded file must stay within its source owner
+$ rm assets/data.bin
+$ mkfifo assets/data.bin
+$ gti build --progress=never
+? 65
+stderr: Embedded input must be a readable regular file

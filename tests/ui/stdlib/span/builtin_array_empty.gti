@@ -1,0 +1,11 @@
+// A zero-length built-in array forms an empty span during constant evaluation.
+import std.span;
+
+constexpr bool empty_span() {
+  int storage[0] = {};
+  auto view = storage.as_span();
+  return view.empty() && view.begin() == view.end();
+}
+
+static_assert(empty_span());
+int main() { return 0; }

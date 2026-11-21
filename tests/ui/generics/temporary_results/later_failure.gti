@@ -1,0 +1,19 @@
+// Failure of a later argument cleans an already materialized constrained-call temporary.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: GTI-R0014
+//@ stderr-contains: failure_during_cleanup
+struct Value {
+  Value() = default;
+  ~Value() { mut int n = 2147483647; n += 1; }
+};
+struct Source { Source() = default; };
+Value produce(Source& source) { return Value(); }
+concept produces<S> = requires(S& source) { { produce(source) } -> Value; };
+int fail() { mut int n = 2147483647; return n + 1; } //~ WARN GTI-S2096
+int consume(Value& value, int n) { return n; }
+int run<S>(S& source) requires produces<S> {
+  return consume(produce(source), fail());
+}
+int main() { Source source{}; return run(source); }

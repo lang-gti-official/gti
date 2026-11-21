@@ -1,0 +1,38 @@
+// Coarse elapsed arithmetic avoids intermediate overflow and differences truncate toward zero.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  int64_t minimum = -9223372036854775807i64 - 1i64;
+  int64_t maximum = 9223372036854775807i64;
+  auto low = c::timestamp(minimum);
+  auto high = c::timestamp(maximum);
+  auto amount = c::hours(2562047788015216i64);
+  auto forward = low.add(amount);
+  auto backward = high.sub(amount);
+  if (forward.unix_seconds() != 1792i64 || backward.unix_seconds() != -1793i64) { return 1; }
+  auto span = high.elapsed_since_as<c::days>(low);
+  if (span.count() != 213503982334601i64) { return 2; }
+  if (high.try_elapsed_since_as<c::seconds>(low)) { return 3; }
+  auto minus_one = c::timestamp::create(-1i64, 1i64);
+  auto positive_boundary = high.elapsed_since_as<c::seconds>(minus_one);
+  if (positive_boundary.count() != maximum) { return 4; }
+  auto negative_boundary = minus_one.elapsed_since_as<c::seconds>(high);
+  if (negative_boundary.count() != -maximum) { return 5; }
+  auto zero = c::timestamp(0i64);
+  auto half = c::timestamp::create(1i64, 500000000i64);
+  auto positive = half.elapsed_since_as<c::seconds>(zero);
+  auto negative = zero.elapsed_since_as<c::seconds>(half);
+  if (positive.count() != 1i64 || negative.count() != -1i64) { return 6; }
+  auto millis = c::milliseconds(1500i64);
+  auto micro = c::microseconds(1500000i64);
+  if (!(zero.add(millis) == half) || !(zero.add(micro) == half)) { return 7; }
+  auto one_day = c::days(1i64);
+  auto seconds = one_day.cast<c::seconds>();
+  if (seconds.count() != 86400i64) { return 8; }
+  auto sum = one_day.add(one_day);
+  if (sum.count() != 2i64) { return 9; }
+  auto past = high.sub(c::seconds(maximum));
+  if (past.unix_seconds() != 0i64) { return 10; }
+  return 0;
+}

@@ -511,7 +511,127 @@ SourceGraph SourceLoader::load(
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
+  loadEmbeddedFiles();
   return std::move(graph);
+}
+
+void SourceLoader::loadEmbeddedFiles() {
+  constexpr std::uintmax_t fileLimit = 16 * 1024 * 1024;
+  constexpr std::uintmax_t compilationLimit = 64 * 1024 * 1024;
+  struct FileContents {
+    std::shared_ptr<const std::string> bytes;
+    std::uint64_t digest = 0;
+    std::string error;
+  };
+  std::unordered_map<std::string, FileContents> contentsByPath;
+  std::uintmax_t bytesRead = 0;
+  const auto read = [&](const std::filesystem::path &path) -> FileContents {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error)
+      return {.error = "Embedded input must be a readable regular file."};
+    const auto size = std::filesystem::file_size(path, error);
+    if (error)
+      return {.error = "Cannot determine the embedded file size."};
+    if (size > fileLimit)
+      return {.error = "Embedded file exceeds the 16 MiB size limit."};
+    if (size > compilationLimit - bytesRead)
+      return {.error = "Embedded files exceed the 64 MiB compilation limit."};
+    std::ifstream input(path, std::ios::binary);
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())) ||
+        input.peek() != std::char_traits<char>::eof() || input.bad())
+      return {
+          .error =
+              "Cannot read the embedded file or it changed while being read."};
+    bytesRead += bytes.size();
+    const auto digest = sourceTextDigest(bytes);
+    return {.bytes = std::make_shared<const std::string>(std::move(bytes)),
+            .digest = digest};
+  };
+
+  for (SourceUnit &unit : graph.units) {
+    if (!unit.tokens || archivedEmbeddedInputs.contains(unit.path.string()))
+      continue;
+    const auto *owner = packageForPath(unit.path);
+    const auto allowed = [&](const std::filesystem::path &path) {
+      return owner && owner == packageForPath(path) &&
+             (owner->kind != SourceOwnerKind::Direct ||
+              pathIsWithin(unit.path.parent_path(), path));
+    };
+    const auto resolve = [&](EmbeddedFile &file) {
+      const std::filesystem::path relative(file.spelling);
+      if (relative.empty() || relative.has_root_path() ||
+          file.spelling.find('\0') != std::string::npos) {
+        file.error = "embed_bytes requires a nonempty relative file path.";
+        return;
+      }
+      const auto requested = unit.path.parent_path() / relative;
+      const auto authored = authoredPath(requested);
+      if (!allowed(authored)) {
+        file.error = "Embedded file must stay within its source owner.";
+        return;
+      }
+      file.lookupPath = authored;
+      std::error_code error;
+      auto canonical = std::filesystem::canonical(requested, error);
+      if (error) {
+        file.error = "Cannot read embedded file '" + file.spelling + "'.";
+        return;
+      }
+      if (!allowed(canonical)) {
+        file.error = "Embedded file must stay within its source owner.";
+        return;
+      }
+      file.path = std::move(canonical);
+      // Snapshot a canonical input once, even across source units.
+      auto [entry, inserted] = contentsByPath.try_emplace(file.path.string());
+      if (inserted)
+        entry->second = read(file.path);
+      const auto &contents = entry->second;
+      file.bytes = contents.bytes;
+      file.digest = contents.digest;
+      file.error = contents.error;
+    };
+
+    std::unordered_map<std::string, std::size_t> storageByPath;
+    const auto &tokens = *unit.tokens;
+    for (std::size_t index = 0; index + 3 < tokens.size(); ++index) {
+      const Token &keyword = tokens[index];
+      if (keyword.kind != TokenKind::EMBED_BYTES ||
+          tokens[index + 1].kind != TokenKind::LEFT_PAREN ||
+          tokens[index + 2].kind != TokenKind::STRING_LITERAL ||
+          tokens[index + 3].kind != TokenKind::RIGHT_PAREN)
+        continue;
+      if (index != 0 && (tokens[index - 1].kind == TokenKind::DOT ||
+                         tokens[index - 1].kind == TokenKind::ARROW ||
+                         tokens[index - 1].kind == TokenKind::SCOPE))
+        continue;
+      if (std::any_of(unit.inactiveSpans.begin(), unit.inactiveSpans.end(),
+                      [&](const SourceSpan &span) {
+                        return span.start == keyword.position;
+                      }))
+        continue;
+      const auto *spelling =
+          std::get_if<std::string>(&tokens[index + 2].literal);
+      if (!spelling)
+        continue;
+      EmbeddedFile file{.keyword = keyword,
+                        .storageOffset = keyword.position,
+                        .spelling = *spelling};
+      resolve(file);
+      if (file.bytes)
+        file.storageOffset =
+            storageByPath.try_emplace(file.path.string(), keyword.position)
+                .first->second;
+      // Cached syntax and semantic prefixes may own generated declarations
+      // for these bytes. A changed or missing input must retire those rows.
+      digestInteger(unit.syntaxDigest, keyword.position);
+      digestInteger(unit.syntaxDigest, file.storageOffset);
+      digestInteger(unit.syntaxDigest, file.digest);
+      digestText(unit.syntaxDigest, file.error);
+      unit.embeddedFiles.push_back(std::move(file));
+    }
+  }
 }
 
 bool SourceLoader::hadError() const { return hasErrors(diagnostics); }
@@ -621,7 +741,8 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
       continue;
     }
     error.clear();
-    if (!std::filesystem::is_regular_file(path, error)) {
+    if (!installedProviders.contains(path.string()) &&
+        !std::filesystem::is_regular_file(path, error)) {
       continue;
     }
 
@@ -704,7 +825,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     std::string deferredText;
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
-    if (isEntry && entrySource && !entrySourceConsumed) {
+    if (installedProviders.contains(key)) {
+      deferredText = deferredSources.at(key)();
+      exactSource = deferredText;
+    } else if (isEntry && entrySource && !entrySourceConsumed) {
       entrySourceConsumed = true;
       exactSource = *entrySource;
       unitCompletionOffset = completionOffset;

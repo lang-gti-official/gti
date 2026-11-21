@@ -1,0 +1,6 @@
+import "public.gti";
+int& escape(int& source) {
+  mut auto rack = instruments::Rack<int, 2>({1, 2});
+  return rack.peek(0);
+}
+int main() { return 0; }

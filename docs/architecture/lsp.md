@@ -169,6 +169,23 @@ this point means primary type checking found no issue in the open file.
 Generic instantiation, cross-function effects and MIR borrow and lifetime
 verification can still report errors for the same version.
 
+After an edit, the same opt-in lets the compiler query a name in the edited
+declaration as soon as it registers the current project's signatures. An
+isolated semantic worker checks the enclosing function with its type parameters
+and requirements, or uses the conformance validator for a pattern or associated
+type. A `nameLookup` notification reports the compiler's error at the edited
+identifier. Before the lexical walk has established namespace values, the
+query admits a missing name only when its spelling occurs nowhere else in the
+active input tokens. Compiled inputs without that evidence, source macros and
+potentially discarded compile-time paths use the ordinary checks.
+
+When an edit replaces that identifier and the compiler observes a binding at
+the same occurrence, the server can withdraw its own provisional error. Each
+retained finding must still have current primary, related and fix-it source
+text. Verified errors stay under the full check's ownership. A corrected name
+can therefore disappear from the editor before MIR checks the document and its
+callers. Exact restoration of a verified buffer still restores its warnings.
+
 The worker performs the ordinary configured analysis and its verification
 fallbacks. It hands an owned diagnostic list to a publisher outside crash
 recovery and continues checking. On open, once the compiler registers the
@@ -197,12 +214,22 @@ errors as soon as the compiler checks that function. The parser records the
 function's braces. The query requires identical source outside those braces,
 reparses the body, and uses the original declaration and its lookup environment
 in an isolated semantic model. One foreground worker retains the most recent
-clean, verified root. Dependency and project changes invalidate it. Newer
-edits cancel earlier queries, and publication checks the document generation.
+verified root with no errors, including its published warnings. Dependency and
+project changes invalidate it. Newer edits cancel earlier queries, and publication
+checks the document generation.
 
-A clean local result retracts errors this query previously published. Restoring
-the exact source bytes of the retained verified root also restores its clean
-ordinary diagnostics when its dependency and project inputs are still current.
+In a generic function or method, the query enters the same type-parameter
+and requirement scopes used to check the original definition. It can report
+an undefined name in the edited body, including inside a lambda, and a missing
+member of an enum whose qualifier resolved. A successful
+lookup alone cannot withdraw an error or certify a concrete instantiation.
+
+A clean local result for an eligible concrete body can retract the query's own
+errors. Restoring the exact verified source restores the original diagnostic
+set, including warning ranges and related information, while dependency and
+project inputs remain current. During a partial check, warnings with locations
+in the changed document wait for current source. Staged clients see
+`bodyChecking` for local type diagnostics and `verifiedRestoration` for undo.
 After a parse failure, the server retains the reported diagnostics and the
 failed text for that root. If the user repairs the body with different text,
 the isolated checker can replay the failed body. It can withdraw the recovery
@@ -221,8 +248,8 @@ answer to project verification.
 
 The complete frontend still checks callers, lifetimes, cleanup and MIR for
 every settled edit. Its diagnostics replace the partial result and its snapshot
-serves navigation and other requests. Edits to declarations, generic or
-compile-time bodies, or functions with inferred reference results use that
+serves navigation and other requests. Edits to declarations and compile-time
+bodies, and concrete functions with inferred reference results, still use
 syntax publication followed by complete analysis.
 
 Full verification shares compiler-owned dominance and cleanup-path proofs across
@@ -289,6 +316,11 @@ public members without exposing that type's name as a namespace candidate.
 Dirty interface overlays invalidate consumers through the existing dependency
 generation machinery, and closing an overlay restores the on-disk surface.
 Registered implementation files are retained source dependencies as well.
+The analysis also retains the authored and resolved paths of embedded binary
+inputs for file-change notifications. It reads their saved bytes for each
+new source analysis and uses the frontend's resolved static byte-span type
+for hover. An edited body containing an embed takes the full source-load
+path so changes to the argument or its origin cannot reuse an older input.
 Project resolution also supplies the default discovered module map. Saved `.gti`
 creation, removal and header changes refresh project snapshots even when no
 previous import edge named that file. A normal `textDocument/didSave` also
@@ -585,8 +617,9 @@ contain a default expression. The placeholder deliberately avoids reprinting
 source expressions while exposing optionality consistently in hover, outline,
 and signature help; the protocol layer does not infer defaults from arity.
 
-Builtin counted-view members implemented by trusted source factories preserve
-one compiler-selected call identity. `ResolvedCallInfo::argumentReceiver`
+Built-in array and counted-view members implemented by trusted source
+factories preserve one compiler-selected call identity.
+`ResolvedCallInfo::argumentReceiver`
 normalizes the written receiver into argument zero for semantic effects and
 HIR's ordinary ordered source call; it does not duplicate the receiver or
 invent a backend member operation. The compiler's shared argument-access

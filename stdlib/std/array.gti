@@ -1,6 +1,7 @@
 export module array;
 
 import std.memory;
+import std.span;
 import "detail/iterator.gti";
 // The value and indexed core is implemented without pointer decay or hidden
 // allocation. Nominal cursors borrow the array owner, never decay its storage.
@@ -229,6 +230,16 @@ public:
       mut T* address = nullptr;
       if constexpr (N > 0) { address = &this.values[0]; }
       return std::assume_mut(address + index, this);
+    }
+  }
+
+  /// Returns a checked read-only span that borrows this fixed array.
+  constexpr span<T> as_span() requires std::storage_element<T> {
+    if constexpr (N == 0) {
+      const T* address = nullptr;
+      unsafe { return gti_internal::make_span(this, address, size_t(0), size_t(0)); }
+    } else {
+      unsafe { return gti_internal::make_span(this, &this.values[0], size_t(0), size_t(N)); }
     }
   }
 

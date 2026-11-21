@@ -1,0 +1,12 @@
+// The non-try runtime formatter panics instead of concealing invalid input.
+//@ slow
+//@ reason: Integrated chrono formatting uses 3.88s CPU locally, above half the 5s fast runtime budget.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: Chrono formatting failed
+import std.chrono;
+int main() {
+  auto date = std::chrono::date::create(2026, 11, 20);
+  auto text = std::chrono::runtime_format(date, "%H");
+  return 0;
+}

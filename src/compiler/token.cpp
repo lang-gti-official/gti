@@ -17,6 +17,7 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"delete", TokenKind::DELETE},
     {"do", TokenKind::DO},
     {"else", TokenKind::ELSE},
+    {"embed_bytes", TokenKind::EMBED_BYTES},
     {"enum", TokenKind::ENUM},
     {"export", TokenKind::EXPORT},
     {"extern", TokenKind::EXTERN},

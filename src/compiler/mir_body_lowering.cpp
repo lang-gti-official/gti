@@ -6477,6 +6477,52 @@ private:
          .programConstantSubstitution = true,
          .info = materializedInfo});
     emittedValues.insert(value.id);
+    if (value.info.traits.containsBorrowedState) {
+      const auto storage = constantAddressDependencies(*value.constant);
+      if (!storage.empty()) {
+        const auto supplier =
+            globalStoragePlace({.root = storage.front()}, source.placeDomain);
+        if (supplier)
+          bindStaticConstantLoan(value, supplier);
+      }
+    }
+  }
+
+  void bindStaticConstantLoan(const HirValue &value, MirPlaceId place) {
+    const auto type = output.findPlace(place)->type;
+    const auto loan =
+        createLoan(MirLoanKind::Stored, place, AccessMode::ReadOnly, value.id);
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Borrow,
+         .hirValue = value.id,
+         .operands = {{.kind = MirOperandKind::BorrowRead,
+                       .place = place,
+                       .type = type}},
+         .loan = loan,
+         .info = {.type = type,
+                  .category = ValueCategory::Place,
+                  .access = AccessMode::ReadOnly,
+                  .traits = output.findPlace(place)->traits}});
+    valueLoans.insert_or_assign(value.id, loan);
+    scopes.back().loans.push_back(loan);
+  }
+
+  void borrowStaticConstantCarrier(const HirValue &value, MirPlaceId place) {
+    if (!value.info.traits.containsBorrowedState ||
+        value.info.access != AccessMode::ReadOnly || loanForValue(value.id))
+      return;
+    const auto *root = output.findPlace(place);
+    if (!root || root->root != MirPlaceRootKind::Symbol || root->capture ||
+        !root->projections.empty())
+      return;
+    const auto *step =
+        program.programInitializationPlan().findStepForSymbol(root->symbol);
+    if (!step || step->role != ProgramInitializationStepRole::DataOnly ||
+        !value.constant || constantAddressDependencies(*value.constant).empty())
+      return;
+    // The checked datum holds only immutable static addresses. Its storage
+    // supplies a static authority when a use copies the carrier by value.
+    bindStaticConstantLoan(value, place);
   }
 
   [[nodiscard]] MirOperand valueOperand(HirValueId id) {
@@ -6600,6 +6646,7 @@ private:
         return valueOperand(id);
       }
       const MirPlaceId place = placeForValue(id);
+      borrowStaticConstantCarrier(*value, place);
       (void)appendInstruction({.kind = MirInstructionKind::Load,
                                .hirValue = value->id,
                                .result = resultFor(*value),
@@ -18406,9 +18453,10 @@ private:
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
 
-    breakContexts.push_back({.target = exitBlock,
-                             .keepScopes = switchScopes.size(),
-                             .exitLoans = endedAfter(statement)});
+    if (!statement.conditionalPattern)
+      breakContexts.push_back({.target = exitBlock,
+                               .keepScopes = switchScopes.size(),
+                               .exitLoans = endedAfter(statement)});
     bool fallsThrough = !coversEveryValue;
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
@@ -18542,8 +18590,10 @@ private:
       }
       scopes.pop_back();
     }
-    fallsThrough = fallsThrough || breakContexts.back().hasBreak;
-    breakContexts.pop_back();
+    if (!statement.conditionalPattern) {
+      fallsThrough = fallsThrough || breakContexts.back().hasBreak;
+      breakContexts.pop_back();
+    }
     current = exitBlock;
     scopes = std::move(exitScopes);
     temporaryDrops = switchTemporaryDrops;

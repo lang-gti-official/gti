@@ -6,6 +6,7 @@ import os
 import pathlib
 import platform
 import shutil
+import signal
 import subprocess
 import tempfile
 from backend_modes import cpp_modes, is_llvm_mode, native_modes, record_symptom, unsupported
@@ -120,6 +121,14 @@ def main():
                     continue
                 result = run([str(binary)], environment)
                 assert not result.stdout and not result.stderr, result
+                if fixture == "process_storage_policy" and os.name != "nt":
+                    exhausted = subprocess.run(
+                        [str(binary)], env=dict(environment, GTI_TEST_FAIL_GROWTH="1"),
+                        capture_output=True, text=True, timeout=30)
+                    assert exhausted.returncode == -signal.SIGABRT, exhausted
+                    assert not exhausted.stdout, exhausted
+                    assert "runtime error[GTI-R0011]" in exhausted.stderr, exhausted
+                    assert "allocation_failure" in exhausted.stderr, exhausted
             binary = temporary / f"process-resource-limit-{label}"
             run([compiler, str(root / "tests/fixtures/process_resource_policy_limit.gti"),
                  *flags, "-o", str(binary), "--",

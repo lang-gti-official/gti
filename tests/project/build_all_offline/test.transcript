@@ -1,0 +1,7 @@
+// Both offline modes must refuse acquisition while resolving an all-target build.
+$ gti build --all --jobs 2 --offline
+? 65
+stderr: GTI-B1703
+$ gti build --all --jobs 2 --locked
+? 65
+stderr: GTI-B1703

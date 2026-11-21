@@ -2,12 +2,14 @@
 #include "gti/ast_clone.h"
 
 #include "diagnostic_registry.h"
+#include "gti/compiled_template_body.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/parser.h"
+#include "gti/project_template.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
@@ -152,6 +154,63 @@ std::string testSelectorLiteral(std::string_view value) {
     result += c;
   }
   return result + "\"";
+}
+
+const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
+                                   std::size_t start, std::size_t end) {
+  for (const auto &item : items) {
+    if (!item)
+      continue;
+    if (const auto *fn = stmtAs<FunctionDecl>(item.get())) {
+      if (!fn->body() || !fn->body()->extent())
+        continue;
+      const auto &span = *fn->body()->extent();
+      if (span.source == path && span.start < start && end < span.end)
+        return fn;
+    } else if (const auto *space = stmtAs<NamespaceDecl>(item.get())) {
+      if (const auto *fn =
+              editedFunction(space->declarations(), path, start, end))
+        return fn;
+    } else if (const auto *owner = stmtAs<ClassDecl>(item.get())) {
+      if (const auto *fn = editedFunction(owner->members(), path, start, end))
+        return fn;
+    }
+  }
+  return nullptr;
+}
+
+// A never-before-seen identifier is a cheap candidate for lookup in the
+// registered declaration environment. A spelling elsewhere in the parsed
+// inputs could introduce a lexical value during body checking. Leave those
+// cases to the ordinary walk. Membership alone never produces a diagnostic.
+const Token *editedLookupToken(const SourceGraph &graph, EditedLookupRange edit,
+                               bool &uniqueSpelling) {
+  const auto *entry = graph.findUnit(graph.entryUnit());
+  if (!entry || !entry->tokens)
+    return nullptr;
+  const auto &tokens = *entry->tokens;
+  for (auto it = tokens.begin(); it != tokens.end(); ++it) {
+    if (it->position > edit.start || it->kind != TokenKind::IDENTIFIER ||
+        it->generated || it->position + it->lexeme.size() < edit.end)
+      continue;
+    if (edit.recheck && (it->position != edit.start ||
+                         it->position + it->lexeme.size() != edit.end))
+      continue;
+    uniqueSpelling = true;
+    for (const auto id : graph.compilationOrder()) {
+      const auto *unit = graph.findUnit(id);
+      if (!unit || !unit->tokens || unit->compiledTemplate)
+        return nullptr;
+      if (std::ranges::any_of(*unit->tokens, [&](const Token &other) {
+            return &other != &*it && other.lexeme == it->lexeme;
+          })) {
+        uniqueSpelling = false;
+        break;
+      }
+    }
+    return uniqueSpelling || edit.recheck ? &*it : nullptr;
+  }
+  return nullptr;
 }
 
 // The source diagnostics of MIR's borrow rejections. `internal` reports that
@@ -1052,6 +1111,28 @@ FrontendUnitCacheKey unitCacheKey(const FrontendOptions &options,
               unit.entry ? options.completionOffset : std::nullopt};
 }
 
+StmtPtr embeddedArrayDeclaration(const EmbeddedFile &file) {
+  const auto token = [&](TokenKind kind, std::string spelling) {
+    auto result = file.storageName();
+    result.kind = kind;
+    result.lexeme = std::move(spelling);
+    return result;
+  };
+  TypeRef type(token(TokenKind::UINT8, "uint8_t"));
+  auto extent =
+      token(TokenKind::INT_LITERAL, std::to_string(file.bytes->size()));
+  extent.literal = static_cast<std::uint64_t>(file.bytes->size());
+  type.arrayExtents.emplace_back(
+      std::make_shared<const ArrayExtentExpr>(std::move(extent)));
+  auto initializer = std::make_unique<ArrayInitializer>(
+      token(TokenKind::LEFT_BRACE, "{"), ExprList{},
+      token(TokenKind::RIGHT_BRACE, "}"), file.bytes);
+  return std::make_shared<VariableDecl>(
+      Mutability::Immutable, std::move(type), file.storageName(),
+      std::move(initializer), token(TokenKind::STATIC, "static"), false,
+      token(TokenKind::CONSTEXPR, "constexpr"));
+}
+
 std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
   std::size_t result = tokens.size() * sizeof(Token);
   for (const Token &token : tokens) {
@@ -1274,6 +1355,19 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const std::string syntaxContext = syntaxCacheContext(options);
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
+  // The parser consumes unshared unit tokens. Retain only the candidate
+  // and the entry tokens until its enclosing declaration is known.
+  std::shared_ptr<const std::vector<Token>> lookupTokens;
+  if (options.editedRange) {
+    bool uniqueSpelling = false;
+    if (const auto *token = editedLookupToken(
+            result.sourceGraph, *options.editedRange, uniqueSpelling)) {
+      result.editedLookup.emplace(*token, uniqueSpelling,
+                                  options.editedRange->recheck);
+      lookupTokens =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit())->tokens;
+    }
+  }
   const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
@@ -1297,7 +1391,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                            ? 0
                            : dependencyDigest->second);
       std::optional<CachedParsedUnit> cached =
-          options.cache ? options.cache->lookupParsed(key) : std::nullopt;
+          options.cache && !unit->compiledTemplate
+              ? options.cache->lookupParsed(key)
+              : std::nullopt;
       if (cached) {
         unitDeclarations = std::move(cached->declarations);
         unit->lifetimeNames = cached->lifetimeNames;
@@ -1330,9 +1426,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                 ? std::move(const_cast<std::vector<Token> &>(*unit->tokens))
                 : unitTokens;
         unit->tokens.reset();
-        Parser parser(std::move(parserTokens), source == nullptr
-                                                   ? std::string_view{}
-                                                   : std::string_view{*source});
+        const auto &recipe = unit->compiledTemplate;
+        if (recipe && recipe->projectSyntax) {
+          parserTokens =
+              projectTemplateTokens(*recipe, parserTokens, unit->path.string());
+          source = &*recipe->projectSyntax;
+        }
+        Parser parser(std::move(parserTokens),
+                      source ? std::string_view(*source) : std::string_view{});
         const std::size_t parseErrorLimit =
             options.limits.errorLimit == 0
                 ? 0
@@ -1347,11 +1448,41 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
-        unit->lifetimeNames =
-            parser.lifetimeNames().empty()
-                ? nullptr
-                : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
-        if (options.cache &&
+        if (recipe && !parser.hadError()) {
+          if (recipe->projectSyntax) {
+            verifyProjectTemplate(*recipe, unitDeclarations,
+                                  parser.lifetimeNames());
+            result.sources.set(unit->path.string(), *recipe->projectSyntax);
+          } else if (auto spelling = restoreTemplateBodies(
+                         unitDeclarations, *recipe, unit->path.string())) {
+            result.sources.set(unit->path.string(), std::move(*spelling));
+          }
+        }
+        if (recipe && !recipe->projectSyntax && !parser.hadError()) {
+          auto names =
+              compiledTemplateLifetimeNames(*recipe, unit->path.string());
+          unit->lifetimeNames =
+              names.empty()
+                  ? nullptr
+                  : std::make_shared<const LifetimeNames>(std::move(names));
+        } else {
+          unit->lifetimeNames = parser.lifetimeNames().empty()
+                                    ? nullptr
+                                    : std::make_shared<const LifetimeNames>(
+                                          parser.lifetimeNames());
+        }
+        StmtList embeddedDeclarations;
+        for (const auto &file : unit->embeddedFiles) {
+          if (!file.bytes || file.storageOffset != file.keyword.position)
+            continue;
+          embeddedDeclarations.push_back(embeddedArrayDeclaration(file));
+          estimatedInputBytes += file.bytes->size();
+        }
+        unitDeclarations.insert(
+            unitDeclarations.begin(),
+            std::make_move_iterator(embeddedDeclarations.begin()),
+            std::make_move_iterator(embeddedDeclarations.end()));
+        if (options.cache && !unit->compiledTemplate &&
             !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(
               key, estimatedInputBytes,
@@ -1387,6 +1518,31 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             .count());
   }
   result.program = Program(std::move(declarations));
+  if (result.editedLookup) {
+    // Until the lexical walk reaches this declaration, a discarded branch or
+    // source macro may depend on body facts that are still unavailable.
+    const Token &token = result.editedLookup->token;
+    result.editedLookup->function =
+        editedFunction(result.program.declarations(), token.source,
+                       token.position, token.position + token.lexeme.size());
+    if (const auto *fn = result.editedLookup->function) {
+      const auto &extent = *fn->body()->extent();
+      for (auto it = lookupTokens->begin(); it != lookupTokens->end(); ++it) {
+        if (it->position < extent.start || it->position >= extent.end)
+          continue;
+        const bool macroCall = it->kind == TokenKind::BANG &&
+                               it != lookupTokens->begin() &&
+                               (std::prev(it)->kind == TokenKind::IDENTIFIER ||
+                                std::prev(it)->kind == TokenKind::GREATER);
+        if (it->kind == TokenKind::CONSTEXPR ||
+            it->kind == TokenKind::HASH_MACRO || macroCall) {
+          result.editedLookup.reset();
+          break;
+        }
+      }
+    }
+  }
+
   result.syntaxValid = syntaxValid;
   if (options.stopAfter == FrontendPhase::Parsing) {
     result.parsingComplete = true;
@@ -1640,8 +1796,23 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
                        diagnostics);
             },
             [&] {
-              observer(DiagnosticStage::Registered, result, semantic.model(),
-                       {});
+              if (hasErrorDiagnostics(semantic.errors()))
+                observer(DiagnosticStage::Declaration, result, semantic.model(),
+                         semantic.errors());
+              else {
+                observer(DiagnosticStage::Registered, result, semantic.model(),
+                         {});
+                if (const auto &candidate = result.editedLookup) {
+                  const auto &token = candidate->token;
+                  const auto lookup = semantic.diagnoseRegisteredLookup(
+                      result.program, result.sources, token,
+                      candidate->function, options.cancellation);
+                  if (lookup && (lookup->empty() ? candidate->recheck
+                                                 : candidate->uniqueSpelling))
+                    observer(DiagnosticStage::Lookup, result, semantic.model(),
+                             *lookup);
+                }
+              }
             });
       } else {
         result.semanticValid = semantic.check(result.program);
@@ -2294,7 +2465,7 @@ std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
   if (!snapshot)
     return {};
   if (!snapshot->bodyQueryContext || !snapshot->canGenerateCode() ||
-      !snapshot->diagnostics.empty() || snapshot->cancelled) {
+      hasErrorDiagnostics(snapshot->diagnostics) || snapshot->cancelled) {
     snapshot->bodyQueryContext.reset();
     return {};
   }
@@ -2303,29 +2474,6 @@ std::shared_ptr<const EditorBodyDiagnostics> EditorBodyDiagnostics::takeFrom(
 }
 
 namespace {
-const FunctionDecl *editedFunction(const StmtList &items, std::string_view path,
-                                   std::size_t start, std::size_t end) {
-  for (const auto &item : items) {
-    if (!item)
-      continue;
-    if (const auto *fn = stmtAs<FunctionDecl>(item.get())) {
-      if (!fn->body() || !fn->body()->extent())
-        continue;
-      const auto &span = *fn->body()->extent();
-      if (span.source == path && span.start < start && end < span.end)
-        return fn;
-    } else if (const auto *space = stmtAs<NamespaceDecl>(item.get())) {
-      if (const auto *fn =
-              editedFunction(space->declarations(), path, start, end))
-        return fn;
-    } else if (const auto *owner = stmtAs<ClassDecl>(item.get())) {
-      if (const auto *fn = editedFunction(owner->members(), path, start, end))
-        return fn;
-    }
-  }
-  return nullptr;
-}
-
 // Only the edited declaration has current statement locations. Check its
 // concrete call closure, then publish solely diagnostics owned by this body.
 // The background pass owns callers, program storage and cross-body findings.
@@ -2436,8 +2584,7 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
   }
   const auto *prior =
       editedFunction(baseline->program.declarations(), path, first, past);
-  if (!prior || prior->isConstexpr() || prior->isProceduralMacro() ||
-      !prior->genericParameters().empty())
+  if (!prior || prior->isConstexpr() || prior->isProceduralMacro())
     return std::nullopt;
   const auto &span = *prior->body()->extent();
   if (span.end > original->size())
@@ -2452,7 +2599,8 @@ std::optional<std::vector<Diagnostic>> EditorBodyDiagnostics::checkEdit(
   for (const auto &token : scanned) {
     if (token.position < span.start || token.position >= bodyEnd)
       continue;
-    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO)
+    if (isDirectiveToken(token.kind) || token.kind == TokenKind::HASH_MACRO ||
+        token.kind == TokenKind::EMBED_BYTES)
       return std::nullopt;
     tokens.push_back(token);
   }

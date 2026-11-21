@@ -1,0 +1,10 @@
+// A promised owned result does not allow binding a mutable temporary argument.
+struct Value { Value() = default; };
+struct Source { Source() = default; };
+Value produce(Source& source) { return Value(); }
+concept produces<S> = requires(S& source) { { produce(source) } -> Value; };
+void change(mut Value& value) {}
+void run<S>(S& source) requires produces<S> {
+  change(produce(source)); //~ ERROR GTI-S2017
+}
+int main() { return 0; }

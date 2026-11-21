@@ -546,6 +546,15 @@ suites retain the existing public contracts, including rejection diagnostics.
 Source-policy failures identify the applied concept and source requirement
 rather than referring to a retired private capability.
 
+`tests/ui/generics/temporary_results/` covers composing guaranteed owned
+free-function and member results with temporary read-only arguments, including
+formatting inside a generic error callback, evaluation/drop order, failure
+cleanup, and rejection of escaping/mutable borrows or an unresolved concrete
+producer. `tests/unit/provisional_call_boundary.cpp` injects a provisional
+requirement marker into a concrete instance provider's otherwise valid call;
+HIR must reject it instead of treating an open-body promise as an executable
+target.
+
 The complete example oracles and both body/declaration censuses remain delivery
 gates. Added source helpers legitimately increase declaration inventories;
 changes to emitted bodies or generated adapters still require individual review.
@@ -2763,6 +2772,10 @@ catalog rules, bounded overlapping children, timeout progress, exact signal vers
 ordinary status (including 127 and 143), failed exec, moved process ownership and
 background descendant termination on both completion and timeout. It uses native
 host children, so its outcome does not depend on GTI-generated checks.
+Descendant checks synchronize startup and require EOF on a lifetime pipe after
+owner completion or timeout; delayed scheduling cannot turn an earlier marker
+write into a false cleanup failure. A separate release pipe cleans up descendants
+even when the group-termination assertion fails.
 Streaming observers must receive complete payloads before the driver releases
 their allocated storage; retained result facts preserve stable failure selection.
 `test_report` parses serialized events with Python's JSON implementation,

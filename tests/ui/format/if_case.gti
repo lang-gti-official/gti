@@ -1,0 +1,4 @@
+// Keep the case pattern on the if condition line.
+//@ parse-pass
+//@ snapshot: format
+int read(Period& p){if(case Period::seconds(auto& seconds)=p){return seconds;}else{return 0;}}

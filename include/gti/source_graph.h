@@ -23,6 +23,7 @@
 namespace lang {
 
 class SourceOwnerRegistry;
+struct CompiledTemplateModule;
 
 using SourceUnitId = std::size_t;
 using ModuleId = std::size_t;
@@ -92,6 +93,21 @@ struct SourceImport {
   SourceImportResolution resolution = SourceImportResolution::Unresolved;
 };
 
+// One authored compile-time file input. Its exact bytes are shared across
+// the source graph, static array initialization, and build identity.
+struct EmbeddedFile {
+  Token keyword;
+  std::size_t storageOffset = 0;
+  std::string spelling;
+  std::filesystem::path lookupPath;
+  std::filesystem::path path;
+  std::shared_ptr<const std::string> bytes;
+  std::uint64_t digest = 0;
+  std::string error;
+
+  [[nodiscard]] Token storageName() const;
+};
+
 struct SourceUnit {
   SourceUnitId id = 0;
   ModuleId moduleId = 0;
@@ -141,6 +157,8 @@ struct SourceUnit {
   // Driver-supplied, validated scalar metadata projected into declarations.
   // This admits no trusted capabilities and never comes from source syntax.
   bool compiledScalarInterface = false;
+  std::vector<EmbeddedFile> embeddedFiles;
+  std::shared_ptr<const CompiledTemplateModule> compiledTemplate;
 };
 
 // Loading provenance, not a dependency or visibility edge. An interface may
@@ -178,6 +196,8 @@ public:
   [[nodiscard]] std::vector<SourceUnitId> compilationOrder() const;
 
   void markCompiledScalarInterface(SourceUnitId id);
+  void attachCompiledTemplate(SourceUnitId,
+                              std::shared_ptr<const CompiledTemplateModule>);
 
 private:
   friend class Frontend;
