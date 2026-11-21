@@ -134,6 +134,22 @@ def main():
                                 capture_output=True, text=True, timeout=10)
         assert output.read_text() == "GTI_JOBS=12\nGTI_TEST_JOBS=12\n"
         assert "unknown MiB" in result.stdout, result.stdout
+        # The public macOS runner exposes its memory as bytes via sysctl.
+        # Exercise its real resource-discovery path and preserve the CPU
+        # fallback if that key is unavailable or malformed.
+        sysctl = commands / "sysctl"
+        sysctl.write_text('#!/bin/sh\n[ "$*" = "-n hw.memsize" ] || exit 1\n'
+                          'printf "%s\\n" "$TEST_HW_MEMSIZE"\n')
+        sysctl.chmod(0o755)
+        environment["GTI_MEMORY_PER_TEST_MIB"] = "3072"
+        for reported, expected in (("7516192768", (3, 2)), ("invalid", (12, 12))):
+            output = root / f"sysctl-memory-{reported}"
+            environment.update(TEST_HW_MEMSIZE=reported, GITHUB_ENV=str(output))
+            subprocess.run([bash, str(script)], env=environment, check=True,
+                           capture_output=True, text=True, timeout=10)
+            assert output.read_text() == f"GTI_JOBS={expected[0]}\nGTI_TEST_JOBS={expected[1]}\n"
+        sysctl.unlink()
+        environment["GTI_MEMORY_PER_TEST_MIB"] = ""
         gitea_output, legacy_output = root / "gitea-environment", root / "unused-github-environment"
         environment.update(GITEA_ENV=str(gitea_output), GITHUB_ENV=str(legacy_output))
         subprocess.run([bash, str(script)], env=environment, check=True,

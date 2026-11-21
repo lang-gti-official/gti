@@ -217,6 +217,13 @@ goes to a sibling `name.stdout` and differing inline `//@ stdout:` lines are
 reported, not rewritten. One `--bless` writes annotations and the rendered
 snapshots that quote them. Review its diff.
 
+The runner groups cases with the same imports and compilation options so a
+worker can reuse checked standard-library declarations. A standalone check-pass
+case with no snapshots can use the ordinary frontend directly. If it passes but
+exceeds the applicable budget, the runner measures it through the usual cached
+path before applying the same limit. The JSON report's `cold` flag identifies
+measurements that include cache preparation.
+
 Tiers and reports: `--opt O3` (or `GTI_TEST_OPT=O3`) builds every run test
 that does not pin `//@ opt:` optimized; `--filter REGEX` selects tests whose
 path matches; `--slowest N` lists the N most expensive tests after the run;

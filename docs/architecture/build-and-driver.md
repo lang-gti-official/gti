@@ -926,6 +926,20 @@ and the default unit count is 1. The default worker limit is the smaller of
 the unit count and available hardware threads. `gti build --all` caps each
 child's workers by the hardware budget divided by concurrent target builds.
 
+For hosted project executables, `gti build --incremental` and
+`gti run --incremental` select eight code-generation units. An explicit
+`--codegen-units N` selects the partition count. Eligible cached builds with
+more than one unit store each native object under `build/gti/cache/codegen-unit-v1`.
+On a source edit the compiler checks and optimizes the current whole program
+and partitions it again. Each worker hashes the final LLVM bitcode it will
+compile, after resolving cross-unit linkage, together with the compiler and
+target policy identity. An identical unit reuses its checksummed object.
+Changed instructions, inlined callees, data layouts and referenced declarations
+participate through the actual bitcode. The ordered objects are linked afresh.
+Verbose output counts the units reused. An unchanged target can still hit
+the whole-target cache first. `--no-cache --incremental` produces a clean
+build with the same partitioning and bypasses both caches.
+
 The unit count and partitioner version enter the executable cache identity.
 Worker count changes scheduling only. LLVM IR output remains the optimized
 whole-program module. Compiled-scalar and embedding libraries and instrumented
@@ -3154,6 +3168,28 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [dependency builds](../../examples/compiled-dependencies/README.md).
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
+
+A library target can also select concrete methods or functions with owning
+GTI types by qualified name in `functions`. For this profile the bundle pairs
+the root module recipe with a target-specific object. For example, selecting
+`Meter::take` compiles the matching concrete overloads, their receivers,
+and the private helpers they call. Callers can receive an `expected<T, E>`
+and own, move or destroy its active alternative using the usual GTI rules.
+
+Consumers import the recipe and check source visibility, overload selection,
+borrows, layout, cleanup and defined failure before binding verified calls to
+the native definitions. Unselected bodies remain available for specialization
+and inlining. The callable identity covers the module, exact declaration offset,
+failure ABI and dependencies. Passive library storage referenced on both sides
+has one linker identity. Active global initialization and TLS require additional
+lifecycle support. Native closures that take function addresses, create native
+callback adapters or perform virtual dispatch require shared code identity and
+are rejected. The profile accepts standard-library dependencies with an
+exact source digest, including the paths, call sites and content of embedded
+files. Native code and imported bodies identify the immutable backing array by
+its defining module and embed site. A mismatched dependency prevents admission.
+A project recipe is checked as ordinary project input. Installed recipes use the
+toolchain's existing authenticated library catalog.
 
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
 explicitly selected root-module functions or the public declarations of the

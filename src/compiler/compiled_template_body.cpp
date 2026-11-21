@@ -16,6 +16,7 @@ namespace {
   throw std::invalid_argument("compiled template: " + std::string(message));
 }
 constexpr std::size_t byteLimit = compiledTemplateSyntaxLimit;
+constexpr std::string_view installedTemplateMagic = "gti.template-unit.4\n";
 constexpr unsigned itemLimit = 65536;
 struct Output {
   std::string bytes;
@@ -1185,6 +1186,14 @@ void verifyCompiledEmbeddedFiles(const CompiledTemplateModule &module,
 
 std::string encodeTemplateModule(const CompiledTemplateModule &module) {
   Output out{std::string(compiledTemplateMagic), compiledTemplateArchiveLimit};
+  if (!module.installedSourceDigest.empty()) {
+    if (module.installedSourceDigest.size() != 64 ||
+        module.installedSourceDigest.find_first_not_of("0123456789abcdef") !=
+            std::string::npos)
+      invalid("invalid installed source identity");
+    out.bytes = installedTemplateMagic;
+    out.text(module.installedSourceDigest);
+  }
   out.text(module.declarations);
   out.number(module.bodies.size());
   for (const auto &[position, body] : module.bodies) {
@@ -1254,11 +1263,21 @@ compiledTemplateLifetimeNames(const CompiledTemplateModule &module,
   return names;
 }
 CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
+  const bool installed = bytes.starts_with(installedTemplateMagic);
   if (bytes.size() > compiledTemplateArchiveLimit ||
-      !bytes.starts_with(compiledTemplateMagic))
+      (!installed && !bytes.starts_with(compiledTemplateMagic)))
     invalid("unsupported module recipe");
-  Input in{bytes.substr(compiledTemplateMagic.size()), {}};
+  const auto magic = installed ? installedTemplateMagic : compiledTemplateMagic;
+  Input in{bytes.substr(magic.size()), {}};
+  std::string digest;
+  if (installed) {
+    digest = in.text();
+    if (digest.size() != 64 ||
+        digest.find_first_not_of("0123456789abcdef") != std::string::npos)
+      invalid("invalid installed source identity");
+  }
   CompiledTemplateModule module{std::string(in.text()), {}};
+  module.installedSourceDigest = std::move(digest);
   for (unsigned n = in.count(); n; --n) {
     auto pos = in.number();
     auto body = in.text();

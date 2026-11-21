@@ -1,0 +1,14 @@
+import "api.gti";
+int main() {
+  mut Meter meter{31};
+  auto value = meter.take(true);
+  auto failure = meter.take(false);
+  if (meter.take(10).value() != 42) { return 6; }
+  if (!value.has_value() || value.value() != 32) { return 1; }
+  if (failure.has_value() || failure.error() != error::negative) { return 2; }
+  auto text = label(true);
+  if (!text.has_value() || text.value().size() != 50) { return 4; }
+  if (label(false).has_value()) { return 5; }
+  if (call_count() != 1) { return 3; }
+  return checked_number(7).value() - 7;
+}
