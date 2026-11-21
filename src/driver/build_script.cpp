@@ -468,8 +468,9 @@ bool completeOutput(const BuildScriptPlan &plan,
   const auto status = std::filesystem::symlink_status(manifest, error);
   if (error && error != std::errc::no_such_file_or_directory) {
     diagnostics.push_back(scriptDiagnostic(
-        plan, "GTI-B2003", "Cannot inspect build-script output '" +
-                              manifest.string() + "': " + error.message() + "."));
+        plan, "GTI-B2003",
+        "Cannot inspect build-script output '" + manifest.string() +
+            "': " + error.message() + "."));
     return false;
   }
   // Do not replace existing output, including a dangling symlink. Parsing and
@@ -482,8 +483,8 @@ bool completeOutput(const BuildScriptPlan &plan,
   output.close();
   if (!output) {
     diagnostics.push_back(scriptDiagnostic(
-        plan, "GTI-B2003", "Cannot write empty build-script output '" +
-                              manifest.string() + "'."));
+        plan, "GTI-B2003",
+        "Cannot write empty build-script output '" + manifest.string() + "'."));
     return false;
   }
   return true;
