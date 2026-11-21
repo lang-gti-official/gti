@@ -1115,6 +1115,15 @@ package publication and publishing permissions are service operations, not
 automatic compiler release side effects. A registry remains a governance/trust
 commitment rather than a guarantee that arbitrary package code is safe to run.
 
+### Package metadata
+
+Implemented: `std.package` supplies owner-specific constexpr name/version
+strings to project source and build programs. Build contexts expose the same
+resolved fields without changing the existing argument protocol. Direct mode
+requires package metadata rather than guessing from ambient files; conditional
+compilation package expressions and semantic-version comparison remain outside
+this change.
+
 ### Build hooks
 
 Status: consumer-approved native package build programs are complete, including

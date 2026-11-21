@@ -1,0 +1,10 @@
+import std.package;
+import std.io;
+import dep.info;
+static_assert(!std::package::name.empty());
+static_assert(!std::package::version.empty());
+int main() {
+  std::println("{} {}", std::package::name, std::package::version);
+  std::println("{} {}", dep_name(), dep_version());
+  return 0;
+}

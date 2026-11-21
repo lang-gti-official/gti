@@ -113,6 +113,7 @@ SourceGraph SourceLoader::load(
   diagnostics.clear();
   states.clear();
   flagIndependentUnits.clear();
+  packageMetadataSources.clear();
   graph.clear();
   sourceManager.clear();
   this->entrySource = std::move(entrySource);
@@ -240,6 +241,38 @@ SourceGraph SourceLoader::load(
     std::sort(standard.modules.begin(), standard.modules.end());
     owners.push_back(std::move(standard));
   }
+  // Each package receives a distinct ordinary module, so the same qualified
+  // constant spelling has the owning package's identity and visibility.
+  std::vector<SourceOwnerDescriptor> metadataOwners;
+  for (const auto &owner : owners) {
+    if (owner.kind != SourceOwnerKind::Package || !owner.packageVersion)
+      continue;
+    const auto root = owner.packageRoot / ".gti-package-metadata";
+    const auto path = root / "package.gti";
+    const auto literal = [](const std::string &value) {
+      std::string text;
+      llvm::raw_string_ostream stream(text);
+      stream << llvm::json::Value(value);
+      return text;
+    };
+    packageMetadataSources.emplace(
+        path.string(), "export module package;\nimport std.string;\n"
+                       "export namespace std { namespace package {\n"
+                       "/// Name from this source package's manifest.\n"
+                       "constexpr std::string_view name = " +
+                           literal(owner.name) +
+                           ";\n"
+                           "/// Version from this source package's manifest.\n"
+                           "constexpr std::string_view version = " +
+                           literal(*owner.packageVersion) + ";\n} }\n");
+    metadataOwners.push_back({.identity = "package-metadata:" + owner.identity,
+                              .name = owner.name + " metadata",
+                              .packageRoot = root,
+                              .sourceRoot = root,
+                              .modules = {{"package", path}},
+                              .kind = SourceOwnerKind::Generated});
+  }
+  owners.insert(owners.end(), metadataOwners.begin(), metadataOwners.end());
   sourceOwners = std::make_shared<const SourceOwnerRegistry>(std::move(owners),
                                                              directMode);
   const auto invalidOwner = [&](std::string message) {
@@ -825,7 +858,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     std::string deferredText;
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
-    if (installedProviders.contains(key)) {
+    if (const auto metadata = packageMetadataSources.find(key);
+        metadata != packageMetadataSources.end()) {
+      exactSource = metadata->second;
+    } else if (installedProviders.contains(key)) {
       deferredText = deferredSources.at(key)();
       exactSource = deferredText;
     } else if (isEntry && entrySource && !entrySourceConsumed) {
@@ -841,7 +877,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       exactSource = deferredText;
     }
     std::uint64_t generation = 0;
-    if (sourceGenerations != nullptr) {
+    if (sourceGenerations != nullptr && !packageMetadataSources.contains(key)) {
       if (const auto found = sourceGenerations->find(key);
           found != sourceGenerations->end()) {
         generation = found->second;
@@ -1387,7 +1423,18 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   const SourceOwnerDescriptor *owner = packageForPath(includingFile);
   std::filesystem::path path;
   std::optional<std::string> expectedName;
-  if (quoted) {
+  if (!quoted && names == std::vector<std::string>{"std", "package"}) {
+    if (!owner || owner->kind != SourceOwnerKind::Package ||
+        !owner->packageVersion)
+      return reject("std.package requires resolved package metadata; use a "
+                    "project command with a gti.toml package manifest.");
+    const auto *metadata =
+        packageByIdentity("package-metadata:" + owner->identity);
+    if (!metadata)
+      return reject("Package metadata module is unavailable.");
+    path = metadata->modules.front().second;
+    expectedName = "package";
+  } else if (quoted) {
     const auto *spelling = std::get_if<std::string>(&tokens[index + 1].literal);
     if (spelling == nullptr || spelling->empty() ||
         spelling->find('\0') != std::string::npos)
@@ -1486,7 +1533,8 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error) &&
       !sourceOverrides->contains(path.string()) &&
-      !deferredSources.contains(path.string())) {
+      !deferredSources.contains(path.string()) &&
+      !packageMetadataSources.contains(path.string())) {
     const auto *targetOwner = packageForPath(path);
     if (targetOwner && targetOwner->kind == SourceOwnerKind::Generated)
       return reject(

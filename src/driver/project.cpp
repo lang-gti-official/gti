@@ -505,7 +505,9 @@ composeBuildScriptPlans(const ProjectWorkspace &workspace,
                      .declaredInputs = script->declaredInputs,
                      .outputDirectory = std::move(output),
                      .declaration = script->declaration,
-                     .selectedPackage = isSelected});
+                     .selectedPackage = isSelected,
+                     .packageName = package->manifest.package().name,
+                     .packageVersion = package->manifest.package().version});
   }
   if (!valid) {
     return std::nullopt;

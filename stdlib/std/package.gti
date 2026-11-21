@@ -1,0 +1,5 @@
+// Project-specific interface, materialized by the source loader per package.
+// import std.package exposes constexpr std::string_view name and version in
+// namespace std::package. The bytes come from the resolved gti.toml manifest.
+export module package;
+#error "std.package requires resolved package metadata."

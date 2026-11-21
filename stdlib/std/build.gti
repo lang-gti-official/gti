@@ -7,6 +7,7 @@ export module build;
 // program may run native tools through exact argv execution before publishing
 // a versioned native-output manifest.
 import std.cstdio;
+import std.environment;
 import std.string;
 import std.vector;
 namespace gti_internal {
@@ -32,23 +33,30 @@ export class context {
   std::string jobs_value;
   std::string cc_value;
   std::string cxx_value;
+  std::string package_name_value;
+  std::string package_version_value;
 
 public:
   context(std::string_view output_file, std::string_view package_dir,
           std::string_view output_dir, std::string_view host,
           std::string_view target, std::string_view target_os,
           std::string_view profile, std::string_view jobs,
-          std::string_view cc, std::string_view cxx)
+          std::string_view cc, std::string_view cxx,
+          std::string_view package_name = "", std::string_view package_version = "")
       : output_file_value(std::string(output_file)),
         package_dir_value(std::string(package_dir)),
         output_dir_value(std::string(output_dir)),
         host_value(std::string(host)), target_value(std::string(target)),
         target_os_value(std::string(target_os)),
         profile_value(std::string(profile)), jobs_value(std::string(jobs)),
-        cc_value(std::string(cc)), cxx_value(std::string(cxx)) {}
+        cc_value(std::string(cc)), cxx_value(std::string(cxx)),
+        package_name_value(std::string(package_name)),
+        package_version_value(std::string(package_version)) {}
 
   std::string& output_file() { return this.output_file_value; }
   std::string& package_dir() { return this.package_dir_value; }
+  std::string& package_name() { return this.package_name_value; }
+  std::string& package_version() { return this.package_version_value; }
   std::string& output_dir() { return this.output_dir_value; }
   std::string& host() { return this.host_value; }
   std::string& target() { return this.target_value; }
@@ -59,15 +67,25 @@ public:
   std::string& cxx() { return this.cxx_value; }
 };
 
+// Environment transport preserves the existing eleven-argument entry point.
+static std::string package_context_value(std::string_view name) {
+  auto value = std::environment::get(name).expect("Cannot read build package metadata");
+  if (!value.has_value()) { return std::string(); }
+  return std::move(value).value();
+}
+
 /// Decodes the exact argument vector supplied to a build.gti entry point.
 /// Callers must first require argc == 11.
 export context context_from_args(std::vector<std::string>& arguments) {
+  auto package_name = package_context_value("GTI_BUILD_PACKAGE_NAME");
+  auto package_version = package_context_value("GTI_BUILD_PACKAGE_VERSION");
   return context(
       arguments[std::size_t(1)].view(), arguments[std::size_t(2)].view(),
       arguments[std::size_t(3)].view(), arguments[std::size_t(4)].view(),
       arguments[std::size_t(5)].view(), arguments[std::size_t(6)].view(),
       arguments[std::size_t(7)].view(), arguments[std::size_t(8)].view(),
-      arguments[std::size_t(9)].view(), arguments[std::size_t(10)].view());
+      arguments[std::size_t(9)].view(), arguments[std::size_t(10)].view(),
+      package_name.view(), package_version.view());
 }
 
 /// One exact host command. No shell parses or expands its arguments.
