@@ -1048,12 +1048,20 @@ Outcome Engine::run(const TestFile &given) {
 
   // A stdlib overlay analyses its own library with private caches, so the
   // worker's shared preamble (and its LRU slots) stay with ordinary tests.
-  const lang::driver::FrontendReuse reuse =
+  lang::driver::FrontendReuse reuse =
       test.stdlibOverlay.empty()
           ? state->reuse
           : lang::driver::FrontendReuse{
                 .parses = std::make_shared<lang::FrontendCache>(),
                 .preambles = std::make_shared<lang::SemanticPreambleCache>()};
+  // A single check has no later consumer to amortize building a semantic
+  // preamble. Its normal frontend still parses and verifies the whole program.
+  const bool singleCheck =
+      test.singleUsePrefix && test.mode == Mode::CheckPass &&
+      test.snapshots.empty() && test.stdlibOverlay.empty() &&
+      !options.isolate && !options.bless;
+  if (singleCheck)
+    reuse.preambles.reset();
   const auto requestFor = [&](const TestFile &file, const Materialized &files,
                               bool optimizationReport = false) {
     const lang::TargetInfo target =
@@ -1667,6 +1675,13 @@ Outcome Engine::run(const TestFile &given) {
   };
 
   outcome = attempt(options.bless);
+  // The budget is for a warm check. If a standalone pass exceeds it, run
+  // the original shared-cache path, including its warm measurement below.
+  if (singleCheck && outcome.status == Status::Pass &&
+      outcome.cpu > limit * options.budgetFraction) {
+    reuse.preambles = state->reuse.preambles;
+    outcome = attempt(false);
+  }
   // Rendered snapshots quote the test's lines: once bless has rewritten the
   // file (annotations, inline stdout), they are blessed again from the new
   // text, so one --bless leaves a passing test.

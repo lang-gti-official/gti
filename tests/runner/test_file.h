@@ -238,6 +238,7 @@ struct TestFile {
   // Tests with equal keys analyse the same trusted prefix; workers prefer
   // running them back to back.
   std::string groupKey;
+  bool singleUsePrefix = false;
 };
 
 // The `//@` lines of the gti-test.defaults files above `test` that apply to
