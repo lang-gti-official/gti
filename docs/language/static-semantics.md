@@ -531,8 +531,8 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Assignment never uses it. Function arguments use only the narrower checked
-immediate construction rule in section 3.6.
+contextually typed call, or a function name. Assignment never uses it. Function arguments use the one-step argument construction rule in section 3.6,
+including eligible read-only temporary reference parameters.
 
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
@@ -1176,20 +1176,35 @@ still requires an ownership contract beyond ordinary virtual dispatch.
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
 
-### Checked immediate argument construction
+### Implicit argument construction
 
-Only after the exact and temporary-borrow tiers are empty, a constant expression
-of type `T` may initialize a by-value class/struct parameter `P` through an
-accessible `implicit consteval` constructor. Its first explicit parameter must
+Only after the existing exact, temporary-borrow and contextual-integer tiers
+are empty, an argument of type `T` may initialize a class/struct parameter `P`
+through an accessible `implicit` constructor. Its first explicit parameter must
 be exactly `T` or read-only `T&`; any trailing parameters need defaults. There
-is one construction, with no numeric conversion, chained constructor, conversion
-operator, ordinary implicit constructor, or reference destination. The existing
-construction ownership/access checks and immediate publication limits apply.
-Assignment and all operators, including `operator()` and `operator[]`, keep
-exact matching.
+is one construction, with no numeric conversion, chained constructor or
+conversion operator. Ordinary, constexpr and consteval implicit constructors
+participate in the same final tier. A selected consteval constructor still
+requires a constant argument and retains its checked-immediate diagnostics.
+Assignment and member operators retain their existing matching rules.
+
+For a read-only `P&` parameter, the same construction supplies a fresh temporary
+only when the explicit `P(argument)` passes the existing temporary-borrow
+boundary. The selected GTI function or method must have a supported checked
+result contract that excludes that temporary as a supplier. Mutable reference
+parameters and native/callback temporary-reference targets are not admitted.
+The caller owns the constructed temporary through the enclosing full expression;
+its cleanup and external stored dependencies are preserved on normal and failure
+paths. `implicit` never extends a borrow's lifetime. Existing named move-only
+sources still require `std::move` when the constructor consumes them.
+
+For example, `void show(std::string& text)` can be called as `show("hello")`,
+exactly as `show(std::string("hello"))`. By-value parameters transfer the newly
+constructed value instead. Selected function items and lambdas admit by-value
+construction; their reference arguments retain their existing exact rules.
 
 The final tier requires one function and one constructor. It does not rank
-checked candidates by the number of conversions, receiver preference, generic
+converting candidates by the number of conversions, receiver preference, generic
 specificity, or defaults. Generic inference does not use a class parameter
 satisfied by this conversion: infer its arguments elsewhere or supply them
 explicitly, then check the substituted class. For example:

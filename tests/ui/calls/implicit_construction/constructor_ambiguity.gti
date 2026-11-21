@@ -1,0 +1,4 @@
+// Two eligible constructors make argument construction ambiguous.
+struct Box { implicit Box(int n) {} implicit Box(int n, bool flag = false) {} };
+void take(Box b) {}
+int main() { take(1); return 0; }  //~ ERROR GTI-S2013

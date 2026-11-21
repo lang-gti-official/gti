@@ -1,0 +1,5 @@
+// The editor accepts imported string constructors for value and read-only arguments.
+import std.string;
+void take(std::string text) {}
+void read(std::string& text) {}
+int main() { take("hello"); read("hello"); return 0; }

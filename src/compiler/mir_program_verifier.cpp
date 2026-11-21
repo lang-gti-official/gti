@@ -2511,7 +2511,10 @@ mirFieldTypeThroughBases(const MirProgram &program,
                     (argumentPlace->type.kind == SemanticType::Enum &&
                      program.findPayloadEnum(argumentPlace->type) == nullptr) ||
                     (argumentPlace->type.kind == SemanticType::StringView &&
-                     producer->operation == MirOperation::Literal))) {
+                     producer->operation == MirOperation::Literal) ||
+                    (argumentPlace->type.kind == SemanticType::Class &&
+                     producer->operation == MirOperation::Literal &&
+                     producer->programConstantSubstitution))) {
           exactProducer = true;
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&

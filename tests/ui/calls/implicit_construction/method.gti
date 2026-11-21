@@ -1,0 +1,5 @@
+// Methods and defaulted converting constructors share function argument construction.
+//@ run-pass
+struct Box { int value; implicit Box(int n, int more = 2) : value(n + more) {} };
+struct Reader { Reader() {} int read(Box& b) { return b.value; } };
+int main() { Reader r{}; return r.read(40) - 42; }

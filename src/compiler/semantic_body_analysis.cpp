@@ -9005,17 +9005,33 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
           literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
-          if (checkedArgumentPotential(expr.arguments()[index],
-                                       argumentTypes[index],
-                                       resolved.parameterTypes[index])) {
+          if ((resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        argumentTypes[index],
+                                        resolved.parameterTypes[index])) {
             const Token parameter =
                 index < resolved.declaration->parameters().size()
                     ? resolved.declaration->parameters()[index].name
                     : resolved.declaration->name();
-            valid = applyCheckedArgument(
+            valid = applyImplicitArgument(
                         expr.arguments()[index], argumentTypes[index],
                         resolved.parameterTypes[index], parameter) &&
                     valid;
+            if (valid && resolved.parameterTypes[index].kind ==
+                             SemanticType::Reference) {
+              if (!temporaryReadBorrowArgumentMatches(
+                      resolved.parameterTypes[index],
+                      resolved.parameterTypes[index].arguments.front(),
+                      expr.arguments()[index])) {
+                reportCallArgumentMismatch(
+                    index, resolved.parameterTypes[index], argumentTypes[index],
+                    expr.arguments()[index], "Function");
+                valid = false;
+              } else {
+                ephemeralBorrowArguments.push_back(index);
+              }
+            }
             continue;
           }
           if (isContextualArrayArgument(expr.arguments()[index])) {
@@ -9128,15 +9144,16 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   bool rejectedCompilerPrivate = false;
   for (const bool allowChecked : {false, true}) {
     if (allowChecked) {
-      const bool hasCheckedParameter = std::any_of(
-          callee->overloads.begin(), callee->overloads.end(),
-          [&](const auto &candidate) {
-            return std::any_of(
-                candidate.parameterTypes.begin(),
-                candidate.parameterTypes.end(), [&](const auto &type) {
-                  return checkedArgumentNonDeduced(type, SemanticType::Unknown);
-                });
-          });
+      const bool hasCheckedParameter =
+          std::any_of(callee->overloads.begin(), callee->overloads.end(),
+                      [&](const auto &candidate) {
+                        return std::any_of(candidate.parameterTypes.begin(),
+                                           candidate.parameterTypes.end(),
+                                           [&](const auto &type) {
+                                             return implicitArgumentNonDeduced(
+                                                 type, SemanticType::Unknown);
+                                           });
+                      });
       if (!hasCheckedParameter)
         break;
       constraintFailures.clear();
@@ -9222,9 +9239,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
             continue;
           }
           if (allowChecked &&
-              checkedArgumentPotential(expr.arguments()[index],
-                                       candidateArguments.types[index],
-                                       resolved.parameterTypes[index])) {
+              (resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        candidateArguments.types[index],
+                                        resolved.parameterTypes[index])) {
             checkedArguments.push_back(index);
           } else {
             exact = false;
@@ -9504,11 +9523,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                       exactMatches, constraintFailures);
       if (!ordinaryTier && !exactMatches.empty()) {
         diagnostics.back().message =
-            "Call is ambiguous; multiple overloads accept checked implicit "
-            "consteval argument construction.";
+            "Call is ambiguous; multiple overloads accept implicit "
+            "argument construction.";
         for (auto &related : diagnostics.back().related)
           if (related.message.starts_with("Exact candidate: "))
-            related.message.replace(0, 17, "Checked candidate: ");
+            related.message.replace(0, 17, "Converting candidate: ");
       }
       if (!viable.empty() &&
           std::all_of(
@@ -9529,10 +9548,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const Token parameter = index < selected.declaration->parameters().size()
                                 ? selected.declaration->parameters()[index].name
                                 : selected.declaration->name();
-    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index],
-                              selected.parameterTypes[index], parameter)) {
+    if (!applyImplicitArgument(expr.arguments()[index], argumentTypes[index],
+                               selected.parameterTypes[index], parameter)) {
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (selected.parameterTypes[index].kind == SemanticType::Reference) {
+      if (!temporaryReadBorrowArgumentMatches(
+              selected.parameterTypes[index],
+              selected.parameterTypes[index].arguments.front(),
+              expr.arguments()[index])) {
+        reportCallArgumentMismatch(index, selected.parameterTypes[index],
+                                   argumentTypes[index],
+                                   expr.arguments()[index], "Function");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      viable.front().ephemeralBorrowArguments.push_back(index);
     }
   }
   adoptContextualIntegerLiteralArguments(

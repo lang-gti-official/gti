@@ -3971,13 +3971,18 @@ private:
   void warnCheckedOverloadOverlap(const CallableCandidate &left,
                                   const CallableCandidate &right);
   [[nodiscard]] bool
-  checkedArgumentNonDeduced(const SemanticType &parameter,
-                            const SemanticType &argument) const;
-  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
-                                              const SemanticType &source,
-                                              const SemanticType &target);
-  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
-                            const SemanticType &target, const Token &parameter);
+  implicitArgumentNonDeduced(const SemanticType &parameter,
+                             const SemanticType &argument) const;
+  [[nodiscard]] bool implicitArgumentPotential(const ExprPtr &argument,
+                                               const SemanticType &source,
+                                               const SemanticType &target);
+  void
+  finishContextualConstruction(const ExprPtr &expr,
+                               const ResolvedConstructionInfo &construction);
+  bool applyImplicitArgument(const ExprPtr &argument,
+                             const SemanticType &source,
+                             const SemanticType &target,
+                             const Token &parameter);
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
