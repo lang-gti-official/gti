@@ -89,6 +89,9 @@ struct Diagnostic {
   std::string missingIncludeName;
   // The qualifier resolved to an enum whose declaration lacks this member.
   bool missingEnumerator = false;
+  // The unresolved use and its suggested binding were checked in the same
+  // lexical environment. This distinguishes a local edit from import advice.
+  bool localNameRepair = false;
 
   friend bool operator==(const Diagnostic &, const Diagnostic &) = default;
 };
