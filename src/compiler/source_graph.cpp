@@ -68,11 +68,13 @@ void SourceGraph::attachCompiledTemplate(
   unit->compiledTemplate = std::move(module);
 }
 
-void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
+void SourceGraph::markCompiledScalarInterface(
+    SourceUnitId id, std::vector<std::size_t> noAmbientStorage) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
     throw std::invalid_argument("invalid compiled scalar interface unit");
   unit->compiledScalarInterface = true;
+  unit->noAmbientStorageDeclarations = std::move(noAmbientStorage);
 }
 
 std::uint64_t sourceTextDigest(std::string_view source) {

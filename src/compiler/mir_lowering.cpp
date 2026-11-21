@@ -437,6 +437,16 @@ MirLoweringResult MirLowerer::lowerProgram(
       signatureOnly = instance;
       signatureOnly->source = nullptr;
     }
+    if (instance.source && !instance.source->body() && !instance.bodyOmitted &&
+        instance.linkage == LanguageLinkage::Gti) {
+      const auto &units = source.analysisSeal().sourceGraph.units;
+      const auto unit = std::ranges::find(units, instance.sourceUnit,
+                                          &SemanticSourceUnitSeal::id);
+      if (unit != units.end() && unit->compiledScalarInterface &&
+          std::ranges::binary_search(unit->noAmbientStorageDeclarations,
+                                     instance.source->name().position))
+        result.program.noAmbientStorageImports_.insert(instance.id);
+    }
     const bool implicitZeroReturn = !instance.owner &&
                                     instance.source != nullptr &&
                                     instance.source->name().lexeme == "main";

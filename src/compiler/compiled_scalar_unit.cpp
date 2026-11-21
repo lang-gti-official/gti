@@ -3,6 +3,7 @@
 #include "gti/compiled_interface_types.h"
 #include "gti/persistent_declaration.h"
 #include "lowered_program_closure.h"
+#include "mir_storage_effects.h"
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -125,7 +126,8 @@ void validateCompiledBorrowContract(const SemanticType &result,
 }
 namespace {
 std::string callableSource(const CompiledScalarSignature &signature,
-                           std::string_view aliasPrefix) {
+                           std::string_view aliasPrefix,
+                           std::size_t *nameOffset = nullptr) {
   const auto registry =
       compiledInterfaceSyntheticRegistry(signature.typeMetadata);
   const auto key = readPersistentFunctionKey(signature.key, registry);
@@ -153,8 +155,9 @@ std::string callableSource(const CompiledScalarSignature &signature,
   std::string out = "export ";
   const std::string resultSpelling =
       compiledInterfaceTypeSpelling(result, registry, aliasPrefix);
-  out += (borrows ? regioned(resultSpelling) : resultSpelling) + " " +
-         std::string(compiledInterfaceBaseName(key.qualifiedName)) +
+  out += (borrows ? regioned(resultSpelling) : resultSpelling) + " ";
+  const auto offset = out.size();
+  out += std::string(compiledInterfaceBaseName(key.qualifiedName)) +
          (borrows ? "<lifetime a>(" : "(");
   for (std::size_t i = 0; i < key.parameters.size(); ++i) {
     if (i)
@@ -165,7 +168,12 @@ std::string callableSource(const CompiledScalarSignature &signature,
                                                        : spelling) +
            " arg" + std::to_string(i);
   }
-  return compiledInterfaceNamespaceSource(key.qualifiedName, out + ");\n");
+  std::size_t declarationStart = 0;
+  auto source = compiledInterfaceNamespaceSource(
+      key.qualifiedName, out + ");\n", &declarationStart);
+  if (nameOffset)
+    *nameOffset = declarationStart + offset;
+  return source;
 }
 } // namespace
 std::string
@@ -174,6 +182,14 @@ compiledInterfaceCallableSource(const CompiledScalarSignature &signature) {
 }
 std::string
 compiledInterfaceSource(std::span<const CompiledScalarSignature> signatures) {
+  std::string source;
+  std::vector<std::size_t> ignored;
+  appendCompiledInterfaceSource(source, signatures, ignored);
+  return source;
+}
+void appendCompiledInterfaceSource(
+    std::string &source, std::span<const CompiledScalarSignature> signatures,
+    std::vector<std::size_t> &noAmbientStorage) {
   std::set<std::string> identifiers, metadata;
   const auto retain = [&](std::string_view name) {
     if (!isCompiledInterfaceName(name))
@@ -205,12 +221,15 @@ compiledInterfaceSource(std::span<const CompiledScalarSignature> signatures) {
     if (next == identifiers.end() || !next->starts_with(prefix))
       break;
   }
-  std::string source;
   for (const auto &bytes : metadata)
     source += compiledInterfaceTypeSource(bytes, prefix);
-  for (const auto &signature : signatures)
-    source += callableSource(signature, prefix);
-  return source;
+  for (const auto &signature : signatures) {
+    std::size_t offset = 0;
+    auto declaration = callableSource(signature, prefix, &offset);
+    if (signature.noAmbientStorage)
+      noAmbientStorage.push_back(source.size() + offset);
+    source += declaration;
+  }
 }
 std::string compiledScalarSymbol(const CompiledScalarSignature &signature) {
   (void)compiledInterfaceCallableSource(signature);
@@ -226,6 +245,8 @@ std::string compiledScalarSymbol(const CompiledScalarSignature &signature) {
   appendContract(contract, std::to_string(static_cast<unsigned>(
                                signature.codegenAttributes.inlining)));
   appendContract(contract, signature.codegenAttributes.cold ? "1" : "0");
+  if (signature.noAmbientStorage)
+    appendContract(contract, "no-ambient-storage");
   return nativeSymbol("__gtilib_callable_v4_", contract);
 }
 std::string compiledScalarSymbol(std::string_view key) {
@@ -585,6 +606,7 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
   const auto registry =
       compiledInterfaceTypeRegistry(program, entry, metadata, units);
   std::vector<CompiledScalarSignature> signatures;
+  const auto noAmbientStorage = functionsWithoutAmbientStorage(program.mir());
   for (const auto *function : selected) {
     const auto *declaration =
         program.findFunctionDeclaration(function->declaration);
@@ -594,7 +616,8 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     signatures.push_back(
         {writePersistentFunctionKey(key, registry), function->returnType,
          metadata, writePersistentType(function->returnType, registry),
-         borrowContract(*function), function->codegenAttributes});
+         borrowContract(*function), function->codegenAttributes,
+         noAmbientStorage.contains(function->id)});
   }
   std::sort(signatures.begin(), signatures.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
@@ -627,6 +650,13 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
     errors.push_back("compiled library has no exports");
   std::set<std::string> keys, symbols;
   std::set<std::size_t> ids;
+  const bool carriesExportProof = std::ranges::any_of(
+      program.compiledScalarBindings(), [](const auto &binding) {
+        return !binding.imported && binding.noAmbientStorage;
+      });
+  const auto proven = carriesExportProof
+                          ? functionsWithoutAmbientStorage(program.mir())
+                          : std::unordered_set<HirFunctionInstanceId>{};
   for (const auto &binding : program.compiledScalarBindings()) {
     const auto *f = program.mir().findFunctionInstance(binding.function);
     if (!f || !scalarFunction(program, *f)) {
@@ -668,11 +698,17 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
           binding.borrow != borrowContract(*f) || !binding.sourceUnit ||
           (!binding.imported &&
            binding.codegenAttributes != f->codegenAttributes) ||
+          (!binding.imported && binding.noAmbientStorage &&
+           !proven.contains(f->id)) ||
+          (binding.imported &&
+           program.mir().importedWithoutAmbientStorage(f->id) &&
+           !binding.noAmbientStorage) ||
           binding.sourceUnit != d->sourceUnit ||
           binding.symbol !=
               compiledScalarSymbol({binding.key, binding.result,
                                     binding.typeMetadata, binding.resultRecipe,
-                                    binding.borrow, binding.codegenAttributes}))
+                                    binding.borrow, binding.codegenAttributes,
+                                    binding.noAmbientStorage}))
         errors.push_back("compiled scalar binding identity mismatch");
     } catch (const std::exception &) {
       errors.push_back("invalid compiled scalar declaration key");
@@ -748,7 +784,7 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
         {selected->id, signature.key, compiledScalarSymbol(signature), imported,
          result, input.sourceUnit, signature.typeMetadata,
          signature.resultRecipe, signature.borrow, signature.codegenAttributes,
-         input.optimizationBody});
+         input.optimizationBody, signature.noAmbientStorage});
   };
   for (const auto &input : exports)
     bindOne(input, false);

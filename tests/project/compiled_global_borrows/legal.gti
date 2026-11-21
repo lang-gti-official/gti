@@ -1,0 +1,8 @@
+import "api.gti";
+mut int counter = 40;
+mut int other = 3;
+int main() {
+    int& live = other;
+    api::replace(counter, 41);
+    return (api::observe(counter) == 43 && live == 3) ? 0 : 1;
+}

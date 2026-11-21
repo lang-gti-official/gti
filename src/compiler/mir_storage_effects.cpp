@@ -211,10 +211,51 @@ std::set<MirInstructionId> inertDrops(const MirBody &body) {
   return result;
 }
 
+bool certifiedDirectCall(const MirProgram &program,
+                         const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.dispatch == CallDispatch::Static &&
+         instruction.functionTarget && !instruction.nativeCallbackAdapter &&
+         !instruction.nativeCalleeType &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         !instruction.elementCleanup &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         program.importedWithoutAmbientStorage(*instruction.functionTarget);
+}
+
+// Only certify operations whose storage is explicit in their places and
+// invocation targets. New MIR operations and unmodeled teardown stay opaque.
+bool representedForStorageExport(const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None)
+    return false;
+  switch (instruction.kind) {
+  case MirInstructionKind::Compute:
+  case MirInstructionKind::Load:
+  case MirInstructionKind::Initialize:
+  case MirInstructionKind::Assign:
+  case MirInstructionKind::Modify:
+  case MirInstructionKind::Move:
+  case MirInstructionKind::Borrow:
+  case MirInstructionKind::ActivateBorrow:
+  case MirInstructionKind::CallInput:
+  case MirInstructionKind::EndBorrow:
+  case MirInstructionKind::Lifecycle:
+  case MirInstructionKind::CallBody:
+    return true;
+  case MirInstructionKind::Call:
+    return !instruction.elementCleanup && !instruction.nativeCalleeType &&
+           !instruction.nativeCallbackAdapter;
+  default:
+    return false;
+  }
+}
+
 bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction,
                              const MirInvocationTargets &targets) {
-  if (!targets.boundary)
+  if (!targets.boundary || certifiedDirectCall(program, instruction))
     return false;
   if (instruction.nativeCalleeType || instruction.nativeCallbackAdapter)
     return false; // Native invocation keeps its explicit unsafe ABI
@@ -294,9 +335,9 @@ void record(std::vector<MirBorrowAuditFinding> &findings, const MirBody &body,
 
 // With `findings`, every rejected invocation is collected (the audit form);
 // without, the first rejection is the verification result.
-MirVerificationResult
-analyzePersistentStorageEffects(const MirProgram &program,
-                                std::vector<MirBorrowAuditFinding> *findings) {
+MirVerificationResult analyzePersistentStorageEffects(
+    const MirProgram &program, std::vector<MirBorrowAuditFinding> *findings,
+    std::unordered_set<HirFunctionInstanceId> *exports = nullptr) {
   std::vector<SymbolId> persistent;
   for (const auto &step : program.programInitializationPlan().steps)
     persistent.push_back(step.symbol);
@@ -305,7 +346,7 @@ analyzePersistentStorageEffects(const MirProgram &program,
   std::sort(persistent.begin(), persistent.end());
   persistent.erase(std::unique(persistent.begin(), persistent.end()),
                    persistent.end());
-  if (persistent.empty())
+  if (persistent.empty() && !exports)
     return {};
   const auto isPersistent = [&](SymbolId symbol) {
     return std::binary_search(persistent.begin(), persistent.end(), symbol);
@@ -324,7 +365,8 @@ analyzePersistentStorageEffects(const MirProgram &program,
   for (auto &node : nodes) {
     // Without a persistent symbol place there can be no canonical direct
     // access to that storage. Calls are still closed below for every body.
-    if (std::any_of(node.body->places.begin(), node.body->places.end(),
+    if (!exports &&
+        std::any_of(node.body->places.begin(), node.body->places.end(),
                     [&](const auto &place) {
                       return place.root == MirPlaceRootKind::Symbol &&
                              isPersistent(place.symbol);
@@ -350,6 +392,23 @@ analyzePersistentStorageEffects(const MirProgram &program,
         }
       node.direct = node.summary;
     }
+    // The separate-compilation proof is deliberately stronger than a local
+    // loan check. Taking a persistent address, an unchecked raw dereference,
+    // or a call outside the closed graph prevents us from exporting it.
+    if (exports)
+      node.unknown =
+          std::ranges::any_of(node.body->places, [&](const auto &place) {
+            return (place.root == MirPlaceRootKind::Symbol &&
+                    (isPersistent(place.symbol) ||
+                     program.findForeignStorage(place.symbol))) ||
+                   std::ranges::any_of(
+                       place.projections, [](const auto &projection) {
+                         return projection.kind ==
+                                    MirProjectionKind::RawIndex ||
+                                projection.kind ==
+                                    MirProjectionKind::RawDereference;
+                       });
+          });
     const auto inert = inertDrops(*node.body);
     for (const auto &block : node.body->blocks) {
       if (!block.reachable)
@@ -368,10 +427,17 @@ analyzePersistentStorageEffects(const MirProgram &program,
                     : 0,
             .unknown = unknownSourceInvocation(program, *node.body, instruction,
                                                targets)};
+        const bool certified =
+            exports && certifiedDirectCall(program, instruction);
+        if (exports && !certified &&
+            (targets.boundary || !representedForStorageExport(instruction)))
+          invocation.unknown = true;
         for (const auto address : targets.addresses) {
           const auto found = indices.find(key(address));
           if (found != indices.end())
             invocation.targets.push_back(found->second);
+          else if (exports && !certified)
+            invocation.unknown = true;
         }
         if (invocation.unknown || !invocation.targets.empty()) {
           node.unknown |= invocation.unknown;
@@ -419,6 +485,14 @@ analyzePersistentStorageEffects(const MirProgram &program,
         work.push_back({caller});
       }
     }
+  }
+
+  if (exports) {
+    for (const auto &node : nodes)
+      if (node.address.kind == MirBodyKind::Function && !node.unknown &&
+          node.summary.empty())
+        exports->insert(node.address.owner);
+    return {};
   }
 
   for (const auto &node : nodes) {
@@ -621,6 +695,14 @@ analyzePersistentStorageEffects(const MirProgram &program,
 MirVerificationResult
 verifyMirPersistentStorageEffects(const MirProgram &program) {
   return analyzePersistentStorageEffects(program, nullptr);
+}
+
+std::unordered_set<HirFunctionInstanceId>
+functionsWithoutAmbientStorage(const MirProgram &program) {
+  std::unordered_set<HirFunctionInstanceId> result;
+  if (!analyzePersistentStorageEffects(program, nullptr, &result).valid())
+    result.clear();
+  return result;
 }
 
 std::vector<MirBorrowAuditFinding>

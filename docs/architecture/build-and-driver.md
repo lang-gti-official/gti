@@ -3246,6 +3246,15 @@ validation used by the importer. Unknown profiles, malformed/noncanonical record
 unresolved recipes and incomplete borrow contracts reject. No AST pointers,
 numerical instance IDs or arbitrary source bodies enter the interface.
 
+Profile `gti.callable-interface.5` adds a per-overload ambient-storage contract.
+The producer can certify that a concrete function and its reachable helpers
+have no hidden persistent-storage accesses. The importer binds that fact to
+the exact native symbol and declaration before checking the caller's loans.
+Passing a global by reference still borrows that argument normally. Unknown
+effects, including private persistent state or an unresolved call, remain
+conservative. Profile 4 supplies no storage proof. Both profiles work with
+native-only library functions, including those marked `[[noinline]]`.
+
 Resolved source optimization policy is selected from the verified MIR export,
 then carried in the compiler-owned binding. Export verification requires an exact
 match to the source policy. Import facades remain ordinary bodyless declarations:
