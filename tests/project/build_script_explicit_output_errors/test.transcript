@@ -6,7 +6,7 @@ stderr: requires integer 'version = 1'
 $ python3 set_mode.py invalid
 $ gti build
 ? 65
-stderr: error[GTI-B2004]
+stderr: error[GTI-B2005]
 $ python3 set_mode.py dangling
 $ gti build
 ? 65
