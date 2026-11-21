@@ -161,7 +161,7 @@ target_link_libraries(gti-corpus PRIVATE gti_compiler)
 add_test(NAME gti_corpus
   COMMAND gti-corpus --root "${PROJECT_SOURCE_DIR}" --jobs ${gti_test_workers}
           --json "${CMAKE_CURRENT_BINARY_DIR}/gti-corpus.json")
-set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS 4)
+set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS ${gti_test_workers})
 
 # gti_unit_tests: every tests/unit/*.cpp linked into one executable of C++
 # unit tests of library code (runtime, driver, LLVM passes, formatter). A file
