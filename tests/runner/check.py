@@ -336,6 +336,7 @@ def self_test(runner):
     kinds_self_test(runner)
     ergonomics_self_test(runner)
     reporting_self_test(runner)
+    single_use_preamble_test(runner)
     project_self_test(runner)
     if (runner.parent / "gti_lsp").exists():
         lsp_self_test(runner)
@@ -459,6 +460,23 @@ def retained_assertion_test(runner):
                             "\nint main() { return 0; }\n")
             code, out = run(runner, case, fixtures=False)
             expect(code == 1 and "invalid test" in out, "invalid assertion fails", out)
+
+
+def single_use_preamble_test(runner):
+    # Check the cache decision directly so a slower host cannot change the test.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        first, second = work / "first.gti", work / "second.gti"
+        for source in (first, second):
+            source.write_text("import std.string;\nint main() { return 0; }\n")
+        report = work / "report.jsonl"
+        for cases, expected in (((first,), [False]), ((first, second), [False, True])):
+            code, out = run(runner, "--jobs", "1", "--json", report, *cases,
+                            env={"GTI_TEST_TIME_SCALE": "8"})
+            expect(code == 0, "standalone and shared-prefix checks pass", out)
+            rows = [json.loads(line) for line in report.read_text().splitlines()]
+            expect(sorted(row.get("cold", -1) for row in rows) == expected,
+                   "only a reusable prefix needs a cold build", str(rows))
 
 
 def reporting_self_test(runner):

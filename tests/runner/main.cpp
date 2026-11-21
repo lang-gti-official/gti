@@ -949,6 +949,10 @@ int main(int argc, char **argv) {
   std::map<std::string, std::deque<std::size_t>> groups;
   for (std::size_t index = 0; index < tests.size(); ++index)
     groups[tests[index].groupKey].push_back(index);
+  for (const auto &[key, members] : groups) {
+    if (members.size() == 1)
+      tests[members.front()].singleUsePrefix = true;
+  }
   std::size_t queued = tests.size();
   const auto next = [&](Worker &worker) -> std::optional<std::size_t> {
     if (queued == 0)
@@ -1060,7 +1064,8 @@ int main(int argc, char **argv) {
            << ",\"mode\":" << jsonString(modeName(test.mode))
            << ",\"status\":" << jsonString(statusName(outcome.status))
            << ",\"cpu\":" << fixed(outcome.cpu, 3)
-           << ",\"wall\":" << fixed(outcome.wall, 3) << "}\n";
+           << ",\"wall\":" << fixed(outcome.wall, 3)
+           << ",\"cold\":" << (outcome.cold ? "true" : "false") << "}\n";
     lastRun << statusName(outcome.status) << '\t' << test.path.string() << '\n';
     outcomes[index] = std::move(outcome);
     ++finished;
