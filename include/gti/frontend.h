@@ -101,6 +101,9 @@ struct FrontendOptions {
   // source generation. Missing identities force SourceLoader to read and
   // digest the file before it may populate or reuse a cache row.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
+  // Offer optional scaffolds for ordinary enum switches in the editor entry
+  // unit.
+  bool suggestEnumSwitchCases = false;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
   // Candidate scans shared across discoveries (see IncludeDiscoveryCache).

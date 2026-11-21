@@ -3588,6 +3588,7 @@ private:
                   const ProjectAnalysisInputs &project,
                   lang::FrontendWorkMetrics &metrics) {
     lang::FrontendOptions frontendOptions;
+    frontendOptions.suggestEnumSwitchCases = !request.audit;
     // The raw-pointer audit multiplies analysis time by well over an order of
     // magnitude (41 s against 0.6 s for an eight-include file), so the
     // edit-path analysis never runs it. A separate background audit of the
@@ -3745,6 +3746,13 @@ private:
     // source. Periodically probe again so a changed program can recover the
     // cheaper path. An early semantic error does not use up a MIR attempt.
     constexpr unsigned completeMirWindow = 8;
+    // An editor hint for the entry unit cannot originate in an omitted library
+    // body. It should neither trigger a repeat pass nor shorten the reuse
+    // window.
+    const bool hasNonHint =
+        std::ranges::any_of(frontend.diagnostics, [](const auto &d) {
+          return d.severity != lang::DiagnosticSeverity::Hint;
+        });
     if (frontendOptions.lowerLibraryOnlyInstanceBodies) {
       result.remainingCompleteMirEdits = request.remainingCompleteMirEdits;
       if (frontend.mirValid)
@@ -3752,7 +3760,7 @@ private:
       // Omitted instances can have diagnostics of their own. If complete
       // lowering produced diagnostics after entering HIR, preserve the
       // ordinary editor's visibility rules by trying its scoped analysis.
-      if (!frontend.cancelled && !frontend.diagnostics.empty() &&
+      if (!frontend.cancelled && hasNonHint &&
           result.workMetrics.hirPasses != 0) {
         frontendOptions.lowerLibraryOnlyInstanceBodies = false;
         auto completeMetrics = std::move(result.workMetrics);
@@ -3771,7 +3779,7 @@ private:
       }
     } else if (frontend.confirmedWithLibraryBodies) {
       result.mirSignatureOnlyFallback = true;
-      if (frontend.mirValid && frontend.diagnostics.empty())
+      if (frontend.mirValid && !hasNonHint)
         result.remainingCompleteMirEdits = completeMirWindow;
     }
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
@@ -5046,18 +5054,21 @@ private:
                       std::ranges::all_of(d.related, currentRange) &&
                       std::ranges::all_of(d.fixes, currentRange));
             });
-        const bool editError =
+        const bool editFinding =
             request.trigger == AnalysisTrigger::DocumentChanged &&
             std::ranges::any_of(checked.diagnostics,
                                 [&](const LspDiagnostic &d) {
                                   return d.uri == request.uri &&
-                                         d.diagnostic.severity ==
-                                             lang::DiagnosticSeverity::Error;
+                                         (d.diagnostic.severity ==
+                                              lang::DiagnosticSeverity::Error ||
+                                          (d.diagnostic.severity ==
+                                               lang::DiagnosticSeverity::Hint &&
+                                           hasAvailableRepair(d)));
                                 });
         // Removing a provisional finding requires a checked replacement for
         // that same occurrence. No other provider's evidence can be withdrawn.
-        if (initial || (compatible &&
-                        (editError || std::ranges::any_of(previous, owned)))) {
+        if (initial || (compatible && (editFinding ||
+                                       std::ranges::any_of(previous, owned)))) {
           bool changed = std::erase_if(previous, owned) != 0;
           for (auto &d : checked.diagnostics) {
             if (d.uri != request.uri ||
