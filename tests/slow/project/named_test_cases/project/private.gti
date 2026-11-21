@@ -1,0 +1,7 @@
+export module hidden_cases;
+import std.panic;
+namespace hidden {
+  int private_input() { return 12; }
+  [[test("private", private_input())]]
+  void value(int number) { if (number != 12) { std::panic("private lookup"); } }
+}

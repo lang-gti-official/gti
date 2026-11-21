@@ -1,0 +1,8 @@
+// Case inputs retain normal name resolution and do not expose synthetic wrappers.
+//@ definition @use: @decl
+//@ hover @use: input
+//@ symbols: example input !gti_generated_test_case_0
+//@ formatting: [[test("value", input())]]
+int /*@decl*/input() { return 7; }
+[[test("value", /*@use*/input())]]
+void example(int value) {}

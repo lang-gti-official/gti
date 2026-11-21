@@ -1303,6 +1303,19 @@ establish runner completion,
 not proof against a compiler silently miscompiling both a test and its checks;
 independent compiler conformance oracles remain necessary.
 
+Named `[[test("label", arguments...)]]` rows are lowered to fresh zero-argument
+AST wrappers beside the annotated function, in its source unit and namespace.
+The parsed-unit cache remains immutable; only branches/namespaces containing
+rows are rebuilt. Each wrapper deep-copies its written input expressions and
+carries its exact annotated declaration and public `qualified_function/label`
+identity. Normal semantics resolves calls, types and ownership; the frontend
+checks that overload resolution selected the annotated declaration. HIR/MIR and
+LLVM consume ordinary checked calls, not a separate test execution path. Case
+arguments remain runtime expressions and listing performs no setup. Generated
+wrapper names avoid every source identifier in the graph; only public case
+identities enter discovery, filtering, JSON reports and the existing digested
+build-cache catalog. Duplicate identities fail before dispatcher construction.
+
 The frontend validates the attributes and selected-package source identities,
 then generates a dispatcher as ordinary GTI source in the suite's lexical
 entry context. A second semantic pass resolves that dispatcher before existing

@@ -5189,7 +5189,13 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
               function->hasFunctionAttribute("thread_confined_callback"),
-          .testFunction = function->hasFunctionAttribute("test"),
+          .testFunction = !function->generatedTestCaseName().empty() ||
+                          std::any_of(function->functionAttributes().begin(),
+                                      function->functionAttributes().end(),
+                                      [](const auto &a) {
+                                        return a.name.lexeme == "test" &&
+                                               !a.argument;
+                                      }),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()

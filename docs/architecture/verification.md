@@ -2772,6 +2772,10 @@ catalog rules, bounded overlapping children, timeout progress, exact signal vers
 ordinary status (including 127 and 143), failed exec, moved process ownership and
 background descendant termination on both completion and timeout. It uses native
 host children, so its outcome does not depend on GTI-generated checks.
+Descendant checks synchronize startup and require EOF on a lifetime pipe after
+owner completion or timeout; delayed scheduling cannot turn an earlier marker
+write into a false cleanup failure. A separate release pipe cleans up descendants
+even when the group-termination assertion fails.
 Streaming observers must receive complete payloads before the driver releases
 their allocated storage; retained result facts preserve stable failure selection.
 `test_report` parses serialized events with Python's JSON implementation,
