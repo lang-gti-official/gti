@@ -1057,8 +1057,22 @@ BackendArtifact emitObjectUnits(
         testProbe(i, context);
       if (unit.diagnosticError)
         return;
+      std::string key;
+      if (options.unitCache) {
+        llvm::SmallVector<char, 0> codegenInput;
+        llvm::raw_svector_ostream buffer(codegenInput);
+        llvm::WriteBitcodeToFile(**part, buffer);
+        if (auto hit = options.unitCache->lookup(
+                {codegenInput.data(), codegenInput.size()}, key)) {
+          unit.object = std::move(*hit);
+          return;
+        }
+      }
       auto machine = makeMachine(target, options);
       unit.object = emitMachineObject(**part, *machine);
+      // Informational machine-pass remarks are private on successful emission.
+      if (options.unitCache && !unit.diagnosticError)
+        options.unitCache->store(key, unit.object);
     } catch (...) {
       unit.failure = std::current_exception();
     }

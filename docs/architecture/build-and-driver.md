@@ -926,6 +926,20 @@ and the default unit count is 1. The default worker limit is the smaller of
 the unit count and available hardware threads. `gti build --all` caps each
 child's workers by the hardware budget divided by concurrent target builds.
 
+For hosted project executables, `gti build --incremental` and
+`gti run --incremental` select eight code-generation units. An explicit
+`--codegen-units N` selects the partition count. Eligible cached builds with
+more than one unit store each native object under `build/gti/cache/codegen-unit-v1`.
+On a source edit the compiler checks and optimizes the current whole program
+and partitions it again. Each worker hashes the final LLVM bitcode it will
+compile, after resolving cross-unit linkage, together with the compiler and
+target policy identity. An identical unit reuses its checksummed object.
+Changed instructions, inlined callees, data layouts and referenced declarations
+participate through the actual bitcode. The ordered objects are linked afresh.
+Verbose output counts the units reused. An unchanged target can still hit
+the whole-target cache first. `--no-cache --incremental` produces a clean
+build with the same partitioning and bypasses both caches.
+
 The unit count and partitioner version enter the executable cache identity.
 Worker count changes scheduling only. LLVM IR output remains the optimized
 whole-program module. Compiled-scalar and embedding libraries and instrumented

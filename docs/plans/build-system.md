@@ -1347,6 +1347,15 @@ Acceptance criteria:
 - **Passed:** deleting a cache entry never damages source or the published
   target and degrades to a clean rebuild.
 
+### Post-Milestone 4 addition: incremental LLVM machine-code generation
+
+- Hosted executable projects can opt into content-addressed reuse of optimized
+  code-generation units with `--incremental`. Reuse occurs after verified
+  whole-program optimization. Frontend and MIR recompilation after an edit
+  remain separate work.
+- The project regression compares an incremental function edit with an
+  independent clean build under the same partition policy.
+
 ### Post-Milestone 4 addition: native-source cache identity and parallel target builds
 
 Status: complete

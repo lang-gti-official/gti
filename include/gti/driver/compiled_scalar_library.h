@@ -29,6 +29,7 @@ loadStandardLibraryInputs(const CompilationRequest &,
 compileWithLibraryImports(const CompilationRequest &, CompilationInputs,
                           std::vector<CompiledScalarImport>,
                           ProgressObserver *progress = nullptr,
+                          LlvmCodegenUnitCache *unitCache = nullptr,
                           std::vector<CompiledModuleImport> moduleImports = {});
 [[nodiscard]] CheckResult
 checkWithStandardLibraries(const CompilationRequest &,

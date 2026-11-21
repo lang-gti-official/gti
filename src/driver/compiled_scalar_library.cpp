@@ -1396,14 +1396,13 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
     requireLibraryBundleCompatibility(bundle, expected, expectedDependencies);
     if (metadata.recipe) {
       const auto &root = interfacePaths[index];
-      facades.push_back({root.string(),
-                         metadata.recipe->declarations +
-                             "\n// compiled project template " + input.digest +
-                             "\n",
-                         {},
-                         metadata.recipe,
-                         metadata.moduleEntries,
-                         metadata.scope});
+      facades.push_back({.path = root.string(),
+                         .source = metadata.recipe->declarations +
+                                   "\n// compiled project template " +
+                                   input.digest + "\n",
+                         .recipe = metadata.recipe,
+                         .moduleEntries = metadata.moduleEntries,
+                         .scope = metadata.scope});
       if (!metadata.moduleEntries.empty()) {
         verifyCompiledScalarObject(bundle.objects.front().bytes,
                                    request.target(), metadata.symbols,
@@ -1472,9 +1471,10 @@ AdmittedLibraries admitScalarLibraries(const CompilationRequest &request,
         source += "import " + importPath(group.path, dependency) + ";\n";
       std::vector<std::size_t> noAmbientStorage;
       appendCompiledInterfaceSource(source, group.signatures, noAmbientStorage);
-      facades.push_back({group.path.string(), std::move(source),
-                         std::move(group.signatures), nullptr,
-                         std::move(noAmbientStorage)});
+      facades.push_back({.path = group.path.string(),
+                         .source = std::move(source),
+                         .signatures = std::move(group.signatures),
+                         .noAmbientStorage = std::move(noAmbientStorage)});
       for (auto &owner : sources)
         if (registered(group.path, name) &&
             owners.ownerForPath(group.path)->identity == owner.identity)
@@ -1779,8 +1779,11 @@ loadStandardLibraryInputs(const CompilationRequest &request,
 CompilationResult compileWithLibraryImports(
     const CompilationRequest &request, CompilationInputs inputs,
     std::vector<CompiledScalarImport> imports, ProgressObserver *progress,
+    LlvmCodegenUnitCache *unitCache,
     std::vector<CompiledModuleImport> moduleImports) {
-  LlvmBackend native(llvmBackendOptions(request));
+  auto options = llvmBackendOptions(request);
+  options.unitCache = unitCache;
+  LlvmBackend native(options);
   ScalarBackend backend(std::move(imports), native);
   backend.importModuleEntries(std::move(moduleImports),
                               request.standardLibrary().root.string());
