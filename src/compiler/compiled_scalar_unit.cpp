@@ -2,6 +2,7 @@
 #include "gti/compiled_interface_names.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/persistent_declaration.h"
+#include "gti/source_graph.h"
 #include "lowered_program_closure.h"
 #include "mir_storage_effects.h"
 #include <algorithm>
@@ -449,7 +450,34 @@ LoweredProgram CompiledScalarUnitBuilder::bindModuleEntries(
         standard ? "std/" + relative.generic_string() : local->second->identity;
     std::string key;
     appendContract(key, scope);
-    appendContract(key, symbol->qualifiedName);
+    if (symbol->generated) {
+      const auto *constant =
+          step.dataConstant
+              ? std::get_if<ConstantAggregateValue>(&*step.dataConstant)
+              : nullptr;
+      const auto name =
+          EmbeddedFile::storageIdentifier(symbol->declarationSource.start);
+      if (symbol->name != name || symbol->mutableBinding || !constant ||
+          !constant->value ||
+          !constant->value->packedBytesMatch(symbol->type)) {
+        if (producer)
+          throw std::invalid_argument(
+              "native module needs an identity for generated storage");
+        continue;
+      }
+      // Generated qualified names can depend on the source-unit layout.
+      // The defining module plus the embed site identifies the snapshot in both
+      // builds.
+      appendContract(key, name);
+    } else {
+      if (symbol->qualifiedName.empty()) {
+        if (producer)
+          throw std::invalid_argument(
+              "native module needs a named storage declaration");
+        continue;
+      }
+      appendContract(key, symbol->qualifiedName);
+    }
     if (standard) {
       std::optional<std::string_view> sourceDigest;
       for (const auto &[id, owner] : scopes) {
@@ -468,12 +496,6 @@ LoweredProgram CompiledScalarUnitBuilder::bindModuleEntries(
         continue;
       }
       appendContract(key, *sourceDigest);
-    }
-    if (symbol->generated || symbol->qualifiedName.empty()) {
-      if (producer)
-        throw std::invalid_argument(
-            "native module needs an identity for generated storage");
-      continue;
     }
     appendContract(key, std::to_string(symbol->declarationSource.start));
     auto name = nativeSymbol(compiledModuleDataPrefix, key);

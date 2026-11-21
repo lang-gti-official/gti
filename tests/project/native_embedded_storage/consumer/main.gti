@@ -1,0 +1,4 @@
+import "public.gti";
+int main() {
+  return int(read_snapshot(0));
+}

@@ -537,6 +537,26 @@ std::string dependencyFields(const ModuleDependencies &dependencies) {
   }
   return bytes;
 }
+void appendEmbeddedInputs(std::string &identity,
+                          std::span<const EmbeddedFile> files) {
+  field(identity, std::to_string(files.size()));
+  for (const auto &file : files) {
+    field(identity, std::to_string(file.keyword.position));
+    field(identity, std::to_string(file.storageOffset));
+    field(identity, file.spelling);
+    field(identity, file.bytes ? hash(*file.bytes) : "missing");
+  }
+}
+std::string moduleSourceIdentity(std::string_view source,
+                                 const SourceUnit &unit) {
+  auto digest = hash(source);
+  if (unit.embeddedFiles.empty())
+    return digest;
+  std::string material = "gti.module-source-with-embedded-inputs.1";
+  field(material, digest);
+  appendEmbeddedInputs(material, unit.embeddedFiles);
+  return hash(material);
+}
 ModuleDependencies moduleDependencies(const FrontendResult &frontend,
                                       const std::filesystem::path &rootPath) {
   // SourceGraph paths are canonical, including for a symlinked sysroot.
@@ -555,7 +575,8 @@ ModuleDependencies moduleDependencies(const FrontendResult &frontend,
         }))
       throw std::invalid_argument("native module requires a self-contained, "
                                   "flag-independent toolchain dependency");
-    dependencies.emplace(path.generic_string(), hash(*source));
+    dependencies.emplace(path.generic_string(),
+                         moduleSourceIdentity(*source, unit));
   }
   return dependencies;
 }
@@ -579,7 +600,7 @@ void validateModuleDependencies(const CompiledLibraryInputs &inputs,
           it->second = unit->compiledTemplate->installedSourceDigest;
         else if (unit) {
           if (auto source = inputs.compilation.sources.find(path))
-            it->second = hash(*source);
+            it->second = moduleSourceIdentity(*source, *unit);
         }
       }
       if (it->second != digest)
@@ -775,7 +796,7 @@ std::optional<std::string> projectModuleMetadata(
       entry->lifetimeNames ? *entry->lifetimeNames : LifetimeNames{},
       entry->embeddedFiles);
   if (profile == LibraryProfile::InstalledStdlib) {
-    recipe.installedSourceDigest = hash(*source);
+    recipe.installedSourceDigest = moduleSourceIdentity(*source, *entry);
     return encodeTemplateModule(recipe);
   }
   return encodeProjectTemplate(recipe, *source);
@@ -874,14 +895,9 @@ std::string producerSources(const CompilationInputs &inputs,
     // Embedded inputs are producer dependencies even when the GTI source and
     // configured tokens are unchanged. Hash the immutable loader snapshot,
     // never reopen the path after checking it.
-    field(sources, std::to_string(unit ? unit->embeddedFiles.size() : 0));
-    if (unit)
-      for (const auto &file : unit->embeddedFiles) {
-        field(sources, std::to_string(file.keyword.position));
-        field(sources, std::to_string(file.storageOffset));
-        field(sources, file.spelling);
-        field(sources, file.bytes ? hash(*file.bytes) : "missing");
-      }
+    appendEmbeddedInputs(
+        sources, unit ? std::span<const EmbeddedFile>(unit->embeddedFiles)
+                      : std::span<const EmbeddedFile>{});
     // Include the actual configured token stream, not a lossy cache digest.
     field(sources,
           std::to_string(unit && unit->tokens ? unit->tokens->size() : 0));

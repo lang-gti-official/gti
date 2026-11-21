@@ -105,6 +105,7 @@ struct EmbeddedFile {
   std::uint64_t digest = 0;
   std::string error;
 
+  [[nodiscard]] static std::string storageIdentifier(std::size_t offset);
   [[nodiscard]] Token storageName() const;
 };
 

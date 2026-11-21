@@ -3185,8 +3185,10 @@ has one linker identity. Active global initialization and TLS require additional
 lifecycle support. Native closures that take function addresses, create native
 callback adapters or perform virtual dispatch require shared code identity and
 are rejected. The profile accepts standard-library dependencies with an
-exact source digest; a mismatched dependency prevents admission. A project
-recipe is checked as ordinary project input. Installed recipes use the
+exact source digest, including the paths, call sites and content of embedded
+files. Native code and imported bodies identify the immutable backing array by
+its defining module and embed site. A mismatched dependency prevents admission.
+A project recipe is checked as ordinary project input. Installed recipes use the
 toolchain's existing authenticated library catalog.
 
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
