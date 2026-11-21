@@ -108,6 +108,36 @@ add_test(NAME gti_test_slow
     ${gti_test_slow_report})
 set_tests_properties(gti_test_slow PROPERTIES PROCESSORS 4 TIMEOUT 1800
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-slow.last-run")
+# - gti_unit_tests_slow: the RFC 0003 retained-storage unit cases over about
+#   2 s each (forged and structural MIR checks over std-importing programs);
+#   gti_unit_tests skips them unless GTI_UNIT_SLOW=1.
+add_test(NAME gti_unit_tests_slow
+  COMMAND gti_unit_tests
+    --test ownerless_failure_snapshot_retention
+    --test ownerless_generic_array_element_return_proof
+    --test ownerless_inline_array_call_supplier_set
+    --test ownerless_multiple_text_owners
+    --test ownerless_owned_storage_borrowed_read
+    --test ownerless_owned_storage_multiple_owners
+    --test ownerless_owned_storage_multiple_records
+    --test ownerless_owned_storage_read_wrapper
+    --test ownerless_owned_storage_receiver_read
+    --test ownerless_owned_storage_receiver_write
+    --test ownerless_owned_storage_reference_argument
+    --test ownerless_owned_storage_reference_receiver
+    --test ownerless_replacement_dependency_verification
+    --test ownerless_retaining_call_conditional_cleanup_proof
+    --test ownerless_retaining_explicit_cleanup
+    --test ownerless_retaining_local_cleanup
+    --test ownerless_retaining_local_construction
+    --test ownerless_retaining_named_callable_escape
+    --test ownerless_retaining_store_contract_separation
+    --test ownerless_retaining_store_effects_on_lowered_program
+    --test ownerless_returned_text_retention
+    --test replaced_record_and_pack_proofs
+)
+set_tests_properties(gti_unit_tests_slow PROPERTIES TIMEOUT 1800
+  ENVIRONMENT "GTI_UNIT_SLOW=1;GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
 gti_test_report(gti_test_isolate gti_test_isolate_report)
 add_test(NAME gti_test_isolate
   COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui" --isolate --jobs 4

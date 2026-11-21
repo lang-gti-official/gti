@@ -1,0 +1,17 @@
+// Whole-value assignment of a class holding a shared reference is admitted
+// (RFC 0003): the destination takes the source's owner dependencies.
+//@ run-pass
+class Borrowed {
+  int& owner;
+public:
+  Borrowed(int& owner) : owner(owner) {}
+  int read() { return this.owner; }
+};
+int main() {
+  int first = 1;
+  int second = 2;
+  Borrowed source = Borrowed(second);
+  mut Borrowed destination = Borrowed(first);
+  destination = std::move(source);
+  return destination.read() - 2;
+}

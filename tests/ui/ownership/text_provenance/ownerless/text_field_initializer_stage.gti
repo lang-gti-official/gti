@@ -1,0 +1,11 @@
+// Text field initializer stage: text field construction retains its ordinary source contract.
+//@ check-pass
+import std.memory;
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+};
+int main() {
+  Label selected{"literal"};
+  return selected.text == "literal" ? 0 : 1;
+}

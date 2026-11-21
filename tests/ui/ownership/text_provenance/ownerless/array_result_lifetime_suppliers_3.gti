@@ -1,0 +1,5 @@
+// Array result lifetime suppliers: the array supplier signature is valid syntax and semantics.
+//@ analyze-pass
+c_string<a>[2] paired<lifetime a>(c_string<a> first,
+          c_string<a> second) { return {nullptr, nullptr}; }
+int main() { return 0; }

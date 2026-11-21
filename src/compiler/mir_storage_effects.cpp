@@ -2,6 +2,7 @@
 
 #include "gti/mir_effects.h"
 #include "mir_borrow_audits.h"
+#include "mir_carrier_flow.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -348,6 +349,13 @@ MirVerificationResult analyzePersistentStorageEffects(
                    persistent.end());
   if (persistent.empty() && !exports)
     return {};
+  // Reuse whole-program verification's analysis (and its call summaries)
+  // when this query runs inside it.
+  std::optional<MirCarrierAnalysis> ownAnalysis;
+  MirCarrierAnalysis *activeAnalysis = activeMirCarrierAnalysis(program);
+  if (!activeAnalysis)
+    activeAnalysis = &ownAnalysis.emplace(program);
+  MirCarrierAnalysis &carrierAnalysis = *activeAnalysis;
   const auto isPersistent = [&](SymbolId symbol) {
     return std::binary_search(persistent.begin(), persistent.end(), symbol);
   };
@@ -373,7 +381,8 @@ MirVerificationResult analyzePersistentStorageEffects(
                     })) {
       std::vector<MirPersistentStorageAccess> direct;
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, {}, &direct);
+          *node.body, node.address.owner, {}, &direct, nullptr, {}, &program,
+          &carrierAnalysis);
       if (!proof.valid()) {
         if (findings == nullptr)
           return proof;
@@ -615,7 +624,8 @@ MirVerificationResult analyzePersistentStorageEffects(
         };
     if (findings == nullptr) {
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent,
+          &program, &carrierAnalysis);
       if (!proof.valid())
         return proof;
       continue;
@@ -667,7 +677,8 @@ MirVerificationResult analyzePersistentStorageEffects(
     // an invocation's.
     for (std::size_t attempt = 0; attempt <= hidden.size() + 1; ++attempt) {
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent,
+          &program, &carrierAnalysis);
       if (proof.valid())
         break;
       const auto &error = proof.errors.front();

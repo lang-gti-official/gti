@@ -1,0 +1,15 @@
+// Replaced record and pack proofs: whole-record shared replacement still protects its new referent.
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;  //~ WARN GTI-S2096
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  second_owner = 3;  //~ ERROR GTI-S2017
+  return left.referent - 2;
+}

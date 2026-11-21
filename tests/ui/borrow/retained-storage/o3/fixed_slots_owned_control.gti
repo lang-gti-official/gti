@@ -1,0 +1,25 @@
+// Borrowed storage: fixed slots owned control.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+struct FixedSlots<T, uint64_t Capacity> {
+  mut T values[Capacity];
+  mut uint64_t used;
+  FixedSlots():values({}),used(0){}
+  bool push(T value) mut {
+    if (this.used == Capacity) { return false; }
+    this.values[this.used] = value;
+    this.used += 1;
+    return true;
+  }
+  T at(uint64_t index) { return this.values[index]; }
+  uint64_t size() { return this.used; }
+};
+int main() {
+  mut FixedSlots<int, 2> slots{};
+  if (!slots.push(11) || !slots.push(22) || slots.push(33)) { return 1; }
+  return slots.size() == 2 && slots.at(0) == 11 && slots.at(1) == 22 ? 0 : 2;
+}

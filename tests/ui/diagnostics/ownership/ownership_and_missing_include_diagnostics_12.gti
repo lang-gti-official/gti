@@ -1,4 +1,4 @@
-// Ownership and missing include diagnostics: a nonassignable borrowed carrier explains unavailable assignment instead of identical-type mismatch.
+// Ownership and missing include diagnostics: replacement cannot outlive its new owner.
 struct View<lifetime a> {
   int&<a> value;
   View(int&<a> input) : value(input) {}
@@ -8,7 +8,7 @@ int main() {
   mut View view{outer};
   {
     int inner = 2;
-    view = View(inner);  //~ ERROR GTI-S2003 assignment is unavailable for type 'View'
+    view = View(inner);
   }
-  return view.value;
+  return view.value;  //~ ERROR GTI-S2017 owner or retained dependency has become unavailable
 }

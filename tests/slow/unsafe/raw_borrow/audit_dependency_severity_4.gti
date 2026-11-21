@@ -1,0 +1,45 @@
+// Audit dependency severity: opting in reports library findings in Warn and Strict promotes exactly those findings.
+//@ slow
+//@ raw-pointer-audit: strict
+//@ raw-pointer-audit-library-findings
+//@ error-limit: 0
+import std.memory;
+int main() { return 0; }
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2102
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103
+//~? ERROR GTI-S2103

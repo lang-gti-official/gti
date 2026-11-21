@@ -1,0 +1,14 @@
+// Borrowed storage: fixed array global publication rejects owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+mut std::string_view escaped = "";
+void publish(std::string_view values[2]) { escaped = values[0]; }
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {owner.view(), "literal"};  //~ ERROR GTI-S2017 This storage or call requires an ownerless value, but the supplied value retains an external owner.
+  publish(values);  //~ ERROR GTI-S2017 This storage or call requires an ownerless value, but the supplied value retains an external owner.
+  return 0;
+}

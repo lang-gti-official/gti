@@ -443,6 +443,31 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       return {nullptr, nullptr};
     }
   };
+  const auto ownerlessRequirement = [&](MirBodyKind kind, std::size_t owner,
+                                        MirBlockId blockId,
+                                        MirInstructionId site) {
+    const auto [lowered, source] = bodiesOf(kind, owner);
+    const auto *block = lowered ? lowered->findBlock(blockId) : nullptr;
+    if (!block || !source)
+      return false;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id != site)
+        continue;
+      const auto *value = source->findValue(
+          instruction.hirValue ? instruction.hirValue : instruction.callSite);
+      if (!value || !value->source)
+        return false;
+      const Token token = expressionAnchorToken(*value->source);
+      if (token.lexeme.empty())
+        return false;
+      add(tokenSpan(token),
+          "This storage or call requires an ownerless value, but the supplied "
+          "value retains an external owner.",
+          "GTI-S2017");
+      return true;
+    }
+    return false;
+  };
   // Explain only concrete storage retained by the rejected return loan. A
   // reference binding is an alias, not evidence that its referent dies here.
   const auto addExplainedEscape = [&](SourceSpan span, MirBodyKind kind,
@@ -515,7 +540,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     auto &related = check.diagnostics.back().related;
     if (related.empty())
       related.push_back(
-          {tokenSpan(token), "The overlapping borrow originates here."});
+          {tokenSpan(token),
+           borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement
+               ? "The retained borrow originates here."
+               : "The overlapping borrow originates here."});
   };
   // A body's user rejection explains why its construction stopped; any
   // structural failure it caused in the same body is a consequence of that
@@ -525,6 +553,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (error.borrow.kind != MirBorrowRejectionKind::None && error.source)
       rejectedBodies.push_back(error.body);
   for (const MirLoweringError &error : mir.errors) {
+    if (error.borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement &&
+        ownerlessRequirement(error.body.kind, error.body.owner, error.block,
+                             error.instruction)) {
+      relateLoan(error.body, error.borrow);
+      continue;
+    }
     if (error.borrow.kind == MirBorrowRejectionKind::None &&
         std::any_of(rejectedBodies.begin(), rejectedBodies.end(),
                     [&](const MirBodyAddress &body) {
@@ -532,6 +566,37 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                              body.owner == error.body.owner;
                     }))
       continue;
+    if (error.borrow.kind == MirBorrowRejectionKind::UnrepresentedRetention ||
+        error.borrow.kind == MirBorrowRejectionKind::ErasedRetention) {
+      std::optional<SourceSpan> span = error.source;
+      const auto [lowered, source] =
+          bodiesOf(error.body.kind, error.body.owner);
+      if (!span && lowered && source)
+        if (const auto *block = lowered->findBlock(error.block))
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == error.instruction) {
+              const auto *value = source->findValue(instruction.hirValue
+                                                        ? instruction.hirValue
+                                                        : instruction.callSite);
+              if (value && value->source) {
+                const Token token = expressionAnchorToken(*value->source);
+                if (!token.lexeme.empty())
+                  span = tokenSpan(token);
+              }
+            }
+      if (span) {
+        add(*span,
+            error.borrow.kind == MirBorrowRejectionKind::ErasedRetention
+                ? "This callable type cannot represent the input lifetimes "
+                  "retained by its target. Use a direct call that preserves "
+                  "the target's retention contract."
+                : "This call stores borrowed text, but its input has no "
+                  "represented "
+                  "owner lifetime or proof that it is ownerless.",
+            "GTI-S2045");
+        continue;
+      }
+    }
     // The provisional program proof reports an escape without a body source.
     if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
          error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
@@ -565,6 +630,11 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           "A consuming borrowed payload requires one exact active carrier "
           "with independently transferable dependencies.",
           "GTI-S2067");
+    } else if (error.borrow.kind == MirBorrowRejectionKind::ExpiredDependency) {
+      add(*error.source,
+          "Cannot use a borrowed value after its owner or retained dependency "
+          "has become unavailable.",
+          "GTI-S2017", &error);
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addExplainedEscape(*error.source, error.body.kind, error.body.owner,
                          error.borrow);
@@ -703,6 +773,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     return check;
   for (const MirVerificationError &error : verifyMirProgram(program).errors) {
     if (error.message == "MIR program is marked invalid")
+      continue;
+    if (error.borrow.kind == MirBorrowRejectionKind::OwnerlessRequirement &&
+        ownerlessRequirement(error.bodyKind, error.owner, error.block,
+                             error.instruction))
       continue;
     const auto span =
         error.borrow.kind == MirBorrowRejectionKind::Escape ||

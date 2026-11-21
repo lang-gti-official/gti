@@ -1,0 +1,11 @@
+// Inferred array return suppliers: array element return infers its supplying parameter.
+//@ check-pass
+import std.string;
+std::string_view pick(std::string_view first[2], std::string_view second[2]) {
+  return first[0];
+}
+int main() {
+  std::string_view first[2] = {"first", "other"};
+  std::string_view second[2] = {"second", "other"};
+  return pick(first, second) == "first" ? 0 : 1;
+}

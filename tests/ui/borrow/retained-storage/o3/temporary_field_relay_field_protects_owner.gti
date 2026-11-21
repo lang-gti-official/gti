@@ -1,0 +1,21 @@
+// Borrowed storage: temporary field relay field protects owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+class Label {
+public:
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+  std::string_view read() { return this.text; }
+};
+std::string_view relay(Label value) { return value.text; }
+Label make_label(std::string_view input) { return Label(input); }
+int main() {
+  mut std::string owner{"borrowed"};
+  std::string_view selected = Label(owner.view()).text;
+  owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return selected == "borrowed" ? 0 : 1;
+}

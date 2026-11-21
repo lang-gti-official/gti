@@ -1,4 +1,4 @@
-// Storage payload admission: source-defined owning storage rejects borrowed payloads through its declared element constraint, without a private handle rule.
+// Storage payload admission: source-defined owning storage admits a borrowed-carrier payload (RFC 0003 shared borrowed storage); its loans stay tied to the referent.
 import std.optional;
 import std.vector;
 class View {
@@ -6,4 +6,4 @@ class View {
 public:
   View(int& value) : source(value) {}
 };
-int main() { int source = 7; std::vector<View> item{}; return 0; }  //~ ERROR GTI-S2029
+int main() { int source = 7; std::vector<View> item{}; return 0; }

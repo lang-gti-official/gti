@@ -1,0 +1,12 @@
+// Borrowed storage: fixed array local alias protects first.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+int main() {
+  mut std::string first{"first"}; mut std::string second{"second"};  //~ WARN GTI-S2096 Mutable binding 'second' is never used mutably.
+  std::string_view views[2] = {first.view(), second.view()};
+  auto& alias = views;
+  first.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return alias[0] == "first" && alias[1] == "second" ? 0 : 1;
+}

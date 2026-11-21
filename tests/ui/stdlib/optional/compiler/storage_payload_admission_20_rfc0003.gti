@@ -1,0 +1,5 @@
+// Storage payload admission: fixed-array and dynamic storage admit moved owner-dependent text.
+//@ check-pass
+import std.string;
+import std.vector;
+int main() { mut std::string owner{"owned"}; std::string_view view = owner.view(); std::string_view values[1] = {std::move(view)}; return int(values[0].size()); }  //~ WARN GTI-S2096

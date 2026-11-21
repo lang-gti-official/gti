@@ -1,0 +1,24 @@
+// Borrowed storage: fixed slots first only.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+struct FixedSlots<T, uint64_t Capacity> {
+  mut T values[Capacity];
+  mut uint64_t used;
+  FixedSlots():values({}),used(0){}
+  bool push(T value) mut {
+    if (this.used == Capacity) { return false; }
+    this.values[this.used] = value;
+    this.used += 1;
+    return true;
+  }
+  T at(uint64_t index) { return this.values[index]; }
+  uint64_t size() { return this.used; }
+};
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut FixedSlots<std::string_view, 2> slots{};
+  if (!slots.push(first.view()) || !slots.push("second")) { return 1; }
+  return slots.size() == 2 && slots.at(0) == "first" && slots.at(1) == "second" ? 0 : 2;
+}

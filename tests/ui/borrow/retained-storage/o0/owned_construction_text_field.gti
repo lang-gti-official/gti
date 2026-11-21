@@ -1,0 +1,20 @@
+// Borrowed storage: owned construction text field.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut std::uninitialized<Label> storage{};
+  unsafe {
+    Label* address = storage.data();
+    std::construct_owned_at<Label, std::uninitialized<Label>, std::string_view>(address, storage, owner.view());
+    auto selected = std::borrow_owned_at(address, storage);
+    return selected.text == "borrowed" ? 0 : 1;
+  }
+}

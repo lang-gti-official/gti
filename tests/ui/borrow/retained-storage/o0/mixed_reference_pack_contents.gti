@@ -1,0 +1,25 @@
+// Borrowed storage: mixed reference pack contents.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+
+import std.string;
+class Reading {
+public:
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+int read(std::string_view& first, Reading& middle, std::string_view& last) {
+  return first == "first" && middle.value == 7 && last == "last" ? 0 : 1;
+}
+int through_pack<Args...>(Args&... args) { return read(args...); }
+int main() {
+  mut std::string first{"first"};  //~ WARN GTI-S2096 Mutable binding 'first' is never used mutably.
+  std::string last{"last"};
+  int number = 7;
+  Reading middle{number};
+  std::string_view a = first.view();
+  std::string_view b = last.view();
+  return through_pack(a, middle, b);
+}

@@ -1,0 +1,11 @@
+// Owned storage reference argument: a retained dependency does not replace a storage owner's reference identity.
+//@ check-pass
+import std.memory;
+import std.string;
+int inspect<T>(T& storage) { return 0; }
+int main() {
+  std::string owner{"borrowed"};
+  mut std::uninitialized<std::string_view> storage{};
+  unsafe { std::initialize_owned_at(storage.data(), storage, owner.view()); }
+  return inspect(storage);
+}

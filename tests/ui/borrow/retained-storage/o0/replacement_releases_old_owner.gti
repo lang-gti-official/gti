@@ -1,0 +1,11 @@
+// Borrowed storage: replacement releases old owner.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int main() {
+  mut std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  view = second.view(); first.clear();
+  return view == "second" ? 0 : 1;
+}

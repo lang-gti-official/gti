@@ -1,0 +1,16 @@
+// Borrowed storage: record second owner write copy.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+struct Labels<lifetime a, lifetime b> {
+  std::string_view<a> first; std::string_view<b> second;
+  Labels(std::string_view<a> x, std::string_view<b> y):first(x),second(y){}
+};
+int main() {
+  std::string first{"first"}; mut std::string second{"second"};
+  Labels labels{first.view(),second.view()};
+  auto copied = labels;
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return copied.first == "first" && copied.second == "second" ? 0 : 1;
+}

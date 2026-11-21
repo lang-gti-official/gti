@@ -1,0 +1,20 @@
+// Borrowed storage: owned construction record local replacement live alias.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  mut int first = 11;  //~ WARN GTI-S2096 Mutable binding 'first' is never used mutably.
+  int second = 22;
+  mut Reading selected{first};
+  Reading& alias = selected;
+  selected = Reading(second);  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+  return alias.read() == 22 ? 0 : 1;
+}

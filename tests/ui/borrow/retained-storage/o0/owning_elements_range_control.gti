@@ -1,0 +1,15 @@
+// Borrowed storage: owning elements range control.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+import std.vector;
+int main() {
+  mut std::vector<std::unique_ptr<int>> values{};
+  values.push_back(std::make_unique<int>(11));
+  values.push_back(std::make_unique<int>(22));
+  mut int total = 0;
+  for (std::unique_ptr<int>& value : values) { total += *value; }
+  return total == 33 ? 0 : 1;
+}

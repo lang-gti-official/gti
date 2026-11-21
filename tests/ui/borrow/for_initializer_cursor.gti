@@ -1,0 +1,30 @@
+// A borrowing cursor declared in a for-loop initializer and used only by the
+// loop's condition and step stays live for the whole loop, then ends with the
+// loop: the owner is mutable again afterwards.
+//@ run-pass
+import std.string;
+class Counter {
+public:
+  mut int value = 0;
+  Counter() = default;
+};
+class Cursor {
+  Counter& counter;
+  mut int position = 0;
+public:
+  Cursor(Counter& counter) : counter(counter) {}
+  bool more() { return this.position < this.counter.value; }
+  void advance() mut { this.position += 1; }
+};
+int main() {
+  mut Counter counter{};
+  counter.value = 3;
+  mut int steps = 0;
+  for (mut Cursor cursor = Cursor(counter); cursor.more(); cursor.advance()) { steps++; }
+  counter.value = 0;
+  mut std::string text{"ab"};
+  mut int letters = 0;
+  for (mut auto it = text.begin(); it != text.end(); ++it) { letters++; }
+  text.clear();
+  return steps == 3 && letters == 2 ? 0 : 1;
+}

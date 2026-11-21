@@ -1,0 +1,32 @@
+// Borrowed storage: owned storage relocate method.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.memory;
+class TransferBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> storage{};
+  TransferBox() = default;
+  unsafe void transfer(mut TransferBox<T>& destination) mut requires std::move_constructible<T> {
+    unsafe { std::relocate_owned_at(destination.storage.data(), destination,
+                                   this.storage.data(), this); }
+  }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut TransferBox<std::string_view> destination{};
+  {
+    mut TransferBox<std::string_view> source{};
+    unsafe {
+      std::initialize_owned_at(source.storage.data(), source, owner.view());
+      source.transfer(destination);
+    }
+  }
+  unsafe {
+    std::string_view selected = std::borrow_owned_at(destination.storage.data(), destination);
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

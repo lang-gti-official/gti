@@ -1,0 +1,32 @@
+// Borrowed storage: owned storage receiver local construction protects owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class Scratch {
+  int value;
+public:
+  Scratch(int input) : value(input) {}
+};
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe void write(T value) mut requires std::move_constructible<T> { Scratch scratch{7}; unsafe { std::initialize_owned_at(this.slot.data(), this, std::move(value)); } }
+  unsafe T& read() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+int main() {
+  mut std::string owner{"borrowed"};
+  mut RawBox<std::string_view> box{};
+  unsafe {
+    box.write(owner.view());
+    owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+    std::string_view selected = box.read();
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

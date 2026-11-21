@@ -1,0 +1,20 @@
+// Borrowed storage: owned construction view copy protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+int main() {
+  mut std::string owner{"borrowed"};
+  mut std::string_view selected = "";
+  {
+    mut std::uninitialized<std::string_view> storage{};
+    unsafe {
+      std::string_view* address = storage.data();
+      std::construct_owned_at(address, storage, owner.view());
+      owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+      selected = std::borrow_owned_at(address, storage);
+    }
+  }
+  return selected == "borrowed" ? 0 : 1;
+}

@@ -1,0 +1,24 @@
+// Borrowed storage: growable records operation insert protects second.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; mut int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  values.reserve(32);
+  values.insert(1, Reading(first));
+  second = 99;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+  return values.size() == 3 && values[0].read() == 11 && values[2].read() == 22 && values[1].read() == 11 ? 0 : 1;
+}

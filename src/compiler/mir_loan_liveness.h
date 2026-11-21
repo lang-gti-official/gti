@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -36,6 +37,21 @@ struct LoanFacts {
   // A reference loan (as opposed to a stored carrier group).
   bool reference = false;
   std::vector<HirBindingId> carriers;
+  // When the finalized MIR carrier flow is complete, these occurrences
+  // replace binding-global reader lists. Copies and replacement versions
+  // then keep separate uses even when they occupied the same source binding.
+  std::optional<std::vector<HirValueId>> exactUseValues;
+  std::vector<HirStatementId> exactUseStatements;
+  // Partial MIR facts add uses to the conservative reader lists. They must
+  // never replace those lists unless the complete-flow proof succeeded.
+  std::vector<HirValueId> additionalUseValues;
+  std::vector<HirStatementId> additionalUseStatements;
+  bool scopeBound = false;
+  // Carriers added because MIR carrier flow shows they retain this loan
+  // through other storage (a record holding a reference to the carrier, for
+  // example). They are uses of the loan, not exclusive aliases of its place.
+  std::vector<HirBindingId> retainedCarriers;
+  HirValueId producedBy = 0;
   std::size_t parent = 0;
   std::size_t storedDependency = 0;
   std::vector<std::size_t> dependencyParents;

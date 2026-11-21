@@ -420,6 +420,47 @@ def self_test(runner):
                "the JSON report has one row per test", report.read_text())
 
 
+def retained_assertion_test(runner):
+    # Migration must preserve related-note and silent-runtime assertions in
+    # both the linked compiler and the isolated CLI execution path.
+    fixture = ROOT / "tests/ui/borrow/retained-storage/o0/record_first_owner_write.gti"
+    with tempfile.TemporaryDirectory() as directory:
+        case = Path(directory) / "case.gti"
+        for isolated in ((), ("--isolate",)):
+            case.write_text(fixture.read_text())
+            code, out = run(runner, case, *isolated, fixtures=False)
+            expect(code == 0, "retained-borrow note matches" + str(isolated), out)
+            case.write_text(case.read_text().replace(
+                "//@ diagnostic-note: Retained borrow originates here.",
+                "//@ diagnostic-note: deliberately absent note"))
+            before = case.read_text()
+            code, out = run(runner, case, *isolated, "--bless", fixtures=False)
+            expect(code == 1 and "diagnostic note containing" in out and
+                   case.read_text() == before,
+                   "missing note fails and cannot be blessed" + str(isolated), out)
+            case.write_text("// A silent program satisfies stderr-empty.\n"
+                            "//@ run-pass\n//@ stderr-empty\nint main() { return 0; }\n")
+            code, out = run(runner, case, *isolated, fixtures=False)
+            expect(code == 0, "empty stderr passes" + str(isolated), out)
+            noisy = (FIXTURES / "pass/basic/run_exit.gti").read_text().replace(
+                "//@ stderr-contains: index_out_of_bounds", "//@ stderr-empty")
+            case.write_text(noisy)
+            code, out = run(runner, case, *isolated, fixtures=False)
+            expect(code == 1 and "expected: empty stderr" in out,
+                   "nonempty stderr fails" + str(isolated), out)
+        case.write_text("// Revision expectations retain the silent-stderr check.\n"
+                        "//@ run-pass\n//@ revisions: first second\n"
+                        "//@[first] stderr-empty\n//@[second] stderr-empty\n"
+                        "int main() { return 0; }\n")
+        code, out = run(runner, case, fixtures=False)
+        expect(code == 0, "stderr-empty works in revisions", out)
+        for directive in ("//@ diagnostic-note:", "//@ stderr-empty: text"):
+            case.write_text("// Malformed assertions are rejected.\n" + directive +
+                            "\nint main() { return 0; }\n")
+            code, out = run(runner, case, fixtures=False)
+            expect(code == 1 and "invalid test" in out, "invalid assertion fails", out)
+
+
 def reporting_self_test(runner):
     """--opt, --filter, --slowest, --cpu-budget, argument checks, one-pass
     bless of rendered diagnostics."""
@@ -865,6 +906,7 @@ def main():
     if "--jobs" in sys.argv:
         jobs = sys.argv[sys.argv.index("--jobs") + 1]
     self_test(runner)
+    retained_assertion_test(runner)
     print("gti-test self-test: ok", flush=True)
     if "--self-test-only" in sys.argv:
         return 0

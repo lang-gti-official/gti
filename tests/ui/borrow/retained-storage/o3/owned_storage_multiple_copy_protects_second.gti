@@ -1,0 +1,30 @@
+// Borrowed storage: owned storage multiple copy protects second.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class RawSlots<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> left{};
+  mut std::uninitialized<T> right{};
+  RawSlots() = default;
+};
+int main() {
+  std::string first{"first"};
+  mut std::string_view selected = "";
+  {
+    std::string second{"second"};
+    mut RawSlots<std::string_view> storage{};
+    unsafe {
+      std::string_view* left = storage.left.data();
+      std::string_view* right = storage.right.data();
+      std::initialize_owned_at(left, storage, first.view());
+      std::initialize_owned_at(right, storage, second.view());
+      selected = std::borrow_owned_at(right, storage);
+    }
+  }
+  return selected == "second" ? 0 : 1;  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+}

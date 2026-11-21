@@ -1,0 +1,25 @@
+// Borrowed storage: projected record reference staged receiver.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+
+import std.vector;
+struct Item { int value; Item(int value) : value(value) {} };
+struct State {
+  mut std::vector<Item> values;
+  State(std::vector<Item> values) : values(std::move(values)) {}
+};
+int inspect(mut State& state) {
+  Item item = state.values.back();
+  state.values.pop_back();
+  return item.value;
+}
+int main() {
+  mut std::vector<Item> values{};
+  values.push_back(Item(42));
+  mut State state{std::move(values)};
+  return inspect(state) == 42 ? 0 : 1;
+}

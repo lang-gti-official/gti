@@ -1,0 +1,32 @@
+// Borrowed storage: owned storage nested receiver protects owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe T& read() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+class RawEnvelope<std::layout_queryable T> {
+public:
+  mut RawBox<T> inner{};
+  RawEnvelope() = default;
+  unsafe T& read() { unsafe { return this.inner.read(); } }
+};
+int main() {
+  mut std::string owner{"borrowed"};
+  mut RawEnvelope<std::string_view> box{};
+  unsafe {
+    std::initialize_owned_at(box.inner.slot.data(), box, owner.view());
+    owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+    std::string_view selected = box.read();
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

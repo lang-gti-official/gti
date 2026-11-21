@@ -1,0 +1,24 @@
+// Borrowed storage: owned construction record field.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+class Number { public: mut int value; Number(int input) : value(input) {} };
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  mut Number owner{42};  //~ WARN GTI-S2096 Mutable binding 'owner' is never used mutably.
+  mut std::uninitialized<Reading> storage{};
+  unsafe {
+    Reading* address = storage.data();
+    std::construct_owned_at<Reading, std::uninitialized<Reading>, int&>(address, storage, owner.value);
+    auto selected = std::borrow_owned_at(address, storage);
+    std::destroy_at(address);
+    return selected.read() == 42 ? 0 : 1;
+  }
+}

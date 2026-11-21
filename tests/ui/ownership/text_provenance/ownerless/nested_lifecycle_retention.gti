@@ -1,0 +1,21 @@
+// Nested lifecycle retention: retaining store with nested lifecycle helpers compiles.
+//@ check-pass
+import std.utility;
+void construct_helper() {}
+void cleanup_helper() {}
+class Scratch {
+public:
+  Scratch() { construct_helper(); }
+  ~Scratch() { cleanup_helper(); }
+};
+class Payload {
+public:
+  int value;
+  Payload(int input) : value(input) {}
+  ~Payload() { cleanup_helper(); }
+};
+void assign(mut Payload& target, Payload input) {
+  Scratch scratch{};
+  target = std::move(input);
+}
+int main() { mut Payload target{0}; assign(target, Payload(7)); return target.value; }

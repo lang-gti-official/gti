@@ -1,0 +1,10 @@
+// A record returned from a thread-local keeps that storage borrowed while it
+// is live, like any other static-storage carrier.
+struct View { int& item; View(int& source) : item(source) {} };
+thread_local mut int state = 1;
+View worker() { return View(state); }
+int main() {
+  View v = worker();
+  state = 4;  //~ ERROR GTI-S2017 overlapping borrow
+  return v.item - 4;
+}

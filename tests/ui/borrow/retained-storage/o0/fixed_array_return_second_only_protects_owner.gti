@@ -1,0 +1,14 @@
+// Borrowed storage: fixed array return second only protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+std::string_view<a>[2] pair_views<lifetime a>(std::string_view<a> first, std::string_view<a> second) {
+  return {first, second};
+}
+int main() {
+  std::string first{"first"}; mut std::string second{"second"};
+  auto values = pair_views("first", second.view());
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return values[0] == "first" && values[1] == "second" ? 0 : 1;
+}

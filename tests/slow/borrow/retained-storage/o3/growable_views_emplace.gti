@@ -1,0 +1,17 @@
+// Borrowed storage: growable views emplace.
+//@ slow
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.emplace_back(first.view());
+  values.emplace_back(second.view());
+  values.reserve(32);
+  return values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
+}

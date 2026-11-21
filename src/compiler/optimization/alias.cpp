@@ -568,7 +568,8 @@ private:
 [[nodiscard]] bool intrinsicCall(const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call &&
          instruction.intrinsic != IntrinsicKind::None &&
-         !(instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+         !((instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+            instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
            instruction.constructorTarget) &&
          !instruction.elementCleanup;
 }
@@ -797,10 +798,10 @@ public:
     // Final-address construction passes the vacant pointee first. Forming a
     // raw address of tracked storage is itself a capture, so it is untracked.
     const std::size_t offset =
-        instruction.kind == MirInstructionKind::Call &&
-                instruction.intrinsic == IntrinsicKind::ObjectConstruct
-            ? 1
-            : 0;
+        instruction.kind != MirInstructionKind::Call                   ? 0
+        : instruction.intrinsic == IntrinsicKind::ObjectConstruct      ? 1
+        : instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2
+                                                                       : 0;
     for (const MirBodyAddress target : cached->second.addresses) {
       const MirBodyCaptureSummary *summary = summaries.find(target);
       if (summary == nullptr) {
@@ -931,7 +932,7 @@ public:
       } else if (opaqueOperation(instruction)) {
         result.merge(all);
         result.merge(destinationKeys);
-      } else if (kinds.at(&instruction) != InvocationKind::StructuralDrop) {
+      } else if (kinds.at(&instruction) != InvocationKind::StructuralLifetime) {
         const InputClasses &classes = inputClasses(instruction, edge);
         if (classes.unknown) {
           result.merge(all);
@@ -1053,7 +1054,7 @@ private:
   // How an invocation instruction is treated, fixed for one scan.
   enum class InvocationKind : std::uint8_t {
     Exact,
-    StructuralDrop,
+    StructuralLifetime,
     Inspecting,
     Opaque,
   };
@@ -1064,9 +1065,12 @@ private:
             SynchronizationOperationKind::None ||
         instruction.kind == MirInstructionKind::AllocateObject)
       return InvocationKind::Opaque;
-    if (instruction.kind == MirInstructionKind::Drop &&
-        isMirStructuralValueDrop(program, instruction))
-      return InvocationKind::StructuralDrop;
+    if ((instruction.kind == MirInstructionKind::Drop &&
+         isMirStructuralValueDrop(program, instruction)) ||
+        isMirStructuralFinalAddressConstruction(program, instruction))
+      // Passive final-address construction does not expose its owner witness.
+      // Selected source constructors use their ordinary capture summaries.
+      return InvocationKind::StructuralLifetime;
     if (!intrinsicCall(instruction))
       return InvocationKind::Exact;
     const MirEffectTraits effect = effects(program, body, instruction);

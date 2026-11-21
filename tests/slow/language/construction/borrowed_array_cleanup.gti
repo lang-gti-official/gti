@@ -1,0 +1,33 @@
+// Borrowed elements are cleaned on success and on partial construction failure.
+//@ run-pass
+//@ revisions: success failure
+//@[success] stdout: 22
+//@[success] stdout: 11
+//@[success] stderr-empty
+//@[failure] run-fail
+//@[failure] args: fail
+//@[failure] exit-code: 70
+//@[failure] stdout: 11
+//@[failure] stderr-contains: borrowed_array_cleanup.gti:8: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@ slow
+// --- borrowed_array_cleanup.gti
+import std.string;
+import std.vector;
+
+class Observed {
+  int& source;
+public:
+  Observed(int& input, int divisor) : source(input) {
+    int checked = input / divisor;
+    if (checked < 0) { std::println(checked); }
+  }
+  ~Observed() { std::println(this.source); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int first = 11;
+  int second = 22;
+  int divisor = argc == 1 ? 1 : 0;
+  Observed values[2] = {Observed(first, 1), Observed(second, divisor)};
+  return 0;
+}

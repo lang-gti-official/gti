@@ -1,0 +1,55 @@
+// Borrowed storage: resource move cleanup.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+
+import std.resource;
+import std.memory;
+mut int first_releases = 0;
+mut int second_releases = 0;
+mut int first_live = 0;
+mut int second_live = 0;
+mut int violations = 0;
+class Provider {
+  std::process_resource process{};
+  int id;
+public:
+  Provider(int id) : id(id) {}
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe {
+      auto result = this.process.allocate(request);
+      if (!result) { return unexpected(result.error()); }
+      std::raw_allocation raw = std::move(result).value();
+      return std::raw_allocation(raw.address, raw.bytes, raw.alignment, uint64_t(this.id));
+    }
+  }
+  unsafe void release(std::raw_allocation raw) {
+    if (raw.id != uint64_t(this.id)) { violations++; }
+    if (this.id == 1) { first_releases++; if (first_live != 0) { violations++; } }
+    else { second_releases++; if (second_live != 0) { violations++; } }
+    unsafe { this.process.release(raw); }
+  }
+};
+class Item {
+  int id;
+public:
+  Item(int id) : id(id) { if (id == 1) { first_live++; } else { second_live++; } }
+  ~Item() { if (this.id == 1) { first_live--; } else { second_live--; } }
+};
+int main() {
+  Provider first{1}; Provider second{2};
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    {
+      mut std::resource_storage<Item, Provider> left{first_ref};
+      mut std::resource_storage<Item, Provider> right{second_ref};
+      left.try_allocate(1).value(); right.try_allocate(1).value();
+      left.emplace(0, 1); right.emplace(0, 2);
+      auto moved = std::move(right);
+      if (first_releases != 0 || second_releases != 0 || first_live != 1 || second_live != 1) { return 1; }
+    }
+  }
+  return violations == 0 && first_releases == 2 && second_releases == 2 && second_live == 0 ? 0 : 2;
+}

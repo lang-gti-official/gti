@@ -1,0 +1,19 @@
+// Borrowed storage: field forward borrowed.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+struct BorrowedCell<T> {
+  mut T value;
+  BorrowedCell(T initial):value(initial){}
+  void put(T input) mut { this.value = input; }
+  void forward(T input) mut { this.put(input); }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut BorrowedCell<std::string_view> cell{"initial"};
+  cell.forward(owner.view());
+  return cell.value == "borrowed" ? 0 : 1;
+}
