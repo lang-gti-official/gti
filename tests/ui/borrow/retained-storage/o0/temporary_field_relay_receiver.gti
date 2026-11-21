@@ -1,0 +1,18 @@
+// Borrowed storage: temporary field relay receiver.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+class Label {
+public:
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+  std::string_view read() { return this.text; }
+};
+std::string_view relay(Label value) { return value.text; }
+Label make_label(std::string_view input) { return Label(input); }
+int main() {
+  mut std::string owner{"borrowed"};  //~ WARN GTI-S2096 Mutable binding 'owner' is never used mutably.
+  std::string_view selected = Label(owner.view()).read();
+  return selected == "borrowed" ? 0 : 1;
+}

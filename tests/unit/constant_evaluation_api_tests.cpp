@@ -1898,6 +1898,114 @@ void testNativeStackSegmentsAreInvisible() {
   expect(caught == 7, "an exception thrown on a nested segment propagates");
 }
 
+const lang::ClassDecl *findTopLevelClass(const lang::Program &program,
+                                         const std::string &name) {
+  for (const lang::StmtPtr &declaration : program.declarations()) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(declaration.get());
+    if (classDecl != nullptr && classDecl->name().lexeme == name) {
+      return classDecl;
+    }
+  }
+  return nullptr;
+}
+
+void testBorrowedCleanupQueries() {
+  // The prelude declares the result class, so the query program loads it.
+  const lang::FrontendResult cleanupQuery = lang::Frontend().analyze(
+      "cleanup-query.gti", R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+class Box<T> {
+public:
+  T nested;
+};
+class Expand<T> {
+public:
+  expected<Expand<Expand<T>>, int> nested = unexpected(0);
+public:
+  Expand() = default;
+};
+class Branch<T> {
+public:
+  T left;
+  T right;
+};
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Program &cleanupQueryProgram = cleanupQuery.program;
+  lang::SemanticVisitor cleanupQuerySemantic(lang::TargetInfo::host(),
+                                             &cleanupQuery.sourceGraph, false,
+                                             nullptr, &cleanupQuery.sources);
+  (void)cleanupQuerySemantic.check(cleanupQueryProgram);
+  const lang::ClassDecl *cleanupClass =
+      findTopLevelClass(cleanupQueryProgram, "Cleanup");
+  const lang::ClassDecl *boxClass =
+      findTopLevelClass(cleanupQueryProgram, "Box");
+  const lang::ClassDecl *expandClass =
+      findTopLevelClass(cleanupQueryProgram, "Expand");
+  const lang::ClassDecl *branchClass =
+      findTopLevelClass(cleanupQueryProgram, "Branch");
+  const lang::ClassTypeInfo *cleanupInfo =
+      cleanupClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*cleanupClass);
+  const lang::ClassTypeInfo *boxInfo =
+      boxClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*boxClass);
+  const lang::ClassTypeInfo *expandInfo =
+      expandClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*expandClass);
+  const lang::ClassTypeInfo *branchInfo =
+      branchClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*branchClass);
+  lang::SemanticType nestedCleanup = lang::SemanticType::Unknown;
+  lang::SemanticType expandingRecurrence = lang::SemanticType::Unknown;
+  lang::SemanticType branchingCleanupFree = lang::SemanticType::Int32;
+  if (cleanupInfo != nullptr && boxInfo != nullptr) {
+    const lang::SemanticType cleanup =
+        lang::SemanticType::classType(cleanupInfo->id);
+    nestedCleanup = lang::SemanticType::classType(
+        boxInfo->id, {lang::SemanticType::classType(boxInfo->id, {cleanup})});
+  }
+  if (expandInfo != nullptr) {
+    expandingRecurrence = lang::SemanticType::classType(
+        expandInfo->id, {lang::SemanticType::Int32});
+  }
+  if (branchInfo != nullptr) {
+    for (std::size_t depth = 0; depth < 18; ++depth) {
+      branchingCleanupFree = lang::SemanticType::classType(
+          branchInfo->id, {std::move(branchingCleanupFree)});
+    }
+  }
+  expect(
+      cleanupQuery.syntaxValid && cleanupInfo != nullptr &&
+          boxInfo != nullptr && expandInfo != nullptr &&
+          branchInfo != nullptr &&
+          cleanupQuerySemantic.requiresActiveCleanupFor(nestedCleanup) &&
+          cleanupQuerySemantic.requiresActiveCleanupFor(expandingRecurrence) &&
+          !cleanupQuerySemantic.requiresActiveCleanupFor(branchingCleanupFree),
+      "active-cleanup queries should preserve decreasing concrete generic "
+      "detection, terminate non-decreasing recurrence, and memoize repeated "
+      "cleanup-free generic branches");
+
+  expect(
+      cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(
+          expandingRecurrence) &&
+          !cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(nestedCleanup) &&
+          !cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(
+              branchingCleanupFree),
+      "borrowed-content lifecycle queries terminate expanding generic "
+      "recurrence, preserve decreasing nests, and memoize repeated branches");
+}
+
 } // namespace
 
 GTI_UNIT_TEST(constant_evaluation_api) {
@@ -1907,5 +2015,6 @@ GTI_UNIT_TEST(constant_evaluation_api) {
   testMirConstantRecords();
   testConstantEvaluationReuse();
   testNativeStackSegmentsAreInvisible();
+  testBorrowedCleanupQueries();
   return failures == 0 ? 0 : 1;
 }

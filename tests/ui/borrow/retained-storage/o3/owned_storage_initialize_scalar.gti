@@ -1,0 +1,16 @@
+// Borrowed storage: owned storage initialize scalar.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.memory;
+int main() {
+  mut std::uninitialized<int> storage{};
+  unsafe {
+    int* address = storage.data();
+    std::initialize_owned_at(address, storage, 42);
+    return *address == 42 ? 0 : 1;
+  }
+}

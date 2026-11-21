@@ -416,6 +416,7 @@ struct Compiled {
   // verification, native link). Never blessed.
   std::optional<std::string> internalFailure;
   std::vector<LocatedDiagnostic> diagnostics;
+  std::vector<std::string> diagnosticNotes;
   fs::path executable;
   // The test's own C/C++ sections did not build: a failing test, not an
   // internal error, and not blessable.
@@ -845,6 +846,8 @@ void collect(Compiled &compiled, const Materialized &files,
       compiled.internalFailure =
           diagnostic.code + " at " + diagnostic.primary.source + ":" +
           std::to_string(diagnostic.primary.line) + ": " + diagnostic.message;
+    for (const auto &related : diagnostic.related)
+      compiled.diagnosticNotes.push_back(related.message);
     compiled.diagnostics.push_back(
         locate(files, diagnostic.severity, diagnostic.code, diagnostic.message,
                diagnostic.primary.source, diagnostic.primary.line));
@@ -905,6 +908,9 @@ void collectRendered(Compiled &compiled, const Materialized &files,
       diagnostic.code = match[2].str();
       diagnostic.message = match[3].str();
     } else {
+      static const std::regex note(R"(^.+:[0-9]+:[0-9]+: note: (.*)$)");
+      if (std::regex_match(line, match, note))
+        compiled.diagnosticNotes.push_back(match[1].str());
       continue;
     }
     diagnostics.push_back(std::move(diagnostic));
@@ -1470,6 +1476,16 @@ Outcome Engine::run(const TestFile &given) {
     } else {
       std::vector<std::string> problems =
           compareDiagnostics(test, compiled.diagnostics);
+      bool missingNote = false;
+      for (const auto &needle : test.diagnosticNotes)
+        if (std::none_of(compiled.diagnosticNotes.begin(),
+                         compiled.diagnosticNotes.end(), [&](const auto &note) {
+                           return note.find(needle) != std::string::npos;
+                         })) {
+          problems.push_back("expected: diagnostic note containing \"" +
+                             needle + "\"");
+          missingNote = true;
+        }
       if (modeFails(test.mode) && compiled.succeeded)
         problems.insert(problems.begin(),
                         "the program compiled without errors");
@@ -1480,8 +1496,8 @@ Outcome Engine::run(const TestFile &given) {
                       });
       // Bless never changes a test's declared proof level: an explicit
       // check-pass, build-pass or run test that now errors stays failing.
-      const bool blessable =
-          !(errors && test.modeExplicit && !modeFails(test.mode));
+      const bool blessable = !missingNote && !(errors && test.modeExplicit &&
+                                               !modeFails(test.mode));
       if (!problems.empty()) {
         const std::string text =
             bless && blessable ? blessAnnotations(test, compiled.diagnostics)
@@ -1562,6 +1578,8 @@ Outcome Engine::run(const TestFile &given) {
             problems.push_back("expected: a non-zero exit code");
             problems.push_back("actual:   exit code 0");
           }
+          if (run.stderrEmpty && !program.err.empty())
+            problems.push_back("expected: empty stderr");
           for (const std::string &needle : run.stderrContains)
             if (program.err.find(needle) == std::string::npos)
               problems.push_back("expected: stderr containing \"" + needle +

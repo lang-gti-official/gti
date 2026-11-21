@@ -1,0 +1,21 @@
+// Borrowed storage: borrowed consuming iteration requires extraction records.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  values.reserve(32);
+  for (Reading value : std::move(values).into_range()) {}  //~ ERROR GTI-S2029 Type 'Reading' does not satisfy concept 'std::relocatable<Reading>'.
+//~| ERROR GTI-S2022 Dereference requires a class defining operator*.
+  return 0;
+}

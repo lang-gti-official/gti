@@ -1,0 +1,17 @@
+// Borrowed storage: field forward rejects inner owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+struct BorrowedCell<T> {
+  mut T value;
+  BorrowedCell(T initial):value(initial){}
+  void put(T input) mut { this.value = input; }
+  void forward(T input) mut { this.put(input); }
+};
+int main() {
+  mut BorrowedCell<std::string_view> cell{"initial"};
+  { std::string owner{"borrowed"}; cell.forward(owner.view()); }
+  return cell.value == "borrowed" ? 0 : 1;  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+}

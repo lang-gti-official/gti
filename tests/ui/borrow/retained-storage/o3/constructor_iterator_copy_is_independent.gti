@@ -1,0 +1,14 @@
+// Borrowed storage: constructor iterator copy is independent.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.string;
+int main() {
+  mut std::string source{"hello"};
+  std::string copy{source.begin(), source.end()};
+  source.push_back('!');
+  return copy == "hello" && source == "hello!" ? 0 : 1;
+}

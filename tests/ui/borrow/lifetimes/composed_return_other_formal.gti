@@ -1,0 +1,13 @@
+// An elided receiver return cannot export a second owner from an unnamed parameter.
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& first, int& second) : first(first), second(second) {}
+};
+class Holder {
+public:
+  int x = 1;
+  Holder() {}
+  Pair with_other(int& other) { return Pair(this.x, other); }  //~ ERROR GTI-S2085
+};
+int main() { return 0; }

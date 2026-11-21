@@ -1,0 +1,18 @@
+// Borrowed storage: owned storage initialize view.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.memory;
+int main() {
+  std::string owner{"borrowed"};
+  mut std::uninitialized<std::string_view> storage{};
+  unsafe {
+    std::string_view* address = storage.data();
+    std::initialize_owned_at(address, storage, owner.view());
+    std::string_view selected = std::borrow_owned_at(address, storage);
+    return selected == "borrowed" ? 0 : 1;
+  }
+}

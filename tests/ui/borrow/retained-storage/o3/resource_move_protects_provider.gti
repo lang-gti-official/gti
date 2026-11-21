@@ -1,0 +1,32 @@
+// Borrowed storage: resource move protects provider.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+
+import std.resource;
+import std.memory;
+class Provider {
+  std::process_resource process{};
+public:
+  Provider() = default;
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void release(std::raw_allocation raw) { unsafe { this.process.release(raw); } }
+  void reset() mut {}
+};
+int main() {
+  mut Provider first{}; mut Provider second{};  //~ WARN GTI-S2096 Mutable binding 'first' is never used mutably.
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    mut std::resource_storage<int, Provider> left{first_ref};  //~ WARN GTI-S2096 Mutable binding 'left' is never used mutably.
+    std::resource_storage<int, Provider> right{second_ref};
+    auto moved = std::move(right);
+    second.reset();  //~ ERROR GTI-S2017 A mutable call cannot use storage while a reference borrowed from it may still be live.
+  }
+  return 0;
+}

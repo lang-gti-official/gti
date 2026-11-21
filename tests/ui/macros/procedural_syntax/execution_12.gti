@@ -1,6 +1,6 @@
 // Execution: expected procedural diagnostic before code generation.
 // --- main.gti
-import "library.gti"; struct Ref{int& value; Ref(int& v):value(v){}}; Ref bad(int& input){int local=7;return identity!({Ref(local)});}int main(){return 0;}  //~ ERROR GTI-S2045
+import "library.gti"; struct Ref{int& value; Ref(int& v):value(v){}}; Ref bad(int& input){int local=7;return identity!({Ref(local)});}int main(){return 0;}  //~ ERROR GTI-S2017
 // --- library.gti
 export module procedural_macro_library;
 import std.syntax;

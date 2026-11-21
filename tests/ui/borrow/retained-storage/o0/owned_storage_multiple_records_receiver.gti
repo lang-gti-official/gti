@@ -1,0 +1,33 @@
+// Borrowed storage: owned storage multiple records receiver.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+class RawSlots<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> left{};
+  mut std::uninitialized<T> right{};
+  RawSlots() = default;
+  unsafe T& read_right() {
+    unsafe { return std::borrow_owned_at(this.right.data(), this); }
+  }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut RawSlots<Reading> storage{};
+  unsafe {
+    Reading* left = storage.left.data();
+    Reading* right = storage.right.data();
+    std::initialize_owned_at(left, storage, Reading(first));
+    std::initialize_owned_at(right, storage, Reading(second));
+    Reading selected = storage.read_right();
+    return selected.read() == 22 ? 0 : 1;
+  }
+}

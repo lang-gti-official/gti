@@ -1,0 +1,12 @@
+// Growable borrowed clone case: cloning growable storage preserves external owners.
+//@ check-pass
+//@ require-function-definitions
+import std.string;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view()); values.push_back(second.view());
+  auto copied = values.clone();
+  return copied[0] == "first" && copied[1] == "second" ? 0 : 1;
+}

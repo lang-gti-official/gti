@@ -1,0 +1,15 @@
+// Borrowed storage: replacement loop early continue.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+int check(int count) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  for (mut int i = 0; i < count; i += 1) { if (i == 1) { continue; } view = second.view(); }
+  if (count == 0) { return view == "first" ? 0 : 1; }
+  return view == "second" ? 0 : 2;
+}
+int main() { return check(0) + check(3); }

@@ -44,12 +44,14 @@ isMirStructuralValueType(const MirProgram &program, const SemanticType &type,
                          MirStructuralValueOperation operation);
 // Exact scalar final-address construction (integer, floating, bool, char,
 // null or raw pointer pointee) has no selected constructor, cleanup or
-// adapter. It still writes raw storage and requires the ordinary
+// adapter. An owner-aware form also carries an exact mutable lifetime witness.
+// It still writes raw storage and requires the ordinary
 // unsafe vacancy/extent/alignment contract; this is not a validity proof.
 [[nodiscard]] bool
 isMirScalarFinalAddressConstruction(const MirInstruction &instruction);
 // The same vacant-storage transfer for an integral-enum scalar or an exact
-// generated scalar-record copy/move. Uses the verifier's construction shape and
+// generated scalar-record copy/move, including owned value initialization.
+// Uses the verifier's construction shape and
 // the structural transport classification below; no source constructor or
 // replacement.
 [[nodiscard]] bool

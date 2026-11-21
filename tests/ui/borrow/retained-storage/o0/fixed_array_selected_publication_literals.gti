@@ -1,0 +1,13 @@
+// Borrowed storage: fixed array selected publication literals.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+std::string_view pick(std::string_view values[2]) { return values[0]; }
+mut std::string_view selected_global = "";
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {"dynamic", "literal"};
+  selected_global = pick(values);
+  return selected_global == "dynamic" ? 0 : 1;
+}

@@ -1,0 +1,25 @@
+// Borrowed storage: owned storage receiver scalar bookkeeping.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.memory;
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe void write(T value, uint64_t* count) mut requires std::move_constructible<T> { unsafe { if (*count == uint64_t(0)) { *count = uint64_t(1); } std::initialize_owned_at(this.slot.data(), this, std::move(value)); } }
+  unsafe T& read() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut RawBox<std::string_view> box{};
+  mut uint64_t count = 0;
+  unsafe {
+    box.write(owner.view(), &count);
+    std::string_view selected = box.read();
+    return selected == "borrowed" && count == 1 ? 0 : 1;
+  }
+}

@@ -133,7 +133,7 @@ int main() {
         for profile in ([], ["--release"]):
             run("check", *profile)
             run("run", *profile)
-        for case in ("ui/stdlib/vector/constexpr_range_for_views.gti",
+        for case in ("slow/stdlib/vector/constexpr_range_for_views.gti",
                      "ui/callables/borrowing_captures/borrowing_captures_23.gti"):
             shutil.copyfile(fixture.parents[1] / case, source)
             for profile in ([], ["--release"]):

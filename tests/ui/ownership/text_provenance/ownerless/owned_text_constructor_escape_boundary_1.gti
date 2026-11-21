@@ -1,0 +1,17 @@
+// Owned text constructor escape boundary: owner-tracked construction must not excuse a separate global text escape.
+import std.memory;
+import std.string;
+mut std::string_view escaped = "";
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) { escaped = input; }  //~ ERROR GTI-S2045
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut std::uninitialized<Label> storage{};
+  unsafe {
+    Label* address = storage.data();
+    std::construct_owned_at<Label, std::uninitialized<Label>, std::string_view>(address, storage, owner.view());
+  }
+  return escaped == "borrowed" ? 0 : 1;
+}

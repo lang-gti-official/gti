@@ -1,0 +1,15 @@
+// Borrowed storage: fixed array global publication literals.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+mut std::string_view escaped = "";
+void publish(std::string_view values[2]) { escaped = values[0]; }
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {"dynamic", "literal"};
+  publish(values);
+  return 0;
+}

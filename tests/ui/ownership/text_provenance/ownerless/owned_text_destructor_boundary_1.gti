@@ -1,0 +1,20 @@
+// Owned text destructor boundary: dynamic text construction remains restricted for source destructors.
+import std.memory;
+import std.string;
+import std.panic;
+mut std::string_view escaped = "";
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+  ~Label() { if (this.text != "borrowed") { std::panic("expired text"); } }
+};
+int main() {
+  std::string owner{"borrowed"};
+  mut std::uninitialized<Label> storage{};
+  unsafe {
+    Label* address = storage.data();
+    std::construct_owned_at<Label, std::uninitialized<Label>, std::string_view>(address, storage, owner.view());  //~ ERROR GTI-S2045
+    std::destroy_at(address);
+  }
+  return 0;
+}

@@ -1,0 +1,17 @@
+// Multiple text owners: a shared aggregate retains two text owners.
+//@ check-pass
+import std.string;
+import std.utility;
+struct Labels<lifetime a, lifetime b> {
+  std::string_view<a> first;
+  std::string_view<b> second;
+  Labels(std::string_view<a> x, std::string_view<b> y):first(x),second(y){}
+};
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  Labels labels{first.view(), second.view()};
+  auto copy = labels;
+  auto moved = std::move(labels);
+  return copy.first == "first" && copy.second == "second" &&
+         moved.first == "first" && moved.second == "second" ? 0 : 1;
+}

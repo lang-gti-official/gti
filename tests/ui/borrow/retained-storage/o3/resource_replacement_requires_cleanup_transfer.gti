@@ -1,0 +1,31 @@
+// Borrowed storage: resource replacement requires cleanup transfer.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+
+import std.resource;
+import std.memory;
+class Provider {
+  std::process_resource process{};
+public:
+  Provider() = default;
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void release(std::raw_allocation raw) { unsafe { this.process.release(raw); } }
+  void reset() mut {}
+};
+int main() {
+  mut Provider first{}; mut Provider second{};
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    mut std::resource_storage<int, Provider> left{first_ref};
+    std::resource_storage<int, Provider> right{second_ref};
+    left = std::move(right);  //~ ERROR GTI-S2003 Move assignment is unavailable for type 'std::resource_storage<int32_t, Provider>'.
+
+  }
+  return 0;
+}

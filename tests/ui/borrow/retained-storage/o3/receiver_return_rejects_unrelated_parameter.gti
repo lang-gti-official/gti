@@ -1,0 +1,23 @@
+// Borrowed storage: receiver return rejects unrelated parameter.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class WrongFactory {
+public:
+  View make(int& source) { return View(source); }  //~ ERROR GTI-S2085 Returned value does not relay the exact external owner dependency carried by parameter 'source'.
+public:
+  WrongFactory() = default;
+};
+
+int main() { int n=1; WrongFactory factory{}; auto v=factory.make(n); return 0; }

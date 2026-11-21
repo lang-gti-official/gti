@@ -1,0 +1,25 @@
+// A record that borrows another borrowing record (Rack -> Holder -> Box)
+// retains the inner record's loan only until its own last use: after the
+// outer record is dead, the innermost owner is readable again, even when an
+// earlier alias published a call result through the inner record.
+//@ run-pass
+class Box {
+public:
+  mut int64_t value;
+  Box(int64_t value) : value(value) {}
+  mut int64_t& slot() mut { return this.value; }
+};
+class Holder { public: mut Box& box; Holder(mut Box& box) : box(box) {} };
+class Rack { public: mut Holder& holder; Rack(mut Holder& holder) : holder(holder) {} };
+void store_racked(mut Rack& rack, int64_t value) { rack.holder.box.slot() = value; }
+int main() {
+  mut Box first = Box(int64_t(1));
+  {
+    mut Holder holder = Holder(first);
+    mut Holder& alias = holder;
+    alias.box.slot() = int64_t(3);
+    mut Rack rack = Rack(holder);
+    store_racked(rack, int64_t(22));
+    return int(first.value) - 22;
+  }
+}

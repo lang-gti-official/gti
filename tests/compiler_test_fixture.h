@@ -291,7 +291,11 @@ countDiagnosticContaining(const std::vector<lang::Diagnostic> &diagnostics,
 }
 
 [[maybe_unused]] std::filesystem::path standardLibraryPrelude() {
-  return std::filesystem::path(__FILE__).parent_path().parent_path() /
+  // Normalized: tests/unit includes this header as ../compiler_test_fixture.h.
+  return std::filesystem::path(__FILE__)
+             .lexically_normal()
+             .parent_path()
+             .parent_path() /
          "stdlib/prelude.gti";
 }
 

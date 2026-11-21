@@ -3942,12 +3942,15 @@ closedCallTarget(const MirProgram &program, const MirInstruction &instruction) {
 }
 
 // Final-address construction that runs one exact source constructor of an
-// ordinary record. Its operands after the address are the constructor's.
+// ordinary record. Skip the address and any lifetime-only owner witness.
 [[nodiscard]] std::optional<MirBodyAddress>
 closedObjectConstructTarget(const MirProgram &program,
                             const MirInstruction &instruction) {
+  const bool owned =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned;
+  const std::size_t offset = owned ? 2 : 1;
   if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      (!owned && instruction.intrinsic != IntrinsicKind::ObjectConstruct) ||
       !instruction.constructorTarget || instruction.elementCleanup ||
       instruction.receiver || instruction.result ||
       instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
@@ -3957,7 +3960,8 @@ closedObjectConstructTarget(const MirProgram &program,
       instruction.constructorKind != ConstructorKind::Ordinary ||
       instruction.operation != MirOperation::None ||
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
-      instruction.operands.empty())
+      instruction.operands.size() < offset ||
+      !mir_detail::objectConstruct(program, instruction))
     return std::nullopt;
   const auto &address = instruction.operands.front().type;
   const MirConstructorInstance *constructor =
@@ -3968,7 +3972,8 @@ closedObjectConstructTarget(const MirProgram &program,
       address.arguments.size() != 1 ||
       address.pointerAccess != AccessMode::Mutable || !constructor ||
       constructor->definitionKind != MirDefinitionKind::Source ||
-      constructor->parameterTypes.size() + 1 != instruction.operands.size() ||
+      constructor->parameterTypes.size() + offset !=
+          instruction.operands.size() ||
       !owner || owner->type != address.arguments.front() ||
       owner->kind == ClassKind::Union || owner->unionLayout ||
       owner->traits.containsBorrowedState || owner->polymorphic ||
@@ -6140,7 +6145,11 @@ isolatedMetadataMove(const MirProgram &program, const MirBody &body,
   constructor.kind = MirInstructionKind::Construct;
   constructor.intrinsic = IntrinsicKind::None;
   constructor.unsafeOperation = UnsafeOperationKind::None;
-  constructor.operands.erase(constructor.operands.begin());
+  // The owner witness is a lifetime input, not a source constructor argument.
+  const std::size_t offset =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
+  constructor.operands.erase(constructor.operands.begin(),
+                             constructor.operands.begin() + offset);
   constructor.info.type = instruction.operands.front().type.arguments.front();
   if (!applyClosedCall(body, aliases, block, constructor, state, closedCalls,
                        address))
@@ -6327,6 +6336,11 @@ void applyInstructionCore(
     return;
   if (program ? isMirStructuralFinalAddressConstruction(*program, instruction)
               : isMirScalarFinalAddressConstruction(instruction)) {
+    const std::size_t offset =
+        (instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ||
+         instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned)
+            ? 2
+            : 1;
     std::optional<ScalarAddress> pointer;
     std::optional<IntegerFact> value;
     std::optional<ObjectFact> record;
@@ -6339,23 +6353,23 @@ void applyInstructionCore(
             ? constantIntegerDomain(
                   instruction.operands[0].type.arguments.front())
             : std::nullopt;
-    if (integerPointee && instruction.operands.size() == 1) {
+    if (integerPointee && instruction.operands.size() == offset) {
       // The sealed zero-argument scalar construction value-initializes its
       // exact pointee. This is a successful construction postcondition, not
       // a claim that vacant bytes or neighbouring elements contain zero.
       value = IntegerFact{.domain = *integerPointee, .lower = {}, .upper = {}};
-    } else if (instruction.operands.size() == 2 &&
+    } else if (instruction.operands.size() == offset + 1 &&
                (integerPointee ||
                 !isMirScalarFinalAddressConstruction(instruction))) {
       if (integerPointee) {
-        value = integerForOperand(body, state, instruction.operands[1]);
+        value = integerForOperand(body, state, instruction.operands[offset]);
         parameter = readonlyIntegerParameter(program, address, body,
-                                             instruction.operands[1]);
+                                             instruction.operands[offset]);
       } else {
-        record =
-            objectForOperand(body, aliases, state, instruction.operands[1]);
+        record = objectForOperand(body, aliases, state,
+                                  instruction.operands[offset]);
         parameter = readonlyRecordParameter(program, address, body,
-                                            instruction.operands[1]);
+                                            instruction.operands[offset]);
       }
     }
     preserveLiveScalarFactsForConstruction(program, address, body, state);
@@ -6381,8 +6395,8 @@ void applyInstructionCore(
             constantIntegerDomain(*type) != field.domain)
           continue;
         auto fact = rebased(field, block.id, instruction.id,
-                            instruction.operands[1].value,
-                            instruction.operands[1].place);
+                            instruction.operands[offset].value,
+                            instruction.operands[offset].place);
         fact.evidence = merged(fact.evidence, pointer->evidence);
         add(fact.evidence, block.id);
         addInstruction(fact.evidence, instruction.id);

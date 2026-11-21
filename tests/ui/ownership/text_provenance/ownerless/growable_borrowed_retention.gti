@@ -1,0 +1,11 @@
+// Growable borrowed retention: growable insertion retains a dynamic text owner.
+//@ check-pass
+//@ require-function-definitions
+import std.string;
+import std.vector;
+int main() {
+  std::string owner{"borrowed"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(owner.view());
+  return values.size() == 1 ? 0 : 1;
+}

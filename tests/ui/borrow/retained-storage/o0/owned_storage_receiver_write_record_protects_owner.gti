@@ -1,0 +1,31 @@
+// Borrowed storage: owned storage receiver write record protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+class RawBox<std::layout_queryable T> {
+public:
+  mut std::uninitialized<T> slot{};
+  RawBox() = default;
+  unsafe void write(T value) mut requires std::move_constructible<T> { unsafe { std::initialize_owned_at(this.slot.data(), this, std::move(value)); } }
+  unsafe T& read() {
+    unsafe { return std::borrow_owned_at(this.slot.data(), this); }
+  }
+};
+int main() {
+  mut int owner = 42;
+  mut RawBox<Reading> box{};
+  unsafe {
+    box.write(Reading(owner));
+    owner = 99;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+    Reading selected = box.read();
+    return selected.read() == 42 ? 0 : 1;
+  }
+}

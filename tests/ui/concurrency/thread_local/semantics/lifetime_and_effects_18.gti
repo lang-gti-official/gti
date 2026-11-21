@@ -1,4 +1,4 @@
 // Lifetime and effects: the scoped void-task boundary or existing borrowed-carrier return proof rejects worker-owned TLS result publication before drain.
 //@ execution-profile: concurrent
 import std.thread;
-struct View { int& item; View(int& source) : item(source) {} }; thread_local int state = 1; View worker() { return View(state); } int main() { auto joined = std::parallel_invoke(worker); return 0; }  //~ ERROR GTI-S2045
+struct View { int& item; View(int& source) : item(source) {} }; thread_local int state = 1; View worker() { return View(state); } int main() { auto joined = std::parallel_invoke(worker); return 0; }  //~ ERROR GTI-S2084 consumed exact void() tasks

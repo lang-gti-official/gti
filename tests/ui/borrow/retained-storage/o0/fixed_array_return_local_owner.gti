@@ -1,0 +1,12 @@
+// Borrowed storage: fixed array return local owner.
+//@ check-fail
+import std.string;
+import std.utility;
+std::string_view[2] invalid() {
+  std::string first{"first"}; std::string second{"second"};
+  return {first.view(), second.view()};  //~ ERROR GTI-S2017 A returned borrow does not outlive the function: it depends on storage the function owns.
+}
+int main() {
+  auto values = invalid();
+  return values[0] == "first" ? 0 : 1;
+}

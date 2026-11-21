@@ -1,0 +1,15 @@
+// Captured retaining store escape: a literal lambda result can enter retaining storage.
+//@ check-pass
+import std.string;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  mut Holder holder{};
+
+  auto literal = []() -> std::string_view { return "literal"; };
+  holder.put(literal());
+  return holder.value == "literal" ? 0 : 1;
+}

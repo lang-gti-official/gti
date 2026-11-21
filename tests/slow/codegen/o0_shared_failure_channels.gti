@@ -1,4 +1,5 @@
 // At -O0, failure records whose failures are never in flight together share
+//@ slow
 // failure channels: the recursive `parse` frame reserves three, not one per
 // fallible call (issue #397; from llvm_hosted_execution_test.py).
 //@ snapshot: llvm-ir

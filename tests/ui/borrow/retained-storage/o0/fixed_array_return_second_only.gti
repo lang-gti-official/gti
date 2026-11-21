@@ -1,0 +1,13 @@
+// Borrowed storage: fixed array return second only.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+std::string_view<a>[2] pair_views<lifetime a>(std::string_view<a> first, std::string_view<a> second) {
+  return {first, second};
+}
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  auto values = pair_views("first", second.view());
+  return values[0] == "first" && values[1] == "second" ? 0 : 1;
+}

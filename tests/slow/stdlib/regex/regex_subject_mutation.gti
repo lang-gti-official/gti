@@ -1,0 +1,14 @@
+// A match result keeps the subject it read borrowed: changing the subject
+//@ slow
+// while the result is still used is rejected, so a match cannot dangle.
+import std.regex;
+import std.string;
+
+int read_match(std::regex& re) {
+  mut std::string input{"abbbc"};
+  std::match_results m = std::regex_search(input.view(), re);
+  input.append("x");  //~ ERROR GTI-S2017
+  return int(m.str().size());
+}
+
+int main() { return 0; }

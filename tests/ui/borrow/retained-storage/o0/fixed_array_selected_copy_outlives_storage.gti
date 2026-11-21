@@ -1,0 +1,16 @@
+// Borrowed storage: fixed array selected copy outlives storage.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int check(bool choose) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view selected = "";
+  {
+    std::string_view views[2] = {first.view(), second.view()};
+    selected = views[choose ? 1 : 0];
+  }
+  if (choose) { return selected == "second" ? 0 : 1; }
+  return selected == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

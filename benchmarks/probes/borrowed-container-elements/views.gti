@@ -1,0 +1,28 @@
+import std.string;
+import std.vector;
+extern "C" {
+uint64_t bench_rounds();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+int main() {
+  uint64_t rounds = bench_rounds();
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round += 1) {
+    std::string first{"/project/source/compiler/ownership-analysis.gti"};
+    std::string second{"/project/source/library/borrowed-containers.gti"};
+    mut std::vector<std::string_view> paths{};
+    paths.reserve(4096);
+    for (mut uint64_t index = 0; index < 2048; index += 1) {
+      paths.push_back(first.view());
+      paths.push_back(second.view());
+    }
+    for (mut std::size_t index = 0; index < paths.size(); index += 1) {
+      digest += uint64_t(paths[index].size());
+      digest += (paths[index][0] == '/' ? uint64_t(47) : uint64_t(0));
+    }
+  }
+  bench_end(digest);
+  return 0;
+}

@@ -400,13 +400,36 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   std::unordered_set<MirLoanId> unconfined;
   for (const LoanFacts &loan : loans) {
     auto &own = uses[loan.id];
+    own = loan.additionalUseStatements;
+    for (const auto value : loan.additionalUseValues)
+      if (const auto statement = tree.statementOfValue(value))
+        own.push_back(*statement);
+      else
+        unconfined.insert(loan.id);
+    if (loan.scopeBound)
+      unconfined.insert(loan.id);
     std::optional<HirStatementId> creation;
+    if (loan.exactUseValues) {
+      own = loan.exactUseStatements;
+      for (const auto value : *loan.exactUseValues)
+        if (const auto statement = tree.statementOfValue(value))
+          own.push_back(*statement);
+        else
+          unconfined.insert(loan.id);
+      creation = tree.statementOfValue(loan.producedBy);
+      if (creation)
+        own.push_back(*creation);
+      else if (!loan.entry)
+        unconfined.insert(loan.id);
+    }
     for (const HirBindingId carrier : loan.carriers) {
-      if (const auto found = readers.find(carrier); found != readers.end())
-        own.insert(own.end(), found->second.begin(), found->second.end());
-      addDerivedReads(carrier, own);
+      if (!loan.exactUseValues) {
+        if (const auto found = readers.find(carrier); found != readers.end())
+          own.insert(own.end(), found->second.begin(), found->second.end());
+        addDerivedReads(carrier, own);
+      }
       if (const auto declared = declaringStatement.find(carrier);
-          declared != declaringStatement.end()) {
+          declared != declaringStatement.end() && !loan.exactUseValues) {
         own.push_back(declared->second);
         if (!creation ||
             tree.orderOf(declared->second) < tree.orderOf(*creation))
@@ -471,7 +494,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   // Cleanup is a use of every dependency a cleanup-bound carrier retains:
   // its ancestors cannot end at an ordinary last read beneath it.
   for (const LoanFacts &loan : loans) {
-    if (!loan.lifecycleBound)
+    if (!loan.lifecycleBound && !loan.scopeBound)
       continue;
     std::vector<MirLoanId> pending{loan.parent, loan.storedDependency};
     for (const auto dependencyParent : loan.dependencyParents)
@@ -1045,8 +1068,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
+    const auto aliasCarriers = std::count_if(
+        loan.carriers.begin(), loan.carriers.end(), [&](HirBindingId carrier) {
+          return std::find(loan.retainedCarriers.begin(),
+                           loan.retainedCarriers.end(),
+                           carrier) == loan.retainedCarriers.end();
+        });
     if (loan.lifecycleBound ||
-        (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
+        (aliasCarriers > 1 && loan.access != AccessMode::ReadOnly))
       continue;
     if (unconfined.contains(loan.id)) {
       // A range-for's loan is carried by the loop's own symbol-less range
@@ -1103,6 +1132,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         }
       }
     }
+    // A use by a statement that encloses the loan's creation (a for-loop's
+    // condition or step over a cursor its initializer declares) repeats on
+    // every iteration: the loan keeps its region's whole extent.
+    if (created[loan.id] &&
+        std::any_of(own.begin(), own.end(), [&](HirStatementId use) {
+          return use != *created[loan.id] && within(*created[loan.id], use);
+        }))
+      continue;
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);

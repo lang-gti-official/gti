@@ -1,0 +1,19 @@
+// Owned storage borrowed record: generated record cleanup preserves the initialization retention summary.
+//@ check-pass
+import std.memory;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int owner = 42;
+  mut std::uninitialized<Reading> storage{};
+  unsafe {
+    Reading* address = storage.data();
+    std::initialize_owned_at(address, storage, Reading(owner));
+    auto selected = std::borrow_owned_at(address, storage);
+    return selected.read() == 42 ? 0 : 1;
+  }
+}

@@ -513,6 +513,16 @@ enum class IntrinsicKind {
   ThreadScope,
   AtomicFetchAddWrapping,
   AtomicFetchSubWrapping,
+  // Unsafe address validity is separate from checked dependency retention:
+  // (T* destination, mut Owner& storage, T completedValue).
+  ObjectInitializeOwned,
+  // Shared typed access with both physical owner and retained-content proof.
+  ObjectBorrowOwned,
+  ObjectRelocateOwned,
+  // Final-address construction with a checked destination-owner witness.
+  ObjectConstructOwned,
+  // Exclusive typed access with an independently tracked content dependency.
+  ObjectBorrowOwnedMut,
   // Compile-time allocation floor. ConstantEvaluation is true only inside the
   // MIR constant evaluator; every backend lowers it to false, so the runtime
   // path is the only reachable one there. ConstantAllocate/ConstantRelease are

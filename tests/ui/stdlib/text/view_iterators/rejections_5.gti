@@ -1,0 +1,4 @@
+// A sub-view assigned into an outer binding cannot be used after its owner
+// dies; the MIR borrow checker reports the expired dependency at the use.
+import std.string;
+int main() { mut std::string_view kept = ""; { std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); kept = part; } return int(kept.size()); }  //~ ERROR GTI-S2017 retained dependency has become unavailable

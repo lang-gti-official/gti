@@ -1,0 +1,17 @@
+// Borrowed storage: owning elements range rejects storage mutation.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.memory;
+import std.vector;
+int main() {
+  mut std::vector<std::unique_ptr<int>> values{};
+  values.push_back(std::make_unique<int>(11));
+  for (std::unique_ptr<int>& value : values) {
+    values.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+    if (*value == 11) { return 0; }
+  }
+  return 1;
+}
