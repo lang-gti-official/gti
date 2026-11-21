@@ -176,7 +176,11 @@ declaration as soon as it registers the current project's signatures. An
 isolated semantic worker checks the enclosing function with its type parameters
 and requirements, or uses the conformance validator for a pattern or associated
 type. A `nameLookup` notification reports the compiler's error at the edited
-identifier. Before the lexical walk has established namespace values, the
+identifier. Local spelling repairs can accompany this lookup or the isolated
+body check. The body check verifies that the suggested binding still has the
+reported spelling in the edited function or its unchanged header. Retyping a
+misspelling can replace a verified repair when the compiler produces a new
+repair for that same token. Before the lexical walk has established namespace values, the
 query admits a missing name only when its spelling occurs nowhere else in the
 active input tokens. Compiled inputs without that evidence, source macros and
 potentially discarded compile-time paths use the ordinary checks.
@@ -184,7 +188,8 @@ potentially discarded compile-time paths use the ordinary checks.
 When an edit replaces that identifier and the compiler observes a binding at
 the same occurrence, the server can withdraw its own provisional error. Each
 retained finding must still have current primary, related and fix-it source
-text. Verified errors stay under the full check's ownership. A corrected name
+text. Clearing a verified error still requires the full check or exact
+restoration of a verified buffer. A corrected name
 can therefore disappear from the editor before MIR checks the document and its
 callers. Exact restoration of a verified buffer still restores its warnings.
 

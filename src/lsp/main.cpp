@@ -2445,8 +2445,9 @@ private:
             if (prior != diagnosticsByRoot.end()) {
               for (const auto &d : prior->second) {
                 const auto &span = d.diagnostic.primary;
-                if (d.provisionalLookup && d.uri == uri && d.source == old &&
-                    span.start <= first && oldEnd <= span.end) {
+                if ((d.provisionalLookup || d.diagnostic.localNameRepair) &&
+                    d.uri == uri && d.source == old && span.start <= first &&
+                    oldEnd <= span.end) {
                   editedRange.emplace(span.start, span.end - oldEnd + end,
                                       true);
                   priorLookup = d.diagnostic;
@@ -5055,8 +5056,21 @@ private:
                              !analysisSnapshots.contains(request.uri) &&
                              previous.empty();
         const bool lookup = *diagnosticStage == "nameLookup";
+        // A verified spelling error may be replaced only by a fresh compiler
+        // repair for the same edited token. A successful provisional lookup
+        // alone cannot withdraw a verified finding.
+        const bool replacedSpelling =
+            lookup && request.editedRange && request.priorLookup &&
+            request.priorLookup->localNameRepair &&
+            std::ranges::any_of(checked.diagnostics, [&](const auto &d) {
+              const auto &span = d.diagnostic.primary;
+              return d.uri == request.uri && d.diagnostic.localNameRepair &&
+                     span.start == request.editedRange->start &&
+                     span.end == request.editedRange->end;
+            });
         const auto owned = [&](const LspDiagnostic &d) {
-          return lookup && request.priorLookup && d.provisionalLookup &&
+          return lookup && request.priorLookup &&
+                 (d.provisionalLookup || replacedSpelling) &&
                  d.diagnostic == *request.priorLookup;
         };
         const auto currentRange = [&](const auto &location) {

@@ -203,8 +203,10 @@ SemanticVisitor::Impl::lookupDiagnosticAt(const Token &token,
                                        &Diagnostic::severity);
   // Recovery from an earlier error can change which expression is checked.
   if (first != diagnostics.end() && first->primary == site &&
-      (first->missingIncludeName == token.lexeme || first->missingEnumerator) &&
-      first->related.empty() && first->fixes.empty())
+      (first->localNameRepair ||
+       ((first->missingIncludeName == token.lexeme ||
+         first->missingEnumerator) &&
+        first->related.empty() && first->fixes.empty())))
     return std::vector<Diagnostic>{*first};
   // A resolved reference can withdraw only a missing-name finding for this
   // occurrence. Later errors, including pending consteval work, belong to
@@ -264,6 +266,26 @@ SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
   if (lookup)
     return worker->lookupDiagnosticAt(*lookup, function->sourceUnit);
   const auto &checked = *input.body.extent();
+  // This worker reparsed the body and reused an unchanged header. Accept a
+  // lexical spelling repair only if the recorded binding still spells the
+  // replacement inside that function in the edited text.
+  const auto localEvidence = [&](const Diagnostic &d) {
+    if (d.related.empty() && d.fixes.empty())
+      return true;
+    if (!d.localNameRepair || d.related.size() != 1 || d.fixes.size() != 1 ||
+        d.fixes.front().span != d.primary)
+      return false;
+    const auto &declaration = d.related.front().span;
+    const auto *text = input.sources.find(checked.source);
+    return text && input.declaration.extent() &&
+           declaration.source == checked.source &&
+           declaration.start >= input.declaration.extent()->start &&
+           declaration.start <= declaration.end &&
+           declaration.end <= checked.end && declaration.end <= text->size() &&
+           std::string_view(*text).substr(
+               declaration.start, declaration.end - declaration.start) ==
+               d.fixes.front().replacement;
+  };
   if (generic) {
     // An open generic can diagnose failed lexical lookup. Only a concrete
     // instance can establish that its instantiated body passes verification.
@@ -273,7 +295,7 @@ SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
           d.severity == DiagnosticSeverity::Error &&
           d.primary.source == checked.source &&
           d.primary.start >= checked.start && d.primary.end <= checked.end &&
-          d.related.empty() && d.fixes.empty())
+          localEvidence(d))
         missing.push_back(d);
     }
     if (missing.empty())
@@ -293,7 +315,7 @@ SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
     if (diagnostic.severity != DiagnosticSeverity::Error ||
         diagnostic.primary.source != checked.source ||
         (!inBody && diagnostic.primary != tokenSpan(name)) ||
-        !diagnostic.related.empty() || !diagnostic.fixes.empty())
+        !localEvidence(diagnostic))
       return std::nullopt;
   }
   if (input.verify && worker->diagnostics.empty())

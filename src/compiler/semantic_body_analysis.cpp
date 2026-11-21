@@ -13826,6 +13826,8 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
         // An existing lexical repair is not a missing-import diagnostic.
         if (diagnostics.back().fixes.empty())
           diagnostics.back().missingIncludeName = expr.name().lexeme;
+        else
+          diagnostics.back().localNameRepair = true;
       }
     }
     requestSession.recoveryCauses.insert_or_assign(
