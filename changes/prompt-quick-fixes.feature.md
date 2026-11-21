@@ -1,0 +1,1 @@
+The language server offers compiler quick fixes with early diagnostics and restores them when you undo an edit. Editors can request fixes at the cursor even before they have cached the diagnostic. New fixes suggest accessible field spellings, insert missing parentheses on eligible zero-argument method calls, and remove redundant tokens.
