@@ -1,8 +1,10 @@
 #include "gti/compiled_template_body.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
+#include "gti/source_graph.h"
 #include <algorithm>
 #include <climits>
+#include <filesystem>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -13,19 +15,22 @@ namespace {
 [[noreturn]] void invalid(std::string_view message) {
   throw std::invalid_argument("compiled template: " + std::string(message));
 }
-constexpr std::size_t byteLimit = 1024 * 1024;
+constexpr std::size_t byteLimit = compiledTemplateSyntaxLimit;
 constexpr unsigned itemLimit = 65536;
 struct Output {
   std::string bytes;
+  std::size_t limit = byteLimit;
   void number(std::size_t value) {
-    if (value > UINT32_MAX || bytes.size() > byteLimit - 4)
+    if (value > UINT32_MAX || bytes.size() > limit - 4)
       invalid("field exceeds limit");
     for (unsigned i = 0; i < 4; ++i)
       bytes.push_back(static_cast<char>((value >> (8 * i)) & 255));
   }
-  void text(std::string_view s) {
+  void text(std::string_view s, std::size_t maximum = byteLimit) {
+    if (s.size() > maximum)
+      invalid("field exceeds limit");
     number(s.size());
-    if (s.size() > byteLimit - bytes.size())
+    if (s.size() > limit - bytes.size())
       invalid("payload exceeds limit");
     bytes.append(s);
   }
@@ -56,9 +61,9 @@ struct Input {
     bytes.remove_prefix(4);
     return value;
   }
-  std::string_view text() {
+  std::string_view text(std::size_t maximum = byteLimit) {
     auto n = number();
-    if (n > byteLimit || n > bytes.size())
+    if (n > maximum || n > bytes.size())
       invalid("invalid field length");
     auto s = bytes.substr(0, n);
     bytes.remove_prefix(n);
@@ -879,11 +884,20 @@ StmtPtr readStmt(Input &in) {
         auto label = get<Token>(in);
         auto colon = get<Token>(in);
         auto value = getMaybe<ExprPtr>(in);
-        if (colon.kind != TokenKind::COLON ||
-            (label.kind != TokenKind::CASE &&
-             label.kind != TokenKind::DEFAULT) ||
-            (label.kind == TokenKind::CASE) != bool(value))
-          invalid("invalid switch label");
+        if (keyword.kind == TokenKind::IF && !value) {
+          if ((label.kind != TokenKind::ELSE &&
+               label.kind != TokenKind::RIGHT_PAREN) ||
+              colon.kind != TokenKind::RIGHT_PAREN)
+            invalid("invalid if case fallback");
+        } else {
+          const auto separator = keyword.kind == TokenKind::IF
+                                     ? TokenKind::EQUAL
+                                     : TokenKind::COLON;
+          const auto expectedLabel =
+              value ? TokenKind::CASE : TokenKind::DEFAULT;
+          if (label.kind != expectedLabel || colon.kind != separator)
+            invalid("invalid switch label");
+        }
         arm.labels.push_back(
             {std::move(label), std::move(value), std::move(colon)});
       }
@@ -1069,7 +1083,8 @@ void forEachBody(std::span<const StmtPtr> declarations, Visit &visit) {
 } // namespace
 CompiledTemplateModule
 compileTemplateModule(std::span<const StmtPtr> declarations,
-                      std::string_view source, const LifetimeNames &names) {
+                      std::string_view source, const LifetimeNames &names,
+                      std::span<const EmbeddedFile> embedded) {
   if (source.size() > byteLimit)
     invalid("module exceeds limit");
   if (names.completion)
@@ -1099,6 +1114,13 @@ compileTemplateModule(std::span<const StmtPtr> declarations,
         module.declarations[i] = ' ';
   };
   forEachBody(declarations, save);
+  for (const auto &file : embedded) {
+    if (!file.bytes || !file.error.empty())
+      invalid("unavailable embedded input");
+    module.embeddedFiles.push_back(
+        {file.keyword, file.storageOffset, file.spelling, file.bytes});
+  }
+  verifyCompiledEmbeddedFiles(module, source);
   return module;
 }
 std::optional<std::string>
@@ -1130,8 +1152,39 @@ restoreTemplateBodies(std::span<const StmtPtr> declarations,
     invalid("template declaration mismatch");
   return std::move(source.spelling);
 }
+void verifyCompiledEmbeddedFiles(const CompiledTemplateModule &module,
+                                 std::string_view source) {
+  if (module.embeddedFiles.empty())
+    return;
+  Lexer lexer;
+  const auto tokens = lexer.scan(std::string(source));
+  if (lexer.hadError())
+    invalid("invalid embedded input lexical evidence");
+  for (const auto &file : module.embeddedFiles) {
+    const auto at =
+        std::lower_bound(tokens.begin(), tokens.end(), file.keyword.position,
+                         [](const Token &token, std::size_t position) {
+                           return token.position < position;
+                         });
+    if (at == tokens.end() || std::distance(at, tokens.end()) < 4 ||
+        at->position != file.keyword.position ||
+        at->kind != TokenKind::EMBED_BYTES ||
+        at->lexeme != file.keyword.lexeme || at->line != file.keyword.line ||
+        (at != tokens.begin() && ((at - 1)->kind == TokenKind::DOT ||
+                                  (at - 1)->kind == TokenKind::ARROW ||
+                                  (at - 1)->kind == TokenKind::SCOPE)) ||
+        (at + 1)->kind != TokenKind::LEFT_PAREN ||
+        (at + 2)->kind != TokenKind::STRING_LITERAL ||
+        (at + 3)->kind != TokenKind::RIGHT_PAREN)
+      invalid("embedded input lacks a literal source site");
+    const auto *spelling = std::get_if<std::string>(&(at + 2)->literal);
+    if (!spelling || *spelling != file.spelling)
+      invalid("embedded input path differs from lexical evidence");
+  }
+}
+
 std::string encodeTemplateModule(const CompiledTemplateModule &module) {
-  Output out{std::string(compiledTemplateMagic)};
+  Output out{std::string(compiledTemplateMagic), compiledTemplateArchiveLimit};
   out.text(module.declarations);
   out.number(module.bodies.size());
   for (const auto &[position, body] : module.bodies) {
@@ -1143,6 +1196,47 @@ std::string encodeTemplateModule(const CompiledTemplateModule &module) {
   for (const auto &use : module.lifetimeNames.uses)
     fields(out, use.name, use.binder);
   put(out, module.lifetimeNames.unknown);
+  if (out.bytes.size() > byteLimit)
+    invalid("syntax metadata exceeds limit");
+  if (module.embeddedFiles.size() > itemLimit)
+    invalid("too many embedded input sites");
+  out.number(module.embeddedFiles.size());
+  std::map<std::size_t, const std::string *> storage;
+  std::size_t total = 0;
+  std::size_t previous = 0;
+  std::map<std::string, std::size_t> spellings;
+  bool first = true;
+  for (const auto &file : module.embeddedFiles) {
+    if (!file.bytes || file.keyword.kind != TokenKind::EMBED_BYTES ||
+        file.keyword.lexeme != "embed_bytes" ||
+        file.keyword.position >= module.declarations.size() ||
+        (!first && file.keyword.position <= previous) ||
+        file.storageOffset > file.keyword.position || file.spelling.empty() ||
+        file.spelling.find('\0') != std::string::npos ||
+        std::filesystem::path(file.spelling).has_root_path())
+      invalid("invalid embedded input record");
+    const auto [seen, inserted] =
+        spellings.emplace(file.spelling, file.storageOffset);
+    if (!inserted && seen->second != file.storageOffset)
+      invalid("inconsistent embedded input snapshot");
+    first = false;
+    previous = file.keyword.position;
+    put(out, file.keyword);
+    out.number(file.storageOffset);
+    out.text(file.spelling);
+    if (file.storageOffset == file.keyword.position) {
+      if (file.bytes->size() > compiledEmbeddedFileLimit ||
+          file.bytes->size() > compiledEmbeddedTotalLimit - total)
+        invalid("embedded inputs exceed limit");
+      total += file.bytes->size();
+      storage.emplace(file.storageOffset, file.bytes.get());
+      out.text(*file.bytes, compiledEmbeddedFileLimit);
+    } else {
+      const auto found = storage.find(file.storageOffset);
+      if (found == storage.end() || *found->second != *file.bytes)
+        invalid("invalid embedded input storage alias");
+    }
+  }
   return std::move(out.bytes);
 }
 LifetimeNames
@@ -1160,7 +1254,8 @@ compiledTemplateLifetimeNames(const CompiledTemplateModule &module,
   return names;
 }
 CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
-  if (bytes.size() > byteLimit || !bytes.starts_with(compiledTemplateMagic))
+  if (bytes.size() > compiledTemplateArchiveLimit ||
+      !bytes.starts_with(compiledTemplateMagic))
     invalid("unsupported module recipe");
   Input in{bytes.substr(compiledTemplateMagic.size()), {}};
   CompiledTemplateModule module{std::string(in.text()), {}};
@@ -1176,6 +1271,47 @@ CompiledTemplateModule decodeTemplateModule(std::string_view bytes) {
   for (unsigned n = in.count(); n; --n)
     module.lifetimeNames.uses.push_back({get<Token>(in), get<Token>(in)});
   module.lifetimeNames.unknown = get<std::vector<Token>>(in);
+  if (bytes.size() - in.bytes.size() > byteLimit)
+    invalid("syntax metadata exceeds limit");
+  std::map<std::size_t, std::shared_ptr<const std::string>> storage;
+  std::size_t total = 0;
+  std::size_t previous = 0;
+  std::map<std::string, std::size_t> spellings;
+  bool first = true;
+  for (unsigned n = in.count(); n; --n) {
+    auto keyword = get<Token>(in);
+    const auto offset = in.number();
+    const auto spelling = in.text();
+    if (keyword.kind != TokenKind::EMBED_BYTES ||
+        keyword.lexeme != "embed_bytes" ||
+        (!first && keyword.position <= previous) || offset > keyword.position ||
+        spelling.empty() || spelling.find('\0') != std::string::npos ||
+        std::filesystem::path(spelling).has_root_path())
+      invalid("invalid embedded input record");
+    const auto [seen, inserted] =
+        spellings.emplace(std::string(spelling), offset);
+    if (!inserted && seen->second != offset)
+      invalid("inconsistent embedded input snapshot");
+    first = false;
+    previous = keyword.position;
+    std::shared_ptr<const std::string> contents;
+    if (offset == keyword.position) {
+      const auto payload = in.text(compiledEmbeddedFileLimit);
+      if (payload.size() > compiledEmbeddedTotalLimit - total)
+        invalid("embedded inputs exceed limit");
+      total += payload.size();
+      contents = std::make_shared<const std::string>(payload);
+      storage.emplace(offset, contents);
+    } else {
+      const auto found = storage.find(offset);
+      if (found == storage.end())
+        invalid("invalid embedded input storage alias");
+      contents = found->second;
+    }
+    module.embeddedFiles.push_back({std::move(keyword), offset,
+                                    std::string(spelling),
+                                    std::move(contents)});
+  }
   if (!in.bytes.empty())
     invalid("invalid method inventory");
   return module;

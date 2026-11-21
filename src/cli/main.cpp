@@ -3290,7 +3290,8 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   const lang::driver::ProjectTargetSetResolutionResult resolution =
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
           *currentDirectory, std::nullopt, options.profile, *selection.target,
-          std::move(overrides), options.package, {},
+          std::move(overrides), options.package,
+          {.allowAcquisition = !(options.offline || options.locked)},
           lang::driver::RuntimeProfile::Hosted, projectToolchainPolicy(options),
           {.cCompiler = options.cc.has_value()}));
   if (!resolution.succeeded()) {
@@ -3392,6 +3393,12 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     }
     for (const std::string &group : options.disabledWarnings) {
       command.emplace_back("-Wno-" + group);
+    }
+    if (options.offline) {
+      command.emplace_back("--offline");
+    }
+    if (options.locked) {
+      command.emplace_back("--locked");
     }
     if (!options.useCache) {
       command.emplace_back("--no-cache");

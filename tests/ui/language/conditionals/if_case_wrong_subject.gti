@@ -1,0 +1,8 @@
+// An if case subject must have a payload enum type.
+enum Period { seconds(int value) };
+int main() {
+  if (case Period::seconds(auto& seconds) = 1) { //~ ERROR GTI-S2067
+    return 1;
+  }
+  return 0;
+}

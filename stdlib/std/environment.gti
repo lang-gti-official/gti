@@ -13,39 +13,7 @@ export module environment;
 import std.string;
 import std.optional;
 import std.memory;
-export namespace gti_internal {
-namespace environment_runtime {
-extern "C" {
-uint32_t gti_rt_environment_get_v1(text_view name, int64_t* snapshot);
-uint64_t gti_rt_environment_snapshot_size_v1(int64_t snapshot);
-const void* gti_rt_environment_snapshot_data_v1(int64_t snapshot);
-void gti_rt_environment_snapshot_destroy_v1(int64_t snapshot);
-}
-}
-
-// A temporary unique native copy. Ordinary MIR cleanup also releases it if
-// constructing the public string fails. No process-environment loan survives.
-[[no_transfer, no_share]] class environment_snapshot {
-  int64_t handle;
-public:
-  environment_snapshot(int64_t value) : handle(value) {}
-  environment_snapshot(environment_snapshot& other) = delete;
-  environment_snapshot(environment_snapshot&& other) = default;
-  ~environment_snapshot() {
-    environment_runtime::gti_rt_environment_snapshot_destroy_v1(this.handle);
-  }
-  std::string_view view() {
-    unsafe {
-      const void* address = environment_runtime::gti_rt_environment_snapshot_data_v1(this.handle);
-      const char* characters = std::typed_address<char>(address);
-      return std::assume_string_view(
-          characters,
-          environment_runtime::gti_rt_environment_snapshot_size_v1(this.handle),
-          this);
-    }
-  }
-};
-}
+import "detail/environment_snapshot.gti";
 
 export namespace std {
 namespace environment {

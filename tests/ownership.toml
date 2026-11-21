@@ -1887,3 +1887,7 @@ paths = [
 ]
 owners = ["^gti_test_ui(_shard_[1-4])?$"]
 consumers = []
+
+[[unowned]]
+paths = ["scripts/build_chrono_tzdb.py"]
+reason = "Explicit offline resource maintenance; shipped bundle is validated by chrono database source tests and installation checks."

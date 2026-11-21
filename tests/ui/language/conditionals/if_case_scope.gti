@@ -1,0 +1,10 @@
+// A conditional payload reference is visible only on the matching path.
+enum Period { seconds(int value), minutes(int value) };
+int inspect(Period& period) {
+  if (case Period::seconds(auto& seconds) = period) {
+    return seconds;
+  } else {
+    return seconds; //~ ERROR GTI-S2001
+  }
+}
+int main() { return 0; }

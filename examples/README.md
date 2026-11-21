@@ -321,7 +321,7 @@ the modules other examples import.
 | `053-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 | `054-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
 | `055-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport, including source-defined string captures and exactly-once cleanup |
-| `056-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
+| `056-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive switches and conditional payload matching |
 | `057-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 | `058-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
 | `059-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |

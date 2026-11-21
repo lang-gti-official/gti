@@ -1,0 +1,7 @@
+// A checked date pattern rejects unavailable clock components at compile time.
+import std.chrono;
+int main() {
+  auto date = std::chrono::date::create(2026, 11, 20);
+  auto text = std::chrono::format(date, "%H"); //~ ERROR GTI-S2057
+  return 0;
+}

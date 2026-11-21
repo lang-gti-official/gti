@@ -1,0 +1,12 @@
+// Calendar math remains target-independent when local-zone discovery is unavailable.
+//@ target: x86_64-pc-windows-msvc
+import std.chrono;
+constexpr bool leap() {
+  auto date = std::chrono::date::create(2000, 2, 29);
+  return date.day_of_year() == 60;
+}
+static_assert(leap());
+int main() {
+  auto unavailable = std::chrono::try_current_zone_id();
+  return unavailable ? 1 : 0;
+}

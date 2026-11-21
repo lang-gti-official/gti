@@ -1,0 +1,14 @@
+// Calendar normalization and validation have matching constant-evaluation semantics.
+import std.chrono;
+namespace c = std::chrono;
+constexpr bool calendar_proof() {
+  auto day = c::date::create(2000, 2, 29);
+  auto date = c::date::from_days(day.days_since_epoch());
+  auto local = c::local_datetime::from_unix_seconds(-1i64, 123);
+  auto stamp = c::timestamp::create(0i64, -1i64);
+  return date.day() == 29 && date.month() == 2 && local.year() == 1969 &&
+         local.second() == 59 && stamp.unix_seconds() == -1i64 &&
+         stamp.subsecond_nanoseconds() == 999999999;
+}
+static_assert(calendar_proof());
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// A time-zone name cannot outlive the handle supplying its borrowed storage.
+import std.chrono;
+std::string_view dangling_name() {
+  auto zone = std::chrono::time_zone::utc();
+  return zone.name(); //~ ERROR GTI-S2045
+}
+int main() { return 0; }

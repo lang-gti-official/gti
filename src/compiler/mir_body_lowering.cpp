@@ -20050,9 +20050,10 @@ private:
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
 
-    breakContexts.push_back({.target = exitBlock,
-                             .keepScopes = switchScopes.size(),
-                             .exitLoans = endedAfter(statement)});
+    if (!statement.conditionalPattern)
+      breakContexts.push_back({.target = exitBlock,
+                               .keepScopes = switchScopes.size(),
+                               .exitLoans = endedAfter(statement)});
     bool fallsThrough = !coversEveryValue;
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
@@ -20187,8 +20188,10 @@ private:
       }
       scopes.pop_back();
     }
-    fallsThrough = fallsThrough || breakContexts.back().hasBreak;
-    breakContexts.pop_back();
+    if (!statement.conditionalPattern) {
+      fallsThrough = fallsThrough || breakContexts.back().hasBreak;
+      breakContexts.pop_back();
+    }
     current = exitBlock;
     scopes = std::move(exitScopes);
     temporaryDrops = switchTemporaryDrops;

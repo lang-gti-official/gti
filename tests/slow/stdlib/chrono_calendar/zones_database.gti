@@ -1,0 +1,19 @@
+// Every bundled IANA zone parses and keeps independent ownership after reload.
+//@ run-pass
+//@ slow
+import std.chrono;
+namespace c = std::chrono;
+int main() {
+  auto db = c::tzdb::load_default();
+  auto names = db.names();
+  if (names.size() < 400) return 1;
+  for (auto& name : names) {
+    auto result = db.try_locate(name.view());
+    if (!result) return 2;
+  }
+  auto clone = db.clone();
+  if (clone.version() != db.version()) return 3;
+  auto missing = db.try_locate("../etc/passwd");
+  if (missing || missing.error() != c::errc::unknown_zone) return 4;
+  return 0;
+}

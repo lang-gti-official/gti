@@ -1241,7 +1241,7 @@ install(FILES "stdlib/prelude.gti" "stdlib/std.gti" "stdlib/module-map.json"
 install(DIRECTORY "stdlib/std"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain
-        FILES_MATCHING PATTERN "*.gti")
+        FILES_MATCHING PATTERN "*.gti" PATTERN "iana.bin" PATTERN "LICENSE.txt")
 install(FILES "VERSION" DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
         COMPONENT gti_toolchain)
 install(FILES "vendor/tomlplusplus/LICENSE"

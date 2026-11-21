@@ -935,6 +935,21 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
 
+Security scanning is independent of the integration gate. `.github/workflows/codeql.yml`
+scans Actions, C/C++, JavaScript/TypeScript, Python and Rust on main pushes,
+pull requests, weekly and on dispatch. It uses pinned actions and no-build
+extraction, preserving the previous default-setup language coverage; generated
+C/C++ code is not covered by this mode. Main scans are not cancelled by newer
+pushes. Only the analysis job can upload security results, checkout credentials
+are not retained, and cache access is disabled. Default setup stays disabled to
+avoid duplicate analysis. A successful scan is evidence of analysis, not an
+assertion that the source contains no vulnerabilities.
+
+The restore-only beta, sanitizer and slow-tier workflows explicitly set
+`cache-mode: read`. This restricts their cache tokens even for trusted scheduled
+or dispatched runs; selecting a restore-only action alone does not restrict a
+job's token. Their existing main/beta source-admission checks still apply.
+
 Enterprise runner capacity (2026-11-19) replaces the former five-macOS-runner
 assumption. Each platform builds once in `fast`, runs feedback and the
 runner/project/editor/example/unit baselines, and uploads the four native
