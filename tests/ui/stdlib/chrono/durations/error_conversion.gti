@@ -1,0 +1,19 @@
+// Recoverable duration errors propagate through the application's registered error conversion.
+//@ run-pass
+import std.chrono;
+enum AppError { duration(std::chrono::duration_errc cause) };
+for concept std::from<AppError, std::chrono::duration_errc> {
+  AppError from(std::chrono::duration_errc error) { return AppError::duration(error); }
+};
+expected<std::chrono::nanoseconds, AppError> convert() {
+  std::chrono::hours value{9223372036854775807i64};
+  return ?value.try_cast<std::chrono::nanoseconds>();
+}
+int main() {
+  auto result = convert();
+  if (result) return 1;
+  switch (result.error()) {
+    case AppError::duration(auto& error):
+      return error == std::chrono::duration_errc::out_of_range ? 0 : 2;
+  }
+}
