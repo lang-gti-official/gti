@@ -167,8 +167,9 @@ source ownership and public module names confer no compiler privilege.
 `import std;` imports the portable public standard library in one declaration.
 It is an ordinary source interface in `stdlib/std.gti`, re-exporting the named
 standard modules. It excludes the currently POSIX-only `std.environment`,
-`std.process`, and `std.tcp`, which require explicit imports on supported targets,
-and it excludes experimental facilities. Individual imports remain useful for
+`std.process`, `std.tcp`, and `std.testing.resources`, which require explicit
+imports on supported targets. Package-context metadata (`std.package`) also
+requires an explicit import, and experimental facilities remain excluded. Individual imports remain useful for
 documenting dependencies and reducing source-loading/registration work.
 
 Imports use the ordinary compilation pipeline; an import does not

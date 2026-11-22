@@ -30,8 +30,9 @@ def main():
         text = source.read_text(encoding="utf-8")
         assert f"export module {name};" in text, f"std.{name} lacks its module declaration"
         assert "#include" not in text, f"std.{name} uses a removed directive"
+    # Platform-specific helpers and package-context metadata require explicit imports.
     portable = sorted(name for name in modules
-                      if name not in {"std", "environment", "process", "tcp", "package"}
+                      if name not in {"std", "environment", "process", "tcp", "testing.resources", "package"}
                       and not name.startswith("experimental."))
     aggregate = (stdlib / "std.gti").read_text(encoding="utf-8")
     assert [line for line in aggregate.splitlines() if line.startswith("export import ")] == [
