@@ -9039,11 +9039,34 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // Its runtime address is the call result, not a fabricated projection of
     // the entry shell. Verify the complete parent chain and its unique
     // producers before using that alternative publication proof below.
+    const auto isStoredReferent = [&](const MirPlace *referent,
+                                      const std::vector<SymbolId> &fields) {
+      const auto *entrySource =
+          storedCarrierEntryLoan == nullptr
+              ? nullptr
+              : body.findPlace(storedCarrierEntryLoan->source);
+      return referent && entrySource && !fields.empty() &&
+             referent->root == entrySource->root &&
+             referent->binding == entrySource->binding &&
+             entrySource->projections.empty() &&
+             referent->projections.size() == fields.size() + 1 &&
+             std::equal(
+                 fields.begin(), fields.end(), referent->projections.begin(),
+                 [](SymbolId field, const MirPlaceProjection &projection) {
+                   return projection.kind == MirProjectionKind::Field &&
+                          projection.field == field;
+                 }) &&
+             referent->projections.back().kind ==
+                 MirProjectionKind::Dereference;
+    };
     const bool exactReferenceRelay = [&] {
       if (!storedCarrierReference || storedCarrierEntryLoan == nullptr ||
           instance.returnType.kind != SemanticType::Reference ||
           instance.returnType.arguments.size() != 1 || loan->entry ||
-          loan->parent != 0 || loan->source != storedCarrierEntryLoan->source ||
+          loan->parent != 0 ||
+          (loan->source != storedCarrierEntryLoan->source &&
+           !isStoredReferent(body.findPlace(loan->source),
+                             storedCarrierEntryLoan->designatedFields)) ||
           !loan->designatedFields.empty() ||
           !loan->additionalDependencies.empty() || !block.terminator.value ||
           block.terminator.value->kind != MirOperandKind::Loan ||
@@ -9084,7 +9107,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
         if (child == nullptr || !visited.insert(current).second ||
             child->kind != MirLoanKind::CallResult || child->entry ||
             child->escapes || child->parent == 0 ||
-            child->source != storedCarrierEntryLoan->source ||
+            child->source != loan->source ||
             child->access != instance.returnBorrowAccess ||
             !child->designatedFields.empty() ||
             !child->additionalDependencies.empty() || producer == nullptr ||
@@ -9216,17 +9239,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                           return dependency.designatedFields == fields;
                         });
         const bool designatedReferent =
-            designatedPath && referent->root == entrySource->root &&
-            referent->binding == entrySource->binding &&
-            entrySource->projections.empty() &&
-            referent->projections.size() == fields.size() + 1 &&
-            std::equal(
-                fields.begin(), fields.end(), referent->projections.begin(),
-                [](SymbolId field, const MirPlaceProjection &projection) {
-                  return projection.kind == MirProjectionKind::Field &&
-                         projection.field == field;
-                }) &&
-            referent->projections.back().kind == MirProjectionKind::Dereference;
+            designatedPath && isStoredReferent(referent, fields);
         return designatedReferent ? child : nullptr;
       };
       const MirLoan *regionRelay =
