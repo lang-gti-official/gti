@@ -1,0 +1,8 @@
+// Different duration units require an explicit conversion before comparison.
+import std.chrono;
+int main() {
+  std::chrono::seconds seconds{1i64};
+  std::chrono::milliseconds milliseconds{1000i64};
+  bool equal = seconds == milliseconds;  //~ ERROR GTI-S2022
+  return 0;
+}

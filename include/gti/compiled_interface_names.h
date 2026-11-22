@@ -6,6 +6,11 @@
 
 namespace lang {
 
+inline constexpr std::string_view compiledModuleFunctionPrefix =
+    "__gtilib_module_v1_";
+inline constexpr std::string_view compiledModuleDataPrefix =
+    "__gtilib_data_v1_";
+
 // The same bounded name grammar is used by manifest selection and metadata
 // projection. Namespace qualification is distinct from nested class ownership.
 [[nodiscard]] inline bool isCompiledInterfaceName(std::string_view name) {

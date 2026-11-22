@@ -1,0 +1,11 @@
+// Temporary duration casts evaluate the source once and support contextual integer literals.
+//@ run-pass
+import std.chrono;
+mut int calls = 0;
+std::chrono::milliseconds source() { calls++; return std::chrono::milliseconds(1500); }
+int main() {
+  auto checked = source().try_cast<std::chrono::seconds>();
+  if (calls != 1 || !checked || checked.value().count() != 1i64) return 1;
+  auto direct = source().cast<std::chrono::seconds>();
+  return calls == 2 && direct.count() == 1i64 ? 0 : 2;
+}

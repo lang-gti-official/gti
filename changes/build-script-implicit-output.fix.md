@@ -1,0 +1,1 @@
+Allow successful build scripts to omit output publication when they contribute no native outputs. The driver records an empty manifest for caching; explicit invalid manifests and failed scripts remain errors.

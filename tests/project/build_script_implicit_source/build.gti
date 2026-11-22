@@ -1,0 +1,2 @@
+// A successful GTI build program needs no output API or manifest.
+int main() { return 0; }

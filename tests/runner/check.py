@@ -336,6 +336,7 @@ def self_test(runner):
     kinds_self_test(runner)
     ergonomics_self_test(runner)
     reporting_self_test(runner)
+    single_use_preamble_test(runner)
     project_self_test(runner)
     if (runner.parent / "gti_lsp").exists():
         lsp_self_test(runner)
@@ -461,6 +462,23 @@ def retained_assertion_test(runner):
             expect(code == 1 and "invalid test" in out, "invalid assertion fails", out)
 
 
+def single_use_preamble_test(runner):
+    # Check the cache decision directly so a slower host cannot change the test.
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        first, second = work / "first.gti", work / "second.gti"
+        for source in (first, second):
+            source.write_text("import std.string;\nint main() { return 0; }\n")
+        report = work / "report.jsonl"
+        for cases, expected in (((first,), [False]), ((first, second), [False, True])):
+            code, out = run(runner, "--jobs", "1", "--json", report, *cases,
+                            env={"GTI_TEST_TIME_SCALE": "8"})
+            expect(code == 0, "standalone and shared-prefix checks pass", out)
+            rows = [json.loads(line) for line in report.read_text().splitlines()]
+            expect(sorted(row.get("cold", -1) for row in rows) == expected,
+                   "only a reusable prefix needs a cold build", str(rows))
+
+
 def reporting_self_test(runner):
     """--opt, --filter, --slowest, --cpu-budget, argument checks, one-pass
     bless of rendered diagnostics."""
@@ -477,8 +495,8 @@ def reporting_self_test(runner):
     expect(code == 2 and "is O0 or O3" in out, "--opt rejects other levels", out)
 
     code, out = run(runner, FIXTURES / "pass", "--filter", r"run_\w+\.gti$",
-                    "--list")
-    expect(code == 0 and sorted(line.split()[0].rsplit("/", 1)[1]
+                    "--lsp", "/nonexistent/gti_lsp", "--list")
+    expect(code == 0 and sorted(Path(line.partition(" ")[0]).name
                                 for line in out.splitlines()) ==
            ["run_exit.gti", "run_output.gti"], "--filter selects by regex", out)
     code, out = run(runner, FIXTURES / "pass", "--filter", "(")

@@ -1,0 +1,18 @@
+// A separately compiled member shares storage with inline code and transports both expected alternatives.
+$ cd producer
+$ gti check readings --release
+$ gti build scalar --release
+$ sh -c "python3 ../check_calls.py --scalar build/gti/release/*/scalar.gtilib"
+$ gti build readings --release
+$ sh -c "cp build/gti/release/*/readings.gtilib ../consumer/readings.gtilib"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check --release
+$ gti run --release
+$ sh -c "python3 ../check_calls.py build/gti/release/*/app"
+$ test ! -e api.gti
+$ cp ../private.gti main.gti
+$ gti check --release
+? 65
+stderr: advance

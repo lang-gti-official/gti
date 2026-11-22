@@ -1,0 +1,17 @@
+// A native method and an imported generic read the same embedded snapshot after its producer disappears.
+$ cd producer
+$ sh -c "printf A > payload.txt"
+$ gti build assets --release
+$ sh -c "cp build/gti/release/*/assets.gtilib ../consumer/assets.gtilib"
+$ cd ../consumer
+$ gti run --release
+? 65
+$ cd ../producer
+$ sh -c "printf B > payload.txt"
+$ gti build assets --release
+$ sh -c "cp build/gti/release/*/assets.gtilib ../consumer/assets.gtilib"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti run --release
+? 66

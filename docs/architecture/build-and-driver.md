@@ -926,6 +926,20 @@ and the default unit count is 1. The default worker limit is the smaller of
 the unit count and available hardware threads. `gti build --all` caps each
 child's workers by the hardware budget divided by concurrent target builds.
 
+For hosted project executables, `gti build --incremental` and
+`gti run --incremental` select eight code-generation units. An explicit
+`--codegen-units N` selects the partition count. Eligible cached builds with
+more than one unit store each native object under `build/gti/cache/codegen-unit-v1`.
+On a source edit the compiler checks and optimizes the current whole program
+and partitions it again. Each worker hashes the final LLVM bitcode it will
+compile, after resolving cross-unit linkage, together with the compiler and
+target policy identity. An identical unit reuses its checksummed object.
+Changed instructions, inlined callees, data layouts and referenced declarations
+participate through the actual bitcode. The ordered objects are linked afresh.
+Verbose output counts the units reused. An unchanged target can still hit
+the whole-target cache first. `--no-cache --incremental` produces a clean
+build with the same partitioning and bypasses both caches.
+
 The unit count and partitioner version enter the executable cache identity.
 Worker count changes scheduling only. LLVM IR output remains the optimized
 whole-program module. Compiled-scalar and embedding libraries and instrumented
@@ -1096,9 +1110,12 @@ continue
 
 For a standalone program, `gti main.gti -g -O0 -o app` followed by `lldb ./app`
 uses the same path. No generated C++ file needs to remain beside the binary.
-The C++ backend's [source debug contract](backend.md#opt-in-source-debug-locations)
-describes the first-phase limits: statement lines work, but GTI variable names,
-rich types, and expression evaluation are not yet provided.
+LLVM debug builds expose source function names and supported parameters and
+locals to the native debugger. Variable availability depends on the current
+instruction and the compiler's verified locations. When a GTI callee uses a
+hidden result destination, inspect the destination in the caller after the
+assignment completes. See the [LLVM debugger contract](backend.md#llvm-target-layout-and-execution-abi)
+for optimized-code and debugger compatibility limits.
 
 The immutable compilation and native requests carry the debug policy; the
 native command adds `-g` after forwarded arguments. On ELF toolchains symbols
@@ -1302,6 +1319,19 @@ failure returns nonzero even when all selected tests passed. These records
 establish runner completion,
 not proof against a compiler silently miscompiling both a test and its checks;
 independent compiler conformance oracles remain necessary.
+
+Named `[[test("label", arguments...)]]` rows are lowered to fresh zero-argument
+AST wrappers beside the annotated function, in its source unit and namespace.
+The parsed-unit cache remains immutable; only branches/namespaces containing
+rows are rebuilt. Each wrapper deep-copies its written input expressions and
+carries its exact annotated declaration and public `qualified_function/label`
+identity. Normal semantics resolves calls, types and ownership; the frontend
+checks that overload resolution selected the annotated declaration. HIR/MIR and
+LLVM consume ordinary checked calls, not a separate test execution path. Case
+arguments remain runtime expressions and listing performs no setup. Generated
+wrapper names avoid every source identifier in the graph; only public case
+identities enter discovery, filtering, JSON reports and the existing digested
+build-cache catalog. Duplicate identities fail before dispatcher construction.
 
 The frontend validates the attributes and selected-package source identities,
 then generates a dispatcher as ordinary GTI source in the suite's lexical
@@ -2080,6 +2110,11 @@ using the installed standard library/runtime and host C++ toolchain; the
 package's requested target still governs the native artifacts it publishes.
 Compilation diagnostics retain `build.gti` source locations.
 
+A script that exits successfully without writing `GTI_BUILD_OUTPUT` contributes
+no native outputs; the driver records an empty manifest for cache validation.
+No explicit `publish()` call is needed in that case. The manifest requirements
+below apply only when the script supplies an output manifest.
+
 Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
@@ -2110,7 +2145,9 @@ produces empty context fields.
 shell parsing. `std::build::outputs` records include directories, C and C++
 sources, library directories/files/names, and frameworks, then `publish`
 writes the versioned output manifest consumed by the same validation path as
-an external command.
+an external command. Scripts that only run a tool can return its exit status
+directly; they do not need an empty `outputs` object or a publication call.
+Existing malformed or unreadable manifests still fail validation.
 
 ```gti
 import std.build;
@@ -2140,7 +2177,11 @@ The cache identity includes the command or GTI source, host/target/profile,
 selected C/C++ compilers, and content of every declared input. GTI-authored
 programs additionally include the GTI compiler identity and host C++ compiler.
 A matching state is reused only when its structured output still validates;
-changed or missing inputs rerun the program. `--jobs N` is forwarded as the
+changed or missing inputs rerun the program. This also applies to the
+driver-recorded empty manifest: deleting it reruns the script rather than
+assuming its prior outputs were empty. Before execution, prior output and
+cache state are removed, so an output-free run cannot reuse old native outputs.
+`--jobs N` is forwarded as the
 program's parallelism budget and defaults to at most four jobs. `gti check`,
 `fetch`, `metadata`, and project resolution never compile or execute build
 programs or create their output directories; executable-producing `build`,
@@ -3187,6 +3228,28 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
+A library target can also select concrete methods or functions with owning
+GTI types by qualified name in `functions`. For this profile the bundle pairs
+the root module recipe with a target-specific object. For example, selecting
+`Meter::take` compiles the matching concrete overloads, their receivers,
+and the private helpers they call. Callers can receive an `expected<T, E>`
+and own, move or destroy its active alternative using the usual GTI rules.
+
+Consumers import the recipe and check source visibility, overload selection,
+borrows, layout, cleanup and defined failure before binding verified calls to
+the native definitions. Unselected bodies remain available for specialization
+and inlining. The callable identity covers the module, exact declaration offset,
+failure ABI and dependencies. Passive library storage referenced on both sides
+has one linker identity. Active global initialization and TLS require additional
+lifecycle support. Native closures that take function addresses, create native
+callback adapters or perform virtual dispatch require shared code identity and
+are rejected. The profile accepts standard-library dependencies with an
+exact source digest, including the paths, call sites and content of embedded
+files. Native code and imported bodies identify the immutable backing array by
+its defining module and embed site. A mismatched dependency prevents admission.
+A project recipe is checked as ordinary project input. Installed recipes use the
+toolchain's existing authenticated library catalog.
+
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
 explicitly selected root-module functions or the public declarations of the
 root and its re-exported modules, including their exported overloads. Names may be
@@ -3426,8 +3489,8 @@ The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` uses the OS entropy backend. The public random module ships
 its GTI definitions in `std_random.gtilib`.
-The catalog packages 77 standard-library modules per target and profile.
-Alongside the two native libraries, 75 bundles carry parsed declarations
+The catalog packages 78 standard-library modules per target and profile.
+Alongside the two native libraries, 76 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
 assertions. `std.package` is also excluded from the precompiled catalog: the

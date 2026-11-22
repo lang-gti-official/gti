@@ -1,0 +1,14 @@
+// A read-only local static can be borrowed by a static-lifetime result from a static method.
+//@ run-pass
+//@ execution-profile: concurrent
+struct Table {
+  static int&<static> lookup() {
+    static int data = 11;
+    return data;
+  }
+  Table() = default;
+};
+int main() {
+  int&<static> entry = Table::lookup();
+  return entry - 11;
+}

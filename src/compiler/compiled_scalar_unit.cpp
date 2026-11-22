@@ -2,10 +2,12 @@
 #include "gti/compiled_interface_names.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/persistent_declaration.h"
+#include "gti/source_graph.h"
 #include "lowered_program_closure.h"
 #include "mir_storage_effects.h"
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/SHA256.h>
 #include <set>
@@ -64,6 +66,17 @@ std::string resultRecipe(const CompiledScalarSignature &signature) {
 }
 void appendContract(std::string &out, std::string_view value) {
   out += std::to_string(value.size()) + ":" + std::string(value);
+}
+std::string nativeSymbol(std::string_view prefix, std::string_view contract) {
+  auto digest = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(contract.data()), contract.size()));
+  constexpr char hex[] = "0123456789abcdef";
+  std::string result(prefix);
+  for (auto b : digest) {
+    result += hex[b >> 4];
+    result += hex[b & 15];
+  }
+  return result;
 }
 void retainInterfaceUnit(std::vector<CompiledInterfaceUnit> &units,
                          SourceUnitId sourceUnit,
@@ -235,15 +248,7 @@ std::string compiledScalarSymbol(const CompiledScalarSignature &signature) {
   appendContract(contract, signature.codegenAttributes.cold ? "1" : "0");
   if (signature.noAmbientStorage)
     appendContract(contract, "no-ambient-storage");
-  auto digest = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
-      reinterpret_cast<const uint8_t *>(contract.data()), contract.size()));
-  constexpr char hex[] = "0123456789abcdef";
-  std::string result = "__gtilib_callable_v4_";
-  for (auto b : digest) {
-    result += hex[b >> 4];
-    result += hex[b & 15];
-  }
-  return result;
+  return nativeSymbol("__gtilib_callable_v4_", contract);
 }
 std::string compiledScalarSymbol(std::string_view key) {
   return compiledScalarSymbol(
@@ -295,17 +300,19 @@ CompiledBorrowContract borrowContract(const MirFunctionInstance &function) {
 bool supportsCompiledStorage(const LoweredProgram &program) {
   // Object data has no startup/retirement ordering to compose. Admit only the
   // already verified passive MIR storage stages; executable initialization,
-  // lazy local storage and cleanup still need a per-library lifetime plan.
+  // first-use initialization and cleanup need a per-library lifetime plan.
   const auto &storage = program.mir().programInitializationPlan().steps;
   const bool passiveStorage =
       std::all_of(storage.begin(), storage.end(), [](const auto &step) {
         return step.role == ProgramInitializationStepRole::DataOnly &&
                (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
-                step.storageKind == ProgramStorageKind::StaticField) &&
+                step.storageKind == ProgramStorageKind::StaticField ||
+                step.storageKind == ProgramStorageKind::FunctionLocal) &&
                !step.requiresActiveCleanup && !step.nativeRetirement &&
                !step.sourceCleanup &&
                ((step.dataInitialization ==
                      MirProgramDataInitializationKind::ImplicitZero &&
+                 step.storageKind != ProgramStorageKind::FunctionLocal &&
                  !step.dataConstant) ||
                 (step.dataInitialization ==
                      MirProgramDataInitializationKind::Constant &&
@@ -331,6 +338,192 @@ bool scalarFunction(const LoweredProgram &program,
                      isCompiledScalarValueType);
 }
 } // namespace
+namespace {
+const LoweredFunctionInstance *moduleEntry(const LoweredProgram &program,
+                                           const MirFunctionInstance &function,
+                                           SourceUnitId unit,
+                                           std::string_view name) {
+  const auto *decl = program.findFunctionDeclaration(function.declaration);
+  if (!decl || decl->sourceUnit != unit || decl->qualifiedName != name)
+    return nullptr;
+  const auto *owner = decl->ownerClass
+                          ? program.findClassDeclaration(decl->ownerClass)
+                          : nullptr;
+  if ((owner &&
+       (!owner->genericParameters.empty() || !owner->explicitlyExported)) ||
+      (!owner && !decl->explicitlyExported) ||
+      !decl->genericParameters.empty() || !function.typeArguments.empty() ||
+      !function.valueArguments.empty() ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.linkage != LanguageLinkage::Gti || decl->compilerPrivate ||
+      function.proceduralFunction || decl->virtualMethod ||
+      decl->parameterPack || !decl->callableParameters.empty() ||
+      decl->tracksCaller || decl->entryKind != ProgramEntryKind::None ||
+      decl->intrinsic != IntrinsicKind::None)
+    return nullptr;
+  return program.findFunctionInstance(function.id);
+}
+} // namespace
+std::string compiledModuleSymbol(std::string_view identity,
+                                 std::string_view name, std::size_t offset,
+                                 bool mayFail) {
+  std::string contract("gti.module.native.1");
+  appendContract(contract, identity);
+  appendContract(contract, name);
+  appendContract(contract, std::to_string(offset));
+  appendContract(contract, mayFail ? "status" : "value");
+  return nativeSymbol(compiledModuleFunctionPrefix, contract);
+}
+std::vector<CompiledModuleEntry> CompiledScalarUnitBuilder::selectModuleEntries(
+    const LoweredProgram &program, SourceUnitId unit,
+    std::span<const std::string> names, std::string_view identity) const {
+  std::vector<CompiledModuleEntry> entries;
+  std::set<std::size_t> offsets;
+  for (const auto &name : names) {
+    bool found = false;
+    for (const auto &function : program.mir().functionInstances()) {
+      const auto *decl = moduleEntry(program, function, unit, name);
+      if (!decl)
+        continue;
+      const auto offset = decl->source.start;
+      if (!offsets.insert(offset).second || entries.size() >= 256)
+        throw std::invalid_argument(
+            "duplicate or excessive native module exports");
+      entries.push_back(
+          {name, offset, function.mayRaiseDefinedFailure,
+           compiledModuleSymbol(identity, name, offset,
+                                function.mayRaiseDefinedFailure)});
+      found = true;
+    }
+    if (!found)
+      throw std::invalid_argument("no concrete native module declaration for " +
+                                  name);
+  }
+  std::ranges::sort(entries, {}, &CompiledModuleEntry::offset);
+  return entries;
+}
+LoweredProgram CompiledScalarUnitBuilder::bindModuleEntries(
+    LoweredProgram program, std::span<const CompiledModuleImport> entries,
+    bool producer, std::string_view stdlibRoot) const {
+  if (entries.empty())
+    return program;
+  if (!program.compiledModuleBindings_.empty() || program.embeddingPlan() ||
+      (producer && !supportsCompiledStorage(program)))
+    throw std::invalid_argument(
+        "unsupported native module initialization or binding");
+  std::map<SourceUnitId, const CompiledModuleScope *> scopes;
+  std::set<std::string> permittedData;
+  for (const auto &item : entries) {
+    if (!item.scope || !item.sourceUnit || item.scope->identity.size() != 64 ||
+        !isCompiledInterfaceName(item.entry.name) ||
+        item.entry.symbol !=
+            compiledModuleSymbol(item.scope->identity, item.entry.name,
+                                 item.entry.offset, item.entry.mayFail))
+      throw std::invalid_argument("invalid native module identity");
+    if (scopes.emplace(item.sourceUnit, item.scope.get()).second)
+      permittedData.insert(item.scope->dataSymbols.begin(),
+                           item.scope->dataSymbols.end());
+  }
+  // A native library and code instantiated from its recipe must observe one
+  // address for passive storage. Its declaration and initializer are bound
+  // to the complete, configuration-checked source snapshot.
+  for (const auto &step : program.mir().programInitializationPlan().steps) {
+    const auto *symbol = program.findSymbol(step.symbol);
+    if (!symbol) {
+      if (producer)
+        throw std::invalid_argument("missing library storage declaration");
+      continue;
+    }
+    const auto relative =
+        std::filesystem::path(symbol->declarationSource.source)
+            .lexically_relative(stdlibRoot);
+    const bool standard = !relative.empty() && !relative.is_absolute() &&
+                          *relative.begin() != "..";
+    const auto local = scopes.find(step.sourceUnit);
+    if (!standard && local == scopes.end()) {
+      if (producer)
+        throw std::invalid_argument(
+            "native module storage belongs to an unpackaged unit");
+      continue;
+    }
+    if (!producer && step.role != ProgramInitializationStepRole::DataOnly)
+      continue;
+    std::string scope =
+        standard ? "std/" + relative.generic_string() : local->second->identity;
+    std::string key;
+    appendContract(key, scope);
+    if (symbol->generated) {
+      const auto *constant =
+          step.dataConstant
+              ? std::get_if<ConstantAggregateValue>(&*step.dataConstant)
+              : nullptr;
+      const auto name =
+          EmbeddedFile::storageIdentifier(symbol->declarationSource.start);
+      if (symbol->name != name || symbol->mutableBinding || !constant ||
+          !constant->value ||
+          !constant->value->packedBytesMatch(symbol->type)) {
+        if (producer)
+          throw std::invalid_argument(
+              "native module needs an identity for generated storage");
+        continue;
+      }
+      // Generated qualified names can depend on the source-unit layout.
+      // The defining module plus the embed site identifies the snapshot in both
+      // builds.
+      appendContract(key, name);
+    } else {
+      if (symbol->qualifiedName.empty()) {
+        if (producer)
+          throw std::invalid_argument(
+              "native module needs a named storage declaration");
+        continue;
+      }
+      appendContract(key, symbol->qualifiedName);
+    }
+    if (standard) {
+      std::optional<std::string_view> sourceDigest;
+      for (const auto &[id, owner] : scopes) {
+        const auto found = owner->dependencies.find(relative.generic_string());
+        if (found == owner->dependencies.end())
+          continue;
+        if (sourceDigest && *sourceDigest != found->second)
+          throw std::invalid_argument("inconsistent native storage owner");
+        sourceDigest = found->second;
+      }
+      if (!sourceDigest) {
+        if (producer)
+          throw std::invalid_argument(
+              "missing native storage source identity: " +
+              symbol->qualifiedName);
+        continue;
+      }
+      appendContract(key, *sourceDigest);
+    }
+    appendContract(key, std::to_string(symbol->declarationSource.start));
+    auto name = nativeSymbol(compiledModuleDataPrefix, key);
+    if (producer || permittedData.contains(name))
+      program.compiledModuleStorage_.emplace(step.symbol, std::move(name));
+  }
+  std::set<LoweredFunctionInstanceId> bound;
+  for (const auto &[unit, entry, scope] : entries) {
+    bool found = false;
+    for (const auto &function : program.mir().functionInstances()) {
+      const auto *decl = moduleEntry(program, function, unit, entry.name);
+      if (!decl || decl->source.start != entry.offset)
+        continue;
+      if (found || !bound.insert(function.id).second ||
+          function.mayRaiseDefinedFailure != entry.mayFail)
+        throw std::invalid_argument(
+            "incompatible native module call contract: " + entry.name);
+      program.compiledModuleBindings_.push_back(
+          {function.id, entry.symbol, !producer});
+      found = true;
+    }
+    if (producer && !found)
+      throw std::invalid_argument("missing native module export");
+  }
+  return program;
+}
 std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     const LoweredProgram &program, SourceUnitId entry,
     const PersistentDeclarationOwner &owner,

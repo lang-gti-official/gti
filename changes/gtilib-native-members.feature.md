@@ -1,0 +1,1 @@
+Compiled GTI libraries can provide native implementations of concrete member functions and return owning values, including both alternatives of `expected<T, E>`. Callers keep the usual borrow, visibility and cleanup checks. Native methods and caller-compiled code share the backing storage for embedded file data.

@@ -1,0 +1,4 @@
+// Implicit construction does not create mutable caller storage for a reference parameter.
+struct Box { int value; implicit Box(int n) : value(n) {} };
+void edit(mut Box& b) {}
+int main() { edit(1); return 0; }  //~ ERROR GTI-S2003

@@ -258,6 +258,7 @@ enum class ProjectCommand {
 };
 
 struct ProjectOptions {
+  bool incremental = false;
   std::optional<unsigned> codegenUnits;
   std::optional<unsigned> codegenThreads;
 
@@ -511,6 +512,8 @@ void printUsage(std::ostream &stream) {
          "      --std <version>  Override c++20 or c++23.\n"
          "      --codegen-units <N>  Split LLVM machine-code generation "
          "(default 1).\n"
+         "      --incremental    Reuse unchanged LLVM code generation units "
+         "(default 8 units).\n"
          "      --codegen-threads <N>  Bound code generation workers.\n"
          "      --backend <name> Select llvm or cpp for executable builds "
          "(default: llvm on arm64 macOS and x86_64 Linux, cpp elsewhere).\n"
@@ -1431,6 +1434,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.cc = argv[index];
       continue;
     }
+    if (argument == "--incremental") {
+      options.incremental = true;
+      continue;
+    }
     if (argument == "--codegen-units" || argument == "--codegen-threads") {
       auto &count = argument == "--codegen-units" ? options.codegenUnits
                                                   : options.codegenThreads;
@@ -1654,6 +1661,15 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       return ArgumentResult::ExitFailure;
     }
     options.target = argument;
+  }
+  if (options.incremental) {
+    if (options.codegenUnits == 1) {
+      std::cerr
+          << "gti: --incremental requires at least two code generation units\n";
+      return ArgumentResult::ExitFailure;
+    }
+    if (!options.codegenUnits)
+      options.codegenUnits = 8;
   }
   if ((options.codegenUnits || options.codegenThreads) &&
       (!buildsExecutable(options.command) || options.emitMir ||
@@ -2595,6 +2611,9 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       std::cerr << "bypassed";
       break;
     }
+    if (result.cache.codegenUnits)
+      std::cerr << "; reused " << result.cache.reusedCodegenUnits << "/"
+                << result.cache.codegenUnits << " LLVM code generation units";
     if (!result.cache.key.empty()) {
       std::cerr << ' ' << result.cache.key;
     }

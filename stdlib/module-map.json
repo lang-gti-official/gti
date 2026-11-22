@@ -49,6 +49,7 @@
     "syntax": "std/syntax.gti",
     "tcp": "std/tcp.gti",
     "testing": "std/testing.gti",
+    "testing.resources": "std/testing/resources.gti",
     "thread": "std/thread.gti",
     "unordered_map": "std/unordered_map.gti",
     "unordered_set": "std/unordered_set.gti",

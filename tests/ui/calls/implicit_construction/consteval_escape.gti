@@ -1,0 +1,4 @@
+// Immediate construction does not allow a result to outlive its temporary owner.
+struct Checked { int value; implicit consteval Checked(int n) : value(n) {} };
+int& escape(Checked& value) { return value.value; }
+int main() { auto& invalid = escape(21); return invalid; } //~ ERROR GTI-S2003

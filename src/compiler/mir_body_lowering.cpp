@@ -6953,6 +6953,10 @@ private:
       valid = false;
       return;
     }
+    const auto appendMaterialization = [&](MirInstruction instruction) {
+      (void)initializeValueLifecycle(instruction, value);
+      (void)appendInstruction(std::move(instruction));
+    };
     ExpressionInfo materializedInfo = value.info;
     materializedInfo.category = ValueCategory::Value;
     materializedInfo.access = AccessMode::ReadOnly;
@@ -6975,7 +6979,7 @@ private:
       }
       const MirValueId result = appendValue(value.id, materializedInfo);
       loweredValues.insert_or_assign(value.id, result);
-      (void)appendInstruction(
+      appendMaterialization(
           {.kind = MirInstructionKind::Compute,
            .hirValue = value.id,
            .result = result,
@@ -7000,21 +7004,21 @@ private:
            .info = materializedInfo});
       const MirValueId result = appendValue(value.id, materializedInfo);
       loweredValues.insert_or_assign(value.id, result);
-      (void)appendInstruction({.kind = MirInstructionKind::Compute,
-                               .hirValue = value.id,
-                               .result = result,
-                               .operands = {{.kind = MirOperandKind::Value,
-                                             .value = magnitude,
-                                             .type = value.info.type}},
-                               .operation = MirOperation::Negate,
-                               .programConstantSubstitution = true,
-                               .info = materializedInfo});
+      appendMaterialization({.kind = MirInstructionKind::Compute,
+                             .hirValue = value.id,
+                             .result = result,
+                             .operands = {{.kind = MirOperandKind::Value,
+                                           .value = magnitude,
+                                           .type = value.info.type}},
+                             .operation = MirOperation::Negate,
+                             .programConstantSubstitution = true,
+                             .info = materializedInfo});
       emittedValues.insert(value.id);
       return;
     }
     const MirValueId result = appendValue(value.id, materializedInfo);
     loweredValues.insert_or_assign(value.id, result);
-    (void)appendInstruction(
+    appendMaterialization(
         {.kind = MirInstructionKind::Compute,
          .hirValue = value.id,
          .result = result,
@@ -14845,9 +14849,20 @@ private:
       projectedOwner = true;
     }
     if (!place || place->root != MirPlaceRootKind::Binding ||
-        !place->projections.empty() ||
         place->type.kind == SemanticType::Reference)
       return;
+    if (!place->projections.empty()) {
+      const auto *owner = findBinding(place->binding);
+      if (!owner || owner->info.type.kind == SemanticType::Reference ||
+          !std::all_of(place->projections.begin(), place->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind == MirProjectionKind::Field;
+                       }))
+        return;
+      // Replacing a field changes only part of the owning record. Its
+      // other fields must keep their dependencies.
+      projectedOwner = true;
+    }
     BindingLoanSet contents = copiedContentsForValue(sourceValue);
     retainStoredGroups(place->binding, std::move(contents), replacementStore,
                        projectedOwner);
@@ -15942,8 +15957,17 @@ private:
       if (arguments.size() == 1 && carrier != nullptr &&
           initializer->info.type == carrier->info.type)
         if (const MirLoan *source = held(loanForValue(arguments.front()));
-            source != nullptr && source->kind == MirLoanKind::Stored)
+            source != nullptr && source->kind == MirLoanKind::Stored) {
+          // A multi-field copy retains the primary path as well as every
+          // additional path. Carrier flow verifies both sets at publication.
+          if (candidate->designatedFields.empty() &&
+              !candidate->additionalDependencies.empty() &&
+              candidate->source == source->source &&
+              candidate->additionalDependencies ==
+                  source->additionalDependencies)
+            candidate->designatedFields = source->designatedFields;
           return source->id;
+        }
     }
     // A by-value call result keeps its independently published loan even
     // when it names exactly the input's owners. Carrier flow follows that
@@ -18322,13 +18346,13 @@ private:
         if (step.initializer || step.statement != 0) {
           valid = false;
         }
+        lowered.dataConstant = step.dataConstant;
+        if (!lowered.dataConstant && binding != nullptr)
+          lowered.dataConstant = binding->info.constant;
         lowered.dataInitialization =
-            binding != nullptr && binding->info.constant
+            lowered.dataConstant
                 ? MirProgramDataInitializationKind::Constant
                 : MirProgramDataInitializationKind::ImplicitZero;
-        if (binding != nullptr && binding->info.constant) {
-          lowered.dataConstant = binding->info.constant;
-        }
         lowered.storageInitialization = appendInstruction(
             {.kind = MirInstructionKind::Initialize,
              .destination = storagePlace,

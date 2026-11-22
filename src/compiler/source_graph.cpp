@@ -8,6 +8,9 @@
 #include <utility>
 
 namespace lang {
+std::string EmbeddedFile::storageIdentifier(std::size_t offset) {
+  return "$embed_bytes:" + std::to_string(offset);
+}
 Token EmbeddedFile::storageName() const {
   // The name cannot be written as a single GTI identifier. Source-local
   // storage supplies the unit identity, and the keyword offset supplies
@@ -16,7 +19,7 @@ Token EmbeddedFile::storageName() const {
   name.kind = TokenKind::IDENTIFIER;
   name.sourceLength = static_cast<std::uint32_t>(keyword.lexeme.size());
   name.position = storageOffset;
-  name.lexeme = "$embed_bytes:" + std::to_string(storageOffset);
+  name.lexeme = storageIdentifier(storageOffset);
   name.generated = true;
   return name;
 }

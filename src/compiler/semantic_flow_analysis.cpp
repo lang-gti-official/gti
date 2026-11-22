@@ -2437,6 +2437,8 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
   ProgramInitializationPlan plan;
   plan.unitOrder = programInitializationUnitOrder();
   if (sourceGraph == nullptr) {
+    for (const auto &entry : requestSession.localStaticSteps)
+      plan.steps.push_back(entry.second);
     for (const StmtPtr &statement : program.declarations()) {
       collectProgramInitializationStatement(*statement, 0, std::nullopt,
                                             plan.steps);
@@ -2456,6 +2458,9 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
                                               sourceUnit, std::nullopt,
                                               unitSteps);
       }
+      for (const auto &entry : requestSession.localStaticSteps)
+        if (entry.second.sourceUnit == sourceUnit)
+          unitSteps.push_back(entry.second);
       std::stable_sort(unitSteps.begin(), unitSteps.end(),
                        [](const ProgramInitializationStep &left,
                           const ProgramInitializationStep &right) {
@@ -4699,6 +4704,15 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   }
   const ResolvedConstructionInfo &construction =
       *semanticModel.findContextualConstruction(*expr);
+  finishContextualConstruction(expr, construction);
+  if (diagnostics.size() == diagnosticStart)
+    enforceImmediateInvocation(*expr, true);
+  return construction.constructedType;
+}
+
+auto SemanticVisitor::Impl::finishContextualConstruction(
+    const ExprPtr &expr, const ResolvedConstructionInfo &construction) -> void {
+  const SourceSpan site = tokenSpan(expressionToken(expr));
   if (construction.kind == ConstructorKind::Move ||
       construction.directInitialization ||
       (!construction.parameterTypes.empty() &&
@@ -4721,9 +4735,6 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
         construction.constructedType, site,
         contextualConstructionRawFields(*expr, construction.constructedType));
   }
-  if (diagnostics.size() == diagnosticStart)
-    enforceImmediateInvocation(*expr, true);
-  return construction.constructedType;
 }
 
 auto SemanticVisitor::Impl::declarationConversionApplies(
@@ -6736,12 +6747,15 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
 
 // A spelling repair is advisory: ordinary lookup still fails and the program
 // stays invalid until the user chooses an edit. Do not instantiate candidates.
-auto SemanticVisitor::Impl::suggestVisibleLocalName(
-    const Token &name, Diagnostic &diagnostic) const -> void {
+namespace {
+template <class Scopes, class VisibleDeclaration>
+void suggestClosestSpelling(const Token &name, const Scopes &scopes,
+                            VisibleDeclaration visibleDeclaration,
+                            Diagnostic &diagnostic, std::string_view note) {
   constexpr std::size_t maximumLength = 64;
   constexpr std::size_t maximumBindings = 512;
-  if (name.generated || macroContext(name) != nullptr ||
-      name.lexeme.size() < 3 || name.lexeme.size() > maximumLength)
+  if (name.generated || name.completion || name.lexeme.size() < 3 ||
+      name.lexeme.size() > maximumLength)
     return;
   const std::size_t threshold = name.lexeme.size() < 6 ? 1 : 2;
   const auto distance = [&](std::string_view candidate) {
@@ -6765,7 +6779,7 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
     }
     return previous[candidate.size()];
   };
-  const Symbol *best = nullptr;
+  const Token *best = nullptr;
   std::size_t bestDistance = threshold + 1;
   bool ambiguous = false;
   std::size_t visited = 0;
@@ -6775,25 +6789,16 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
       // arbitrary winner or hide an equally close spelling.
       if (++visited > maximumBindings)
         return;
-      if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
-          symbol.bindingKind != SemanticBindingKind::Parameter &&
-          symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+      if (key.size() > maximumLength ||
+          key.size() + threshold < name.lexeme.size() ||
+          name.lexeme.size() + threshold < key.size())
         continue;
-      const auto &spelling = symbol.declaration.lexeme;
-      if (symbol.declaration.generated || key != spelling ||
-          spelling.size() > maximumLength ||
-          spelling.size() + threshold < name.lexeme.size() ||
-          name.lexeme.size() + threshold < spelling.size())
+      const Token *declaration = visibleDeclaration(key, symbol);
+      if (!declaration || declaration->generated || declaration->lexeme != key)
         continue;
-      Token candidate = name;
-      candidate.lexeme = spelling;
-      // Use the actual lexical/hygienic resolver, including shadowing. Captures
-      // not admitted into this lambda's environment are never candidates.
-      if (resolve(candidate) != &symbol)
-        continue;
-      const auto score = distance(spelling);
+      const auto score = distance(key);
       if (score < bestDistance) {
-        best = &symbol;
+        best = declaration;
         bestDistance = score;
         ambiguous = false;
       } else if (score == bestDistance) {
@@ -6803,13 +6808,32 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
   }
   if (best == nullptr || ambiguous)
     return;
-  const std::string &spelling = best->declaration.lexeme;
+  const std::string &spelling = best->lexeme;
   diagnostic.hints.push_back("Did you mean '" + spelling + "'?");
-  diagnostic.related.push_back(
-      {tokenSpan(best->declaration), "Similar visible binding declared here."});
+  diagnostic.related.push_back({tokenSpan(*best), std::string(note)});
   diagnostic.fixes.push_back({tokenSpan(name), spelling,
                               "Replace with '" + spelling + "'", false,
                               RepairApplicability::RequiresReview});
+}
+
+} // namespace
+
+auto SemanticVisitor::Impl::suggestVisibleLocalName(
+    const Token &name, Diagnostic &diagnostic) const -> void {
+  if (macroContext(name) != nullptr)
+    return;
+  suggestClosestSpelling(
+      name, scopes,
+      [&](const auto &key, const Symbol &symbol) -> const Token * {
+        if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+            symbol.bindingKind != SemanticBindingKind::Parameter &&
+            symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+          return nullptr;
+        Token candidate = name;
+        candidate.lexeme = key;
+        return resolve(candidate) == &symbol ? &symbol.declaration : nullptr;
+      },
+      diagnostic, "Similar visible binding declared here.");
 }
 
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
@@ -8499,6 +8523,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   if (!expression) {
     return result;
   }
+  if (const auto *construction =
+          semanticModel.findContextualConstruction(*expression)) {
+    result.type = construction->constructedType;
+    if (construction->kind != ConstructorKind::Ordinary)
+      return result;
+    if (typeTraits(result.type).containsBorrowedState ||
+        construction->dependentTextPublication) {
+      result.failure = FreshTemporaryValueFailure::BorrowedState;
+      return result;
+    }
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
+    return result;
+  }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
   const bool callable =
@@ -8719,7 +8757,11 @@ auto SemanticVisitor::Impl::freshTemporaryBorrowValue(
     return result;
   }
   bool ordinaryProducer = false;
-  if (const auto *construction = semanticModel.findConstruction(*producer)) {
+  const auto *construction =
+      semanticModel.findContextualConstruction(*expression);
+  if (!construction)
+    construction = semanticModel.findConstruction(*producer);
+  if (construction) {
     ordinaryProducer = construction->kind == ConstructorKind::Ordinary &&
                        construction->constructedType == result.type &&
                        construction->borrowOrigin == BorrowOriginKind::Argument;
@@ -9112,7 +9154,8 @@ auto SemanticVisitor::Impl::findMember(const SemanticType &objectType,
 }
 
 auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
-                                          const Token &name)
+                                          const Token &name,
+                                          std::optional<AccessMode> fieldAccess)
     -> const MemberInfo * {
   const ClassInfo *owner = classInfo(objectType);
   if (owner == nullptr) {
@@ -9126,6 +9169,24 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
   if (member == nullptr) {
     report(name, "Unknown member '" + name.lexeme + "' on '" +
                      owner->name.lexeme + "'.");
+    if (fieldAccess && !owner->compilerPrivate &&
+        owner->kind != ClassKind::Union && !instanceAnalysisActive &&
+        !macroExpansionDepth && !macroContext(name)) {
+      suggestClosestSpelling(
+          name, std::span(&owner->members, 1),
+          [&](const auto &, const MemberInfo &candidate) -> const Token * {
+            const auto &symbol = candidate.symbol;
+            if (symbol.bindingKind != SemanticBindingKind::Field ||
+                symbol.staticMember || symbol.compilerPrivate ||
+                semanticModel.isCompilerPrivateType(symbol.type) ||
+                (*fieldAccess == AccessMode::Mutable && !symbol.assignable) ||
+                !canAccessMember(candidate.access, symbol.ownerClass,
+                                 objectType))
+              return nullptr;
+            return &symbol.declaration;
+          },
+          diagnostics.back(), "Similar accessible field declared here.");
+    }
     return nullptr;
   }
   if (!isCompilerTrustedRequester(name) && member->symbol.compilerPrivate) {

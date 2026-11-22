@@ -333,14 +333,15 @@ private:
       const Token keyword = peekAt(*offset);
       reportMisplacedExport(*offset);
       if (peekAt(*offset + 1).kind == TokenKind::EXPORT) {
-        throw error(peekAt(*offset + 1),
-                    "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(peekAt(*offset + 1),
+                                  "A declaration cannot repeat 'export'.");
       }
       tokens.erase(tokens.begin() +
                    static_cast<std::ptrdiff_t>(current + *offset));
       StmtPtr result = declaration();
       if (result->exportKeyword()) {
-        throw error(keyword, "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(keyword,
+                                  "A declaration cannot repeat 'export'.");
       }
       result->setExportKeyword(keyword);
       return result;
@@ -349,7 +350,8 @@ private:
       const Token keyword = previous();
       StmtPtr result = declaration();
       if (result->exportKeyword()) {
-        throw error(keyword, "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(*result->exportKeyword(),
+                                  "A declaration cannot repeat 'export'.");
       }
       result->setExportKeyword(keyword);
       return result;
@@ -576,7 +578,7 @@ private:
               "An extern \"C\" block may contain only function or variable "
               "declarations.");
         } else {
-          declaration = typedDeclaration(true, std::nullopt, false, false, true,
+          declaration = typedDeclaration(true, std::nullopt, false, false,
                                          LanguageLinkage::C);
         }
         stampExtent(declaration, declarationStart);
@@ -1201,7 +1203,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1244,7 +1246,7 @@ private:
                .message = "Replace obsolete '[[unsafe]]' with 'unsafe'"});
         }
         diagnostics.emplace_back(std::move(diagnostic));
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::nullopt, std::nullopt, std::move(keyword),
                                 std::move(functionAttributes));
       }
@@ -1303,7 +1305,7 @@ private:
           throw error(peek(), "A native function attribute must annotate a "
                               "function declaration.");
         }
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::move(nativeCArray),
                                 std::move(nativeLinkName), std::nullopt,
                                 std::move(functionAttributes));
@@ -1340,16 +1342,23 @@ private:
           }
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability condition.");
+        } else if (attribute.name.lexeme == "test" &&
+                   match({TokenKind::LEFT_PAREN})) {
+          attribute.argument = consume(
+              TokenKind::STRING_LITERAL,
+              "Expect a quoted case name in '[[test(name, arguments...)]]'.");
+          while (match({TokenKind::COMMA}))
+            attribute.testArguments.emplace_back(check(TokenKind::LEFT_BRACE)
+                                                     ? arrayInitializer()
+                                                     : assignment());
+          attribute.testClose = consume(
+              TokenKind::RIGHT_PAREN, "Expect ')' after test case arguments.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           if (attribute.name.lexeme == "inline" ||
               attribute.name.lexeme == "noinline" ||
               attribute.name.lexeme == "cold") {
             throw error(attribute.name, "[[" + attribute.name.lexeme +
                                             "]] takes no arguments.");
-          }
-          if (attribute.name.lexeme == "test") {
-            throw error(attribute.name, "[[test]] takes no arguments; annotate "
-                                        "a zero-argument void function.");
           }
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");
@@ -1451,7 +1460,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1616,7 +1625,7 @@ private:
       bool allowFunction,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false, bool allowOperators = false,
-      bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
+      LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
@@ -1629,7 +1638,8 @@ private:
         std::exchange(conformanceRequirement, std::nullopt);
     if (match({TokenKind::UNSAFE})) {
       if (unsafeKeyword) {
-        throw error(previous(), "A function cannot repeat 'unsafe'.");
+        throw redundantTokenError(previous(),
+                                  "A function cannot repeat 'unsafe'.");
       }
       unsafeKeyword = previous();
     }
@@ -1640,7 +1650,7 @@ private:
                   "not a native binding.");
     }
     if (unsafeKeyword && check(TokenKind::UNSAFE)) {
-      throw error(peek(), "A function cannot repeat 'unsafe'.");
+      throw redundantTokenError(peek(), "A function cannot repeat 'unsafe'.");
     }
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
@@ -1652,14 +1662,9 @@ private:
       auto &keyword = previous().kind == TokenKind::STATIC ? staticKeyword
                                                            : threadLocalKeyword;
       if (keyword)
-        throw error(previous(), "A storage specifier cannot be repeated.");
+        throw redundantTokenError(previous(),
+                                  "A storage specifier cannot be repeated.");
       keyword = previous();
-    }
-    if (staticKeyword && !allowStatic && !threadLocalKeyword) {
-      throw error(
-          *staticKeyword,
-          "Block-scope static declarations are not supported yet; declare "
-          "static storage at namespace or class scope.");
     }
     if (staticKeyword && runtimeBinding) {
       throw error(*staticKeyword,
@@ -2812,8 +2817,8 @@ private:
     if (match({TokenKind::COMMA})) {
       comma = previous();
       if (check(TokenKind::RIGHT_PAREN)) {
-        throw error(peek(),
-                    "A trailing comma is not allowed in 'static_assert'.");
+        throw redundantTokenError(
+            *comma, "A trailing comma is not allowed in 'static_assert'.");
       }
       message = consume(TokenKind::STRING_LITERAL,
                         "Expect a quoted string message after ','.");
@@ -2835,9 +2840,10 @@ private:
 
   StmtPtr groupedFieldDeclaration() {
     if (match({TokenKind::MUT})) {
-      throw error(previous(),
-                  "Fields inside a 'mut { ... }' group are already mutable; "
-                  "remove the redundant 'mut'.");
+      throw redundantTokenError(
+          previous(),
+          "Fields inside a 'mut { ... }' group are already mutable; "
+          "remove the redundant 'mut'.");
     }
     if (match({TokenKind::STATIC, TokenKind::THREAD_LOCAL})) {
       throw error(previous(),
@@ -3505,7 +3511,7 @@ private:
       return structuredBindingDeclaration();
     }
     if (isTypedDeclaration()) {
-      return typedDeclaration(false, std::nullopt, false, false, false);
+      return typedDeclaration(false);
     }
     return statement();
   }
@@ -3908,7 +3914,7 @@ private:
       }
       result = structuredBindingDeclaration();
     } else if (isTypedDeclaration()) {
-      result = typedDeclaration(false, std::nullopt, false, false, false);
+      result = typedDeclaration(false);
     } else {
       result = expressionStatement();
     }
@@ -5682,6 +5688,20 @@ private:
     diagnostics.push_back(makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing,
                                          token, std::string(message)));
     return ParseError{};
+  }
+
+  ParseError redundantTokenError(const Token &token, std::string_view message) {
+    const auto failure = error(token, message);
+    if (!token.generated && !token.completion &&
+        token.position <= source.size() &&
+        source.substr(token.position, token.lexeme.size()) == token.lexeme) {
+      diagnostics.back().fixes.push_back(
+          {.span = tokenSpan(token),
+           .replacement = "",
+           .message = "Remove redundant '" + token.lexeme + "'",
+           .applicability = RepairApplicability::MachineApplicable});
+    }
+    return failure;
   }
 
   void checkNestingDepth(const Token &token, std::size_t additionalDepth = 0) {

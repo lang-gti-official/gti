@@ -25,6 +25,9 @@ struct CompiledTemplateModule {
   std::map<std::size_t, std::string> bodies;
   std::optional<std::string> projectSyntax;
   LifetimeNames lifetimeNames;
+  // Authenticated by the installed bundle receipt. Ordinary project recipes
+  // use the normal parser to attest their syntax instead.
+  std::string installedSourceDigest;
   std::vector<CompiledEmbeddedFile> embeddedFiles;
 };
 CompiledTemplateModule

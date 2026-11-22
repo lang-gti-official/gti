@@ -71,6 +71,20 @@ def verify(stage):
         # exercise an input-dependent destructor in the generic vector body.
         shutil.copyfile(fixture.parents[1] / "ui/stdlib/vector/construction_only/element_failure.gti", source)
 
+        # Installed paths can have aliases (on macOS /var itself is one).
+        # Producers and source-absent callers must agree on dependency identities.
+        alias = root / "stdlib-link"
+        alias.symlink_to(stage / "share/gti/stdlib", target_is_directory=True)
+        modules = root / "native-members"
+        shutil.copytree(fixture.parent / "native_module_members", modules)
+        linked_env = dict(env, GTI_STDLIB_PATH=str(alias))
+        producer, consumer = modules / "producer", modules / "consumer"
+        run("build", "readings", "--release", cwd=producer, environment=linked_env)
+        artifact, = (producer / "build/gti/release").glob("*/readings.gtilib")
+        shutil.copyfile(artifact, consumer / "readings.gtilib")
+        shutil.rmtree(producer)
+        run("run", "--release", cwd=consumer, environment=linked_env)
+
         def cleanup_program(profile):
             shutil.rmtree(project / "build", ignore_errors=True)
             run("build", *(["--release"] if profile == "release" else []))
@@ -113,6 +127,11 @@ int main() {
 #endif
 }
 """)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
         for profile in ([], ["--release"]):
             run("run", *profile)
 
@@ -255,6 +274,11 @@ int main() {
         # receipt must still fail before any cache hit can publish that output.
         # The random-only consumer is independent of a corrupt math module.
         random_source = source.read_text()
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         run("run", "--release")
         bundle, = bundles.glob("*/release/cmath.gtilib")

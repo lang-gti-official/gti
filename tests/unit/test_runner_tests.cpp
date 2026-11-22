@@ -2,6 +2,7 @@
 #include "gti/driver/test_runner.h"
 #include "unit_test.h"
 #include <algorithm>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -9,6 +10,9 @@
 #include <iostream>
 #include <thread>
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -22,6 +26,24 @@ void check(bool value, const char *message) {
     ++failures;
   }
 }
+#if !defined(_WIN32)
+// EOF proves the descendant closed its last writer, including when the caller
+// was descheduled. A missing marker after a sleep cannot prove termination.
+int readLifetimeByte(int descriptor, char &byte) {
+  pollfd channel{descriptor, POLLIN, 0};
+  int ready;
+  do {
+    ready = poll(&channel, 1, 2000);
+  } while (ready < 0 && errno == EINTR);
+  if (ready <= 0)
+    return -1;
+  ssize_t count;
+  do {
+    count = read(descriptor, &byte, 1);
+  } while (count < 0 && errno == EINTR);
+  return static_cast<int>(count);
+}
+#endif
 } // namespace
 GTI_UNIT_TEST(test_runner) {
 #if defined(_WIN32)
@@ -71,17 +93,22 @@ GTI_UNIT_TEST(test_runner) {
         std::this_thread::sleep_for(10ms);
     }
     if (mode == "background" || mode == "background_timeout") {
-      if (fork() == 0) {
-        std::this_thread::sleep_for(500ms);
-        std::ofstream(std::getenv("GTI_RUNNER_MARKER")) << "escaped";
+      const int peer = std::stoi(std::getenv("GTI_RUNNER_PEER"));
+      const auto descendant = fork();
+      if (descendant < 0)
+        return 1;
+      if (descendant == 0) {
+        if (write(peer, "R", 1) != 1)
+          _exit(1);
+        // Hold the endpoint until killed or the test releases us on failure.
+        char release;
+        while (read(peer, &release, 1) < 0 && errno == EINTR) {
+        }
         _exit(0);
       }
       if (mode == "background_timeout")
         for (;;)
-          std::this_thread::sleep_for(10ms);
-      // Normal completion must tolerate startup/scheduling delays beyond the
-      // deliberately short deadline used by the hanging-child case.
-      std::this_thread::sleep_for(150ms);
+          pause();
       return 0;
     }
     if (mode == "barrier_a" || mode == "barrier_b") {
@@ -236,19 +263,39 @@ GTI_UNIT_TEST(test_runner) {
             !moved.wait().succeeded(),
         "process ownership must move once and reject a second wait");
   for (const auto *mode : {"background", "background_timeout"}) {
-    const auto marker = directory / mode;
-    const auto child = invokeProcess(
+    int endpoints[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, endpoints) != 0) {
+      check(false, "create lifetime probe for background descendants");
+      continue;
+    }
+    if (fcntl(endpoints[0], F_SETFD, FD_CLOEXEC) != 0) {
+      close(endpoints[0]);
+      close(endpoints[1]);
+      check(false, "isolate the controller's endpoint");
+      continue;
+    }
+    const bool timeout = std::string(mode) == "background_timeout";
+    auto child = startProcess(
         {executable.string(), mode},
         {.captureSuccessfulOutput = true,
-         .environment = {{"GTI_RUNNER_MARKER", marker.string()}},
-         .timeout = std::string(mode) == "background_timeout" ? 100ms : 2s,
+         .environment = {{"GTI_RUNNER_PEER", std::to_string(endpoints[1])}},
+         .timeout = timeout ? 2s : 10s,
          .isolateProcessGroup = true});
-    check(child.timedOut == (std::string(mode) == "background_timeout"),
-          "timeout fact must reflect the actual deadline");
-    std::this_thread::sleep_for(650ms);
-    check(!std::filesystem::exists(marker),
-          "completion and timeout must both terminate background group "
-          "descendants");
+    close(endpoints[1]);
+    char ready = 0;
+    check(readLifetimeByte(endpoints[0], ready) == 1 && ready == 'R',
+          "background descendant must start before owner wait");
+    // Exercise delayed observation of ordinary completion without depending on
+    // a marker being written before the caller is scheduled again.
+    if (!timeout)
+      std::this_thread::sleep_for(600ms);
+    const auto completion = child.wait();
+    check(timeout ? completion.timedOut : completion.succeeded(),
+          "background helper must complete or time out as requested");
+    check(readLifetimeByte(endpoints[0], ready) == 0,
+          "completion and timeout must both close all descendant endpoints");
+    // Closing the controller also releases a surviving descendant on failure.
+    close(endpoints[0]);
   }
   std::filesystem::remove_all(directory);
   return failures == 0 ? 0 : 1;

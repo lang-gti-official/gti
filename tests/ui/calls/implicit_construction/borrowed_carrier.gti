@@ -1,0 +1,5 @@
+// A converted temporary carrier retains its external supplier through the call.
+//@ run-pass
+struct Box<lifetime a> { int&<a> value; implicit Box(int&<a> n) : value(n) {} };
+int read<lifetime a>(Box<a>& b) { return b.value; }
+int main() { int value = 42; return read(value) - read(Box(value)); }

@@ -1,0 +1,4 @@
+// A lambda's by-value parameter uses the same implicit constructor as a named function.
+//@ run-pass
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int main() { auto take = [](Box b) -> int { return b.value; }; return take(42) - 42; }

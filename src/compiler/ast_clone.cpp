@@ -6,6 +6,25 @@
 
 namespace lang {
 
+CompileCondition cloneCompileCondition(const CompileCondition &value) {
+  CompileCondition copy;
+  copy.kind = value.kind;
+  copy.token = value.token;
+  copy.property = value.property;
+  copy.oper = value.oper;
+  copy.valueToken = value.valueToken;
+  copy.expectedValue = value.expectedValue;
+  copy.flag = value.flag;
+  copy.resolved = value.resolved;
+  if (value.left)
+    copy.left =
+        std::make_unique<CompileCondition>(cloneCompileCondition(*value.left));
+  if (value.right)
+    copy.right =
+        std::make_unique<CompileCondition>(cloneCompileCondition(*value.right));
+  return copy;
+}
+
 namespace {
 
 class Cloner {
@@ -216,25 +235,6 @@ private:
                           parameterDefault(parameter.defaultArgument, *this));
     }
     return copies;
-  }
-
-  [[nodiscard]] std::unique_ptr<CompileCondition>
-  condition(const std::unique_ptr<CompileCondition> &value) {
-    if (!value) {
-      return nullptr;
-    }
-    auto copy = std::make_unique<CompileCondition>();
-    copy->kind = value->kind;
-    copy->token = value->token;
-    copy->property = value->property;
-    copy->oper = value->oper;
-    copy->valueToken = value->valueToken;
-    copy->expectedValue = value->expectedValue;
-    copy->flag = value->flag;
-    copy->left = condition(value->left);
-    copy->right = condition(value->right);
-    copy->resolved = value->resolved;
-    return copy;
   }
 
   [[nodiscard]] ExprPtr cloneExpression(const Expr &expression) {
@@ -480,18 +480,7 @@ private:
       for (const ConditionalBranch &branch : node.branches()) {
         ConditionalBranch copy;
         if (branch.condition) {
-          CompileCondition value;
-          value.kind = branch.condition->kind;
-          value.token = branch.condition->token;
-          value.property = branch.condition->property;
-          value.oper = branch.condition->oper;
-          value.valueToken = branch.condition->valueToken;
-          value.expectedValue = branch.condition->expectedValue;
-          value.flag = branch.condition->flag;
-          value.left = condition(branch.condition->left);
-          value.right = condition(branch.condition->right);
-          value.resolved = branch.condition->resolved;
-          copy.condition.emplace(std::move(value));
+          copy.condition.emplace(cloneCompileCondition(*branch.condition));
         }
         if (!stmts(branch.statements, copy.statements)) {
           return nullptr;
