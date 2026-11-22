@@ -99,6 +99,12 @@ public:
     return this.source[this.offset + index];
   }
   string_view view() { return this.source.substr(this.offset, this.length); }
+  /// Reuses the common numeric/text grammar without copying pattern bytes.
+  constexpr bool parse_standard(mut format_spec& result) {
+    result = format_spec();
+    return detail::parse_standard_spec_text(this.source, this.offset,
+                                            this.offset + this.length, result);
+  }
   constexpr format_parse_context prefix(size_t count) {
     if (count > this.length) { detail::panic("Invalid format specification prefix"); }
     return format_parse_context(this.source, this.offset, count);
@@ -173,7 +179,7 @@ concept legacy_formattable<T> =
 }
 
 /// A type can supply the formatting protocol or an exact formatter specialization.
-/// A parsing formatter takes precedence; otherwise the protocol is selected.
+/// Empty fields use the protocol when available; parsing formatters own custom specs.
 export concept formattable<T> = detail::parsing_formattable<T> || formatting<T> || detail::legacy_formattable<T>;
 
 namespace detail {
@@ -239,14 +245,14 @@ constexpr bool format_type(char value) {
          value == 'g' || value == 'G';
 }
 
-constexpr bool parse_format_number(format_parse_context& pattern, mut size_t& cursor,
-                                   mut size_t& value) {
-  if (cursor >= pattern.size() || !format_digit(pattern.at(cursor))) {
+constexpr bool parse_format_number(string_view pattern, mut size_t& cursor,
+                                   mut size_t& value, size_t end) {
+  if (cursor >= end || !format_digit(pattern[cursor])) {
     return false;
   }
   value = 0;
-  while (cursor < pattern.size() && format_digit(pattern.at(cursor))) {
-    uint64_t digit = uint64_t(uint8_t(pattern.at(cursor)) - uint8_t('0'));
+  while (cursor < end && format_digit(pattern[cursor])) {
+    uint64_t digit = uint64_t(uint8_t(pattern[cursor]) - uint8_t('0'));
     if (value >
         (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
       return false;
@@ -259,6 +265,7 @@ constexpr bool parse_format_number(format_parse_context& pattern, mut size_t& cu
 
 /// Parses one field beginning at `open`. `indexing_mode` is zero before the
 /// first field, one for automatic fields, and two for explicit numeric fields.
+[[inline]]
 constexpr bool parse_format_field(string_view pattern, size_t open,
                         mut size_t& next_automatic,
                         mut uint8_t& indexing_mode,
@@ -280,8 +287,7 @@ constexpr bool parse_format_field(string_view pattern, size_t open,
       return false;
     }
     indexing_mode = uint8_t(2);
-    format_parse_context number{pattern, 0, pattern.size()};
-    if (!parse_format_number(number, cursor, field.argument_index)) {
+    if (!parse_format_number(pattern, cursor, field.argument_index, pattern.size())) {
       return false;
     }
   } else {
@@ -318,60 +324,64 @@ constexpr bool parse_format_field(string_view pattern, size_t open,
 }
 
 /// Parse the common numeric/text grammar for an existing formatter or adapter.
-constexpr bool parse_standard_spec(format_parse_context& text, mut format_spec& spec) {
-  mut size_t cursor = 0;
-  if (cursor + 1 < text.size() &&
-      format_alignment(text.at(cursor + 1))) {
-    if (text.at(cursor) == '{' || text.at(cursor) == '}') {
+constexpr bool parse_standard_spec_text(string_view text, mut size_t cursor, size_t end, mut format_spec& spec) {
+  if (cursor + 1 < end &&
+      format_alignment(text[cursor + 1])) {
+    if (text[cursor] == '{' || text[cursor] == '}') {
       return false;
     }
-    spec.fill = text.at(cursor);
-    spec.alignment = text.at(cursor + 1);
+    spec.fill = text[cursor];
+    spec.alignment = text[cursor + 1];
     cursor += 2;
-  } else if (cursor < text.size() && format_alignment(text.at(cursor))) {
-    spec.alignment = text.at(cursor);
+  } else if (cursor < end && format_alignment(text[cursor])) {
+    spec.alignment = text[cursor];
     cursor++;
   }
 
-  if (cursor < text.size() &&
-      (text.at(cursor) == '+' || text.at(cursor) == '-' ||
-       text.at(cursor) == ' ')) {
-    spec.sign = text.at(cursor);
+  if (cursor < end &&
+      (text[cursor] == '+' || text[cursor] == '-' ||
+       text[cursor] == ' ')) {
+    spec.sign = text[cursor];
     cursor++;
   }
-  if (cursor < text.size() && text.at(cursor) == '#') {
+  if (cursor < end && text[cursor] == '#') {
     spec.alternate = true;
     cursor++;
   }
-  if (cursor < text.size() && text.at(cursor) == '0') {
+  if (cursor < end && text[cursor] == '0') {
     spec.zero_pad = true;
     cursor++;
   }
-  if (cursor < text.size() && format_digit(text.at(cursor))) {
-    if (!parse_format_number(text, cursor, spec.width)) {
+  if (cursor < end && format_digit(text[cursor])) {
+    if (!parse_format_number(text, cursor, spec.width, end)) {
       return false;
     }
   }
-  if (cursor < text.size() && text.at(cursor) == '.') {
+  if (cursor < end && text[cursor] == '.') {
     cursor++;
     spec.has_precision = true;
-    if (!parse_format_number(text, cursor, spec.precision)) {
+    if (!parse_format_number(text, cursor, spec.precision, end)) {
       return false;
     }
   }
-  if (cursor < text.size()) {
-    if (!format_type(text.at(cursor))) {
+  if (cursor < end) {
+    if (!format_type(text[cursor])) {
       return false;
     }
-    spec.type = text.at(cursor);
+    spec.type = text[cursor];
     cursor++;
   }
-  if (cursor != text.size()) {
+  if (cursor != end) {
     return false;
   }
   return true;
 }
 
+constexpr bool parse_standard_spec(format_parse_context& text, mut format_spec& spec) {
+  return text.parse_standard(spec);
+}
+
+[[inline]]
 constexpr expected<void, format_errc> validate_format_pattern(string_view pattern,
                                                      size_t argument_count) {
   mut size_t cursor = 0;
@@ -753,18 +763,52 @@ format_argument_status append_float64(mut string& output, double& value,
   return format_argument_status::appended;
 }
 
+// Keep type-specific parser/render state out of the common formatting loop.
+// This also prevents a large custom renderer inflating default-field callers.
+[[noinline]]
+expected<void, format_errc> format_parsed<T>(T& value, mut string& output,
+                                            format_parse_context& spec)
+    requires parsing_formattable<T> {
+  mut formatter<T> writer{};
+  if (!writer.parse(spec)) { return unexpected(format_errc::invalid_format); }
+  return writer.format(value, output, spec);
+}
+
 expected<void, format_errc> format_selected<T>(T& value, mut string& output,
                                               format_parse_context& spec)
     requires formattable<T> {
+  if constexpr (formatting<T>) {
+    if (spec.size() == 0) {
+      format_spec standard{};
+      return formatting<T>::format(value, output, standard);
+    }
+  }
   if constexpr (parsing_formattable<T>) {
-    mut formatter<T> writer{};
-    if (!writer.parse(spec)) { return unexpected(format_errc::invalid_format); }
-    return writer.format(value, output, spec);
+    return format_parsed(value, output, spec);
   } else {
     mut format_spec standard{};
-    if (!parse_standard_spec(spec, standard)) { return unexpected(format_errc::invalid_format); }
+    if (spec.size() != 0 && !parse_standard_spec(spec, standard)) { return unexpected(format_errc::invalid_format); }
     return format_value(value, output, standard);
   }
+}
+
+expected<void, format_errc> format_default_value<T>(T& value, mut string& output)
+    requires formattable<T> {
+  if constexpr (formatting<T>) {
+    format_spec standard{};
+    return formatting<T>::format(value, output, standard);
+  } else {
+    string_view empty = "";
+    format_parse_context spec{empty, 0, 0};
+    return format_selected(value, output, spec);
+  }
+}
+
+void append_default_format_argument<T>(mut string& output,
+                                       mut bool& failed, mut format_errc& error, T& value)
+    requires formattable<T> {
+  auto result = format_default_value(value, output);
+  if (!result) { failed = true; error = result.error(); }
 }
 
 void append_selected_format_argument<T>(mut string& output,
@@ -1090,6 +1134,9 @@ private:
 namespace std {
 namespace detail {
 constexpr bool checked_argument_spec<T>(std::meta::type<T> argument, format_parse_context& text) {
+  if constexpr (formatting<T>) {
+    if (text.size() == 0) { return true; }
+  }
   if constexpr (parsing_formattable<T>) {
     mut formatter<T> writer{};
     return writer.parse(text);
@@ -1110,7 +1157,6 @@ constexpr bool checked_argument_spec<T>(std::meta::type<T> argument, format_pars
 
 /// Parse a complete common numeric/text specification. On success fills result.
 export constexpr bool parse_format_spec(format_parse_context& text, mut format_spec& result) {
-  result = format_spec();
   return detail::parse_standard_spec(text, result);
 }
 
@@ -1157,6 +1203,16 @@ expected<string, format_errc>
 try_runtime_format_impl<Args...>(string_view pattern, Args&... args) {
   mut size_t argument_count = 0;
   (detail::count_format_argument(argument_count, args), ...);
+  // The common single default field needs no scanning or parser state.
+  if (argument_count == 1 && pattern.size() == 2 && pattern[0] == '{' && pattern[1] == '}') {
+    mut string output{};
+    output.reserve(18);
+    mut bool failed = false;
+    mut format_errc error = format_errc::invalid_format;
+    (detail::append_default_format_argument(output, failed, error, args), ...);
+    if (failed) { return unexpected(error); }
+    return std::move(output);
+  }
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, argument_count);
   if (!validation) {

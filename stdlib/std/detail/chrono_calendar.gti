@@ -613,6 +613,7 @@ void append_calendar_digits(mut std::string& output, int32_t value, int32_t widt
 }
 std::string calendar_iso(date& value) {
   mut std::string output{};
+  output.reserve(10);
   append_calendar_digits(output, value.year(), 4);
   output.push_back('-');
   append_calendar_digits(output, value.month(), 2);
@@ -622,6 +623,7 @@ std::string calendar_iso(date& value) {
 }
 std::string calendar_iso(time_of_day& value) {
   mut std::string output{};
+  output.reserve(std::size_t(value.subsecond_nanoseconds() == 0 ? 8 : 18));
   append_calendar_digits(output, value.hour(), 2);
   output.push_back(':');
   append_calendar_digits(output, value.minute(), 2);

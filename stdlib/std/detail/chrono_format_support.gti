@@ -192,6 +192,8 @@ public:
   constexpr temporal_formatter() {}
   constexpr bool parse(std::format_parse_context& spec) mut requires temporal_components<T> {
     this.presentation = std::format_spec();
+    this.pattern_start = 0;
+    if (spec.size() == 0) { return true; }
     mut std::size_t cursor = 0;
     // A percent sign may itself be the fill character.
     if (spec.size() > 1 && (spec.at(1) == '<' || spec.at(1) == '>' || spec.at(1) == '^')) { cursor = 2; }

@@ -639,8 +639,8 @@ public:
 
 The specialization must be default-initializable and provide exactly this
 public, safe, read-only, nongeneric method signature. `std::formattable<T>` is a
-source-defined conjunction of default initialization and the exact method
-requirement, not a compiler-known capability. Normal primary-or-argument package
+source-defined contract over the supported customization forms, not a
+compiler-known capability. Normal primary-or-argument package
 ownership controls specialization coherence. The primary satisfies the contract
 only for integral enums; other application types need an exact specialization.
 A selected specialization must satisfy the contract itself. A user may
@@ -663,7 +663,7 @@ twins, and formatted panic all use this one protocol. Failed formatting never
 publishes a partially appended destination or submits partial formatted stdout.
 Directly calling a formatter is lower-level: its caller owns the destination
 and any partial append behavior. A formatter is constructed per selected field,
-so repeated indexed fields repeat its method call in pattern order.
+so repeated indexed fields repeat dispatch in pattern order.
 
 Unsupported static types receive ordinary contract diagnostics in CLI and LSP;
 no fix can invent the application's formatting policy. Generic forwarding
@@ -689,9 +689,10 @@ separate formatter during constant evaluation and calls the same parser; its
 constructor and parser must therefore be constexpr to accept literal patterns.
 Runtime-only parsers remain usable with the explicit runtime APIs.
 
-This parsing contract takes precedence over `std::formatting<T>`. Without it,
-the existing protocol takes precedence over the common-specification class
-formatter. Only complete matching contracts participate; a method merely named
+For an empty specification, `std::formatting<T>` remains the default when
+available. Otherwise the parsing contract takes precedence. Without a parsing
+formatter, the protocol takes precedence over the common-specification class
+formatter. Literal checking and runtime dispatch use the same selection. Only complete matching contracts participate; a method merely named
 `parse` does not replace an existing formatter.
 
 The context holds a checked read-only reference to the pattern view. `size()`
@@ -699,8 +700,8 @@ and `at(index)` are constexpr; `prefix(count)` and `suffix(start)` produce
 checked subcontexts. `view()` supplies the borrowed specification text at
 runtime. All bounds are checked. The context is passed to rendering as well,
 so parsers can store offsets or other ordinary values without retaining raw
-pointers or escaping the pattern's lifetime. `std::parse_format_spec(context,
-result)` reuses the common numeric/text grammar and fills `std::format_spec`.
+pointers or escaping the pattern's lifetime. `context.parse_standard(result)` and `std::parse_format_spec(context,
+result)` reuse the common numeric/text grammar and fills `std::format_spec`.
 
 The outer parser owns escaping, argument indexing and balanced field boundaries.
 The type parser owns the text after `:` (excluding the enclosing braces).

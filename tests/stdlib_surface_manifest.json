@@ -3890,9 +3890,9 @@
         "std::chrono::timestamp",
         "std::chrono::years",
         "std::formatter<std::chrono::date>",
-        "std::formatter<std::chrono::timestamp>",
+        "std::formatter<std::chrono::local_datetime>",
         "std::formatter<std::chrono::time_of_day>",
-        "std::formatter<std::chrono::local_datetime>"
+        "std::formatter<std::chrono::timestamp>"
       ],
       "case_ids": [
         "chrono"
@@ -4033,6 +4033,26 @@
         "tests/ui/chrono/formatting.gti",
         "tests/slow/chrono/format_runtime.gti",
         "tests/ui/stdlib/format/chrono_parse.gti"
+      ]
+    },
+    {
+      "id": "chrono.format-support",
+      "source": "stdlib/std/detail/chrono_format_support.gti",
+      "status": "executable",
+      "operations": [
+        "shared temporal tokenizer and formatter adapter",
+        "std::chrono::errc",
+        "std::chrono::format_error"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Calendar and zone formatters use the same tokenizer as standalone and prepared chrono patterns."
+      ],
+      "evidence": [
+        "tests/ui/stdlib/format/chrono_parse.gti",
+        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     },
     {
@@ -4816,15 +4836,18 @@
         "std::cerr",
         "std::cout",
         "std::format",
+        "std::format_parse_context",
         "std::format_pattern<Args...>",
         "std::format_spec",
         "std::format_to",
         "std::formattable<T>",
         "std::formatter<T>",
+        "std::formatter<T>::parse(format_parse_context&)",
         "std::formatter<T>::validate(format_spec&)",
         "std::formatting<T>",
         "std::formatting<T>::format",
         "std::output_target",
+        "std::parse_format_spec",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
         "std::println(target,text)",
@@ -4840,10 +4863,7 @@
         "std::try_runtime_format",
         "std::try_runtime_format_to",
         "std::try_runtime_print",
-        "std::try_runtime_println",
-        "std::format_parse_context",
-        "std::parse_format_spec",
-        "std::formatter<T>::parse(format_parse_context&)"
+        "std::try_runtime_println"
       ],
       "case_ids": [
         "format",
@@ -8971,26 +8991,6 @@
         "tests/ui/stdlib/containers/swap/values.gti",
         "tests/ui/stdlib/containers/swap/cleanup.gti",
         "tests/ui/stdlib/containers/swap"
-      ]
-    },
-    {
-      "id": "chrono.format-support",
-      "source": "stdlib/std/detail/chrono_format_support.gti",
-      "status": "executable",
-      "operations": [
-        "std::chrono::errc",
-        "std::chrono::format_error",
-        "shared temporal tokenizer and formatter adapter"
-      ],
-      "case_ids": [
-        "chrono"
-      ],
-      "required_instantiations": [
-        "Calendar and zone formatters use the same tokenizer as standalone and prepared chrono patterns."
-      ],
-      "evidence": [
-        "tests/ui/stdlib/format/chrono_parse.gti",
-        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     }
   ]
