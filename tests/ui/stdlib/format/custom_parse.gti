@@ -8,7 +8,7 @@ class std::formatter<Reading> {
 public:
   constexpr formatter() {}
   constexpr bool parse(std::format_parse_context& spec) mut {
-    this.decorated = spec.size() == 3 && spec[0] == 't' && spec[1] == 'a' && spec[2] == 'g';
+    this.decorated = spec.size() == 3 && spec.at(0) == 't' && spec.at(1) == 'a' && spec.at(2) == 'g';
     return spec.size() == 0 || this.decorated;
   }
   expected<void, std::format_errc> format(Reading& value, mut std::string& output,

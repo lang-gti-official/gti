@@ -44,31 +44,30 @@ struct time_token {
   mut char code = char(0);
 };
 // The same bounded parser is used by consteval validation and runtime preparation.
-constexpr expected<time_token, format_error> next_time_token<T, Pattern>(
-    Pattern pattern, mut std::size_t& cursor)
-    requires requires(Pattern& p, std::size_t i) { { p.size() } -> std::size_t; { p[i] } -> char; } {
+constexpr expected<time_token, format_error> next_time_token<T>(
+    std::format_parse_context& pattern, mut std::size_t& cursor) {
   mut time_token result{};
   result.start = cursor;
-  if (pattern[cursor] != '%') {
-    while (cursor < pattern.size() && pattern[cursor] != '%') { cursor++; }
+  if (pattern.at(cursor) != '%') {
+    while (cursor < pattern.size() && pattern.at(cursor) != '%') { cursor++; }
     result.length = cursor - result.start;
     return result;
   }
   cursor++;
   if (cursor == pattern.size()) { return unexpected(format_error(errc::invalid_pattern, result.start)); }
-  mut char code = pattern[cursor];
+  mut char code = pattern.at(cursor);
   cursor++;
   if (code == ':') {
     code = 'z';
-    if (cursor < pattern.size() && pattern[cursor] == ':') { code = 'o'; cursor++; }
-    if (cursor == pattern.size() || pattern[cursor] != 'z') {
+    if (cursor < pattern.size() && pattern.at(cursor) == ':') { code = 'o'; cursor++; }
+    if (cursor == pattern.size() || pattern.at(cursor) != 'z') {
       return unexpected(format_error(errc::invalid_pattern, result.start));
     }
     cursor++;
   } else if (code == '{') {
-    if (cursor + 5 > pattern.size() || pattern[cursor] != 'z' ||
-        pattern[cursor + 1] != 'o' || pattern[cursor + 2] != 'n' ||
-        pattern[cursor + 3] != 'e' || pattern[cursor + 4] != '}') {
+    if (cursor + 5 > pattern.size() || pattern.at(cursor) != 'z' ||
+        pattern.at(cursor + 1) != 'o' || pattern.at(cursor + 2) != 'n' ||
+        pattern.at(cursor + 3) != 'e' || pattern.at(cursor + 4) != '}') {
       return unexpected(format_error(errc::invalid_pattern, result.start));
     }
     cursor += 5;
@@ -82,20 +81,22 @@ constexpr expected<time_token, format_error> next_time_token<T, Pattern>(
                code == 'I' || code == 'p' || code == 'P';
   bool zone = code == 'z' || code == 'o' || code == 'Z' || code == 'q';
   if constexpr (temporal_components<T>) {
-  if ((!calendar && !clock && !zone && code != '%') ||
-      (calendar && !temporal_components<T>::has_date()) || (clock && !temporal_components<T>::has_time()) ||
-      (zone && !temporal_components<T>::has_zone())) {
+    if ((!calendar && !clock && !zone && code != '%') ||
+        (calendar && !temporal_components<T>::has_date()) ||
+        (clock && !temporal_components<T>::has_time()) ||
+        (zone && !temporal_components<T>::has_zone())) {
+      return unexpected(format_error(errc::invalid_pattern, result.start));
+    }
+  } else {
     return unexpected(format_error(errc::invalid_pattern, result.start));
   }
-  } else { return unexpected(format_error(errc::invalid_pattern, result.start)); }
   result.code = code;
   return result;
 }
-constexpr expected<void, format_error> validate_time_pattern<T, Pattern>(Pattern pattern)
-    requires requires(Pattern& p, std::size_t i) { { p.size() } -> std::size_t; { p[i] } -> char; } {
+constexpr expected<void, format_error> validate_time_pattern<T>(std::format_parse_context& pattern) {
   if (pattern.size() > 65536) { return unexpected(format_error(errc::resource_limit, 0)); }
   mut std::size_t cursor = 0;
-  while (cursor < pattern.size()) { auto token = ?next_time_token<T, Pattern>(pattern, cursor); }
+  while (cursor < pattern.size()) { auto token = ?next_time_token<T>(pattern, cursor); }
   return;
 }
 void append_digits(mut std::string& out, int64_t value, int32_t width) {
@@ -176,9 +177,10 @@ expected<std::string, format_error> render_time<T>(T& value, std::string_view pa
   auto fields = ?fields_of(value);
   mut std::string result{};
   result.reserve(pattern.size() + 32);
+  std::format_parse_context context{pattern, 0, pattern.size()};
   mut std::size_t cursor = 0;
   while (cursor < pattern.size()) {
-    auto token = ?next_time_token<T, std::string_view>(pattern, cursor);
+    auto token = ?next_time_token<T>(context, cursor);
     ?append_time_token(result, fields, pattern, token);
   }
   return std::move(result);
@@ -192,18 +194,19 @@ public:
     this.presentation = std::format_spec();
     mut std::size_t cursor = 0;
     // A percent sign may itself be the fill character.
-    if (spec.size() > 1 && (spec[1] == '<' || spec[1] == '>' || spec[1] == '^')) { cursor = 2; }
+    if (spec.size() > 1 && (spec.at(1) == '<' || spec.at(1) == '>' || spec.at(1) == '^')) { cursor = 2; }
     // Everything before the first directive is the common text presentation.
-    while (cursor < spec.size() && spec[cursor] != '%') { cursor++; }
+    while (cursor < spec.size() && spec.at(cursor) != '%') { cursor++; }
     auto prefix = spec.prefix(cursor);
     if (!std::parse_format_spec(prefix, this.presentation)) { return false; }
     if ((this.presentation.type != char(0) && this.presentation.type != 's') ||
         this.presentation.sign != '-' || this.presentation.alternate || this.presentation.zero_pad) {
       return false;
     }
+    if (cursor < spec.size() && (this.presentation.has_precision || this.presentation.type != char(0))) { return false; }
     this.pattern_start = cursor;
     auto pattern = spec.suffix(cursor);
-    auto valid = validate_time_pattern<T, std::format_parse_context>(pattern);
+    auto valid = validate_time_pattern<T>(pattern);
     return bool(valid);
   }
   expected<void, std::format_errc> format(T& value, mut std::string& output, std::format_parse_context& spec)

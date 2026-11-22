@@ -94,7 +94,7 @@ public:
     }
   }
   constexpr size_t size() { return this.length; }
-  constexpr char operator[](size_t index) {
+  constexpr char at(size_t index) {
     if (index >= this.length) { detail::panic("Format specification index out of bounds"); }
     return this.source[this.offset + index];
   }
@@ -239,17 +239,14 @@ constexpr bool format_type(char value) {
          value == 'g' || value == 'G';
 }
 
-constexpr bool parse_format_number<Text>(Text pattern, mut size_t& cursor,
-                         mut size_t& value)
-    requires requires(Text& text, size_t index) {
-      { text.size() } -> size_t; { text[index] } -> char;
-    } {
-  if (cursor >= pattern.size() || !format_digit(pattern[cursor])) {
+constexpr bool parse_format_number(format_parse_context& pattern, mut size_t& cursor,
+                                   mut size_t& value) {
+  if (cursor >= pattern.size() || !format_digit(pattern.at(cursor))) {
     return false;
   }
   value = 0;
-  while (cursor < pattern.size() && format_digit(pattern[cursor])) {
-    uint64_t digit = uint64_t(uint8_t(pattern[cursor]) - uint8_t('0'));
+  while (cursor < pattern.size() && format_digit(pattern.at(cursor))) {
+    uint64_t digit = uint64_t(uint8_t(pattern.at(cursor)) - uint8_t('0'));
     if (value >
         (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
       return false;
@@ -283,7 +280,8 @@ constexpr bool parse_format_field(string_view pattern, size_t open,
       return false;
     }
     indexing_mode = uint8_t(2);
-    if (!parse_format_number(pattern, cursor, field.argument_index)) {
+    format_parse_context number{pattern, 0, pattern.size()};
+    if (!parse_format_number(number, cursor, field.argument_index)) {
       return false;
     }
   } else {
@@ -323,38 +321,38 @@ constexpr bool parse_format_field(string_view pattern, size_t open,
 constexpr bool parse_standard_spec(format_parse_context& text, mut format_spec& spec) {
   mut size_t cursor = 0;
   if (cursor + 1 < text.size() &&
-      format_alignment(text[cursor + 1])) {
-    if (text[cursor] == '{' || text[cursor] == '}') {
+      format_alignment(text.at(cursor + 1))) {
+    if (text.at(cursor) == '{' || text.at(cursor) == '}') {
       return false;
     }
-    spec.fill = text[cursor];
-    spec.alignment = text[cursor + 1];
+    spec.fill = text.at(cursor);
+    spec.alignment = text.at(cursor + 1);
     cursor += 2;
-  } else if (cursor < text.size() && format_alignment(text[cursor])) {
-    spec.alignment = text[cursor];
+  } else if (cursor < text.size() && format_alignment(text.at(cursor))) {
+    spec.alignment = text.at(cursor);
     cursor++;
   }
 
   if (cursor < text.size() &&
-      (text[cursor] == '+' || text[cursor] == '-' ||
-       text[cursor] == ' ')) {
-    spec.sign = text[cursor];
+      (text.at(cursor) == '+' || text.at(cursor) == '-' ||
+       text.at(cursor) == ' ')) {
+    spec.sign = text.at(cursor);
     cursor++;
   }
-  if (cursor < text.size() && text[cursor] == '#') {
+  if (cursor < text.size() && text.at(cursor) == '#') {
     spec.alternate = true;
     cursor++;
   }
-  if (cursor < text.size() && text[cursor] == '0') {
+  if (cursor < text.size() && text.at(cursor) == '0') {
     spec.zero_pad = true;
     cursor++;
   }
-  if (cursor < text.size() && format_digit(text[cursor])) {
+  if (cursor < text.size() && format_digit(text.at(cursor))) {
     if (!parse_format_number(text, cursor, spec.width)) {
       return false;
     }
   }
-  if (cursor < text.size() && text[cursor] == '.') {
+  if (cursor < text.size() && text.at(cursor) == '.') {
     cursor++;
     spec.has_precision = true;
     if (!parse_format_number(text, cursor, spec.precision)) {
@@ -362,10 +360,10 @@ constexpr bool parse_standard_spec(format_parse_context& text, mut format_spec& 
     }
   }
   if (cursor < text.size()) {
-    if (!format_type(text[cursor])) {
+    if (!format_type(text.at(cursor))) {
       return false;
     }
-    spec.type = text[cursor];
+    spec.type = text.at(cursor);
     cursor++;
   }
   if (cursor != text.size()) {

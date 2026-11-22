@@ -311,7 +311,7 @@ auto name = std::format("wal-{:%Y-%m-%d_%H-%M-%S_%f}Z.log", stamp);
 
 `std::println`, `std::try_format`, the append APIs, and their explicit runtime
 variants use the same dispatch. Empty specifications retain ISO-like default
-output. A common text presentation may precede the first `%` directive, for
+output. Fill, alignment and width may precede the first `%` directive, for
 example `{:>24%Y-%m-%d}`. The existing chrono directive vocabulary and component
 checks apply; this does not claim all C++ chrono directives or locale support.
 

@@ -695,7 +695,7 @@ formatter. Only complete matching contracts participate; a method merely named
 `parse` does not replace an existing formatter.
 
 The context holds a checked read-only reference to the pattern view. `size()`
-and indexed access are constexpr; `prefix(count)` and `suffix(start)` produce
+and `at(index)` are constexpr; `prefix(count)` and `suffix(start)` produce
 checked subcontexts. `view()` supplies the borrowed specification text at
 runtime. All bounds are checked. The context is passed to rendering as well,
 so parsers can store offsets or other ordinary values without retaining raw

@@ -31,7 +31,8 @@ export class time_pattern<temporal_value T> {
   std::string_view text;
 public:
   implicit consteval time_pattern(std::string_view value) : text(value) {
-    auto valid = detail::validate_time_pattern<T, std::string_view>(value);
+    std::format_parse_context context{value, 0, value.size()};
+    auto valid = detail::validate_time_pattern<T>(context);
     if (!valid) { std::detail::panic("Invalid chrono pattern or unavailable temporal component"); }
   }
   constexpr std::string_view view() { return this.text; }
@@ -46,10 +47,11 @@ public:
   prepared_time_pattern(prepared_time_pattern<T>& other) = delete;
   prepared_time_pattern(prepared_time_pattern<T>&& other) = default;
   expected<void, format_error> try_assign(std::string_view pattern) mut {
-    ?detail::validate_time_pattern<T, std::string_view>(pattern);
+    std::format_parse_context context{pattern, 0, pattern.size()};
+    ?detail::validate_time_pattern<T>(context);
     mut std::vector<detail::time_token> tokens{};
     mut std::size_t cursor = 0;
-    while (cursor < pattern.size()) { tokens.push_back(?detail::next_time_token<T, std::string_view>(pattern, cursor)); }
+    while (cursor < pattern.size()) { tokens.push_back(?detail::next_time_token<T>(context, cursor)); }
     this.text = std::string(pattern);
     this.tokens = std::move(tokens);
     return;
@@ -93,13 +95,14 @@ export prepared_time_pattern<T> prepare_time_pattern<temporal_value T>(std::stri
 }
 
 export expected<std::string, format_error> try_runtime_format<temporal_value T>(T& value, std::string_view pattern) {
-  ?detail::validate_time_pattern<T, std::string_view>(pattern);
+  std::format_parse_context context{pattern, 0, pattern.size()};
+  ?detail::validate_time_pattern<T>(context);
   auto fields = ?detail::fields_of(value);
   mut std::string out{};
   out.reserve(pattern.size() + 32);
   mut std::size_t cursor = 0;
   while (cursor < pattern.size()) {
-    auto token = ?detail::next_time_token<T, std::string_view>(pattern, cursor);
+    auto token = ?detail::next_time_token<T>(context, cursor);
     ?detail::append_time_token(out, fields, pattern, token);
   }
   return std::move(out);

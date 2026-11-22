@@ -21,5 +21,7 @@ int main() {
   if (std::chrono::format(date, "%Y-%m-%d") != "2026-11-22") { return 10; }
   auto prepared = std::chrono::prepare_time_pattern<std::chrono::date>("%d/%m");
   if (prepared.format(date) != "22/11") { return 11; }
+  if (std::try_runtime_format("{:.3%Y}", date)) { return 12; }
+  if (std::format("{:%>12%Y-%m-%d}", date) != "%%2026-11-22") { return 13; }
   return 0;
 }

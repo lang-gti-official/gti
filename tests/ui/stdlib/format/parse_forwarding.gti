@@ -1,0 +1,21 @@
+// Checked patterns remain valid after forwarding and repeated instantiation.
+//@ run-pass
+//@ stdout: note: 4 items
+//@ stdout: note: 4-4
+//@ stdout: <  4>
+import std.format;
+import std.string;
+
+void note<std::formattable Args...>(std::format_pattern<Args...> pattern, Args&... args) {
+  std::print("note: ");
+  std::println(pattern, args...);
+}
+
+int main() {
+  int32_t count = 4;
+  note("{} items", count);
+  note("{1}-{0}", count, count);
+  std::format_pattern<int32_t> boxed = "<{:>3}>";
+  std::println(boxed, count);
+  return 0;
+}
