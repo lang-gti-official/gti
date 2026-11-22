@@ -1,0 +1,9 @@
+// std::tcp::stream is move-only.
+//@ slow
+import std.tcp;
+void copy_stream(std::tcp::stream& original) {
+  std::tcp::stream copied = original;  //~ ERROR GTI-S2003 Cannot initialize 'copied'
+}
+int main() {
+  return 0;
+}

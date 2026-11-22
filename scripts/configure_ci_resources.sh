@@ -22,9 +22,8 @@ fi
 # whole build when every processor runs one at once. When the workflow states
 # the memory one compile job needs (GTI_MEMORY_PER_JOB_MIB), the detected
 # default is capped by the memory the job can see. Explicit overrides are not
-# capped: they are the operator's statement about the runner. Detection reads
-# /proc/meminfo with shell builtins only; a host without it keeps the
-# processor count.
+# capped: they are the operator's statement about the runner. Linux reports
+# memory in KiB through procfs and macOS reports bytes through hw.memsize.
 memory_mib=""
 meminfo="${GTI_MEMINFO:-/proc/meminfo}"
 if [[ -r "${meminfo}" ]]; then
@@ -34,6 +33,11 @@ if [[ -r "${meminfo}" ]]; then
       break
     fi
   done < "${meminfo}"
+elif command -v sysctl >/dev/null 2>&1; then
+  memory_bytes="$(sysctl -n hw.memsize 2>/dev/null || true)"
+  if [[ "${memory_bytes}" =~ ^[1-9][0-9]*$ ]]; then
+    memory_mib=$(( memory_bytes / 1048576 ))
+  fi
 fi
 # The same bound applies to CTest workers when the workflow states the memory
 # one test process needs (GTI_MEMORY_PER_TEST_MIB): sanitizer-instrumented

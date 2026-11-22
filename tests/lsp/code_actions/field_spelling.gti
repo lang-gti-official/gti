@@ -1,0 +1,38 @@
+// A misspelled instance field offers a unique, accessible replacement.
+//@ code-action @field: "Replace with 'width'" => step 2
+struct Rect { int width = 4; };
+int read(Rect& r) { return r./*^field*/widht; }  //~ ERROR GTI-S2000
+// --- step 2
+struct Rect { int width = 4; };
+int read(Rect& r) { return r.width; }
+// --- step 3
+//@ code-action @field: "Replace with 'width'" => step 4
+struct Rect { mut int width = 4; };
+void write(mut Rect& r) { r./*^field*/widht = 2; }  //~ ERROR GTI-S2000
+// --- step 4
+struct Rect { mut int width = 4; };
+void write(mut Rect& r) { r.width = 2; }
+// --- step 5
+//@ no-code-action @field
+struct Color { int blue = 0; int glue = 0; };
+int read(Color& color) { return color./*^field*/clue; }  //~ ERROR GTI-S2000
+// --- step 6
+//@ no-code-action @field
+class Rect { int width = 4; };
+int read(Rect& r) { return r./*^field*/widht; }  //~ ERROR GTI-S2000
+// --- step 7
+//@ no-code-action @field
+struct Rect { int width = 4; };
+void write(mut Rect& r) { r./*^field*/widht = 2; }  //~ ERROR GTI-S2000
+// --- step 8
+//@ no-code-action @field
+struct Rect { static int width = 4; };
+int read(Rect& r) { return r./*^field*/widht; }  //~ ERROR GTI-S2000
+// --- step 9
+//@ no-code-action @field
+struct Rect { int width() { return 4; } };
+int read(Rect& r) { return r./*^field*/widht; }  //~ ERROR GTI-S2000
+// --- step 10
+//@ no-code-action @field
+struct Rect { mut int width = 4; };
+void write(Rect& r) { r./*^field*/widht = 2; }  //~ ERROR GTI-S2000

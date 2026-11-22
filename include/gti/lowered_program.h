@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_signature.h"
@@ -861,6 +862,12 @@ struct CompiledScalarBinding {
   // Exported source policy, or authenticated interface policy for an import.
   FunctionCodegenAttributes codegenAttributes;
   std::shared_ptr<const CompiledMirBody> optimizationBody;
+  bool noAmbientStorage = false;
+};
+struct CompiledModuleBinding {
+  LoweredFunctionInstanceId function = 0;
+  std::string symbol;
+  bool imported = false;
 };
 class CompiledScalarUnitBuilder;
 
@@ -878,6 +885,26 @@ public:
   [[nodiscard]] const std::vector<CompiledInterfaceUnit> &
   compiledInterfaceUnits() const {
     return compiledInterfaceUnits_;
+  }
+  [[nodiscard]] const auto &compiledModuleStorage() const {
+    return compiledModuleStorage_;
+  }
+  [[nodiscard]] const auto &compiledModuleBindings() const {
+    return compiledModuleBindings_;
+  }
+  [[nodiscard]] const CompiledModuleBinding *
+  compiledModuleBinding(LoweredFunctionInstanceId id) const {
+    for (const auto &entry : compiledModuleBindings_)
+      if (entry.function == id)
+        return &entry;
+    return nullptr;
+  }
+  [[nodiscard]] bool compiledModuleProducer() const {
+    return !compiledModuleBindings_.empty() &&
+           !compiledModuleBindings_.front().imported;
+  }
+  [[nodiscard]] bool compiledNativeProducer() const {
+    return compiledScalarProducer() || compiledModuleProducer();
   }
   [[nodiscard]] bool compiledScalarProducer() const {
     return compiledScalarProducer_;
@@ -971,6 +998,8 @@ public:
 
 private:
   LoweredProgram() = default;
+  std::map<SymbolId, std::string> compiledModuleStorage_;
+  std::vector<CompiledModuleBinding> compiledModuleBindings_;
   bool compiledScalarProducer_ = false;
   std::vector<CompiledScalarBinding> compiledScalarBindings_;
   std::vector<CompiledInterfaceUnit> compiledInterfaceUnits_;

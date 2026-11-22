@@ -1,5 +1,5 @@
-// Reference payloads: rejected with GTI-S2003.
-//@ analyze-fail
+// Reference payloads: whole-value replacement of an enum whose payload is a
+// shared-reference class carrier is accepted (RFC 0003 shared borrowed storage).
 class carrier {
   int32_t& source;
 public:
@@ -12,6 +12,6 @@ int main() {
   carrier value = carrier(backing);
   mut holder first = holder::one(value);
   holder second = holder::one(value);
-  first = second;  //~ ERROR GTI-S2003
+  first = second;
   return 0;
 }

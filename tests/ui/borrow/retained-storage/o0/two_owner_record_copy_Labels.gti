@@ -1,0 +1,15 @@
+// Borrowed storage: two owner record copy Labels.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+struct Labels<lifetime a, lifetime b> {
+  std::string_view<a> first; std::string_view<b> second;
+  Labels(std::string_view<a> x, std::string_view<b> y):first(x),second(y){}
+};
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  Labels labels{first.view(),second.view()};
+  Labels transferred = labels;
+  return transferred.first == "first" && transferred.second == "second" ? 0 : 1;
+}

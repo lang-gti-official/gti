@@ -1,4 +1,5 @@
-// Native identity: rejected with GTI-S2045.
+// Native identity: a returned class borrowing a local is rejected by the MIR
+// borrow checker (RFC 0004).
 class Holder {
   int32_t& value;
 public:
@@ -6,6 +7,6 @@ public:
 };
 Holder build(int32_t&) {
   int32_t local = 2;
-  return Holder(local);  //~ ERROR GTI-S2045
+  return Holder(local);  //~ ERROR GTI-S2017 depends on storage the function owns
 }
 int main() { return 0; }

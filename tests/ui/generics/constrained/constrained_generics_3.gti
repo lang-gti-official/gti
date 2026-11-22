@@ -90,7 +90,7 @@ int use() {
   DeletedCopy invalid_construction = needs_copy_construction(DeletedCopy());  //~ ERROR GTI-S2029 std::copy_constructible
   mut int copy_source = 1;
   CopyConstructOnly copy_only = CopyConstructOnly(copy_source);
-  CopyConstructOnly invalid_copy = needs_copy(std::move(copy_only));  //~ ERROR GTI-S2029 std::copyable
+  DeletedCopy invalid_copy = needs_copy(DeletedCopy());  //~ ERROR GTI-S2029 std::copyable
   DeletedMove invalid_move = needs_move(DeletedMove());  //~ ERROR GTI-S2029 std::movable //~ ERROR GTI-D0002
   NoDefault invalid_default = needs_default<NoDefault>();
   return 0;

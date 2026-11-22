@@ -733,6 +733,14 @@ the lifecycle and concurrency concepts. `std::layout_queryable` and
 `std::storage_element` compose object-layout and borrow-free facts. Their
 former private concept binding labels are removed; actual reflection access,
 native atomic operations and object lifetimes remain compiler-checked.
+Borrow-free `std::storage_element` and `std::relocatable` remain separate from
+owner-aware container admission. `std::vector_element` also permits movable
+borrowed payloads with object layout, but concrete typed-storage operations
+independently require supported shared dependencies, storage witnesses and
+failure-free generated relocation. A broad source constraint is not proof that
+an arbitrary borrowed type can use every vector operation; for example,
+consuming `into_range()` retains its `std::relocatable<T>` requirement.
+
 Arithmetic domain concepts use source requirements for the actual operations.
 Their `[[unsatisfied(...)]]` explanations also live in source, so constraint
 diagnostics retain useful guidance without recognizing those concept names.

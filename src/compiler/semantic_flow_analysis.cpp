@@ -3528,6 +3528,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             uniqueOwnerAccessDetail());
           break;
         case IntrinsicKind::ObjectConstruct:
+        case IntrinsicKind::ObjectConstructOwned:
           // Raw validity is the unsafe caller's obligation. Only the selected
           // GTI constructor may fail; there is no allocation or slot preflight.
           if (selectedConstructor())
@@ -3572,6 +3573,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::ObjectTake:
+        case IntrinsicKind::ObjectInitializeOwned:
+        case IntrinsicKind::ObjectRelocateOwned:
         case IntrinsicKind::SyntaxSize:
         case IntrinsicKind::SyntaxText:
         case IntrinsicKind::SyntaxKind:
@@ -3669,6 +3672,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::EnumUnderlyingValue:
         case IntrinsicKind::ObjectSize:
         case IntrinsicKind::ObjectAlignment:
+        case IntrinsicKind::ObjectBorrowOwned:
+        case IntrinsicKind::ObjectBorrowOwnedMut:
         case IntrinsicKind::RawBorrow:
         case IntrinsicKind::RawBorrowMut:
         case IntrinsicKind::UniqueOwnerUpcast:
@@ -6731,12 +6736,15 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
 
 // A spelling repair is advisory: ordinary lookup still fails and the program
 // stays invalid until the user chooses an edit. Do not instantiate candidates.
-auto SemanticVisitor::Impl::suggestVisibleLocalName(
-    const Token &name, Diagnostic &diagnostic) const -> void {
+namespace {
+template <class Scopes, class VisibleDeclaration>
+void suggestClosestSpelling(const Token &name, const Scopes &scopes,
+                            VisibleDeclaration visibleDeclaration,
+                            Diagnostic &diagnostic, std::string_view note) {
   constexpr std::size_t maximumLength = 64;
   constexpr std::size_t maximumBindings = 512;
-  if (name.generated || macroContext(name) != nullptr ||
-      name.lexeme.size() < 3 || name.lexeme.size() > maximumLength)
+  if (name.generated || name.completion || name.lexeme.size() < 3 ||
+      name.lexeme.size() > maximumLength)
     return;
   const std::size_t threshold = name.lexeme.size() < 6 ? 1 : 2;
   const auto distance = [&](std::string_view candidate) {
@@ -6760,7 +6768,7 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
     }
     return previous[candidate.size()];
   };
-  const Symbol *best = nullptr;
+  const Token *best = nullptr;
   std::size_t bestDistance = threshold + 1;
   bool ambiguous = false;
   std::size_t visited = 0;
@@ -6770,25 +6778,16 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
       // arbitrary winner or hide an equally close spelling.
       if (++visited > maximumBindings)
         return;
-      if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
-          symbol.bindingKind != SemanticBindingKind::Parameter &&
-          symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+      if (key.size() > maximumLength ||
+          key.size() + threshold < name.lexeme.size() ||
+          name.lexeme.size() + threshold < key.size())
         continue;
-      const auto &spelling = symbol.declaration.lexeme;
-      if (symbol.declaration.generated || key != spelling ||
-          spelling.size() > maximumLength ||
-          spelling.size() + threshold < name.lexeme.size() ||
-          name.lexeme.size() + threshold < spelling.size())
+      const Token *declaration = visibleDeclaration(key, symbol);
+      if (!declaration || declaration->generated || declaration->lexeme != key)
         continue;
-      Token candidate = name;
-      candidate.lexeme = spelling;
-      // Use the actual lexical/hygienic resolver, including shadowing. Captures
-      // not admitted into this lambda's environment are never candidates.
-      if (resolve(candidate) != &symbol)
-        continue;
-      const auto score = distance(spelling);
+      const auto score = distance(key);
       if (score < bestDistance) {
-        best = &symbol;
+        best = declaration;
         bestDistance = score;
         ambiguous = false;
       } else if (score == bestDistance) {
@@ -6798,13 +6797,32 @@ auto SemanticVisitor::Impl::suggestVisibleLocalName(
   }
   if (best == nullptr || ambiguous)
     return;
-  const std::string &spelling = best->declaration.lexeme;
+  const std::string &spelling = best->lexeme;
   diagnostic.hints.push_back("Did you mean '" + spelling + "'?");
-  diagnostic.related.push_back(
-      {tokenSpan(best->declaration), "Similar visible binding declared here."});
+  diagnostic.related.push_back({tokenSpan(*best), std::string(note)});
   diagnostic.fixes.push_back({tokenSpan(name), spelling,
                               "Replace with '" + spelling + "'", false,
                               RepairApplicability::RequiresReview});
+}
+
+} // namespace
+
+auto SemanticVisitor::Impl::suggestVisibleLocalName(
+    const Token &name, Diagnostic &diagnostic) const -> void {
+  if (macroContext(name) != nullptr)
+    return;
+  suggestClosestSpelling(
+      name, scopes,
+      [&](const auto &key, const Symbol &symbol) -> const Token * {
+        if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+            symbol.bindingKind != SemanticBindingKind::Parameter &&
+            symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+          return nullptr;
+        Token candidate = name;
+        candidate.lexeme = key;
+        return resolve(candidate) == &symbol ? &symbol.declaration : nullptr;
+      },
+      diagnostic, "Similar visible binding declared here.");
 }
 
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
@@ -9107,7 +9125,8 @@ auto SemanticVisitor::Impl::findMember(const SemanticType &objectType,
 }
 
 auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
-                                          const Token &name)
+                                          const Token &name,
+                                          std::optional<AccessMode> fieldAccess)
     -> const MemberInfo * {
   const ClassInfo *owner = classInfo(objectType);
   if (owner == nullptr) {
@@ -9121,6 +9140,24 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
   if (member == nullptr) {
     report(name, "Unknown member '" + name.lexeme + "' on '" +
                      owner->name.lexeme + "'.");
+    if (fieldAccess && !owner->compilerPrivate &&
+        owner->kind != ClassKind::Union && !instanceAnalysisActive &&
+        !macroExpansionDepth && !macroContext(name)) {
+      suggestClosestSpelling(
+          name, std::span(&owner->members, 1),
+          [&](const auto &, const MemberInfo &candidate) -> const Token * {
+            const auto &symbol = candidate.symbol;
+            if (symbol.bindingKind != SemanticBindingKind::Field ||
+                symbol.staticMember || symbol.compilerPrivate ||
+                semanticModel.isCompilerPrivateType(symbol.type) ||
+                (*fieldAccess == AccessMode::Mutable && !symbol.assignable) ||
+                !canAccessMember(candidate.access, symbol.ownerClass,
+                                 objectType))
+              return nullptr;
+            return &symbol.declaration;
+          },
+          diagnostics.back(), "Similar accessible field declared here.");
+    }
     return nullptr;
   }
   if (!isCompilerTrustedRequester(name) && member->symbol.compilerPrivate) {
@@ -12404,6 +12441,8 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   // an object lifetime. A source-defined borrow-returning method is not proof
   // of purity: it may replace its allocation before returning the new object.
   switch (resolved->intrinsic) {
+  case IntrinsicKind::ObjectBorrowOwned:
+  case IntrinsicKind::ObjectBorrowOwnedMut:
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::EraseReference:
   case IntrinsicKind::EraseReferenceMut:

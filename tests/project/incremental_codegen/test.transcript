@@ -1,0 +1,19 @@
+// A changed function rebuilds its machine code, reuses other units, and matches a clean edited executable.
+$ gti run -O0 --incremental --codegen-threads 1 --verbose
+? 12
+stderr: reused 0/8 LLVM code generation units
+$ python3 edit.py edit
+$ gti run -O0 --incremental --codegen-threads 2 --verbose
+? 16
+stderr: /8 LLVM code generation units
+!stderr: reused 0/8
+!stderr: reused 8/8
+$ python3 edit.py corrupt
+$ gti run -O0 --incremental --codegen-threads 2 --verbose
+? 16
+stderr: ignored corrupt compiled GTI object
+stderr: reused 0/8 LLVM code generation units
+$ python3 edit.py save
+$ gti run -O0 --incremental --no-cache
+? 16
+$ python3 edit.py compare

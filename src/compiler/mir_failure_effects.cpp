@@ -5,6 +5,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_carrier_flow.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
@@ -2646,11 +2647,22 @@ bool MirOwnedFailureClosure::proveFunction(HirFunctionInstanceId id) {
 } // namespace
 MirDefinedFailureEffects
 deriveMirDefinedFailureEffects(const MirProgram &program) {
+  // Whole-program verification asks for the same immutable program's
+  // effects more than once; reuse them within one carrier-analysis session.
+  thread_local std::uint64_t cachedSession = 0;
+  thread_local MirDefinedFailureEffects cachedEffects;
+  const std::uint64_t session = activeMirCarrierSession(program);
+  if (session != 0 && session == cachedSession)
+    return cachedEffects;
   MirDefinedFailureEffects effects;
   effects.functions =
       deriveMirFunctionDefinedFailureEffects(program, &effects.destructors);
   effects.constructors.assign(program.constructorInstances().size(), true);
   MirOwnedFailureClosure(program, effects).derive();
+  if (session != 0) {
+    cachedSession = session;
+    cachedEffects = effects;
+  }
   return effects;
 }
 

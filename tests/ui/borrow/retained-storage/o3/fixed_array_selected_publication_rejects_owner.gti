@@ -1,0 +1,14 @@
+// Borrowed storage: fixed array selected publication rejects owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+std::string_view pick(std::string_view values[2]) { return values[0]; }
+mut std::string_view selected_global = "";
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {owner.view(), "literal"};  //~ ERROR GTI-S2017 This storage or call requires an ownerless value, but the supplied value retains an external owner.
+  selected_global = pick(values);  //~ ERROR GTI-S2017 This storage or call requires an ownerless value, but the supplied value retains an external owner.
+  return selected_global == "dynamic" ? 0 : 1;
+}

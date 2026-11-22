@@ -1,0 +1,21 @@
+// Borrowed storage: owned construction text field protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+};
+int main() {
+  mut std::string owner{"borrowed"};
+  mut std::uninitialized<Label> storage{};
+  unsafe {
+    Label* address = storage.data();
+    std::construct_owned_at<Label, std::uninitialized<Label>, std::string_view>(address, storage, owner.view());
+    owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+    auto selected = std::borrow_owned_at(address, storage);
+    return selected.text == "borrowed" ? 0 : 1;
+  }
+}

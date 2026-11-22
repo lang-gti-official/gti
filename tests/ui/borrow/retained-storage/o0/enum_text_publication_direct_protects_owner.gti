@@ -1,0 +1,17 @@
+// Borrowed storage: enum text publication direct protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+
+enum Text { empty, value(std::string_view text) };
+int main() {
+  mut std::string owner{"owned"};
+  std::string_view view = owner.view();
+  auto text = Text::value(owner.view());
+  owner.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  switch (text) {
+    case Text::value(selected): return selected == "owned" ? 0 : 1;
+    case Text::empty: return 2;
+  }
+}

@@ -1,0 +1,19 @@
+// Retaining callable escape: even a literal invocation cannot erase a retaining-input contract.
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{
+    [](mut Holder& target, std::string_view input) -> void {
+      target.put(input);  //~ ERROR GTI-S2045
+    }
+  };
+  mut Holder holder{};
+
+  store(holder, "literal");
+  return 0;
+}

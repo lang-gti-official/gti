@@ -1,0 +1,15 @@
+// Borrowed storage: borrow free consuming iteration control.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(11); values.push_back(22);
+  mut int total = 0;
+  for (int value : std::move(values).into_range()) { total += value; }
+  return total == 33 ? 0 : 1;
+}

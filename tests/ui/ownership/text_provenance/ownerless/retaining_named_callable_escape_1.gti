@@ -1,0 +1,18 @@
+// Retaining named callable escape: a named callable storing only literal text has no input-retention obligation.
+//@ check-pass
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain(mut Holder& target, std::string_view input) { target.put(input); }
+void literal(mut Holder& target, std::string_view input) { target.put("literal"); }
+
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{literal};
+  mut Holder holder{};
+  std::string owner{"short"}; store(holder, owner.view());
+  return holder.value == "literal" ? 0 : 1;
+}

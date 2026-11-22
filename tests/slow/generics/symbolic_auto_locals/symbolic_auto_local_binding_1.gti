@@ -1,0 +1,31 @@
+// Symbolic auto local binding: a constrained symbolic dereference should infer an exact auto-local type independently in each concrete generic instance.
+//@ slow
+//@ check-pass
+import std.iterator;
+import std.vector;
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() {
+  mut std::vector<int64_t> wide = std::vector<int64_t>();
+  wide.push_back(int64_t(2));
+  wide.push_back(int64_t(9));
+  mut std::vector<int32_t> narrow = std::vector<int32_t>();
+  narrow.push_back(3);
+  narrow.push_back(8);
+  bool wide_result = first_less_than_next(wide.begin(), wide.end());
+  bool narrow_result = first_less_than_next(narrow.begin(), narrow.end());
+  return wide_result && narrow_result ? 0 : 1;
+}

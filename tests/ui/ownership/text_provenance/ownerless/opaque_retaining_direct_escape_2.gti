@@ -1,0 +1,20 @@
+// Opaque retaining direct escape: an opaque direct call cannot hide its retained input lifetime.
+import std.string;
+extern "C" { void opaque_effect(); }
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain_opaque(mut Holder& target, std::string_view input) {
+  target.put(input); opaque_effect();
+}
+void copy_opaque(mut std::string& target, std::string_view input) {
+  target.append(input); opaque_effect();
+}
+
+int main() {
+  mut Holder holder{};
+  { std::string owner{"short"}; retain_opaque(holder, owner.view()); }
+  return holder.value == "short" ? 0 : 1;  //~ ERROR GTI-S2017
+}

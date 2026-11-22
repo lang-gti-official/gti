@@ -7,6 +7,17 @@
 
 namespace lang {
 namespace {
+// Inline text storage has one external dependency region shared by its
+// elements. Array nesting changes storage shape, not the signature's region.
+// This classifies capacity only; MIR must still prove each actual publication.
+bool inlineTextStorage(const SemanticType &type) {
+  if (type.kind == SemanticType::StringView ||
+      type.kind == SemanticType::CString)
+    return true;
+  return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+         inlineTextStorage(type.arguments.front());
+}
+
 // Declaration summaries reuse normal source-visible lookup without retaining
 // the caller's context. Moving the replacement before mutation makes unwind
 // restore each changed field, including nested summary requests.
@@ -935,7 +946,16 @@ auto SemanticVisitor::Impl::typeTraits(
     }
     const SemanticType fieldType =
         substituteType(member->second.symbol.type, substitution);
-    mergeTraits(typeTraits(fieldType, visiting));
+    auto fieldTraits = typeTraits(fieldType, visiting);
+    if (fieldType.kind == SemanticType::Reference &&
+        fieldType.referenceAccess == AccessMode::ReadOnly) {
+      // Whole-record replacement copies a shared reference value into the new
+      // aggregate. This does not make an individual reference field reseatable;
+      // place and lifetime checks still govern replacement of the aggregate.
+      fieldTraits.copyAssignable = true;
+      fieldTraits.moveAssignable = true;
+    }
+    mergeTraits(fieldTraits);
     // Copying a reference as an expression is distinct from duplicating a
     // stored exclusive capability. Every direct reference field participates,
     // not only the first field used by the legacy primary-dependency record.
@@ -946,6 +966,13 @@ auto SemanticVisitor::Impl::typeTraits(
   if (hasSourceDestructorBody(owner)) {
     traits.copyable = false;
     traits.copyAssignable = false;
+    // Shared-reference fields permit ordinary whole-record replacement, but
+    // a destructor that retains borrowed state owns a cleanup-bound loan.
+    // Replacement does not yet transfer that obligation to the destination;
+    // keep these carriers move-constructible, not implicitly move-assignable.
+    // Containing records inherit this restriction through their field traits.
+    if (traits.containsBorrowedState)
+      traits.moveAssignable = false;
   }
   if ((hasSourceDestructorBody(owner) || concreteBase(owner) != nullptr ||
        owner.polymorphic || owner.kind == ClassKind::Union) &&
@@ -961,8 +988,12 @@ auto SemanticVisitor::Impl::typeTraits(
     // references still carry an exclusive capability and remain move-only.
     traits.copyable = traits.copyable &&
                       owner.storedReference->access == AccessMode::ReadOnly;
-    traits.copyAssignable = false;
-    traits.moveAssignable = false;
+    traits.copyAssignable =
+        traits.copyAssignable &&
+        owner.storedReference->access == AccessMode::ReadOnly;
+    traits.moveAssignable =
+        traits.moveAssignable &&
+        owner.storedReference->access == AccessMode::ReadOnly;
     traits.containsBorrowedState = true;
   }
   if (owner.copyConstructor && owner.copyConstructor->declaration != nullptr) {
@@ -3035,6 +3066,25 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
                                        .field = field});
     for (const auto &payload : textPayloadFields(type, use.formal))
       (void)requireOwnerlessTextField(use.function, payload);
+    // In a generic class a field typed by a class parameter may be text in
+    // an instance (`T elements[N]` of `array<std::string_view, N>`). Require
+    // it here; each instance keeps only the fields that are text there.
+    if (const ClassInfo *owner = classInfo(type);
+        owner != nullptr && !owner->genericParameters.empty())
+      for (const FieldInfo &entry : owner->fields) {
+        if (entry.declaration == nullptr)
+          continue;
+        const auto member =
+            owner->members.find(entry.declaration->name().lexeme);
+        if (member == owner->members.end() ||
+            !containsOpenTypeParameter(member->second.symbol.type))
+          continue;
+        (void)requireOwnerlessTextField(
+            use.function,
+            {.receiver = use.formal.receiver,
+             .parameter = use.formal.parameter,
+             .field = symbolForDeclaration(member->second.symbol.declaration)});
+      }
   }
   // Finite monotone closure over exact (formal, field) pairs.
   bool changed = true;
@@ -3163,9 +3213,16 @@ auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
           return false;
         const auto fieldType =
             substituteType(member->second.symbol.type, classSubstitution(type));
-        return fieldType.kind == SemanticType::StringView ||
-               fieldType.kind == SemanticType::CString ||
-               (conditional && fieldType.kind == SemanticType::TypeParameter);
+        const SemanticType *element = &fieldType;
+        while (element->kind == SemanticType::Array &&
+               element->arguments.size() == 1)
+          element = &element->arguments.front();
+        // An inline array owns its view objects, but each element can retain
+        // external text. A field contract conservatively covers all elements;
+        // it does not assert that their external owners are the array itself.
+        return element->kind == SemanticType::StringView ||
+               element->kind == SemanticType::CString ||
+               (conditional && element->kind == SemanticType::TypeParameter);
       });
 }
 
@@ -3620,7 +3677,19 @@ auto SemanticVisitor::Impl::removeCapturedTextCarrier(const Symbol &carrier)
 auto SemanticVisitor::Impl::ownerlessTextForwardingParameter(
     const ExprPtr &expression) const -> std::optional<std::size_t> {
   const auto *function = currentFunctionInfo();
-  const auto *variable = directCallableParameterVariable(expression);
+  // Publishing an inline-array element imposes an obligation on the
+  // array's contents, just as publishing a scalar imposes one on that
+  // formal. An index selects storage; it does not make the text ownerless.
+  const ExprPtr *root = &expression;
+  for (;;) {
+    if (const auto *group = exprAs<Grouping>(root->get()))
+      root = &group->expression();
+    else if (const auto *index = exprAs<Index>(root->get()))
+      root = &index->object();
+    else
+      break;
+  }
+  const auto *variable = directCallableParameterVariable(*root);
   const auto *symbol = variable ? resolve(variable->name()) : nullptr;
   if (!function || !function->bodyDeclaration() || !symbol ||
       !symbol->parameterDeclaration)
@@ -3635,13 +3704,31 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingParameter(
         parameters[index].mutability == Mutability::Mutable ||
         index >= function->parameterTypes.size())
       return std::nullopt;
-    const auto kind = function->parameterTypes[index].kind;
-    if (kind != SemanticType::StringView && kind != SemanticType::CString &&
-        kind != SemanticType::TypeParameter)
+    const auto &type = function->parameterTypes[index];
+    if (!inlineTextStorage(type) && type.kind != SemanticType::TypeParameter)
       return std::nullopt;
     return index;
   }
   return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::hasMirRetainingReceiver(
+    const SemanticPlace &place) const -> bool {
+  const auto *function = currentFunctionInfo();
+  // Source methods can export independently checked retaining-write effects.
+  // This defers a storage obligation to MIR; it does not prove the source
+  // value lives long enough or authorize raw/indirect storage.
+  return function && function->bodyDeclaration() &&
+         function->linkage == LanguageLinkage::Gti &&
+         !function->virtualMethod && !function->overrideMethod &&
+         place.receiver && !place.projections.empty() &&
+         std::all_of(
+             place.projections.begin(), place.projections.end(),
+             [](const auto &projection) {
+               return projection.kind == PlaceProjectionKind::Field ||
+                      projection.kind == PlaceProjectionKind::ConstantIndex ||
+                      projection.kind == PlaceProjectionKind::DynamicIndex;
+             });
 }
 
 auto SemanticVisitor::Impl::requireOwnerlessTextParameter(
@@ -3861,13 +3948,6 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
             });
         if (!whole)
           continue;
-        if (!published.empty()) {
-          report(expressionToken(*argument),
-                 "A value can hold dynamic text from one owner; this argument "
-                 "would add a second owner dependency.",
-                 "GTI-S2045");
-          break;
-        }
         std::vector<SymbolId> path{entry.field};
         path.insert(path.end(), paths.front().begin(), paths.front().end());
         published.push_back({.resultFields = std::move(path),
@@ -3919,14 +3999,6 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
       if (textFieldOwnerDependency(*argument, entry.field).empty()) {
         reportOwnerDependentTextStorage(
             *argument, "passed to a function that returns it in a field");
-        break;
-      }
-      if (!published.empty()) {
-        // Phase 1 of L-OWN-02 publishes one owner per value.
-        report(expressionToken(*argument),
-               "A value can hold dynamic text from one owner; this argument "
-               "would add a second owner dependency.",
-               "GTI-S2045");
         break;
       }
       published.push_back({.resultFields = {entry.field},
@@ -4196,73 +4268,137 @@ auto SemanticVisitor::Impl::reportCapturedTextReturn(const Expr &value)
 
 auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
     const SemanticType &type) const -> bool {
+  // Text fields can carry value-specific external dependencies without a
+  // static containsBorrowedState trait. Discover their structural capacity
+  // independently of the publication policy (which also restricts source
+  // constructors/destructors), before asking whether cleanup observes them.
+  std::vector<SemanticType> capacityVisiting;
+  std::vector<std::pair<SemanticType, bool>> capacityResults;
+  const auto mayCarry = [&](const auto &self,
+                            const SemanticType &current) -> bool {
+    const auto cached =
+        std::find_if(capacityResults.begin(), capacityResults.end(),
+                     [&](const auto &entry) { return entry.first == current; });
+    if (cached != capacityResults.end())
+      return cached->second;
+    // Substituting a recursive generic field can grow its type at every
+    // step without ever repeating an exact type. Reuse the same structural
+    // termination rule as cleanup and capability queries.
+    if (nonDecreasingNominalRecurrence(current, capacityVisiting))
+      return true;
+    if (typeTraits(current).containsBorrowedState ||
+        current.kind == SemanticType::StringView ||
+        current.kind == SemanticType::CString)
+      return true;
+    capacityVisiting.push_back(current);
+    bool carries = false;
+    if (current.kind == SemanticType::Array && current.arguments.size() == 1) {
+      carries = self(self, current.arguments.front());
+    } else if (current.kind == SemanticType::Lambda &&
+               current.hasLambdaShape()) {
+      for (const auto &capture : current.lambdaCaptureTypes())
+        carries = carries || self(self, capture);
+    } else if (current.kind == SemanticType::Enum) {
+      if (const auto enumeration = enumTypeFor(current);
+          enumeration && enumeration->payload)
+        for (const auto &variant : enumeration->enumerators)
+          for (const auto &field : variant.payloadTypes)
+            carries = carries || self(self, field);
+    } else if (const auto *owner = classInfo(current)) {
+      const auto substitution = classSubstitution(current);
+      for (const auto &base : owner->bases)
+        carries =
+            carries || (!base.interface &&
+                        self(self, substituteType(base.type, substitution)));
+      for (const auto &field : owner->fields) {
+        if (!field.declaration)
+          continue;
+        const auto member =
+            owner->members.find(field.declaration->name().lexeme);
+        carries = carries || member == owner->members.end() ||
+                  self(self, substituteType(member->second.symbol.type,
+                                            substitution));
+      }
+    }
+    capacityVisiting.pop_back();
+    capacityResults.emplace_back(current, carries);
+    return carries;
+  };
   std::vector<SemanticType> visiting;
+  std::vector<std::pair<SemanticType, bool>> lifecycleResults;
   const auto visit = [&](const auto &self,
                          const SemanticType &current) -> bool {
-    if (!typeTraits(current).containsBorrowedState ||
-        !requiresActiveCleanupFor(current))
-      return false;
-    if (current.kind == SemanticType::Enum) {
-      const auto enumeration = enumTypeFor(current);
-      if (!enumeration || !enumeration->payload ||
-          std::find(visiting.begin(), visiting.end(), current) !=
-              visiting.end())
-        return true;
-      visiting.push_back(current);
-      bool bound = false;
-      for (const auto &variant : enumeration->enumerators)
-        for (const auto &field : variant.payloadTypes)
-          bound =
-              bound || field.kind == SemanticType::Unknown || self(self, field);
-      visiting.pop_back();
-      return bound;
-    }
-    // A closure environment is an aggregate of its captures with no source
-    // destructor: generated cleanup destroys each owned capture in order and
-    // never reads a borrowing capture. Only a capture that is itself bound
-    // keeps the environment bound.
-    if (current.kind == SemanticType::Lambda) {
-      if (!current.hasLambdaShape() ||
-          std::find(visiting.begin(), visiting.end(), current) !=
-              visiting.end())
-        return true;
-      visiting.push_back(current);
-      bool bound = false;
-      for (const auto &capture : current.lambdaCaptureTypes())
-        bound = bound || capture.kind == SemanticType::Unknown ||
-                self(self, capture);
-      visiting.pop_back();
-      return bound;
-    }
-    const auto *owner = classInfo(current);
-    // Unknown/recursive cleanup is conservative. Compiler-bound resources and
-    // source destructors may use or release a declared dependency. Generated
-    // destruction of an unrelated owned field does neither.
-    if (owner == nullptr ||
-        std::find(visiting.begin(), visiting.end(), current) !=
-            visiting.end() ||
-        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-        isDefaultLibraryMutexGuardCarrier(*owner) ||
-        hasSourceDestructorBody(*owner))
-      return true;
-    visiting.push_back(current);
-    const auto substitution = classSubstitution(current);
-    bool bound = false;
-    for (const auto &base : owner->bases)
-      bound = bound || (!base.interface &&
-                        self(self, substituteType(base.type, substitution)));
-    for (const auto &field : owner->fields) {
-      if (field.declaration == nullptr)
-        continue;
-      const auto member = owner->members.find(field.declaration->name().lexeme);
-      if (member == owner->members.end()) {
-        bound = true;
-        continue;
+    const auto cached =
+        std::find_if(lifecycleResults.begin(), lifecycleResults.end(),
+                     [&](const auto &entry) { return entry.first == current; });
+    if (cached != lifecycleResults.end())
+      return cached->second;
+    const auto calculate = [&]() -> bool {
+      if (!mayCarry(mayCarry, current) || !requiresActiveCleanupFor(current))
+        return false;
+      if (current.kind == SemanticType::Enum) {
+        const auto enumeration = enumTypeFor(current);
+        if (!enumeration || !enumeration->payload ||
+            nonDecreasingNominalRecurrence(current, visiting))
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &variant : enumeration->enumerators)
+          for (const auto &field : variant.payloadTypes)
+            bound = bound || field.kind == SemanticType::Unknown ||
+                    self(self, field);
+        visiting.pop_back();
+        return bound;
       }
-      bound = bound || self(self, substituteType(member->second.symbol.type,
-                                                 substitution));
-    }
-    visiting.pop_back();
+      // A closure environment is an aggregate of its captures with no source
+      // destructor: generated cleanup destroys each owned capture in order and
+      // never reads a borrowing capture. Only a capture that is itself bound
+      // keeps the environment bound.
+      if (current.kind == SemanticType::Lambda) {
+        if (!current.hasLambdaShape() ||
+            nonDecreasingNominalRecurrence(current, visiting))
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &capture : current.lambdaCaptureTypes())
+          bound = bound || capture.kind == SemanticType::Unknown ||
+                  self(self, capture);
+        visiting.pop_back();
+        return bound;
+      }
+      const auto *owner = classInfo(current);
+      // Unknown/recursive cleanup is conservative. Compiler-bound resources and
+      // source destructors may use or release a declared dependency. Generated
+      // destruction of an unrelated owned field does neither.
+      if (owner == nullptr ||
+          nonDecreasingNominalRecurrence(current, visiting) ||
+          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+          isDefaultLibraryMutexGuardCarrier(*owner) ||
+          hasSourceDestructorBody(*owner))
+        return true;
+      visiting.push_back(current);
+      const auto substitution = classSubstitution(current);
+      bool bound = false;
+      for (const auto &base : owner->bases)
+        bound = bound || (!base.interface &&
+                          self(self, substituteType(base.type, substitution)));
+      for (const auto &field : owner->fields) {
+        if (field.declaration == nullptr)
+          continue;
+        const auto member =
+            owner->members.find(field.declaration->name().lexeme);
+        if (member == owner->members.end()) {
+          bound = true;
+          continue;
+        }
+        bound = bound || self(self, substituteType(member->second.symbol.type,
+                                                   substitution));
+      }
+      visiting.pop_back();
+      return bound;
+    };
+    const bool bound = calculate();
+    lifecycleResults.emplace_back(current, bound);
     return bound;
   };
   return visit(visit, type);
@@ -4339,13 +4475,6 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
   if (source == dependencies.end() || owner == nullptr ||
       member == owner->members.end())
     return;
-  if (!textOrigins.empty()) {
-    report(expressionToken(argument),
-           "A value can hold dynamic text from one owner; this argument would "
-           "add a second owner dependency.",
-           "GTI-S2045");
-    return;
-  }
   std::vector<SymbolId> path{toolingSymbolFor(member->second.symbol)};
   if (input.payload != 0)
     path.push_back(input.payload);
@@ -7072,6 +7201,20 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
       return contract;
     case ExplicitLifetimeResult::Kind::Region:
+      const bool arrayInput =
+          std::any_of(parameterTypes.begin(), parameterTypes.end(),
+                      [](const SemanticType &parameter) {
+                        const auto &value =
+                            parameter.kind == SemanticType::Reference &&
+                                    parameter.arguments.size() == 1
+                                ? parameter.arguments.front()
+                                : parameter;
+                        return value.kind == SemanticType::Array &&
+                               inlineTextStorage(value);
+                      });
+      const bool inlineTextResult =
+          inlineTextStorage(returnType) &&
+          (returnType.kind == SemanticType::Array || arrayInput);
       // A region written on a supplier this instance makes owned supplies
       // nothing, and a mutable result needs a supplier that can grant
       // mutable access. Over a pack this selects its borrowing elements.
@@ -7096,7 +7239,8 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
                                AccessMode::Mutable;
                   });
           const bool borrows = type.kind == SemanticType::Reference ||
-                               (inventory && !inventory->empty());
+                               (inventory && !inventory->empty()) ||
+                               (inlineTextResult && inlineTextStorage(type));
           // A carrier result keeps every borrowing supplier, each at its own
           // access; only a mutable reference result needs a mutable one.
           if (borrows &&
@@ -7116,7 +7260,8 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         if (ownerClass != 0 && !staticMember) {
           contract.origin = BorrowOriginKind::Receiver;
           if (!lifetime.parameters.empty() &&
-              (reference || isBorrowReturningType(returnType)))
+              (reference || isBorrowReturningType(returnType) ||
+               inlineTextResult))
             contract.parameters = regionSuppliers();
         }
         return contract;
@@ -7127,7 +7272,7 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       }
       // A region on a result this instance makes owned
       // (neither a reference nor a conditional borrow carrier) is inert.
-      if (!reference && !isBorrowReturningType(returnType))
+      if (!reference && !isBorrowReturningType(returnType) && !inlineTextResult)
         return contract;
       {
         std::vector<std::size_t> suppliers = regionSuppliers();
@@ -7712,6 +7857,16 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_destroy") {
       return IntrinsicKind::ObjectDestroy;
     }
+    if (name == "object_initialize_owned")
+      return IntrinsicKind::ObjectInitializeOwned;
+    if (name == "object_relocate_owned")
+      return IntrinsicKind::ObjectRelocateOwned;
+    if (name == "object_borrow_owned_mut")
+      return IntrinsicKind::ObjectBorrowOwnedMut;
+    if (name == "object_borrow_owned")
+      return IntrinsicKind::ObjectBorrowOwned;
+    if (name == "object_construct_owned")
+      return IntrinsicKind::ObjectConstructOwned;
     if (name == "object_construct") {
       return IntrinsicKind::ObjectConstruct;
     }
@@ -13821,6 +13976,140 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+      intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
+    const bool mutableBorrow = intrinsic == IntrinsicKind::ObjectBorrowOwnedMut;
+    const auto access =
+        mutableBorrow ? AccessMode::Mutable : AccessMode::ReadOnly;
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    requireUnsafe(expr, UnsafeOperationKind::RawDereference, expr.paren(),
+                  "Reading owner-tracked raw storage");
+    const ExpressionInfo *owner =
+        arguments.size() == 2
+            ? semanticModel.findExpression(*expr.arguments()[1])
+            : nullptr;
+    if (arguments.size() != 2 || !expr.typeArguments().empty() ||
+        arguments[0].kind != SemanticType::RawPointer ||
+        arguments[0].arguments.size() != 1 || !owner ||
+        owner->category != ValueCategory::Place ||
+        (mutableBorrow &&
+         (owner->access != AccessMode::Mutable ||
+          arguments[0].pointerAccess != AccessMode::Mutable)) ||
+        (!containsOpenTypeParameter(arguments[0].arguments.front()) &&
+         !runtimeObjectLayoutType(arguments[0].arguments.front()))) {
+      report(expr.paren(),
+             "Owner-tracked access requires a typed pointer "
+             "to a complete object and a checked owner place.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto element = arguments[0].arguments.front();
+    const auto ownerType = arguments[1];
+    arguments[1] = SemanticType::referenceTo(ownerType, access);
+    const auto reference = SemanticType::referenceTo(element, access);
+    validateReferenceReferent(reference, expr.paren());
+    validateReferenceBinding(arguments[1], ownerType, expr.arguments()[1]);
+    currentType = element;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = reference,
+                               .parameterTypes = std::move(arguments),
+                               .typeArguments = {element, ownerType},
+                               .intrinsic = intrinsic,
+                               .borrowOrigin = BorrowOriginKind::Argument,
+                               .borrowArgument = 1,
+                               .borrowAccess = access});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ObjectRelocateOwned) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  "Relocating owner-tracked raw storage");
+    const auto mutableOwner = [&](std::size_t index) {
+      const auto *owner =
+          semanticModel.findExpression(*expr.arguments()[index]);
+      return owner && owner->category == ValueCategory::Place &&
+             owner->access == AccessMode::Mutable;
+    };
+    if (arguments.size() != 4 || !expr.typeArguments().empty() ||
+        arguments[0].kind != SemanticType::RawPointer ||
+        arguments[0].pointerAccess != AccessMode::Mutable ||
+        arguments[0].arguments.size() != 1 || arguments[2] != arguments[0] ||
+        !mutableOwner(1) || !mutableOwner(3)) {
+      report(expr.paren(),
+             "Owner-tracked relocation requires matching writable "
+             "object pointers and two mutable storage owners.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto element = arguments[0].arguments.front();
+    if (!containsOpenTypeParameter(element) &&
+        (!runtimeObjectLayoutType(element) || !typeTraits(element).movable)) {
+      report(expr.paren(),
+             "Owner-tracked relocation requires a complete movable object.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto destinationOwner = arguments[1];
+    const auto sourceOwner = arguments[3];
+    arguments[1] =
+        SemanticType::referenceTo(destinationOwner, AccessMode::Mutable);
+    arguments[3] = SemanticType::referenceTo(sourceOwner, AccessMode::Mutable);
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{
+                  .returnType = currentType,
+                  .parameterTypes = std::move(arguments),
+                  .typeArguments = {element, destinationOwner, sourceOwner},
+                  .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ObjectInitializeOwned) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  "Initializing owner-tracked raw storage");
+    const ExpressionInfo *owner =
+        arguments.size() == 3
+            ? semanticModel.findExpression(*expr.arguments()[1])
+            : nullptr;
+    const bool shape = arguments.size() == 3 && expr.typeArguments().empty() &&
+                       arguments[0] == SemanticType::rawPointerTo(
+                                           arguments[2], AccessMode::Mutable) &&
+                       owner && owner->category == ValueCategory::Place &&
+                       owner->access == AccessMode::Mutable;
+    if (!shape || (!containsOpenTypeParameter(arguments[2]) &&
+                   (!runtimeObjectLayoutType(arguments[2]) ||
+                    !typeTraits(arguments[2]).movable))) {
+      report(expr.paren(),
+             "Owner-tracked initialization requires a writable "
+             "pointer, a mutable owner place and an exact completed movable "
+             "value.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto element = arguments[2];
+    const auto ownerType = arguments[1];
+    arguments[1] = SemanticType::referenceTo(ownerType, AccessMode::Mutable);
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .typeArguments = {element, ownerType},
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ObjectTake) {
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())
@@ -13914,8 +14203,12 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     return;
   }
   if (intrinsic == IntrinsicKind::ObjectDestroy ||
-      intrinsic == IntrinsicKind::ObjectConstruct) {
-    const bool construction = intrinsic == IntrinsicKind::ObjectConstruct;
+      intrinsic == IntrinsicKind::ObjectConstruct ||
+      intrinsic == IntrinsicKind::ObjectConstructOwned) {
+    const bool ownedConstruction =
+        intrinsic == IntrinsicKind::ObjectConstructOwned;
+    const bool construction = intrinsic != IntrinsicKind::ObjectDestroy;
+    const std::size_t argumentOffset = ownedConstruction ? 2 : 1;
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())
       arguments.push_back(analyze(argument));
@@ -13924,7 +14217,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
                   construction ? "Constructing a raw object"
                                : "Ending a raw object's lifetime");
-    if (arguments.empty() || (!construction && arguments.size() != 1) ||
+    if (arguments.size() < argumentOffset ||
+        (!construction && arguments.size() != 1) ||
         !expr.typeArguments().empty() ||
         arguments.front().kind != SemanticType::RawPointer ||
         arguments.front().pointerAccess != AccessMode::Mutable ||
@@ -13943,9 +14237,23 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       currentType = SemanticType::Unknown;
       return;
     }
+    if (ownedConstruction) {
+      const auto *owner = semanticModel.findExpression(*expr.arguments()[1]);
+      if (!owner || owner->category != ValueCategory::Place ||
+          owner->access != AccessMode::Mutable ||
+          (!containsOpenTypeParameter(arguments[1]) &&
+           !runtimeObjectLayoutType(arguments[1]))) {
+        report(expr.paren(),
+               "Owner-tracked construction requires a mutable "
+               "complete destination owner place.",
+               "GTI-S2019");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     const SemanticType element = arguments.front().arguments.front();
     if (construction) {
-      if (!containsOpenTypeParameter(element) &&
+      if (!ownedConstruction && !containsOpenTypeParameter(element) &&
           typeTraits(element).containsBorrowedState) {
         report(expr.paren(),
                "Raw construction cannot store checked borrowed state without "
@@ -13954,9 +14262,10 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
         currentType = SemanticType::Unknown;
         return;
       }
-      if (element.kind == SemanticType::StringView ||
-          element.kind == SemanticType::CString) {
-        for (std::size_t index = 1; index < expr.arguments().size(); ++index) {
+      if (!ownedConstruction && (element.kind == SemanticType::StringView ||
+                                 element.kind == SemanticType::CString)) {
+        for (std::size_t index = argumentOffset;
+             index < expr.arguments().size(); ++index) {
           if (isOwnerDependentTextExpression(expr.arguments()[index])) {
             reportOwnerDependentTextStorage(expr.arguments()[index],
                                             "nested in raw storage");
@@ -13969,7 +14278,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       }
       std::vector<AnalyzedCallArgument> constructorArguments;
       bool concrete = true;
-      for (std::size_t index = 1; index < arguments.size(); ++index) {
+      for (std::size_t index = argumentOffset; index < arguments.size();
+           ++index) {
         if (!appendConcreteCallArgument(arguments[index],
                                         expr.arguments()[index],
                                         constructorArguments)) {
@@ -13981,17 +14291,26 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
         if (element.kind == SemanticType::Class)
           analyzeConstructorCallArguments(
               expr, element.classId, element.arguments, element.valueArguments,
-              constructorArguments, expr.paren());
+              constructorArguments, expr.paren(), false, false, nullptr, false,
+              ownedConstruction);
         else if (!containsOpenTypeParameter(element))
           validateStorageValueConstruction(expr, element, constructorArguments);
       }
-      preserveStorageConstructorParameters(semanticModel, expr, 1, arguments);
+      preserveStorageConstructorParameters(semanticModel, expr, argumentOffset,
+                                           arguments);
+    }
+    std::vector<SemanticType> typeArguments{element};
+    if (ownedConstruction) {
+      typeArguments.push_back(arguments[1]);
+      arguments[1] =
+          SemanticType::referenceTo(arguments[1], AccessMode::Mutable);
     }
     currentType = SemanticType::Void;
-    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
-                                                .parameterTypes = arguments,
-                                                .typeArguments = {element},
-                                                .intrinsic = intrinsic});
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = arguments,
+                               .typeArguments = std::move(typeArguments),
+                               .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

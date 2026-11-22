@@ -1,0 +1,14 @@
+// Borrowed storage: branch first dependency both arms.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+int check(bool choose) {
+  std::string owner{"borrowed"}; auto source = owner.view();
+  mut std::string_view view = "";
+  if (choose) { view = source; } else { view = source; }
+  return view == "borrowed" ? 0 : 1;
+}
+int main() { return check(true) + check(false); }

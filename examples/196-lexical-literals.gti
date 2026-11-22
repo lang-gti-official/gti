@@ -5,8 +5,6 @@
 // context, and a value out of range for it is a compile error, not a
 // truncation. Raw strings, R"delim(...)delim", keep their text verbatim, so a
 // regular expression or a JSON document needs no escaping.
-import std.json;
-import std.regex;
 import std.string;
 
 // Separators group digits in any base; they have no meaning.
@@ -59,8 +57,7 @@ int main() {
   }
 
   // A regular expression without doubled backslashes.
-  std::regex time = std::regex(time_pattern);
-  std::println(time.replace("09:14 and 17:05", "$1h$2"));
+  std::println(time_pattern);
   std::println(quoted);
 
   // A JSON document, quotes and all, spanning several lines.
@@ -68,13 +65,6 @@ int main() {
   "name": "sensor \"A\"",
   "ports": [80, 443]
 })json";
-  auto decoded = std::json::decode<std::json::value>(document);
-  if (!decoded) {
-    std::println(decoded.error().description());
-    return 1;
-  }
-  std::println(decoded.value().at("name").as_string().view());
-  std::println(std::to_string(
-      decoded.value().at("ports").as_array().size()));
+  std::println(document);
   return 0;
 }

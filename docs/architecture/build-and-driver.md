@@ -926,6 +926,20 @@ and the default unit count is 1. The default worker limit is the smaller of
 the unit count and available hardware threads. `gti build --all` caps each
 child's workers by the hardware budget divided by concurrent target builds.
 
+For hosted project executables, `gti build --incremental` and
+`gti run --incremental` select eight code-generation units. An explicit
+`--codegen-units N` selects the partition count. Eligible cached builds with
+more than one unit store each native object under `build/gti/cache/codegen-unit-v1`.
+On a source edit the compiler checks and optimizes the current whole program
+and partitions it again. Each worker hashes the final LLVM bitcode it will
+compile, after resolving cross-unit linkage, together with the compiler and
+target policy identity. An identical unit reuses its checksummed object.
+Changed instructions, inlined callees, data layouts and referenced declarations
+participate through the actual bitcode. The ordered objects are linked afresh.
+Verbose output counts the units reused. An unchanged target can still hit
+the whole-target cache first. `--no-cache --incremental` produces a clean
+build with the same partitioning and bypasses both caches.
+
 The unit count and partitioner version enter the executable cache identity.
 Worker count changes scheduling only. LLVM IR output remains the optimized
 whole-program module. Compiled-scalar and embedding libraries and instrumented
@@ -1096,9 +1110,12 @@ continue
 
 For a standalone program, `gti main.gti -g -O0 -o app` followed by `lldb ./app`
 uses the same path. No generated C++ file needs to remain beside the binary.
-The C++ backend's [source debug contract](backend.md#opt-in-source-debug-locations)
-describes the first-phase limits: statement lines work, but GTI variable names,
-rich types, and expression evaluation are not yet provided.
+LLVM debug builds expose source function names and supported parameters and
+locals to the native debugger. Variable availability depends on the current
+instruction and the compiler's verified locations. When a GTI callee uses a
+hidden result destination, inspect the destination in the caller after the
+assignment completes. See the [LLVM debugger contract](backend.md#llvm-target-layout-and-execution-abi)
+for optimized-code and debugger compatibility limits.
 
 The immutable compilation and native requests carry the debug policy; the
 native command adds `-g` after forwarded arguments. On ELF toolchains symbols
@@ -3155,6 +3172,28 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
 dependency-owned records and enums through multiple compiled libraries.
 
+A library target can also select concrete methods or functions with owning
+GTI types by qualified name in `functions`. For this profile the bundle pairs
+the root module recipe with a target-specific object. For example, selecting
+`Meter::take` compiles the matching concrete overloads, their receivers,
+and the private helpers they call. Callers can receive an `expected<T, E>`
+and own, move or destroy its active alternative using the usual GTI rules.
+
+Consumers import the recipe and check source visibility, overload selection,
+borrows, layout, cleanup and defined failure before binding verified calls to
+the native definitions. Unselected bodies remain available for specialization
+and inlining. The callable identity covers the module, exact declaration offset,
+failure ABI and dependencies. Passive library storage referenced on both sides
+has one linker identity. Active global initialization and TLS require additional
+lifecycle support. Native closures that take function addresses, create native
+callback adapters or perform virtual dispatch require shared code identity and
+are rejected. The profile accepts standard-library dependencies with an
+exact source digest, including the paths, call sites and content of embedded
+files. Native code and imported bodies identify the immutable backing array by
+its defining module and embed site. A mismatched dependency prevents admission.
+A project recipe is checked as ordinary project input. Installed recipes use the
+toolchain's existing authenticated library catalog.
+
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects either
 explicitly selected root-module functions or the public declarations of the
 root and its re-exported modules, including their exported overloads. Names may be
@@ -3225,6 +3264,15 @@ declaration closure. Development codec entry points expose the same canonical
 validation used by the importer. Unknown profiles, malformed/noncanonical records,
 unresolved recipes and incomplete borrow contracts reject. No AST pointers,
 numerical instance IDs or arbitrary source bodies enter the interface.
+
+Profile `gti.callable-interface.5` adds a per-overload ambient-storage contract.
+The producer can certify that a concrete function and its reachable helpers
+have no hidden persistent-storage accesses. The importer binds that fact to
+the exact native symbol and declaration before checking the caller's loans.
+Passing a global by reference still borrows that argument normally. Unknown
+effects, including private persistent state or an unresolved call, remain
+conservative. Profile 4 supplies no storage proof. Both profiles work with
+native-only library functions, including those marked `[[noinline]]`.
 
 Resolved source optimization policy is selected from the verified MIR export,
 then carried in the compiler-owned binding. Export verification requires an exact

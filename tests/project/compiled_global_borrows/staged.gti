@@ -1,0 +1,4 @@
+import "api.gti";
+mut int counter = 40;
+int reset_counter() { counter = 7; return 8; }
+int main() { api::replace(counter, reset_counter()); return 0; }

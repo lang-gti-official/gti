@@ -1,0 +1,27 @@
+// Borrowed storage: mixed reference pack protects text owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+
+import std.string;
+class Reading {
+public:
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+int read(std::string_view& first, Reading& middle, std::string_view& last) {
+  return first == "first" && middle.value == 7 && last == "last" ? 0 : 1;
+}
+int through_pack<Args...>(Args&... args) { return read(args...); }
+int main() {
+  mut std::string first{"first"};
+  std::string last{"last"};
+  int number = 7;
+  Reading middle{number};
+  std::string_view a = first.view();
+  std::string_view b = last.view();
+  first.clear(); return through_pack(a, middle, b);  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+}

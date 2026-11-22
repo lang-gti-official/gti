@@ -1,0 +1,18 @@
+// Returned aggregate retention: aggregate result forwarding compiles.
+//@ check-pass
+class Payload { public: int value; Payload(int input) : value(input) {} };
+Payload relay(Payload input) { return input; }
+Payload choose(Payload first, Payload second, bool select) {
+  if (select) { return relay(first); }
+  return relay(second);
+}
+Payload fresh() { return Payload(3); }
+class Box {
+  mut Payload value{0};
+public:
+  Box() = default;
+  void set(Payload first, Payload second, bool select) mut {
+    this.value = choose(first, second, select);
+  }
+};
+int main() { mut Box box{}; box.set(Payload(1), Payload(2), true); return fresh().value; }

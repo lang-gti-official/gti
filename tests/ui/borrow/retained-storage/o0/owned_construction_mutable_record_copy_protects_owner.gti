@@ -1,0 +1,24 @@
+// Borrowed storage: owned construction mutable record copy protects owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  mut int owner = 42;
+  mut std::uninitialized<Reading> storage{};
+  unsafe {
+    Reading* address = storage.data();
+    std::construct_owned_at(address, storage, Reading(owner));
+    owner = 99;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+    auto selected = std::borrow_owned_mut_at(address, storage);
+    std::destroy_at(address);
+    return selected.read() == 42 ? 0 : 1;
+  }
+}

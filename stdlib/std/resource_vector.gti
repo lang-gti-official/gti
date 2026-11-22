@@ -43,7 +43,7 @@ public:
   }
 
   unsafe void append<Args...>(Args... args) mut { unsafe { this.data.append_unchecked(args...); } }
-  unsafe void append_value(T value) mut {
+  unsafe void append_value(T value) mut requires std::move_constructible<T> {
     unsafe { this.data.append_value_unchecked(std::move(value)); }
   }
   T& get(size_t index) { return this.data.read(index); }

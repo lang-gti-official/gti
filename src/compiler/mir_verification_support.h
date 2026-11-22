@@ -11,8 +11,9 @@
 
 namespace lang::mir_detail {
 
-// Runs every program check. Only verifyMirBody(body, owner) may be reused,
-// and only for equal bodies at the same address in a verified immutable input.
+// Runs every program check. Body-local structure may be reused only for equal
+// bodies at the same address in a verified immutable input. Carrier loan flow
+// is rechecked against the current program because callee effects may change.
 [[nodiscard]] MirVerificationResult
 verifyMirProgramWithVerifiedBodies(const MirProgram &program,
                                    const MirProgram *verifiedInput,

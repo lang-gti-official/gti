@@ -1,0 +1,31 @@
+// Borrowed storage: resource move surviving provider.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+
+import std.resource;
+import std.memory;
+class Provider {
+  std::process_resource process{};
+public:
+  Provider() = default;
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void release(std::raw_allocation raw) { unsafe { this.process.release(raw); } }
+  void reset() mut {}
+};
+int main() {
+  mut Provider first{}; mut Provider second{};  //~ WARN GTI-S2096 Mutable binding 'first' is never used mutably.
+//~| WARN GTI-S2096 Mutable binding 'second' is never used mutably.
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    mut std::resource_storage<int, Provider> left{first_ref};  //~ WARN GTI-S2096 Mutable binding 'left' is never used mutably.
+    std::resource_storage<int, Provider> right{second_ref};
+    auto moved = std::move(right);
+
+  }
+  return 0;
+}

@@ -1,0 +1,11 @@
+// A borrowed JSON array element excludes growing the array.
+//@ slow
+//@ check-fail
+import std.json;
+int main() {
+  mut auto values = std::json::value::array();
+  values.push_back(std::json::value(1));
+  auto& first = values.at(std::size_t(0));
+  values.push_back(std::json::value(2));  //~ ERROR GTI-S2017
+  return int(first.as_int64());
+}

@@ -1,0 +1,13 @@
+// Generic array element return contract: the generic array getter reaches checked HIR.
+//@ check-pass
+import std.string;
+struct Entries<T, uint64_t Capacity> {
+  mut T values[Capacity];
+  Entries():values({}){}
+  T at(uint64_t index) { return this.values[index]; }
+};
+int main() {
+  Entries<std::string_view, 3> text{};
+  Entries<int, 3> numbers{};
+  return text.at(0) == "" && numbers.at(0) == 0 ? 0 : 1;
+}

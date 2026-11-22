@@ -1,0 +1,12 @@
+// Owned mutable borrow hir: read-only pointers cannot authorize mutable owned access.
+import std.memory;
+class Reading { public: int& value; Reading(int& input) : value(input) {} };
+unsafe mut Reading& access(const Reading* address, mut int& owner) {
+  unsafe { return std::borrow_owned_mut_at(address, owner); }  //~ ERROR GTI-S2003 //~ ERROR GTI-S2017
+}
+int main() {
+  Reading* address = nullptr;
+  mut int owner = 0;
+  unsafe { mut Reading& selected = access(address, owner); }
+  return 0;
+}

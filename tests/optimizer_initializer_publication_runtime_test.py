@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Unstaged constructor field initializers survive optimization.
+"""Explicit constructor field publication survives optimization.
 
-A constructor record can publish a field initializer that the body leaves
-unstaged: no Initialize instruction carries it, so the backend writes the field
-from the MIR value the initializer's HIR argument defines. That value has no
-MIR use, and the dead-unused-computations pass once removed it, leaving every
-literal-backed `std::string_view` field empty at -O1 and above. Each case must
-print identically at every level and the optimizer must report the retained
-value rather than remove it.
+Text-field initializers now have an ordinary MIR Initialize use. The optimizer
+must preserve their observable values at O0, O1 and O3 without depending on the
+obsolete metadata-only publication remark. The owning C++ optimizer regression
+also proves that removing the required explicit stage is rejected.
 """
 
 import json
@@ -59,10 +56,6 @@ int main() { P p{}; std::print(p.q.tag); std::print(p.name); std::print("\\n"); 
     ),
 }
 
-RETAINED = (
-    "unused computation retained: the constructor record publishes an "
-    "unstaged field initializer from this value"
-)
 
 
 def main() -> int:
@@ -93,14 +86,10 @@ def main() -> int:
                     if remark["kind"] == "applied"
                     and remark["body"]["kind"] == "constructor"]
                 assert not removed_in_constructor, (label, removed_in_constructor)
-                retained = [
-                    remark for entry in dead for remark in entry["remarks"]
-                    if remark["kind"] == "missed" and remark["message"] == RETAINED
-                    and remark["body"]["kind"] == "constructor"]
                 if level == "O0":
                     assert not dead, (label, "O0 schedules no transformation")
                 else:
-                    assert retained, (label, [entry["remarks"] for entry in dead])
+                    assert dead, (label, "optimized levels run dead-computation analysis")
             print(f"initializer publication: {name} passed (3 levels)", flush=True)
     return 0
 

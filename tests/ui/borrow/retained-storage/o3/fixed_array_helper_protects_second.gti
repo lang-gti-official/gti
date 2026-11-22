@@ -1,0 +1,19 @@
+// Borrowed storage: fixed array helper protects second.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+std::string_view<a> select_view<lifetime a>(std::string_view<a>[2] values, int index) {
+  return values[index];
+}
+int check(bool choose) {
+  std::string first{"first"}; mut std::string second{"second"};
+  std::string_view values[2] = {first.view(), second.view()};
+  auto selected = select_view(values, choose ? 1 : 0);
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  if (choose) { return selected == "second" ? 0 : 1; }
+  return selected == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

@@ -2497,7 +2497,8 @@ public:
   }
 };
 
-class filled<std::storage_element T> {
+concept fill_element<T> = std::storage_element<T> && std::move_constructible<T>;
+class filled<fill_element T> {
   mut std::detail::prefix_owner<T> data;
 
 public:

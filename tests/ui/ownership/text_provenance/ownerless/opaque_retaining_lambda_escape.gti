@@ -1,0 +1,23 @@
+// Opaque retaining lambda escape: the lambda's opaque retaining helper reaches MIR.
+import std.string;
+import std.functional;
+extern "C" { void opaque_effect(); }
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain_opaque(mut Holder& target, std::string_view input) {
+  target.put(input);
+  opaque_effect();
+}
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{
+    [](mut Holder& target, std::string_view input) -> void {
+      retain_opaque(target, input);  //~ ERROR GTI-S2045
+    }
+  };
+  mut Holder holder{};
+  { std::string owner{"short"}; store(holder, owner.view()); }
+  return holder.value == "short" ? 0 : 1;
+}

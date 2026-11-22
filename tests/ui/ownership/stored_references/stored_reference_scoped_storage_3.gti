@@ -1,4 +1,4 @@
-// Stored reference scoped storage: stored-reference diagnostics should reject unsupported reference graphs, assignment, and temporary owners.
+// Stored reference scoped storage: shared-carrier assignment is supported; unsupported reference graphs and temporary owners remain rejected.
 class BorrowingIterator<T> {
   T& value;
 public:
@@ -59,7 +59,7 @@ int main() {
   mut SingleRange<int> range = SingleRange<int>(1);
   mut BorrowingIterator<int> iterator = range.begin();
   BorrowingIterator<int> other = range.begin();
-  iterator = std::move(other);  //~ ERROR GTI-S2003
+  iterator = std::move(other);
   BorrowingIterator<int> nested_source = range.begin();
   GenericNest<BorrowingIterator<int>> nested =
       GenericNest<BorrowingIterator<int>>(std::move(nested_source));

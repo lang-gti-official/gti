@@ -1,0 +1,16 @@
+// Borrowed storage: owned copy releases source borrow.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+struct Box {
+  mut int value;
+  Box(int input):value(input){}
+};
+Box& observe_box(Box& box) { return box; }
+int main() {
+  mut Box source{1};
+  auto copied = observe_box(source);
+  source.value = 2;
+  return copied.value == 1 && source.value == 2 ? 0 : 1;
+}

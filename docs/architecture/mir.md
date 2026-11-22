@@ -3245,9 +3245,13 @@ revision. Within that fixed point, body lowering records the function,
 constructor and destructor effects it reads, including targets still lacking a
 summary. A later round can move a previously lowered body into the new program
 when all those answers agree. A changed answer rebuilds its caller, and further
-changes propagate through following rounds. The module rebuilds its initialization
-plan on each round. Reuse ends with the current HIR and cleanup-sharing attempt.
-The assembled program goes through ordinary interprocedural verification.
+changes propagate through following rounds. A reused body also needs the same
+source program for retaining calls. When the seed and the independently
+verified program differ, the first final round rebuilds under the verified
+retaining context. Later rounds share that immutable context. The module
+rebuilds its initialization plan on each round. Reuse ends with the current HIR
+and cleanup-sharing attempt. The assembled program goes through ordinary
+interprocedural verification.
 
 Across revisions the editor's bounded MIR cache retains two structural facts.
 Dominance depends on the entry and successor lists of a validated CFG.
@@ -3479,6 +3483,583 @@ returns therefore keep the view's owner borrowed, although none of them is a
 recorded carrier. `EndBorrow` has no runtime effect:
 it records the analysis for the verifier and the optimizer.
 
+The RFC 0003 groundwork adds `deriveMirCarrierFlow` in
+`src/compiler/mir_carrier_flow.cpp`. It uses the shared MIR forward-dataflow
+solver to track carried loan groups at program points. Exact direct replacement
+replaces a root's set; projected or aliased stores union into every candidate
+root. Copies retain independent sets, joins union, and loop backedges converge.
+A read through a reference uses the physical storage loan, while an independent
+copied element or scalar result does not retain that physical loan. Failure
+edges retain both possible destination versions and withhold the failed SSA
+result. Known-empty and unknown provenance are distinct; a fact absent on an
+executable predecessor stays unknown at a join. Reads include receivers and
+return operands, and writes through references keep their physical access loans
+alive through the store.
+
+Scalar reads through checked reference fields use the carrier's current
+dependency set, rather than its declaration's historical attachments. This
+keeps exact record replacement precise without treating a scalar result as
+borrowed. Staged scalar-reference arguments retain that same current set.
+For a local carrier with one unconditional shared-reference field, a reference
+returned from such an argument can use its exact current referent. The program
+verifier reconstructs this source from the staged input's flow and concrete
+field inventory, independently of the returned loan; a previous owner's live,
+type-correct place is still rejected as the wrong source. Raw dereferences and reads of dependency-bearing referents still
+require their own provenance. A fresh shared result can replace an input's
+loan only when it independently represents the same owners and the verified
+field relay preserves their provenance. An unnamed whole-carrier dependency
+can match a named field when the concrete declared-field inventory proves a
+sole shared-reference path; multiple references, hidden text, pointer-backed
+storage and unknown layouts do not justify that inference.
+
+The semantic lifecycle query that discovers borrowed-content capacity shares
+cleanup's non-decreasing nominal recurrence guard. Growing generic field shapes
+are conservative instead of recursively expanding without a bound; decreasing
+concrete nests still reach their leaf types. Per-query memoization avoids
+revisiting identical field branches for capacity and observing cleanup.
+
+Each concrete reference-pack lane derives the same entry capabilities as an
+ordinary reference formal. A reference to borrowed contents has a distinct
+external-content entry and physical-reference entry, even when the wrapper
+returns no borrow. The lane map selects the physical entry after both are
+created. Verification independently checks the lane's formal type, content
+paths, exact dependency link and entry counts; equal-typed lanes cannot exchange
+content authority.
+
+A by-value carrier's stored entry protects its external referent separately
+from the carrier's physical storage. Mutable receiver-result activation uses
+that same distinction as ordinary access: the exact stored entry is not a
+competing loan of its own carrier. Other overlapping loans still prevent
+activation, and whole-program verification checks the stored-dependency link.
+
+Call-result source snapshots (`resultSourceContents` and
+`unavailableResultSourceContents`) record the physical source's contents after
+that invocation's modeled writes. They distinguish a mutating accessor's
+pre-call inputs from the contents observed by its returned reference, without
+including later writes retroactively. Unknown call effects produce unknown
+snapshots. These are provenance facts, not authority to dereference: consumers
+must separately prove the callee's owner-content contract, effect completeness,
+access and lifetime obligations. Owner-aware result verification checks these snapshots against the exact
+callee contract and the result annotation, instead of combining historical
+carrier attachments. Focused emplacement and corrupted-metadata tests pass.
+Native tests also bind the returned mutable reference, copy its borrowed payload,
+and use that copy after container growth while protecting both external owners.
+
+A checked mutable accessor assignment widens the physical owner's retained
+contents. Earlier element copies keep their original dependencies. The text
+contract verifier can discharge an ownerless-storage requirement for this write
+only when it independently reconstructs a static owner-aware accessor, a local
+owned destination, and a known nonempty shared dependency set transferred to
+that exact destination. This does not waive access or lifetime verification.
+Focused tests cover valid replacement, both old and new owner protection,
+expired replacement inputs, and malformed write authority/source metadata.
+An unrelated generic source-defined storage class also passes replacement and
+both owner-protection tests, using the same owner-aware mutable access contract.
+
+The same flow records `unavailableReads` and `unavailableExits`: carried values whose
+represented dependency was not produced, or encountered an `EndBorrow`, on an
+executable path. Direct loan identifiers start unavailable unless they are entry
+loans. A producer authorizes only its normal continuation; a failed producer
+cannot make its loan available on the failure edge.
+Expiration follows each storage root and SSA value through copies, exact
+replacement, weak writes, simultaneous edge arguments, and failure edges.
+Creating a new value for a loan group does not repair an older expired copy.
+A return without an explicit return-loan transfer also checks expired plain
+shared stored dependencies from initialization and aggregate construction;
+this obligation does not depend on the presence of a replacement store. Such
+a return is an escape rejection, while an unrelated ended loan does not
+prevent returning a known ownerless value.
+Physical alias resolution uses the ordinary provenance facts, so a reference to
+a slot observes that slot's current contents rather than a historical copy.
+This distinction matters at joins: a group that was never created on one
+predecessor is not an expired value on that predecessor. Unknown validity is
+not a permission proof, and these facts do not replace the active-loan engine's
+access, parent, or cleanup checks.
+A call's argument reads do not establish which dependencies its result carries.
+Without a represented result loan, a dependency-capable call result remains
+unknown rather than inheriting the union of its arguments. Independent scalar
+results remain empty. Unknown results provide neither shortening permission nor
+proof that an expired argument is returned; result contracts must supply that
+missing boundary evidence.
+
+Lowering stores a set of possible retained groups per local. Exact-parent and
+physical-authority consumers explicitly request a singleton; they never select
+an arbitrary member of a joined set. Shared branch joins can preserve distinct
+parentless read-only producer groups without manufacturing a new loan. Missing
+branch authority is not treated as a proven empty alternative. Cleanup removes
+only the ended group from a local's set, and canonical place queries receive all
+remaining candidates. At a completed loop exit, lowering can request the
+existing carrier-flow solver's converged block-entry facts rather than restore
+only the pre-loop mapping. The query seals unfinished frontiers in an analysis
+copy of the lowered prefix; it creates no borrow and changes no executable
+edge. Unknown roots cannot preserve an old exact-group claim. Final whole-body
+verification still establishes origin, activity and carried-value availability,
+including later enclosing-loop backedges. Block-entry maps are collected only
+when requested, avoiding their storage in ordinary verification queries.
+Late failure-cleanup reconciliation must also establish that a retained group's
+producer can reach the failure edge without an intervening retirement. A
+carrier's lexical visibility alone cannot justify ending a group created later
+in a straight-line execution. The reachability query follows loop backedges so
+an earlier source-order failure can still clean up a previous iteration's
+retained value. It grants no access permission; final loan verification checks
+the resulting activity and cleanup schedule.
+Call and return boundary support for these sets is still in progress;
+preserving the set is not itself permission to publish it.
+
+Inline array construction collects the original groups of every element,
+including nested arrays. A copied element conservatively retains the array's
+owner set; that is not authority to borrow its physical element storage.
+Initialization preserves an actual stored group even when an earlier expression
+trait says ownerless. A physical loan used only to copy an owned value is not
+extended merely because its type could hold dependencies. Fixed-array source
+admission and the text-storage contract verifier remain restricted while the
+complete storage and boundary proof is implemented.
+For an explicitly named result region, semantic signature contracts recognize
+inline arrays of text views (including nested arrays and C-string views) as
+possible dependency carriers. Suppliers come from the written region relation,
+not the returned initializer; unrelated input regions are not included. This
+preserves the declared contract only. For an explicit read-only array result,
+MIR reconstructs the returned value's full dependency set. A known-empty result
+is permitted; every nonempty dependency must be an exact read-only stored entry
+of a declared, type-compatible formal. Duplicate suppliers, local owners,
+unrelated inputs and unknown result provenance are rejected. This publication
+exports external referents, not the callee's physical array storage, and does
+not choose one arbitrary origin from the set. The call result retains its checked
+suppliers as a stored value dependency. The same explicit region relation applies
+to a scalar text view selected from a by-value text array. At a call boundary,
+inline text values retain the union of all declared inputs' actual read-only,
+parentless stored groups. An ownerless primary input does not erase a borrowed
+secondary input, and an array input does not collapse several owners to its
+physical storage. The verifier reconstructs the input sets at their checked
+argument evaluations and rejects omitted owners. A reference-to-array formal
+has separate physical and external-data entries. Copying a text element retains
+the external entry while the read still checks the physical reference. Expiring
+either capability cannot revive an expired external owner. The abstract data
+entry must name an exact formal and remains read-only; it cannot grant mutable
+access to shared text. Unsupported ancestry and relayed result groups still
+need their independent proof. Receiver field and inline-array writes in
+nonvirtual source methods can now defer their storage obligation to the MIR
+retaining-store proof described below; this is not permission for arbitrary
+reference, raw, or persistent storage writes.
+
+Whole-local shared stores retain all source groups in the destination's scope,
+preserving independently copied groups. Retention uses the same type-level
+capacity classification as carrier flow and requires an actual MIR source group.
+An expression's earlier ownerless trait cannot suppress that group after a store
+has changed a local's contents; conversely, type-level capacity alone never
+creates a dependency or grants borrowing permission. Branch and scoped-expression exits
+project mappings by lexical visibility, including an outer local that acquired
+its first dependency inside the region; they do not filter solely by the
+bindings that already carried a loan on region entry.
+The current implementation admits dependent assignment into direct automatic
+text-value locals and by-value parameters through this MIR path. Reference
+referents, captures and persistent bindings retain their separate storage
+restrictions. Captured-text results still require their own escape proof.
+Focused executable tests cover local replacement, copies, branches, loops,
+and owner protection. Early release of a replaced owner remains conservative
+when the reachable call-effect graph is incomplete.
+
+When one branch has no binding-to-loan map entry, lowering does not interpret
+that absence as an ownerless value. It queries the converged MIR carrier set at
+the merge and requires an exact known match to the plain shared groups being
+retained. A literal alternative can therefore join a borrowed alternative;
+unknown provenance cannot manufacture that permission. Final body verification
+still checks group activity and expiration on actual paths.
+Cleanup discovery also records plain read-only groups retained by actual stores.
+It recovers their endpoint in the outermost surviving carrier scope when a loop
+snapshot predates the store. Normal scope-exit checkpoints and failure plans
+resolve missing retained endpoints after the body has revealed all stores.
+An early return or failure before a store in source order can follow that store
+on a loop backedge. Endpoints follow the outermost visible carrier scope,
+leaving inner-owner destruction subject to the ordinary conflict checks.
+Failure planning remains enabled when suffix sharing is disabled; sharing is
+an optimization, not the source of cleanup obligations.
+These are cleanup obligations only: they do not
+make a group active at the loop header or change a binding's borrow permission.
+Copies in inner scopes cannot retire a group still carried by an outer binding;
+normal and failure cleanup retain the existing child-before-parent rules. The verifier reconstructs replacement
+inputs and uses from MIR, rather than trusting `MirLoan::carriers`, and rejects
+represented unavailable replacement values at instruction or block-exit uses.
+Parentless read-only groups introduced by actual replacement stores may join
+as active/inactive alternatives. Their unique static producer may execute
+again on a backedge while that same shared group is active; every producer
+execution still undergoes the ordinary source-access checks. This neither
+reactivates exclusive or parented groups nor repairs expired carried copies.
+An ordinary non-invocation value use requires
+known carried provenance and an empty unavailable set; a bare loan identifier
+that was never produced cannot use that permission. Conditional endpoints still
+must retire the groups before exit, and possible owners remain protected against
+mutation. This rule does not authorize exclusive groups, parented groups, new
+loan publication, or call/return boundary contracts. General conditional
+loan construction still requires its own proof. Combined with checked retaining
+method effects and getter supplier verification, these rules admit an ordinary
+generic fixed-capacity container of views from two owners. Executable tests
+cover both owners, mixed literal inputs, different names and capacities, and
+a selected view surviving the container scope.
+
+Only a complete query with source-mappable uses supplies occurrence-level uses
+to `deriveLoanEnds`. Unmodelled retaining calls, raw storage, unsupported effects,
+or failed convergence retain conservative liveness. A receiver text write is
+discharged only by a complete, instruction-specific retaining effect covering
+every scalar text formal supplying that write. Other escapes of the same
+parameter retain their ownerless requirement. Records with such retaining
+methods cannot be assumed to contain only ownerless text.
+
+At a retaining call, each text input must have an independently reconstructed
+origin or represented caller dependencies. A known-empty carrier-flow set is
+not by itself an ownerless proof: an unsupported captured result may have lost
+its owner representation. These failures produce a source diagnostic at the
+call. The check keeps each formal's input facts separate before receiver unions.
+
+Lambda signatures currently publish no retaining-input relationship. A lambda
+may retain a parameter in invocation-local storage, but a store through another
+formal or into an environment requires a represented boundary contract. Likewise,
+converting a named function with a derived retaining effect to an invocation
+pointer must not erase that effect. Direct calls retain the derived relationship.
+The focused
+carrier-flow cases in `mir_borrow_audit` covers replacement/copies, branch and loop joins,
+simultaneous edge arguments, alias widening, failure paths and unknown facts.
+
+Explicit MIR intrinsics whose canonical effect classification excludes storage
+writes, invoked user/runtime code, allocation, cleanup and synchronization do
+not introduce an unknown retaining-call effect. Their input uses and result
+provenance still participate in carrier flow. This is not inferred from a
+library name or an unsafe tag: raw writes and unresolved calls remain
+conservative, and a produced borrow still needs its independent loan proof.
+
+Invocation pointers publish no input-to-storage retaining relation. Their
+invocation intrinsic can therefore supply a non-retention effect only alongside
+the independent target-conversion and lambda-boundary checks above; this is not
+a purity claim or permission to ignore result provenance. An unresolved static
+helper with a mutable destination capable of holding text cannot accept an
+unrepresented text input. Destination capacity is structural: owned byte storage
+is distinct from storage containing borrowed views.
+
+An expanded parameter pack can have several concrete parameter types but one
+source binding. A fully analyzed body with no stores can still prove an empty
+retaining relation without mapping pack elements to individual formals. Calls
+check the concrete parameter arity. A pack body with stores or unknown effects
+remains conservative until its projected transfers can be represented; a missing
+mapping must never be interpreted as an empty retaining relation.
+
+`deriveMirRetainingStoreEffects` reconstructs direct source-body retaining
+writes from the same flow, mapping entry dependencies to the receiver or a
+reference formal. Every primary and additional owner in a represented group
+contributes an effect; conditional alternatives are conservatively unioned.
+An unknown or callee-local additional owner makes the entire summary incomplete.
+Explicit Loan-rooted reborrows reconstruct all parent origins, including
+alternative parents. A parent link alone cannot export local carrier storage;
+raw or nested dereferences, unresolved stored-shell dependencies, and cyclic
+provenance remain incomplete. Local by-value parameter replacement is not a caller-visible effect. Unknown input provenance, escaping local origins, unmodeled calls,
+cleanup, and raw effects yield an incomplete summary rather than a false empty
+one. When supplied a MIR program, `deriveMirCarrierFlow` can substitute these
+summaries at static calls and widen the actual caller storage; it
+evaluates all source inputs before updating any aliased destination. Each
+destination retains its own input set: independent writes in one invocation do
+not acquire each other's owners, while aliased destinations union both sets. Copies
+continue to carry independent dependency sets. An initial conservative lowering
+supplies transfer shapes for a second lowering that constructs caller retention
+and cleanup. The initial shape is not executable proof authority. Whole-program
+verification then reconstructs the callee effects and checks the rebuilt callers;
+subsequent failure-effect refinement uses that verified provisional program when
+deriving loan ends.
+Static helper summaries compose through the same analysis and are cached within
+one immutable-program analysis session. Body verification and program-contract
+verification share that session. Detached bodies submitted while lowering are
+always analyzed afresh; cached summaries belong only to the immutable callee
+program. Input permutations are substituted at every boundary.
+A worklist solves the reachable static call graph over finite pairs of destination
+and source formals. Recursive permutations union effects until no dependent body
+changes. Empty iteration seeds are internal only; no caller consumes a summary
+before convergence. Unsupported bodies, local escaping origins, and unavailable
+calls make completeness false throughout the dependent caller graph. That
+loss of completeness is absorbing, but known retaining writes continue to grow
+through callers and recursive components. Unknown effects cannot erase a known
+storage obligation. Incomplete summaries never supply precise returned-owner
+facts or permission to treat a value as ownerless.
+A fully inspected recursive cycle with no retaining writes can converge to an
+empty effect; opaque recursion cannot.
+If exact flow is incomplete, known retaining writes still add their destination
+bindings and known MIR reads to conservative liveness. Storage without a mapped
+binding, or a new carrier requiring cleanup, keeps a conservative scope extent;
+partial facts can extend a loan but cannot justify shortening it.
+Loop-exit recovery uses the same callee context when rebuilding retained sets
+from its sealed prefix CFG. A body-only query there would discard helper-call
+transfers and could lose the owners needed by a later copy.
+Observing element cleanup retains its dependency through the destination's drop,
+but cannot extend a referent's lexical lifetime. Leaving the referent's scope
+expires that dependency; an observing drop after that point is rejected. Passive
+cleanup may release storage without reading its expired referents.
+An unconditional whole-storage ownership transfer empties the source's carried
+contents after preserving the transferred operands and result. Dormant cleanup
+of the moved-from object therefore does not invent a dependency use. Conditional
+or projected transfers remain conservative, and failure edges preserve possible
+source contents; the destination still carries and checks its dependencies.
+Body and persistent-storage loan verification can also receive the MIR program.
+They reconstruct retaining call inputs from callee bodies when identifying
+conditional shared dependency groups, just as they reconstruct direct assignment
+inputs. A body-only query remains conservative: `MirLoan::carriers` cannot justify
+an otherwise inactive endpoint. Changing or removing a callee store changes this
+proof; the cached effect is not an independent contract. This does not bypass the
+separate typed text-storage checks.
+
+A generated `Drop` does not make a retaining summary incomplete when its exact
+cleanup recipe has no source destructor or polymorphic cleanup. Passive ordinary
+records are checked against their exact nominal class and generated destructor
+metadata. This describes absence of retaining writes only: cleanup execution,
+loan validity and lifecycle verification remain separate. Replacement cleanup
+can preserve the summary when its exact destination cleanup recipe, paired
+assignment and private destructor effects are established. Program verification
+still independently enforces the success-only commit order. Unknown cleanup
+continues to prevent a complete retaining summary.
+
+Source helper summaries also distinguish the dependencies of returned values
+from loans merely read while returning. A converged return relation names
+receiver/formal contents, or proves a known-empty set for a fresh value;
+unknown return provenance stays distinct from both. Calls capture these actual
+contents before applying any retaining writes. The return and store relations
+converge together, so a helper returning a value through another helper can
+feed a later retaining store without a nominal container or allocator exception.
+A fresh construction without a represented loan similarly derives its contents
+from checked constructor writes into the receiver. Merely reading a borrowed
+argument to construct an owned field does not retain that argument. Unknown
+constructor effects remain unknown; represented borrowed constructions retain
+their independently verified loan and external-owner obligations.
+The dependency graph includes helpers reached inside selected constructors
+and typed cleanup bodies, so their summary changes also invalidate the enclosing
+function. Discovering those bodies supplies no permission to execute cleanup;
+the existing exact lifecycle proofs still apply.
+Synthetic summary-entry tokens are added only when a formal has no existing
+carrier relation; a local or unavailable loan must not be replaced with a
+fabricated entry origin. Concrete flow keeps existing result loans authoritative. In the private
+symbolic summary, a proved by-value return relation can identify its formal
+contents even when the call also creates a fresh result loan with a direct
+binding origin. This does not replace the concrete loan, authorize reference
+access, or grant permission for a raw-storage operation.
+
+During lowering, a complete static source-call effect can attach the original
+shared groups to an owned destination binding. Source groups are captured before
+any destinations are updated. The destination keeps its previous owners as well
+as the new ones, and the earliest surviving carrier scope owns cleanup. Reference
+alias destinations still require additional resolution. Shared groups retained
+by an actual store survive logical and conditional expression joins; ordinary
+branch-local borrows do not acquire this treatment.
+
+A getter that reads a checked element of a direct inline text-array field
+exports that field's external-text relation. Both signature inference and MIR
+return verification identify the field; the latter checks every index projection
+against the declared array dimensions. Integer element getters remain ordinary
+scalar returns. At a call on storage holding several shared owner groups, the
+returned view retains every actual group conservatively, independent of the
+runtime index. The caller's result metadata is refined from that actual retained
+set. Verification reconstructs the set at the checked input stage, rejects
+expired inputs and missing owners, and permits an ownerless result only when
+that input is independently known empty. Reference aliases and more complex
+retained field shapes still require their own complete propagation proofs.
+
+General typed store admission beyond the checked receiver text writes above,
+and general conditional replacement-loan construction, remain unfinished.
+A retaining summary alone does not authorize a source store: the independent
+text-origin, caller-retention and cleanup checks must also succeed.
+An unsafe source-call marker does not erase a complete callee retaining summary.
+Its unsafe-use obligation is checked independently. Lifecycle bookkeeping may
+inherit that marker without invoking another retaining operation. Address
+formation and pointer conversion computations can likewise preserve effect
+completeness when canonical effects prove no write, allocation, destructor or
+external invocation. Unknown calls and raw writes still require their own
+modeled effects; unsafe syntax never supplies those effects by itself.
+
+Explicit failure operations have a separate, exact non-retaining contract.
+Their operand types, terminal/conditional shape, failure propagation and
+registered failure-site outcomes must agree. Panic copies its message bytes
+into the owned failure record rather than retaining the input view. This
+allows allocation failure branches to preserve retaining-effect completeness
+without treating runtime calls generally as harmless. Runtime invocation,
+message reads, failure routing and cleanup effects remain unchanged; missing
+or malformed failure metadata cannot establish this contract.
+
+The owner-tracked raw-storage foundation uses explicit ownership operations.
+`ObjectInitializeOwned(address, owner, value)` transfers a completed value and
+retains its checked dependencies in the owner. The unsafe caller proves extent,
+alignment, vacancy and that the owner controls the storage lifetime; the raw
+pointer is never the lifetime root. Repeated initialization widens the retained
+set rather than discarding owners from earlier elements.
+Initialization consumes a completed value using the generated value-move
+rules, including checked reference fields; it does not grant source-visible
+raw relocation permission. The MIR verifier separately requires an available,
+failure-free generated transfer. Uninitialized storage supplies layout only:
+admitting a borrowed payload does not create a live object, retain its owners,
+or make the storage copyable or movable.
+
+`ObjectRelocateOwned(destination, destinationOwner, source, sourceOwner)`
+transfers a live object into vacant storage using the same failure-free generated
+value movement. Both owners are staged mutable references; raw pointers supply
+addresses, not lifetime evidence. Carrier flow reads the source owner's retained
+contents before widening the destination owner's set. It conservatively keeps
+the source owner's dependencies, since other elements may still retain them.
+The unsafe caller proves exclusive access, validity and nonoverlap, and updates
+its initialized-element bookkeeping. Source object cleanup is retired by the
+transfer; storage deallocation remains the owner's responsibility. This operation
+is used by growable prefix storage to transfer its initialized elements into a
+replacement allocation while retaining the external owners across growth.
+
+Shifting within one owner cannot pass that owner as two simultaneous mutable
+witnesses. The standard-library helper `relocate_within_owned_at` instead uses
+separate uninitialized temporary storage: source to temporary, then temporary
+to destination. Each step uses `ObjectRelocateOwned`; both moves are generated
+and failure-free, and the temporary ends vacant. Insertion initializes the new
+value with `ObjectInitializeOwned`. Erasure preserves the existing destruction
+and suffix-cleanup bookkeeping. These compositions remain subject to native
+integration validation; neither raw addresses nor nominal payload traits grant
+permission to discard retained dependencies.
+
+`ObjectBorrowOwned(address, owner)` is the shared read counterpart. Its unsafe
+contract additionally requires every external dependency of the initialized
+object to be retained by that owner. This is stronger than merely asserting
+that a raw address remains valid. An opaque owner reference used by the read
+receives a separate abstract Stored contents group; its Parameter loan protects
+the physical storage. Independent verification reconstructs the contents
+contract from the exact typed primitive and checks both edges. No source-visible
+reference fields or container names are invented for opaque storage. Ordinary
+raw borrow assertions do not establish this contents contract.
+Static source helpers can forward this contract through an exact shared
+reference parameter. Lowering seeds the candidate entry by following source
+calls to the primitive. Body verification checks the local shell/content edges;
+whole-program verification independently follows the exact callee signature
+and formal binding to the primitive. A helper cycle or external declaration
+cannot establish an opaque contents contract by itself.
+
+At callers retaining several independent groups, shared contents verification
+accepts both staged reference inputs and direct operator receivers. Direct
+receivers use separately recorded receiver-only reads, not the union of every
+call argument's loans. Alias reconstruction must identify the exact physical
+owner. A matching shared parent loan protects that physical owner and is kept
+separate from the live, read-only Stored groups for its contents; unrelated or
+expired loans cannot satisfy the contents proof.
+
+Copied record initialization uses the same content-group reconstruction as
+assignment. A by-value copy retains every known external group, while a
+reference binding retains the physical accessor loan. Function returns of such
+copies require a separate publication proof: actual returned SSA values must
+be typed copies with complete provenance, and each retained group must name a
+caller-owned shared reference formal admitted by the declared lifetime
+contract. Retiring the callee's bookkeeping capability does not end the caller's
+referent. This distinction applies only at the value-return boundary; ordinary
+reads and stores still require active dependencies. The return integration is
+under validation, including undeclared-supplier and local-owner rejection.
+
+Retaining copies in an outer carrier extends demand for their dependencies;
+it does not extend directly borrowed local storage. Normal and failure cleanup
+cap those dependency endpoints at the innermost direct owner's scope, including
+fields of owners without destructors. Reference dereferences continue to use
+their parent/dependency proofs. Reads of expired stored dependencies are source
+lifetime errors, while explicit return-loan transfers retain their separate
+publication rules. Focused LLVM O0/O3 regressions cover moved and cloned
+containers, scalar and field owners, and rejection at either owner's scope end.
+
+Retaining-effect summaries distinguish unsafe validity obligations from storage
+writes. Shared-reference argument staging, borrow creation and borrow ending
+may inherit an unsafe-call marker without invoking that call again. They are
+non-retaining only when the canonical effects exclude writes, invoked code,
+allocation, destruction and synchronization; raw-memory effects remain unknown.
+This permits source-defined accessors to expose their checked return relations
+without certifying arbitrary unsafe calls as non-retaining.
+
+Owner-aware in-place construction is implemented and under integration. The
+raw `object_construct` path still has no destination-owner witness and rejects
+checked borrowed payloads. `object_construct_owned` adds an exact mutable owner
+operand before constructor arguments; `std::construct_owned_at` exposes the
+unsafe final-address operation. Constructor selection, argument staging and
+LLVM invocation retain their ordinary contracts. Generated value transfers
+publish the input's dependencies; selected constructors derive external inputs
+from their verified body and map receiver writes into the destination owner.
+Unknown effects cannot certify retention. Initializing from a completed value
+and constructing at the final address remain distinct contracts.
+
+Concrete parameter-pack elements retain separate identities in carrier flow
+and formal effect summaries. An entry origin may name one checked pack-element
+projection; mapping back to an actual argument verifies the concrete pack,
+expanded signature and element index. It never treats an entire pack as one
+argument. Focused MIR checks cover constructed borrowed-record reads and
+independent pack-element retention. Concrete reference and text pack elements
+receive entry loans independently of whether the wrapper returns a borrow;
+body and program verification check their exact access and element identity.
+Native copied-record and text construction passes owner-protection checks.
+The owner-aware path also passes the existing non-borrowed selected-constructor
+cleanup scenarios. Direct reference-field constructors now retain one or
+several distinct input owners; native success and owner-protection cases pass.
+Emplacement and use of its returned reference pass focused native tests for
+text views and records containing shared references. A reference-bearing payload
+that reads its owner in its destructor passes all six existing construction and
+cleanup scenarios at LLVM O0 and O3, including constructor failure, argument
+preparation failure, body failure, and failure during cleanup. The analogous
+by-value text-field payload with a user-defined destructor is outside this
+stage: ordinary construction requires ownerless text. Generic owner-aware
+construction rejects forwarded text packs with GTI-S2045, including literals
+whose ownerless status the pack contract does not represent. Supporting it later requires destructor receiver-field
+escape contracts in both semantics and the independent MIR proof. The
+reference-bearing cleanup profiles remain supported and tested.
+
+Passive constructors with direct text fields now publish explicit MIR
+`Initialize` stages. Owner-tracked construction can forward a concrete text
+pack element into such a field when independent constructor and carrier-flow
+proofs establish retention by the destination owner. Raw construction and
+separate global escapes do not acquire this permission. Native tests cover
+construction, copying a text-field record beyond its storage lifetime, owner
+mutation rejection, and expired-owner rejection at LLVM O0 and O3. Physical
+reference identity and abstract content entries use dependency capacity rather
+than only static borrowed-state traits, since a record's actual text contents
+can carry dependencies absent from those traits.
+
+A by-value result with stored reference state retains both its checked physical
+loan and the contents of that loan's source at publication. This applies to
+source-defined adapters without recognizing library names. Expiration travels
+with those contents; a new physical loan cannot revive an expired owner.
+When a fresh, independently checked shared result loan covers exactly the same
+external owner places, the copied value need not retain the input carrier's
+older loan IDs as well. This equivalence applies only to live, parent-free,
+unconditional groups without reference selections. Designated fields additionally
+require the exact call's verified source-to-result field mapping, attached to
+an actual input carrying that dependency. A temporary receiver's physical call
+shell may likewise end after invocation when the result independently represents
+its live external dependency under that mapping. Expired inputs and unmatched
+field provenance remain explicit dependencies. A reference
+to a scalar contributes its referent through the result loan; the scalar does
+not contain a second borrowed value, so its parameter's temporary access
+capability is not copied into the result.
+This stage conservatively keeps the physical source loan in adapter-derived
+element copies. Growth and source-scope exit remain rejected while such copies
+are used; detaching that physical loan requires an independently proved
+adapter-to-element content projection. Direct indexed copies retain their
+existing independent-content behavior.
+
+Loan-end derivation completes the first-pass CFG, including unshared failure
+cleanup, before querying carrier flow. Unfinished invoke targets invalidate the
+forward analysis and would otherwise force binding-wide conservative lifetimes.
+The provisional body is discarded without verification; the second lowering
+pass applies the derived endpoints and verifies its complete cleanup schedule.
+Focused tests cover a copied shared-reference record releasing its physical
+storage borrow, local whole-record replacement releasing the old owner, and
+container element replacement while an independent old copy remains usable.
+Owner mutation, expired-owner and live-alias rejection cases pass at LLVM O0/O3.
+Overloaded assignment stages the accessor as a place independently of the
+assignment expression's by-value result, including reference-bearing records.
+
+`object_borrow_owned_mut` and `std::borrow_owned_mut_at` require a writable
+address and an exclusive owner witness. Their physical result loan is mutable,
+while the separate abstract external-contents entry remains read-only: access
+to the storage does not upgrade the references held by its payload. Source
+helper propagation checks the result access against the owner and reconstructs
+the primitive contract through MIR. Focused LLVM O0/O3 cases pass for copying
+text and reference-containing records through this operation, including owner
+protection. Shared-element replacement and container accessor integration pass
+focused tests; broader subsystem validation remains in progress. Exclusive
+borrowed elements are outside the accepted shared-element scope.
+
+This foundation is under integration: shared reads, wrapper propagation,
+relocation and growable standard-library containers must all pass source and
+native validation before growable borrowed storage is considered supported.
+
 MIR derives a body's entry loans (what the caller lends it) from the
 declared types of its receiver, captures and parameters: which carriers
 receive one, its kind and access, the stored reference paths a by-value
@@ -3604,6 +4185,19 @@ that group retains. A loan on a carrier shell names no such place and stays
 the binding's own. A consuming call or move that
 publishes a lifecycle-bound loan for the same owner and parent as the
 lifecycle-bound loan its moved argument held retires the consumed loan there.
+
+Whole-value copying through a source helper is being integrated with the same
+rule. `copiedReferenceParameter` independently checks every reachable normal
+return: it must load a copy of the whole referent of one shared reference
+formal, and actual returned dependencies must be that formal's abstract stored
+contents. Matching parameter/result types or a declared lifetime relation alone
+does not establish this fact. Such a call can carry the original external groups
+without a synthetic result loan. Carrier flow reconstructs those groups at the
+call, checks their expiration separately from the physical input reference, and
+program verification requires this evidence before admitting the absent result
+loan. Mixed return shapes, unknown contents and lifecycle-bound groups retain
+the conservative path. This rule has no dependency on a library helper's name.
+
 The range protocol is the one structural exception: a synthesized cursor
 carries the traversal's loan, the held loan its own loan was lowered below,
 because a child loan would conflict with the loop's own uses of the range
@@ -3672,10 +4266,32 @@ carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
 origin and its later use as related notes. `mirBorrowDiagnostics` in
 `src/compiler/frontend.cpp` maps MIR rejections to them, and the LSP publishes
-the same diagnostics. MIR types and
+the same diagnostics. A represented external dependency passed to ownerless
+storage or an ownerless call parameter is an `OwnerlessRequirement` rejection:
+its instruction and block identify the actual storage or call site, and the
+frontend reports GTI-S2017 there. Missing producer evidence remains a verifier
+failure rather than being treated as proof of ownerless data. MIR types and
 both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
+
+Intermediate optimizer verification can reuse structural checks for an unchanged
+body from its verified input. Its carrier loan flow is still checked against the
+current program: an unchanged caller can observe changed callee retention effects.
+Whole-program result caching requires equality of the entire program.
+
+Carrier analysis may reuse converged helper-call summaries within one
+`MirCarrierAnalysis` session over an immutable program. Lowering uses a session
+for the previous immutable program snapshot across its body-construction and
+loan-end passes. The new output program is separate. Detached bodies are
+analysed afresh on every query, including partially lowered join prefixes;
+only the immutable snapshot's callee summaries are reused. Each newly reached
+helper graph reaches its fixed point before publication; cached unknown facts
+remain unknown. The session ends with its lowering or verification pass and must
+be rebuilt after any mutation to that immutable program snapshot. Standalone
+queries still construct a fresh analysis,
+including verifier tests that edit MIR at the same program address. This cache
+changes analysis cost, not source permissions or runtime representation.
 
 ### Borrow audits hosted on MIR
 
@@ -4695,7 +5311,10 @@ Each drop obligation retains a stable HIR construction ordinal. Reached
 full-expression drops are a contiguous suffix immediately before their path's
 boundary marker in reverse ordinal order. Each emitted lexical cleanup sequence
 has its own table entry and marker, and every binding-kind `Drop` instruction is
-covered by exactly one such sequence. Resolved `Call` and `Construct`
+covered by exactly one such sequence. Non-executable `EndBorrow` instructions
+may occur between its drops: loan flow separately checks their activity and
+ordering, including that no owner is dropped while borrowed. They do not alter
+the boundary's required runtime drop sequence. Resolved `Call` and `Construct`
 instructions retain their exact parameter types; only a non-reference input
 role can justify an ownership-consuming lifecycle event, and program
 verification cross-checks those roles against the concrete target signature.
@@ -4746,6 +5365,14 @@ non-failing active cleanup, such as shared-owner release: the backend executes
 the verified reverse-order recipe before retiring the inert native array
 shell. Arrays embedded in allocated objects use the same recipe. Native array
 destruction is not a substitute for releasing checked ownership resources.
+
+Borrowed elements with observing destructors retain every lifecycle-bound
+loan until the array drop completes, including its failure cleanup edge.
+The loan verifier follows element cleanup into an array only when the
+aggregate's exact SSA operands transfer their individual obligations into
+that exact result obligation. Array element types alone are insufficient
+proof. Failed construction retains the individual obligations for elements
+already constructed; a later element never acquires cleanup before success.
 
 ### Signature-only declarations
 

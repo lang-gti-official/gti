@@ -1,0 +1,20 @@
+// Borrowed storage: growable views user copy.
+//@ slow
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.vector;
+T copy_borrowed<T>(T& value)
+    requires std::copy_constructible<T> { return value; }
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  std::string_view selected = copy_borrowed(values[0]);
+  values.reserve(32);
+  return selected == "first" ? 0 : 1;
+}

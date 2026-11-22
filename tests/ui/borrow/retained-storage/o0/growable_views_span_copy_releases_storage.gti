@@ -1,0 +1,16 @@
+// A copied text view keeps its span owner borrowed until its last use.
+//@ run-pass
+import std.span;
+import std.string;
+import std.vector;
+
+int main() {
+  std::string name{"first"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(name.view());
+  auto view = values.as_span();
+  auto selected = view[0];
+  bool matches = selected == "first";
+  values.clear();
+  return matches ? 0 : 1;
+}

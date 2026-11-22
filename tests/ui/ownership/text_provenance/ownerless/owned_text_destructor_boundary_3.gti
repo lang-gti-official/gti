@@ -1,0 +1,12 @@
+// Owned text destructor boundary: ordinary ownerless text construction supports a source destructor.
+//@ check-pass
+import std.memory;
+import std.string;
+import std.panic;
+mut std::string_view escaped = "";
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+  ~Label() { if (this.text != "borrowed") { std::panic("expired text"); } }
+};
+int main() { Label value{"borrowed"}; return 0; }

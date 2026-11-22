@@ -37,7 +37,7 @@ int stores(std::string_view v) {
   slots[0] = f();  //~ ERROR GTI-S2045
   Message message = Message::text(f());  //~ ERROR GTI-S2045
   keep(f());  //~ ERROR GTI-S2045
-  label.set(f());  //~ ERROR GTI-S2045
+  label.set(f());  // a setter grows the local label's dependencies (RFC 0003)
   return note.line + token.n + made.n;
 }
 int locals(std::string_view v) {

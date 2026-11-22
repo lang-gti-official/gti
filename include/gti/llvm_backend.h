@@ -41,6 +41,17 @@ struct LlvmCodegenUnits {
   unsigned threads = 0; // Resolve from hardware concurrency when unspecified.
 };
 
+// A managed project may cache independent machine-code inputs. Calls can
+// run on different worker threads. Keys must describe the final module,
+// including restored linkage and all referenced definitions/declarations.
+class LlvmCodegenUnitCache {
+public:
+  virtual ~LlvmCodegenUnitCache() = default;
+  virtual std::optional<std::string> lookup(std::string_view bitcode,
+                                            std::string &key) = 0;
+  virtual void store(const std::string &key, const std::string &object) = 0;
+};
+
 struct LlvmBackendOptions {
   LlvmCodegenOptimization optimization = LlvmCodegenOptimization::None;
   bool debugInfo = false;
@@ -51,6 +62,7 @@ struct LlvmBackendOptions {
   // never part of object-cache identity.
   bool textualIr = false;
   LlvmCodegenUnits codegen;
+  LlvmCodegenUnitCache *unitCache = nullptr;
   // Emit distributed library objects for the platform baseline. Ordinary
   // native compilations retain their host's deployment target.
   bool distributedLibrary = false;

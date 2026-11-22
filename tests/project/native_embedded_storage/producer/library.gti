@@ -1,0 +1,20 @@
+export module assets;
+import std.span;
+
+export class Reader {
+public:
+  Reader() = default;
+  uint8_t read(std::span<uint8_t, static> caller) {
+    auto bytes = embed_bytes("payload.txt");
+    unsafe {
+      if (&caller[0] != &bytes[0]) { return uint8_t(0); }
+    }
+    return bytes[0];
+  }
+};
+
+export uint8_t read_snapshot<T>(T ignored) {
+  Reader reader{};
+  auto bytes = embed_bytes("payload.txt");
+  return reader.read(bytes);
+}

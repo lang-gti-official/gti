@@ -1057,8 +1057,22 @@ BackendArtifact emitObjectUnits(
         testProbe(i, context);
       if (unit.diagnosticError)
         return;
+      std::string key;
+      if (options.unitCache) {
+        llvm::SmallVector<char, 0> codegenInput;
+        llvm::raw_svector_ostream buffer(codegenInput);
+        llvm::WriteBitcodeToFile(**part, buffer);
+        if (auto hit = options.unitCache->lookup(
+                {codegenInput.data(), codegenInput.size()}, key)) {
+          unit.object = std::move(*hit);
+          return;
+        }
+      }
       auto machine = makeMachine(target, options);
       unit.object = emitMachineObject(**part, *machine);
+      // Informational machine-pass remarks are private on successful emission.
+      if (options.unitCache && !unit.diagnosticError)
+        options.unitCache->store(key, unit.object);
     } catch (...) {
       unit.failure = std::current_exception();
     }
@@ -1149,7 +1163,7 @@ BackendArtifact Session::emitObject() {
     // callbacks/llvm.used; no escape summary, external linkage promise or
     // function attribute is invented.
     const auto &mir = program().mir();
-    if ((mir.hostedStartupPlan() || program().compiledScalarProducer()) &&
+    if ((mir.hostedStartupPlan() || program().compiledNativeProducer()) &&
         !program().embeddingPlan()) {
       std::set<HirFunctionInstanceId> retained;
       for (const auto &callback : mir.nativeCallbackAdapters())
@@ -1168,7 +1182,8 @@ BackendArtifact Session::emitObject() {
       }
       for (const auto &[id, function] : sourceDefinitions_) {
         const auto &source = *mir.findFunctionInstance(id);
-        if (source.linkage != LanguageLinkage::Gti ||
+        if (program().compiledModuleBinding(id) ||
+            source.linkage != LanguageLinkage::Gti ||
             !source.externalSymbol.empty() || source.virtualMethod ||
             retained.contains(id) ||
             source.entryKind != ProgramEntryKind::None ||

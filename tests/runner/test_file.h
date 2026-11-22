@@ -94,6 +94,7 @@ struct RunSpec {
   bool hasInlineStdout = false;
   std::optional<std::filesystem::path> stdoutFile;
   std::vector<std::string> stderrContains;
+  bool stderrEmpty = false;
   std::optional<int> exitCode;
   std::vector<std::string> args;
   std::optional<std::string> stdinText;
@@ -155,6 +156,8 @@ struct TestFile {
   bool hasInlineStdout = false;
   std::optional<std::filesystem::path> stdoutFile;
   std::vector<std::string> stderrContains;
+  bool stderrEmpty = false;
+  std::vector<std::string> diagnosticNotes;
   std::optional<int> exitCode;
   std::optional<int> exitSignal;
   std::vector<std::string> args;
@@ -235,6 +238,7 @@ struct TestFile {
   // Tests with equal keys analyse the same trusted prefix; workers prefer
   // running them back to back.
   std::string groupKey;
+  bool singleUsePrefix = false;
 };
 
 // The `//@` lines of the gti-test.defaults files above `test` that apply to

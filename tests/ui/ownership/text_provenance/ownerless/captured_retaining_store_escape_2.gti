@@ -1,0 +1,18 @@
+// Captured retaining store escape: retaining a captured view cannot outlive its underlying owner.
+import std.string;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  mut Holder holder{};
+
+  {
+    std::string owner{"short"};
+    auto view = owner.view();
+    auto captured = [view]() -> std::string_view { return view; };
+    holder.put(captured());  //~ ERROR GTI-S2045
+  }
+  return holder.value == "short" ? 0 : 1;
+}

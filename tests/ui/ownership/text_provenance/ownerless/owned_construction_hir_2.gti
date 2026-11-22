@@ -1,0 +1,18 @@
+// Owned construction hir: owner-aware construction rejects a shared destination owner.
+import std.memory;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+void put(Reading* destination, int& owner, int& input) {
+  unsafe { std::construct_owned_at<Reading, int, int&>(destination, owner, input); }  //~ ERROR GTI-S2017
+}
+int main() {
+  Reading* destination = nullptr;
+  mut int owner = 0;
+  int number = 11;
+  put(destination, owner, number);
+  return 0;
+}

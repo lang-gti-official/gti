@@ -2,7 +2,8 @@
 // ambiguous returned reference (S2017, no quick fix) fixed by a binder, a
 // region mismatch fixed by an outlives bound, a write while a reborrow
 // lives, a loan carried into a later loop iteration, a returned local, and
-// assigning a region carrier (S2003). (lifetime_parameters_lsp_test.py,
+// a region carrier assigned a shorter-lived borrow and then used (S2017;
+// RFC 0003 admits the whole-value assignment). (lifetime_parameters_lsp_test.py,
 // second part; related locations are not asserted)
 //@ no-code-action @choose
 /* 😀 */ int& /*^choose*/choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
@@ -61,8 +62,8 @@ int invalid() {
 // --- step 11
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 int main() { int outer = 1; mut View view{outer};
-  { int inner = 2; /* 😀 */ view = View(inner); }  //~ ERROR GTI-S2003 assignment is unavailable for type 'View'
-  return view.value; }
+  { int inner = 2; /* 😀 */ view = View(inner); }
+  return view.value; }  //~ ERROR GTI-S2017 owner or retained dependency has become unavailable
 // --- step 12
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 int main() { int outer = 1; View view{outer};
