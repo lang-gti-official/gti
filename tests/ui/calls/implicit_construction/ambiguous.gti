@@ -1,0 +1,6 @@
+// Two converting destinations are ambiguous, regardless of constructor cost.
+struct A { implicit A(int n) {} };
+struct B { implicit B(int n) {} };
+int take(A a) { return 1; }
+int take(B b) { return 2; }
+int main() { return take(1); }  //~ ERROR GTI-S2013

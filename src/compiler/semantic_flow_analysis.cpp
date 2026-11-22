@@ -4699,6 +4699,15 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   }
   const ResolvedConstructionInfo &construction =
       *semanticModel.findContextualConstruction(*expr);
+  finishContextualConstruction(expr, construction);
+  if (diagnostics.size() == diagnosticStart)
+    enforceImmediateInvocation(*expr, true);
+  return construction.constructedType;
+}
+
+auto SemanticVisitor::Impl::finishContextualConstruction(
+    const ExprPtr &expr, const ResolvedConstructionInfo &construction) -> void {
+  const SourceSpan site = tokenSpan(expressionToken(expr));
   if (construction.kind == ConstructorKind::Move ||
       construction.directInitialization ||
       (!construction.parameterTypes.empty() &&
@@ -4721,9 +4730,6 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
         construction.constructedType, site,
         contextualConstructionRawFields(*expr, construction.constructedType));
   }
-  if (diagnostics.size() == diagnosticStart)
-    enforceImmediateInvocation(*expr, true);
-  return construction.constructedType;
 }
 
 auto SemanticVisitor::Impl::declarationConversionApplies(
@@ -8512,6 +8518,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   if (!expression) {
     return result;
   }
+  if (const auto *construction =
+          semanticModel.findContextualConstruction(*expression)) {
+    result.type = construction->constructedType;
+    if (construction->kind != ConstructorKind::Ordinary)
+      return result;
+    if (typeTraits(result.type).containsBorrowedState ||
+        construction->dependentTextPublication) {
+      result.failure = FreshTemporaryValueFailure::BorrowedState;
+      return result;
+    }
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
+    return result;
+  }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
   const bool callable =
@@ -8732,7 +8752,11 @@ auto SemanticVisitor::Impl::freshTemporaryBorrowValue(
     return result;
   }
   bool ordinaryProducer = false;
-  if (const auto *construction = semanticModel.findConstruction(*producer)) {
+  const auto *construction =
+      semanticModel.findContextualConstruction(*expression);
+  if (!construction)
+    construction = semanticModel.findConstruction(*producer);
+  if (construction) {
     ordinaryProducer = construction->kind == ConstructorKind::Ordinary &&
                        construction->constructedType == result.type &&
                        construction->borrowOrigin == BorrowOriginKind::Argument;

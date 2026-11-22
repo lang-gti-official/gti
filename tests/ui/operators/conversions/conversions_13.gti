@@ -1,4 +1,5 @@
-// Conversion operators: rejected with GTI-S2003.
+// An implicit optional constructor supplies a by-value call argument.
+//@ run-pass
 import std.optional;
-int take(std::optional<int> value) { return 0; }
-int main() { return take(7); }  //~ ERROR GTI-S2003
+int take(std::optional<int> value) { return value.value(); }
+int main() { return take(7) + take(std::optional<int>(7)) - 14; }

@@ -1,0 +1,5 @@
+// Function arguments never chain two implicit constructors.
+struct A { implicit A(int n) {} };
+struct B { implicit B(A a) {} };
+void take(B b) {}
+int main() { take(1); return 0; }  //~ ERROR GTI-S2003
