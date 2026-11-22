@@ -1,0 +1,11 @@
+// A print call cannot release the owner of text stored in a local array.
+//@ slow
+import std.string;
+int main() {
+  mut std::string owner{"text"};
+  std::string_view words[1] = {owner.view()};
+  std::println("unrelated");
+  std::string_view& word = words[0];
+  owner.clear();  //~ ERROR GTI-S2017
+  return word.empty() ? 1 : 0;
+}

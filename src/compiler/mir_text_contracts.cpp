@@ -3975,6 +3975,138 @@ std::optional<SemanticType> inheritedFieldType(const MirProgram &program,
   }
   return std::nullopt;
 }
+
+// An opaque effect elsewhere in a body cannot change a private array whose
+// only addresses are local, read-only references used solely to load text.
+// Prove the literal initializer and every use of those addresses independently
+// of the body's retaining-effect summary.
+bool privateLiteralTextArray(const MirBody &body, const MirPlace &root) {
+  if (root.root != MirPlaceRootKind::Binding || root.initiallyAvailable ||
+      root.foreignStorage || root.access != AccessMode::ReadOnly ||
+      root.type.kind != SemanticType::Array)
+    return false;
+  std::set<MirLoanId> borrows;
+  std::set<HirBindingId> aliases;
+  for (const auto &loan : body.loans) {
+    const auto *source = body.findPlace(loan.source);
+    if (!source || source->root != root.root || source->binding != root.binding)
+      continue;
+    if (loan.kind != MirLoanKind::Local ||
+        loan.access != AccessMode::ReadOnly || loan.escapes || loan.entry ||
+        loan.parent || loan.storedDependency ||
+        !loan.additionalDependencies.empty() || loan.referenceSelection)
+      return false;
+    borrows.insert(loan.id);
+    aliases.insert(loan.carriers.begin(), loan.carriers.end());
+  }
+  const auto touches = [&](const MirPlace *p) {
+    return p &&
+           ((p->root == MirPlaceRootKind::Binding &&
+             (p->binding == root.binding || aliases.contains(p->binding))) ||
+            (p->root == MirPlaceRootKind::Loan && borrows.contains(p->loan)));
+  };
+  const auto addresses = [&](const MirOperand &operand) {
+    return touches(body.findPlace(operand.place)) ||
+           borrows.contains(operand.loan);
+  };
+  std::set<MirValueId> literals;
+  const auto literal = [&](const auto &self, const MirOperand &op) -> bool {
+    if (op.kind != MirOperandKind::Value || !op.value)
+      return false;
+    if (literals.contains(op.value))
+      return true;
+    const auto *value = definitionFor(body, op.value);
+    if (!value || value->tombstone || value->info.type != op.type ||
+        value->kind != MirInstructionKind::Compute)
+      return false;
+    if (value->operation == MirOperation::Aggregate &&
+        op.type.kind == SemanticType::Array && op.type.arguments.size() == 1) {
+      if (!std::all_of(value->operands.begin(), value->operands.end(),
+                       [&](const auto &v) {
+                         return v.type == op.type.arguments.front() &&
+                                self(self, v);
+                       }))
+        return false;
+    } else if (!textType(op.type) || value->operation != MirOperation::Literal ||
+               !value->literal ||
+               (!std::holds_alternative<std::string>(*value->literal) &&
+                !std::holds_alternative<std::nullptr_t>(*value->literal)))
+      return false;
+    literals.insert(op.value);
+    return true;
+  };
+  bool initialized = false;
+  for (const auto &block : body.blocks) {
+    for (const auto &stage : block.instructions) {
+      if (stage.tombstone)
+        continue;
+      const auto *dest =
+          stage.destination ? body.findPlace(*stage.destination) : nullptr;
+      if (touches(dest)) {
+        if (stage.kind != MirInstructionKind::Initialize ||
+            !dest->projections.empty() || stage.operands.size() != 1 ||
+            dest->root != MirPlaceRootKind::Binding)
+          return false;
+        const auto &input = stage.operands.front();
+        if (dest->binding == root.binding) {
+          if (initialized || !literal(literal, input))
+            return false;
+          initialized = true;
+        } else if (input.kind != MirOperandKind::Loan ||
+                   !borrows.contains(input.loan) ||
+                   dest->type.kind != SemanticType::Reference ||
+                   dest->type.referenceAccess != AccessMode::ReadOnly) {
+          return false;
+        } else {
+          continue;
+        }
+      }
+      if ((stage.receiver && addresses(*stage.receiver)) ||
+          (stage.retainedOwnerPlace &&
+           touches(body.findPlace(*stage.retainedOwnerPlace))) ||
+          (stage.successResultDestination &&
+           touches(body.findPlace(*stage.successResultDestination))))
+        return false;
+      for (const auto &op : stage.operands) {
+        if (!addresses(op))
+          continue;
+        // Evaluating a nested index can form an unused address of its
+        // intermediate row. No caller or projected place receives it.
+        if (stage.kind == MirInstructionKind::Compute &&
+            stage.operation == MirOperation::AddressOf && stage.result &&
+            op.kind == MirOperandKind::Address &&
+            body.usesOf(*stage.result).empty() &&
+            std::none_of(body.places.begin(), body.places.end(),
+                         [&](const auto &p) {
+                           return p.root == MirPlaceRootKind::Value &&
+                                  p.value == *stage.result;
+                         }))
+          continue;
+        if (stage.kind == MirInstructionKind::Load &&
+            op.kind == MirOperandKind::Copy && inlineTextType(op.type) &&
+            inlineTextType(stage.info.type))
+          continue;
+        if (stage.kind == MirInstructionKind::Borrow && !stage.result &&
+            stage.loan && borrows.contains(*stage.loan) &&
+            op.kind == MirOperandKind::BorrowRead)
+          continue;
+        return false;
+      }
+    }
+    const auto &end = block.terminator;
+    if ((end.returnLoan && borrows.contains(*end.returnLoan)) ||
+        (end.value && addresses(*end.value)) ||
+        std::any_of(end.targetArguments.begin(), end.targetArguments.end(),
+                    addresses) ||
+        std::any_of(end.elseArguments.begin(), end.elseArguments.end(),
+                    addresses))
+      return false;
+    for (const auto &arm : end.switchTargets)
+      if (std::any_of(arm.arguments.begin(), arm.arguments.end(), addresses))
+        return false;
+  }
+  return initialized;
+}
 } // namespace
 
 bool isOwnerlessTextStorageProjection(const MirProgram &program,
@@ -4062,7 +4194,8 @@ bool isOwnerlessTextStorageProjection(const MirProgram &program,
       derived = deriveMirCarrierFlow(body, &program);
       flow = &*derived;
     }
-    if (!flow->effectsComplete)
+    if (!flow->effectsComplete &&
+        (!rootPlace || !privateLiteralTextArray(body, *rootPlace)))
       return false;
     const MirCarrierRoot root{MirPlaceRootKind::Binding, place.binding};
     for (const auto &[site, writes] : flow->storeInputsByTarget) {

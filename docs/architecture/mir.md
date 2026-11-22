@@ -3629,7 +3629,12 @@ suppliers as a stored value dependency. The same explicit region relation applie
 to a scalar text view selected from a by-value text array. For a scalar result,
 only a declared supplier that stores text views can select this array proof.
 When a character array owns text made from its address, MIR checks the borrow
-of that array's storage. At a call boundary,
+of that array's storage. When an opaque call makes the body's retaining effects
+incomplete, MIR can still prove that an immutable local array contains only
+literal text. It checks the initializer and every use of the array's address.
+Value copies and local read-only element borrows preserve that proof. An address
+passed to a call or a view initialized from a live owner requires the usual
+dependency evidence. At a call boundary,
 inline text values retain the union of all declared inputs' actual read-only,
 parentless stored groups. An ownerless primary input does not erase a borrowed
 secondary input, and an array input does not collapse several owners to its
