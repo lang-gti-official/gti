@@ -298,3 +298,32 @@ BCE/year-zero dates, general date-string parsing, full localization or a
 recurring-schedule engine. Time-zone accuracy reflects the pinned data's
 historical coverage and rules known at that release; future government changes
 require an explicit data update or a newly built application.
+
+### Calendar patterns through std::format
+
+Importing `std.chrono` supplies parsing formatters for `date`, `time_of_day`,
+`local_datetime`, `timestamp` and `zoned_time` in their owning modules:
+
+```gti
+auto stamp = std::chrono::timestamp::now();
+auto name = std::format("wal-{:%Y-%m-%d_%H-%M-%S_%f}Z.log", stamp);
+```
+
+`std::println`, `std::try_format`, the append APIs, and their explicit runtime
+variants use the same dispatch. Empty specifications retain ISO-like default
+output. A common text presentation may precede the first `%` directive, for
+example `{:>24%Y-%m-%d}`. The existing chrono directive vocabulary and component
+checks apply; this does not claim all C++ chrono directives or locale support.
+
+Literal patterns reject unavailable components during compilation. Runtime
+pattern or temporal conversion failures become `std::format_errc::invalid_format`
+(and the matching print error). The dedicated `std::chrono::try_format` and
+runtime helpers remain available when callers need a chrono error category and
+byte position; prepared patterns remain useful for repeated standalone output.
+
+The shared tokenizer and renderer live below the calendar and zone adapters.
+The internal `temporal_components` protocol supplies capability checks and
+field extraction without introducing a module dependency cycle. Both public
+formatting paths use that shared machinery, so directives have one meaning.
+Timestamp-based filenames still require exclusive file creation to guarantee
+uniqueness.

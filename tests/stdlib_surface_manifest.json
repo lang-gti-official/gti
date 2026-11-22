@@ -3888,7 +3888,11 @@
         "std::chrono::months",
         "std::chrono::time_of_day",
         "std::chrono::timestamp",
-        "std::chrono::years"
+        "std::chrono::years",
+        "std::formatter<std::chrono::date>",
+        "std::formatter<std::chrono::timestamp>",
+        "std::formatter<std::chrono::time_of_day>",
+        "std::formatter<std::chrono::local_datetime>"
       ],
       "case_ids": [
         "chrono"
@@ -3899,7 +3903,8 @@
       "evidence": [
         "tests/ui/chrono/calendar_cycle.gti",
         "tests/ui/chrono/calendar_duration_arithmetic.gti",
-        "tests/ui/chrono/calendar_bounds.gti"
+        "tests/ui/chrono/calendar_bounds.gti",
+        "tests/ui/stdlib/format/chrono_parse.gti"
       ]
     },
     {
@@ -4006,7 +4011,6 @@
       "operations": [
         "std::chrono::error",
         "std::chrono::format",
-        "std::chrono::format_error",
         "std::chrono::format_to",
         "std::chrono::prepare_time_pattern",
         "std::chrono::prepared_time_pattern",
@@ -4027,7 +4031,8 @@
       ],
       "evidence": [
         "tests/ui/chrono/formatting.gti",
-        "tests/slow/chrono/format_runtime.gti"
+        "tests/slow/chrono/format_runtime.gti",
+        "tests/ui/stdlib/format/chrono_parse.gti"
       ]
     },
     {
@@ -4067,7 +4072,8 @@
       "evidence": [
         "tests/slow/stdlib/chrono_calendar/zones_named.gti",
         "tests/ui/stdlib/chrono_calendar/zones_name_escape.gti",
-        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti"
+        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti",
+        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     },
     {
@@ -4834,7 +4840,10 @@
         "std::try_runtime_format",
         "std::try_runtime_format_to",
         "std::try_runtime_print",
-        "std::try_runtime_println"
+        "std::try_runtime_println",
+        "std::format_parse_context",
+        "std::parse_format_spec",
+        "std::formatter<T>::parse(format_parse_context&)"
       ],
       "case_ids": [
         "format",
@@ -4870,7 +4879,9 @@
         "tests/fixtures/checked_literal_arguments.gti",
         "tests/ui/stdlib/contracts",
         "tests/ui/stdlib/format/output_targets.gti",
-        "tests/ui/stdlib/format/output_target_error.gti"
+        "tests/ui/stdlib/format/output_target_error.gti",
+        "tests/ui/stdlib/format/custom_parse.gti",
+        "tests/slow/stdlib/format/custom_parse_invalid.gti"
       ]
     },
     {
@@ -8960,6 +8971,26 @@
         "tests/ui/stdlib/containers/swap/values.gti",
         "tests/ui/stdlib/containers/swap/cleanup.gti",
         "tests/ui/stdlib/containers/swap"
+      ]
+    },
+    {
+      "id": "chrono.format-support",
+      "source": "stdlib/std/detail/chrono_format_support.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::errc",
+        "std::chrono::format_error",
+        "shared temporal tokenizer and formatter adapter"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Calendar and zone formatters use the same tokenizer as standalone and prepared chrono patterns."
+      ],
+      "evidence": [
+        "tests/ui/stdlib/format/chrono_parse.gti",
+        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     }
   ]

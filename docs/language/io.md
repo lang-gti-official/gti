@@ -651,9 +651,9 @@ constrain a forwarding generic with `requires std::formattable<T>`.
 Zero alignment/type means unspecified; the default fill is a space and sign is
 `'-'`. A formatter should implement or reject every non-default field it accepts.
 It can delegate to a built-in formatter or compose ordinary `try_format_to`
-calls. This first public protocol shares the existing common specification
-grammar; it does not add C++ iterator/context types or arbitrary per-type parse
-grammars. Neither compiler nor LSP parses format strings.
+calls. These existing implementations continue to use the common specification
+grammar. A parsing formatter can instead own its specification grammar, as
+described below. Neither compiler nor LSP parses format strings.
 
 The formatter appends to a temporary result and may report any `format_errc`.
 `invalid_format` normally means a rejected presentation; `unsupported_argument`
@@ -668,5 +668,50 @@ so repeated indexed fields repeat its method call in pattern order.
 Unsupported static types receive ordinary contract diagnostics in CLI and LSP;
 no fix can invent the application's formatting policy. Generic forwarding
 wrappers should declare the same required contracts. Literal syntax, count, and
-specifier validation remain runtime checks until a general call-site constant
-validation facility exists. See `examples/106-custom-formatters.gti`.
+specifier validation run during constant construction for literal patterns.
+Explicit runtime APIs report these failures through their existing error contracts. See `examples/106-custom-formatters.gti`.
+
+### Type-specific specification parsing
+
+A default-initializable exact `std::formatter<T>` can provide both:
+
+```gti
+constexpr bool parse(std::format_parse_context& spec) mut;
+expected<void, std::format_errc> format(T& value, mut std::string& output,
+                                      std::format_parse_context& spec);
+```
+
+`parse` accepts the complete field specification or returns false. It may store
+ordinary typed state in the formatter. A fresh formatter is constructed for
+every selected field, including repeated explicit indexes, and that same object
+performs parsing followed by rendering. Literal pattern validation constructs a
+separate formatter during constant evaluation and calls the same parser; its
+constructor and parser must therefore be constexpr to accept literal patterns.
+Runtime-only parsers remain usable with the explicit runtime APIs.
+
+This parsing contract takes precedence over `std::formatting<T>`. Without it,
+the existing protocol takes precedence over the common-specification class
+formatter. Only complete matching contracts participate; a method merely named
+`parse` does not replace an existing formatter.
+
+The context holds a checked read-only reference to the pattern view. `size()`
+and indexed access are constexpr; `prefix(count)` and `suffix(start)` produce
+checked subcontexts. `view()` supplies the borrowed specification text at
+runtime. All bounds are checked. The context is passed to rendering as well,
+so parsers can store offsets or other ordinary values without retaining raw
+pointers or escaping the pattern's lifetime. `std::parse_format_spec(context,
+result)` reuses the common numeric/text grammar and fills `std::format_spec`.
+
+The outer parser owns escaping, argument indexing and balanced field boundaries.
+The type parser owns the text after `:` (excluding the enclosing braces).
+Balanced inner braces are delivered as specification text, enabling grammars
+such as chrono's `%{zone}`; they do not introduce implicit nested argument
+references. Named arguments, dynamic width and dynamic precision remain outside
+the generic replacement-field contract.
+
+False from a runtime parser produces `format_errc::invalid_format`. Literal
+rejection uses the existing constant-evaluation diagnostic. `try_format_to`
+remains transactional and print functions submit nothing on formatting failure.
+No compiler changes, special type names, native callbacks or virtual dispatch
+are involved. Parsing adds no allocation itself; formatter implementations own
+their state and output costs.

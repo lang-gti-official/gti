@@ -1,0 +1,36 @@
+// A source-defined formatter owns a nonstandard grammar and per-field state.
+//@ run-pass
+import std.format;
+import std.string;
+struct Reading { int value; };
+class std::formatter<Reading> {
+  mut bool decorated = false;
+public:
+  constexpr formatter() {}
+  constexpr bool parse(std::format_parse_context& spec) mut {
+    this.decorated = spec.size() == 3 && spec[0] == 't' && spec[1] == 'a' && spec[2] == 'g';
+    return spec.size() == 0 || this.decorated;
+  }
+  expected<void, std::format_errc> format(Reading& value, mut std::string& output,
+      std::format_parse_context& spec) {
+    if (this.decorated) { output.append("["); }
+    ?std::try_format_to(output, "{}", value.value);
+    if (this.decorated) { output.append("]"); }
+    return;
+  }
+};
+int main() {
+  Reading reading{.value = 7};
+  auto result = std::format("{0:tag}/{0}/{{{0:tag}}}", reading);
+  if (result != "[7]/7/{[7]}") { return 1; }
+  std::string pattern = std::string("{0:tag}/{0}");
+  if (std::runtime_format(pattern.view(), reading) != "[7]/7") { return 2; }
+  mut std::string destination = std::string("unchanged");
+  auto invalid = std::try_runtime_format_to(destination, "{} {:bad}", reading, reading);
+  if (invalid || invalid.error() != std::format_errc::invalid_format || destination != "unchanged") { return 3; }
+  if (std::try_runtime_format("{:tag", reading)) { return 4; }
+  if (std::try_runtime_format("{0:tag} {}", reading)) { return 5; }
+  if (std::try_runtime_format("{:tag}", 7)) { return 6; }
+  if (std::format("{:04x}", 42) != "002a") { return 7; }
+  return 0;
+}

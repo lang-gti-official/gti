@@ -9,12 +9,6 @@ import std.vector;
 import "panic.gti";
 
 namespace std::chrono {
-/// A recoverable temporal-format failure, located at a byte in the pattern.
-export struct format_error {
-  errc code;
-  std::size_t position;
-  constexpr format_error(errc reason, std::size_t byte) : code(reason), position(byte) {}
-};
 /// Preserves the original component error when combining chrono operations.
 export enum error {
   calendar(errc cause),
@@ -28,197 +22,16 @@ constexpr bool temporal_type<T>() {
     std::meta::is_same<T, local_datetime>() || std::meta::is_same<T, timestamp>() ||
     std::meta::is_same<T, zoned_time>();
 }
-constexpr bool has_date<T>() { return !std::meta::is_same<T, time_of_day>(); }
-constexpr bool has_time<T>() { return !std::meta::is_same<T, date>(); }
-constexpr bool has_zone<T>() {
-  return std::meta::is_same<T, timestamp>() || std::meta::is_same<T, zoned_time>();
+
 }
-struct time_token {
-  constexpr time_token() {}
-  mut std::size_t start = 0;
-  mut std::size_t length = 0;
-  mut char code = char(0);
-};
-// The same bounded parser is used by consteval validation and runtime preparation.
-constexpr expected<time_token, format_error> next_time_token<T>(
-    std::string_view pattern, mut std::size_t& cursor) {
-  mut time_token result{};
-  result.start = cursor;
-  if (pattern[cursor] != '%') {
-    while (cursor < pattern.size() && pattern[cursor] != '%') { cursor++; }
-    result.length = cursor - result.start;
-    return result;
-  }
-  cursor++;
-  if (cursor == pattern.size()) { return unexpected(format_error(errc::invalid_pattern, result.start)); }
-  mut char code = pattern[cursor];
-  cursor++;
-  if (code == ':') {
-    code = 'z';
-    if (cursor < pattern.size() && pattern[cursor] == ':') { code = 'o'; cursor++; }
-    if (cursor == pattern.size() || pattern[cursor] != 'z') {
-      return unexpected(format_error(errc::invalid_pattern, result.start));
-    }
-    cursor++;
-  } else if (code == '{') {
-    if (cursor + 5 > pattern.size() || pattern[cursor] != 'z' ||
-        pattern[cursor + 1] != 'o' || pattern[cursor + 2] != 'n' ||
-        pattern[cursor + 3] != 'e' || pattern[cursor + 4] != '}') {
-      return unexpected(format_error(errc::invalid_pattern, result.start));
-    }
-    cursor += 5;
-    code = 'q';
-  } else if (code == 'z' || code == 'o' || code == 'q') {
-    return unexpected(format_error(errc::invalid_pattern, result.start));
-  }
-  bool calendar = code == 'Y' || code == 'm' || code == 'd' || code == 'a' ||
-                  code == 'A' || code == 'b' || code == 'B';
-  bool clock = code == 'H' || code == 'M' || code == 'S' || code == 'f' ||
-               code == 'I' || code == 'p' || code == 'P';
-  bool zone = code == 'z' || code == 'o' || code == 'Z' || code == 'q';
-  if ((!calendar && !clock && !zone && code != '%') ||
-      (calendar && !has_date<T>()) || (clock && !has_time<T>()) ||
-      (zone && !has_zone<T>())) {
-    return unexpected(format_error(errc::invalid_pattern, result.start));
-  }
-  result.code = code;
-  return result;
-}
-constexpr expected<void, format_error> validate_time_pattern<T>(std::string_view pattern) {
-  if (pattern.size() > 65536) { return unexpected(format_error(errc::resource_limit, 0)); }
-  mut std::size_t cursor = 0;
-  while (cursor < pattern.size()) { auto token = ?next_time_token<T>(pattern, cursor); }
-  return;
-}
-struct time_fields {
-  time_fields() = default;
-  mut int32_t year = 0;
-  mut int32_t month = 0;
-  mut int32_t day = 0;
-  mut int32_t weekday = 0;
-  mut int32_t hour = 0;
-  mut int32_t minute = 0;
-  mut int32_t second = 0;
-  mut int32_t nano = 0;
-  mut int32_t offset = 0;
-  mut std::string abbreviation{};
-  mut std::string zone{};
-};
-void date_fields(mut time_fields& fields, date& value) {
-  fields.year = value.year(); fields.month = value.month();
-  fields.day = value.day(); fields.weekday = value.weekday();
-}
-void clock_fields(mut time_fields& fields, time_of_day& value) {
-  fields.hour = value.hour(); fields.minute = value.minute();
-  fields.second = value.second(); fields.nano = value.subsecond_nanoseconds();
-}
-void local_fields(mut time_fields& fields, local_datetime& value) {
-  fields.year = value.year(); fields.month = value.month(); fields.day = value.day();
-  auto d = date::create(value.year(), value.month(), value.day());
-  fields.weekday = d.weekday();
-  fields.hour = value.hour(); fields.minute = value.minute();
-  fields.second = value.second(); fields.nano = value.subsecond_nanoseconds();
-}
-expected<time_fields, format_error> fields_of<T>(T& value) {
-  mut time_fields result{};
-  if constexpr (std::meta::is_same<T, date>()) { date_fields(result, value); }
-  else if constexpr (std::meta::is_same<T, time_of_day>()) { clock_fields(result, value); }
-  else if constexpr (std::meta::is_same<T, local_datetime>()) { local_fields(result, value); }
-  else if constexpr (std::meta::is_same<T, timestamp>()) {
-    auto converted = local_datetime::try_from_unix_seconds(value.unix_seconds(), value.subsecond_nanoseconds());
-    if (!converted) { return unexpected(format_error(converted.error(), 0)); }
-    auto local = converted.value();
-    local_fields(result, local);
-    result.abbreviation = std::string("UTC"); result.zone = std::string("UTC");
-  } else if constexpr (std::meta::is_same<T, zoned_time>()) {
-    auto local = value.local();
-    local_fields(result, local);
-    result.offset = value.offset_seconds();
-    result.abbreviation = std::string(value.abbreviation());
-    result.zone = std::string(value.zone_name());
-  }
-  return std::move(result);
-}
-void append_digits(mut std::string& out, int64_t value, int32_t width) {
-  mut int64_t divisor = 1;
-  for (mut int32_t n = 1; n < width; n++) { divisor *= 10; }
-  while (divisor > 0) {
-    out.push_back(char(uint8_t(48i64 + value / divisor % 10))); divisor /= 10;
-  }
-}
-void append_offset(mut std::string& out, int32_t value, bool seconds) {
-  mut int64_t count = int64_t(value);
-  if (count < 0) { out.push_back('-'); count = -count; } else { out.push_back('+'); }
-  // TZif permits offsets beyond 24 hours. Preserve the complete hour count.
-  int64_t hours = count / 3600;
-  if (hours > 99) { auto text = std::format("{}", hours); out.append(text.view()); }
-  else { append_digits(out, hours, 2); }
-  out.push_back(':'); append_digits(out, count / 60 % 60, 2);
-  if (seconds) { out.push_back(':'); append_digits(out, count % 60, 2); }
-}
-std::string_view weekday_name(int32_t day, bool full) {
-  if (day == 0) { if (full) { return "Sunday"; } return "Sun"; }
-  if (day == 1) { if (full) { return "Monday"; } return "Mon"; }
-  if (day == 2) { if (full) { return "Tuesday"; } return "Tue"; }
-  if (day == 3) { if (full) { return "Wednesday"; } return "Wed"; }
-  if (day == 4) { if (full) { return "Thursday"; } return "Thu"; }
-  if (day == 5) { if (full) { return "Friday"; } return "Fri"; }
-  if (day == 6) { if (full) { return "Saturday"; } return "Sat"; }
-  return "";
-}
-std::string_view month_name(int32_t month, bool full) {
-  if (month == 1) { if (full) { return "January"; } return "Jan"; }
-  if (month == 2) { if (full) { return "February"; } return "Feb"; }
-  if (month == 3) { if (full) { return "March"; } return "Mar"; }
-  if (month == 4) { if (full) { return "April"; } return "Apr"; }
-  if (month == 5) { if (full) { return "May"; } return "May"; }
-  if (month == 6) { if (full) { return "June"; } return "Jun"; }
-  if (month == 7) { if (full) { return "July"; } return "Jul"; }
-  if (month == 8) { if (full) { return "August"; } return "Aug"; }
-  if (month == 9) { if (full) { return "September"; } return "Sep"; }
-  if (month == 10) { if (full) { return "October"; } return "Oct"; }
-  if (month == 11) { if (full) { return "November"; } return "Nov"; }
-  if (month == 12) { if (full) { return "December"; } return "Dec"; }
-  return "";
-}
-expected<void, format_error> append_time_token(mut std::string& out,
-    time_fields& value, std::string_view pattern, time_token& token) {
-  char code = token.code;
-  if (code == char(0)) {
-    for (mut std::size_t i = 0; i < token.length; i++) { out.push_back(pattern[token.start + i]); }
-  } else if (code == '%') { out.push_back('%'); }
-  else if (code == 'Y') { append_digits(out, int64_t(value.year), 4); }
-  else if (code == 'm') { append_digits(out, int64_t(value.month), 2); }
-  else if (code == 'd') { append_digits(out, int64_t(value.day), 2); }
-  else if (code == 'H') { append_digits(out, int64_t(value.hour), 2); }
-  else if (code == 'M') { append_digits(out, int64_t(value.minute), 2); }
-  else if (code == 'S') { append_digits(out, int64_t(value.second), 2); }
-  else if (code == 'f') { append_digits(out, int64_t(value.nano), 9); }
-  else if (code == 'I') {
-    mut int32_t hour = value.hour % 12;
-    if (hour == 0) { hour = 12; }
-    append_digits(out, int64_t(hour), 2);
-  } else if (code == 'p') { if (value.hour < 12) { out.append("AM"); } else { out.append("PM"); } }
-  else if (code == 'P') { if (value.hour < 12) { out.append("am"); } else { out.append("pm"); } }
-  else if (code == 'a' || code == 'A') { out.append(weekday_name(value.weekday, code == 'A')); }
-  else if (code == 'b' || code == 'B') { out.append(month_name(value.month, code == 'B')); }
-  else if (code == 'z' || code == 'o') {
-    if (code == 'z' && value.offset % 60 != 0) { return unexpected(format_error(errc::invalid_pattern, token.start)); }
-    append_offset(out, value.offset, code == 'o');
-  } else if (code == 'Z') { out.append(value.abbreviation.view()); }
-  else if (code == 'q') { out.append(value.zone.view()); }
-  if (out.size() > 1048576) { return unexpected(format_error(errc::resource_limit, token.start)); }
-  return;
-}
-}
-export concept temporal_value<T> = detail::temporal_type<T>();
+export concept temporal_value<T> = detail::temporal_type<T>() && detail::temporal_components<T>;
 
 /// An immutable checked literal, inferred from the value being formatted.
 export class time_pattern<temporal_value T> {
   std::string_view text;
 public:
   implicit consteval time_pattern(std::string_view value) : text(value) {
-    auto valid = detail::validate_time_pattern<T>(value);
+    auto valid = detail::validate_time_pattern<T, std::string_view>(value);
     if (!valid) { std::detail::panic("Invalid chrono pattern or unavailable temporal component"); }
   }
   constexpr std::string_view view() { return this.text; }
@@ -233,10 +46,10 @@ public:
   prepared_time_pattern(prepared_time_pattern<T>& other) = delete;
   prepared_time_pattern(prepared_time_pattern<T>&& other) = default;
   expected<void, format_error> try_assign(std::string_view pattern) mut {
-    ?detail::validate_time_pattern<T>(pattern);
+    ?detail::validate_time_pattern<T, std::string_view>(pattern);
     mut std::vector<detail::time_token> tokens{};
     mut std::size_t cursor = 0;
-    while (cursor < pattern.size()) { tokens.push_back(?detail::next_time_token<T>(pattern, cursor)); }
+    while (cursor < pattern.size()) { tokens.push_back(?detail::next_time_token<T, std::string_view>(pattern, cursor)); }
     this.text = std::string(pattern);
     this.tokens = std::move(tokens);
     return;
@@ -280,13 +93,13 @@ export prepared_time_pattern<T> prepare_time_pattern<temporal_value T>(std::stri
 }
 
 export expected<std::string, format_error> try_runtime_format<temporal_value T>(T& value, std::string_view pattern) {
-  ?detail::validate_time_pattern<T>(pattern);
+  ?detail::validate_time_pattern<T, std::string_view>(pattern);
   auto fields = ?detail::fields_of(value);
   mut std::string out{};
   out.reserve(pattern.size() + 32);
   mut std::size_t cursor = 0;
   while (cursor < pattern.size()) {
-    auto token = ?detail::next_time_token<T>(pattern, cursor);
+    auto token = ?detail::next_time_token<T, std::string_view>(pattern, cursor);
     ?detail::append_time_token(out, fields, pattern, token);
   }
   return std::move(out);

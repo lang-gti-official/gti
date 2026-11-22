@@ -1,0 +1,17 @@
+// Literal validation calls the same user-defined parser as runtime formatting.
+//@ slow
+import std.format;
+import std.string;
+struct Reading { int value; };
+class std::formatter<Reading> {
+public:
+  constexpr formatter() {}
+  constexpr bool parse(std::format_parse_context& spec) mut { return spec.size() == 0; }
+  expected<void, std::format_errc> format(Reading& value, mut std::string& output,
+      std::format_parse_context& spec) { return; }
+};
+int main() {
+  Reading reading{.value = 7};
+  auto text = std::format("{:bad}", reading); //~ ERROR GTI-S2057
+  return 0;
+}

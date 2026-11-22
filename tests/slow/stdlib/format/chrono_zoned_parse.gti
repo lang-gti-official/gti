@@ -1,0 +1,19 @@
+// Zone, local and time-only adapters share checked directive semantics.
+//@ run-pass
+//@ slow
+import std.chrono;
+import std.format;
+int main() {
+  auto zone = std::chrono::time_zone::fixed(3661);
+  auto zoned = zone.at(std::chrono::timestamp(0i64));
+  if (std::format("{:%H:%M:%S %::z}", zoned) != "01:01:01 +01:01:01") { return 1; }
+  auto rejected = std::try_runtime_format("{:%:z}", zoned);
+  if (rejected || rejected.error() != std::format_errc::invalid_format) { return 2; }
+  auto local = zoned.local();
+  if (std::format("{:%Y %H}", local) != "1970 01") { return 3; }
+  auto time = std::chrono::time_of_day::create(13, 2, 3, 4);
+  if (std::format("{:%I:%M:%S %p %f}", time) != "01:02:03 PM 000000004") { return 4; }
+  if (std::try_runtime_format("{:%Y}", time)) { return 5; }
+  if (std::try_runtime_format("{:%Z}", local)) { return 6; }
+  return 0;
+}
