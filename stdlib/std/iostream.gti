@@ -21,6 +21,7 @@ class basic_iostream<B> : public basic_istream<B> {
   }
 public:
   basic_iostream(B value) : basic_istream<B>(std::move(value)) {}
+  ostream as_ostream() mut requires detail::output_view_source<basic_iostream<B>> { return ostream::from(this); }
   [[discardable]] mut basic_iostream<B>& put(char value) mut requires io::writer<B> {
     uint8_t data[1] = {uint8_t(value)};
     auto bytes = data.as_span();
@@ -119,4 +120,3 @@ public:
   }
 };
 }
-

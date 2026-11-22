@@ -1,5 +1,6 @@
 export module istream;
 export import std.ios;
+export import "detail/istream_view.gti";
 import std.io;
 import std.cstdio;
 import std.charconv;
@@ -20,9 +21,6 @@ constexpr int stream_digit(int32_t byte) {
 }
 
 export namespace std {
-enum input_manipulator { whitespace };
-constexpr input_manipulator ws = input_manipulator::whitespace;
-
 /// Reusable byte-oriented input with classic-locale formatting. A transport
 /// with its own get area owns all lookahead and positioning; a plain reader
 /// needs only a single pending byte to leave a delimiter available.
@@ -219,6 +217,7 @@ class basic_istream<B> : public basic_ios<B> {
   }
 public:
   basic_istream(B value) : basic_ios<B>(std::move(value)) {}
+  istream as_istream() mut requires detail::input_stream_source<basic_istream<B>> { return istream::from(this); }
   size_t gcount() { return this.extracted; }
   int32_t peek() mut {
     this.extracted = 0;
@@ -363,10 +362,13 @@ public:
     this.apply(setting);
     return this;
   }
-  [[discardable]] mut basic_istream<B>& operator>>(input_manipulator operation) mut {
-    if (operation == input_manipulator::whitespace && this.sentry(false)) {
+  void skip_whitespace() mut {
+    if (this.sentry(false)) {
       while (detail::stream_space(this.look())) { if (this.consume() < 0) { break; } }
     }
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(input_manipulator operation) mut {
+    if (operation == input_manipulator::whitespace) { this.skip_whitespace(); }
     return this;
   }
   [[discardable]] mut basic_istream<B>& operator>>(mut char& out) mut {
@@ -434,4 +436,3 @@ public:
   return source;
 }
 }
-

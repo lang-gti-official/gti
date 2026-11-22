@@ -1,0 +1,10 @@
+// Both directions need exclusive access to the same file.
+//@ slow
+import std.fstream;
+int main() {
+  mut std::fstream file{};
+  mut auto out = file.as_ostream();
+  mut auto in = file.as_istream(); //~ ERROR GTI-S2017
+  out.put('A');
+  return in.get();
+}

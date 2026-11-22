@@ -1,0 +1,13 @@
+// A borrowed input view cannot outlive its stream owner.
+//@ slow
+import std.istream;
+import std.io;
+import std.span;
+std::istream invalid(mut std::basic_istream<std::io::memory_reader>& original) {
+  if (original.bad()) { return original.as_istream(); }
+  uint8_t bytes[1] = {uint8_t(65)};
+  mut auto memory = std::io::memory_reader(bytes.as_span());
+  mut std::basic_istream<std::io::memory_reader> owner{std::move(memory)};
+  return owner.as_istream();  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

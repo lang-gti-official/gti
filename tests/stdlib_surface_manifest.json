@@ -1292,6 +1292,34 @@
       }
     },
     {
+      "id": "file-stream-swap",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_swap.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-views",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_views.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "filesystem",
       "mode": "run",
       "source": "tests/fixtures/filesystem_path.gti",
@@ -1980,6 +2008,34 @@
       "id": "memory-stream-extraction",
       "mode": "run",
       "source": "tests/ui/stdlib/io/memory_input_extraction.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-input-view",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/borrowed_memory_input.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-output-view",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_output_view.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -5166,22 +5222,27 @@
         "std::filebuf::is_open",
         "std::fstream::close",
         "std::fstream::open",
+        "std::fstream::swap",
         "std::ifstream::close",
         "std::ifstream::is_open",
         "std::ifstream::open",
+        "std::ifstream::swap",
         "std::ifstream::try_open",
         "std::ofstream::close",
         "std::ofstream::is_open",
-        "std::ofstream::open"
+        "std::ofstream::open",
+        "std::ofstream::swap"
       ],
       "case_ids": [
         "closed-filebuf",
         "file-stream-format",
-        "file-stream-open"
+        "file-stream-open",
+        "file-stream-swap"
       ],
       "evidence": [
         "tests/slow/stdlib/io/file_stream_format.gti",
         "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/slow/stdlib/io/file_stream_swap.gti",
         "tests/ui/stdlib/io/closed_filebuf.gti"
       ]
     },
@@ -5603,6 +5664,22 @@
       "evidence": [
         "tests/slow/stdlib/io/file_stream_open.gti",
         "tests/ui/stdlib/io/memory_duplex_cursor.gti"
+      ]
+    },
+    {
+      "id": "istream.borrowed-input",
+      "source": "stdlib/std/detail/istream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::istream::operator>>"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti"
       ]
     },
     {
@@ -7032,6 +7109,22 @@
       ]
     },
     {
+      "id": "ostream.borrowed-output",
+      "source": "stdlib/std/detail/ostream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::ostream::operator<<"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
+      ]
+    },
+    {
       "id": "ostream.insertion",
       "source": "stdlib/std/ostream.gti",
       "status": "executable",
@@ -8084,6 +8177,25 @@
       ],
       "required_instantiations": [
         "portable modules through one import, including std.charconv and std.regex"
+      ]
+    },
+    {
+      "id": "streams.borrowed-state",
+      "source": "stdlib/std/detail/stream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_view_state::apply",
+        "std::detail::stream_view_state::rdstate"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
       ]
     },
     {

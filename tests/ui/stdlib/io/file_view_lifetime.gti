@@ -1,0 +1,7 @@
+// A borrowed writer cannot outlive its owning stream.
+import std.fstream;
+std::ostream writer() { //~ ERROR GTI-S2045
+  mut std::ofstream file{};
+  return file.as_ostream();
+}
+int main() { return 0; }

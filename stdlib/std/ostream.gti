@@ -1,5 +1,6 @@
 export module ostream;
 export import std.ios;
+export import "detail/ostream_view.gti";
 import std.cstdio;
 import std.io;
 import std.span;
@@ -7,11 +8,6 @@ import std.string;
 import "detail/stream_format.gti";
 
 export namespace std {
-enum output_manipulator { newline_and_flush, null_character, flush_buffer };
-constexpr output_manipulator endl = output_manipulator::newline_and_flush;
-constexpr output_manipulator ends = output_manipulator::null_character;
-constexpr output_manipulator flush = output_manipulator::flush_buffer;
-
 class basic_ostream<B> : public basic_ios<B> {
   mut string output_scratch{};
   void insert_value<T>(T& value) mut requires io::writer<B> {
@@ -25,6 +21,7 @@ class basic_ostream<B> : public basic_ios<B> {
   }
 public:
   basic_ostream(B value) : basic_ios<B>(std::move(value)) {}
+  ostream as_ostream() mut requires detail::output_view_source<basic_ostream<B>> { return ostream::from(this); }
   [[discardable]] mut basic_ostream<B>& put(char value) mut requires io::writer<B> {
     uint8_t data[1] = {uint8_t(value)};
     auto bytes = data.as_span();
@@ -123,4 +120,3 @@ public:
   }
 };
 }
-

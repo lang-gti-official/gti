@@ -1,0 +1,35 @@
+// Swapping streams transfers their pending data, format flags, read positions and handles.
+//@ slow
+//@ run-pass
+import std.fstream;
+int main() {
+  std::string_view left_path = "swap-left.txt";
+  std::string_view right_path = "swap-right.txt";
+  {
+    mut std::ofstream left{left_path};
+    mut std::ofstream right{right_path};
+    if (!left || !right) { return 1; }
+    left << std::hex << 16;
+    right << 24;
+    left.swap(right);
+    left << 5;
+    right << 10;
+    if (!left.close() || !right.close()) { return 2; }
+  }
+  {
+    mut std::ifstream left{left_path};
+    mut std::ifstream right{right_path};
+    if (!left || !right || left.peek() != 49 || right.peek() != 50) { return 3; }
+    left.swap(right);
+    if (left.get() != 50 || right.get() != 49) { return 4; }
+    if (left.get() != 52 || left.get() != 53) { return 5; }
+    if (right.get() != 48 || right.get() != 97) { return 6; }
+  }
+  {
+    mut std::fstream left{left_path};
+    mut std::fstream right{right_path};
+    left.swap(right);
+    if (left.get() != 50 || right.get() != 49) { return 7; }
+  }
+  return 0;
+}

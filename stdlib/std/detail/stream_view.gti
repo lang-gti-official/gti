@@ -1,0 +1,102 @@
+export module detail_borrowed_stream_state;
+import std.ios;
+import std.panic;
+import std.cstdio;
+import std.memory;
+import "function_pointer.gti";
+
+namespace std::detail {
+export concept stream_state_source<S> = requires(S& src, mut S& dst,
+    ios::iostate bits, ios::fmtflags flags, size_t count, char byte, stream_setting setting) {
+  { src.rdstate() } -> ios::iostate;
+  { src.error() } -> io_errc;
+  { src.flags() } -> ios::fmtflags;
+  { src.width() } -> size_t;
+  { src.precision() } -> size_t;
+  { src.fill() } -> char;
+  { dst.apply(setting) } -> void;
+  { dst.clear(bits) } -> void;
+  { dst.setstate(bits) } -> void;
+  { dst.flags(flags) } -> ios::fmtflags;
+  { dst.width(count) } -> size_t;
+  { dst.precision(count) } -> size_t;
+  { dst.fill(byte) } -> char;
+};
+enum state_property { status, flags, width, precision, fill };
+enum state_change { clear, set, flags, width, precision, fill };
+
+/// A single checked borrow pairs its owner with the operations for that exact stream.
+export class stream_view_state {
+private:
+  mut erased_object& object;
+  gti_internal::function_pointer<size_t(erased_object&, state_property)> observe;
+  gti_internal::function_pointer<io_errc(erased_object&)> reason;
+  gti_internal::function_pointer<size_t(mut erased_object&, state_change, size_t)> change;
+
+  gti_internal::function_pointer<void(mut erased_object&, stream_setting)> apply_setting;
+
+  size_t read(state_property property) {
+    return gti_internal::function_pointer_invoke(this.observe, this.object, property);
+  }
+  size_t update(state_change action, size_t value) mut {
+    return gti_internal::function_pointer_invoke(this.change, this.object, action, value);
+  }
+public:
+  stream_view_state<stream_state_source S>(mut S& stream) :
+    object(std::erase_mut(stream)),
+    observe(gti_internal::function_pointer_from_item<size_t(erased_object&, state_property)>(
+        [](erased_object& source, state_property property) -> size_t {
+      unsafe {
+        S& actual = std::restore_ref<S>(source);
+        switch (property) {
+        case state_property::status: return size_t(actual.rdstate());
+        case state_property::flags: return size_t(actual.flags());
+        case state_property::width: return actual.width();
+        case state_property::precision: return actual.precision();
+        case state_property::fill: return size_t(uint8_t(actual.fill()));
+        default: std::panic("invalid stream state query");
+        }
+      }
+    })),
+    reason(gti_internal::function_pointer_from_item<io_errc(erased_object&)>(
+        [](erased_object& source) -> io_errc {
+      unsafe { S& actual = std::restore_ref<S>(source); return actual.error(); }
+    })),
+    change(gti_internal::function_pointer_from_item<size_t(mut erased_object&, state_change, size_t)>(
+        [](mut erased_object& source, state_change action, size_t value) -> size_t {
+      unsafe {
+        mut S& actual = std::restore_mut<S>(source);
+        switch (action) {
+        case state_change::clear: actual.clear(ios::iostate(value)); return size_t(0);
+        case state_change::set: actual.setstate(ios::iostate(value)); return size_t(0);
+        case state_change::flags: return size_t(actual.flags(ios::fmtflags(value)));
+        case state_change::width: return actual.width(value);
+        case state_change::precision: return actual.precision(value);
+        case state_change::fill: return size_t(uint8_t(actual.fill(char(uint8_t(value)))));
+        default: std::panic("invalid stream state update");
+        }
+      }
+    })),
+    apply_setting(gti_internal::function_pointer_from_item<void(mut erased_object&, stream_setting)>(
+        [](mut erased_object& source, stream_setting setting) -> void {
+      unsafe { mut S& actual = std::restore_mut<S>(source); actual.apply(setting); }
+    })) {}
+  erased_object& owner() { return this.object; }
+  mut erased_object& owner_mut() mut { return this.object; }
+  void apply(stream_setting setting) mut {
+    gti_internal::function_pointer_invoke(this.apply_setting, this.object, setting);
+  }
+  ios::iostate rdstate() { return ios::iostate(this.read(state_property::status)); }
+  io_errc error() { return gti_internal::function_pointer_invoke(this.reason, this.object); }
+  ios::fmtflags flags() { return ios::fmtflags(this.read(state_property::flags)); }
+  size_t width() { return this.read(state_property::width); }
+  size_t precision() { return this.read(state_property::precision); }
+  char fill() { return char(uint8_t(this.read(state_property::fill))); }
+  void clear(ios::iostate value) mut { [[discard]] this.update(state_change::clear, size_t(value)); }
+  void setstate(ios::iostate value) mut { [[discard]] this.update(state_change::set, size_t(value)); }
+  ios::fmtflags flags(ios::fmtflags value) mut { return ios::fmtflags(this.update(state_change::flags, size_t(value))); }
+  size_t width(size_t value) mut { return this.update(state_change::width, value); }
+  size_t precision(size_t value) mut { return this.update(state_change::precision, value); }
+  char fill(char value) mut { return char(uint8_t(this.update(state_change::fill, size_t(uint8_t(value))))); }
+};
+}

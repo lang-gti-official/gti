@@ -271,8 +271,44 @@ an already open stream reports failure and preserves its file. Call `clear()`
 to continue using that file or `close()` before opening a different one. A
 successful open clears the previous error. Use `is_open()` to test ownership
 of the file handle and `fail()` or `!file` to test the current stream state.
+Read `error()` after a reported failure or EOF. Calling it while `good()`
+is true panics. The default open modes are `in` for `ifstream`, `out` for
+`ofstream`, and `in | out` for `fstream`. Opening an `fstream` in its
+default mode requires an existing file. Add `trunc` to create or replace it.
 Call `close()` explicitly when the caller needs to observe a flush or close
 failure. Destruction releases the file handle.
+
+### Passing a stream to a function
+
+Use `as_istream()` for a reader and `as_ostream()` for a writer. Each view
+borrows its stream. Formatting, file position and errors are visible to the
+caller after the borrow ends.
+
+```gti
+import std.fstream;
+
+void write_log(mut std::ostream out) {
+  out << "ready" << '\n';
+}
+
+void write_count(mut std::ostream& out) {
+  out << 42;
+}
+
+void report(mut std::fstream& file) {
+  write_log(file.as_ostream());
+  {
+    mut auto output = file.as_ostream();
+    write_count(output);
+  }
+  file.flush();
+}
+```
+
+Taking the view by value lets the caller pass it directly. For a
+`mut std::ostream&` or `mut std::istream&` parameter, bind the view to a
+mutable local first. The stream is exclusively borrowed while the view is in
+use. End that borrow before switching direction or accessing the file again.
 
 ### Reading, writing and positioning
 
@@ -284,6 +320,7 @@ failure. Destruction releases the file handle.
 | Transfer bytes | `read(mutable_span)`, `gcount()`, `write(span)`, `put(ch)`, `flush()` |
 | Inspect or change the position | `tellg()`, `seekg(offset, origin)`, `tellp()`, `seekp(offset, origin)` |
 | Inspect or reset the state | `good()`, `eof()`, `fail()`, `bad()`, `rdstate()`, `clear()` |
+| Access the concrete buffer | `file.rdbuf()` borrows the buffer. Readers and writers accepting a directional view operate through the stream. |
 | Format the next value | `width(n)` sets the minimum width for one insertion. `fill(ch)`, `precision(n)` and flags set with `setf` persist. |
 
 `peek()` and the zero-argument `get()` return an integer so every byte,
