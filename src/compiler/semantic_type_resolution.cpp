@@ -9190,12 +9190,19 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
       function.receiverMutability() != ReceiverMutability::Mutable) {
     fail("Prefix operator++ must use a mutable receiver.");
   }
-  if (mutableShift && currentClass &&
-      returnType != SemanticType::referenceTo(openClassType(*currentClass),
-                                               AccessMode::Mutable)) {
-    fail(std::string(operatorSourceSpelling(name.kind)) +
-         " with a mutable receiver must return a mutable reference to its "
-         "receiver type.");
+  if (mutableShift && currentClass) {
+    if (returnType != SemanticType::referenceTo(openClassType(*currentClass),
+                                                AccessMode::Mutable)) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " with a mutable receiver must return a mutable reference to its "
+           "receiver type.");
+    } else {
+      const auto &region = function.returnType().referenceLifetime;
+      if (region && region->name.kind != TokenKind::THIS &&
+          region->name.lexeme != "_")
+        fail("A mutable shift result must borrow its receiver. Elide the "
+             "result region or use 'this'.");
+    }
   }
   if (valueOperator && (returnType == SemanticType::Void ||
                         returnType.kind == SemanticType::Reference ||

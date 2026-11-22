@@ -18,6 +18,7 @@
     "filesystem": "std/filesystem.gti",
     "format": "std/format.gti",
     "forward_list": "std/forward_list.gti",
+    "fstream": "std/fstream.gti",
     "functional": "std/functional.gti",
     "http": "std/http.gti",
     "io": "std/io.gti",

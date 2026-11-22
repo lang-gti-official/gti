@@ -6629,7 +6629,13 @@ private:
       }
       break;
     case HirValueKind::Binary:
-      if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
+      if (value->functionTarget &&
+          value->info.category == ValueCategory::Place) {
+        // A reference-returning operator designates its checked call-result
+        // loan.
+        place = loanOrValuePlace(*value);
+      } else if (value->operation == TokenKind::COMMA &&
+                 !value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.back()), *value);
       }
       break;

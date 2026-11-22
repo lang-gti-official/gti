@@ -589,6 +589,20 @@
       }
     },
     {
+      "id": "closed-filebuf",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/closed_filebuf.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
@@ -920,6 +934,20 @@
         "exit_code": 0,
         "stdout": "password: io-out\n",
         "stderr": "io-err\n"
+      }
+    },
+    {
+      "id": "cstdio-exclusive-create",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/exclusive_create.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
       }
     },
     {
@@ -1588,6 +1616,20 @@
       "mode": "run",
       "source": "tests/fixtures/integral_enum_formatting_temporary.gti",
       "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "ios-state",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/ios_state.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4111,6 +4153,21 @@
       ]
     },
     {
+      "id": "cstdio.exclusive-create",
+      "source": "stdlib/std/cstdio.gti",
+      "status": "executable",
+      "operations": [
+        "std::file_mode::read_write_exclusive",
+        "std::file_mode::write_exclusive"
+      ],
+      "case_ids": [
+        "cstdio-exclusive-create"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/exclusive_create.gti"
+      ]
+    },
+    {
       "id": "cstdio.executable",
       "source": "stdlib/std/cstdio.gti",
       "status": "executable",
@@ -5016,6 +5073,22 @@
       ]
     },
     {
+      "id": "fstream.stream-state",
+      "source": "stdlib/std/fstream.gti",
+      "status": "executable",
+      "operations": [
+        "std::filebuf::available",
+        "std::filebuf::close",
+        "std::filebuf::is_open"
+      ],
+      "case_ids": [
+        "closed-filebuf"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/closed_filebuf.gti"
+      ]
+    },
+    {
       "id": "functional.borrowing",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
@@ -5397,6 +5470,24 @@
       "evidence": [
         "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
+      ]
+    },
+    {
+      "id": "ios.stream-state",
+      "source": "stdlib/std/ios.gti",
+      "status": "executable",
+      "operations": [
+        "std::ios_base::clear",
+        "std::ios_base::eof",
+        "std::ios_base::good",
+        "std::ios_base::operator bool",
+        "std::ios_base::setstate"
+      ],
+      "case_ids": [
+        "ios-state"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/ios_state.gti"
       ]
     },
     {

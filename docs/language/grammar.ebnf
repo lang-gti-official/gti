@@ -926,7 +926,9 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `operator%`, `operator&`, `operator|`, `operator^`, `operator<<`, and
    `operator>>` take one exact-match parameter. These value-producing
    operators use a read-only or trailing-`&&` consuming receiver and return an
-   owned non-void value, not a reference or receiver-tied borrowed state.
+   owned non-void value. A shift may also take a trailing-`mut` receiver.
+   That overload returns a mutable reference to the receiver type, borrowed
+   from the receiver.
 
    `operator=`, `operator[]`, the compound operators `+=`, `-=`, `*=`, `/=`,
    `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>=`, and comparisons `==`, `!=`, `<`,

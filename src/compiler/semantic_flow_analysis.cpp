@@ -2887,8 +2887,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   const bool directOperatorResult =
       kind == ExprKind::Index || kind == ExprKind::Call ||
       (kind == ExprKind::Binary &&
-       (static_cast<const Binary &>(expr).oper().kind == TokenKind::SHIFT_LEFT ||
-        static_cast<const Binary &>(expr).oper().kind == TokenKind::SHIFT_RIGHT)) ||
+       (static_cast<const Binary &>(expr).oper().kind ==
+            TokenKind::SHIFT_LEFT ||
+        static_cast<const Binary &>(expr).oper().kind ==
+            TokenKind::SHIFT_RIGHT)) ||
       (kind == ExprKind::Unary &&
        static_cast<const Unary &>(expr).oper().kind == TokenKind::STAR);
   if (directOperatorResult) {

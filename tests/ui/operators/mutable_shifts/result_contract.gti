@@ -1,0 +1,10 @@
+// Mutable shifts require a receiver-supplied mutable reference of the receiver type.
+struct WrongType {
+  int operator<<(int v) mut { return v; } //~ ERROR GTI-S2022 mutable reference
+};
+struct WrongSource {
+  mut WrongSource& operator>>(mut WrongSource& rhs) mut {
+    return rhs; //~ ERROR GTI-S2017 receiver
+  }
+};
+int main() { return 0; }
