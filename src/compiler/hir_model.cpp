@@ -3284,6 +3284,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (step.id != semantic.id || step.sourceUnit != semantic.sourceUnit ||
         step.kind != semantic.kind || step.role != semantic.role ||
         step.source != semantic.declaration || step.symbol != semantic.symbol ||
+        step.dataConstant != semantic.dataConstant ||
         step.requiresActiveCleanup != semantic.requiresActiveCleanup ||
         step.nativeRetirement.has_value() !=
             semantic.requiresNativeRetirement ||
@@ -3316,10 +3317,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       result.errors.emplace_back(
           "program initialization step has no exact module binding");
     }
-    if (step.kind == ProgramStorageKind::NamespaceGlobal) {
+    if (step.kind != ProgramStorageKind::StaticField) {
       if (step.ownerClass != 0 || semantic.ownerClass != 0) {
         result.errors.emplace_back(
-            "namespace-global initialization step has a class owner");
+            "non-member initialization step has a class owner");
       }
     } else {
       const HirClassInstance *owner =

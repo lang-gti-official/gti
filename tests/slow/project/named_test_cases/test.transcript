@@ -1,0 +1,24 @@
+// Named rows are independently discovered, filtered, isolated and cached;
+// owned inputs and private source-scope factories use ordinary GTI calls.
+slow
+$ cd project
+$ gti test rows --list --format json --progress never
+stdout: data::numbers/zero
+stdout: data::numbers/positive
+stdout: data::numbers/negative
+stdout: data::text/quoted \"name\"
+stdout: hidden::value/private
+stdout: "discovered":9,"selected":9,"started":0,"completed":0
+$ gti test rows --skip /fails --jobs 3 --format json --progress never
+stdout: "selected":8,"started":8,"completed":8,"passed":8
+stdout: "complete":true
+$ gti test rows --filter data::numbers/positive --exact --format json --progress never
+stdout: "selected":1,"started":1,"completed":1,"passed":1
+$ gti test rows --filter data::failure --jobs 1 --format json --progress never
+? 70
+stdout: "name":"data::failure/fails","status":"failed"
+stdout: "name":"data::failure/survives","status":"passed"
+stdout: "selected":2,"started":2,"completed":2,"passed":1,"failed":1
+stdout: "complete":true
+$ gti test rows --list --format json --progress never
+stdout: "discovered":9,"selected":9,"started":0,"completed":0

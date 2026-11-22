@@ -1620,7 +1620,8 @@ private:
                                 : std::nullopt,
            .binding = binding,
            .initializer = initializer,
-           .statement = statement});
+           .statement = statement,
+           .dataConstant = step.dataConstant});
     }
     if (output.program.programInitialization.steps.size() !=
         semanticPlan.steps.size()) {
@@ -4540,6 +4541,9 @@ private:
                              body);
     }
     if (const auto *variable = stmtAs<VariableDecl>(statement)) {
+      // The module plan owns this initializer and its lifetime.
+      if (variable->isStatic() && !variable->isThreadLocal())
+        return std::nullopt;
       return appendStatement(
           {.kind = HirStatementKind::Variable,
            .source = statement,

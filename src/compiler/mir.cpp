@@ -666,7 +666,10 @@ materializationAmong(const MirBody &body, const MirPlace &place,
                (isPassiveScalarValueType(instruction.info.type) ||
                 instruction.info.type.kind == SemanticType::Enum ||
                 (instruction.info.type.kind == SemanticType::StringView &&
-                 instruction.operation == MirOperation::Literal))) ||
+                 instruction.operation == MirOperation::Literal) ||
+                (instruction.info.type.kind == SemanticType::Class &&
+                 instruction.operation == MirOperation::Literal &&
+                 instruction.programConstantSubstitution))) ||
               (instruction.kind == MirInstructionKind::Compute &&
                ((instruction.operation == MirOperation::Closure &&
                  instruction.info.type.kind == SemanticType::Lambda) ||
@@ -13621,6 +13624,15 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             producer->operation == MirOperation::FunctionItem &&
             producer->functionTarget && !producer->lambdaTarget &&
             !producer->constructorTarget));
+      // An immediate class result is materialized from its checked aggregate
+      // constant. Literal verification independently requires the exact
+      // published constant and type; the ordinary loan/drop proof still
+      // applies.
+      const bool constantConstruction =
+          producer && producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::Literal &&
+          producer->programConstantSubstitution &&
+          referent.kind == SemanticType::Class;
       const bool scalarComputation =
           producer && producer->kind == MirInstructionKind::Compute &&
           (isPassiveScalarValueType(referent) ||
@@ -13694,7 +13706,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
            !scalarComputation && !scalarCallResult && !payloadConstruction &&
-           !callableConstruction && !joinedTemporary &&
+           !constantConstruction && !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }
@@ -17418,14 +17430,29 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.kind != MirInstructionKind::CallInput ||
             instruction.programConstantSubstitution || !instruction.result ||
-            instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != MirOperandKind::Value) {
+            instruction.operands.size() != 1) {
           continue;
+        }
+        const auto &operand = instruction.operands.front();
+        MirValueId materialized =
+            operand.kind == MirOperandKind::Value ? operand.value : 0;
+        if (instruction.callInputRole == MirCallInputRole::Argument &&
+            instruction.callInputKind ==
+                HirCallInputKind::ReadTemporaryBorrow &&
+            operand.kind == MirOperandKind::BorrowRead) {
+          const auto *place = body.findPlace(operand.place);
+          // Call-input verification independently proves the exact live
+          // temporary, loan and cleanup. This stage borrows the one constant
+          // materialization; it does not evaluate another constant value.
+          if (place && place->root == MirPlaceRootKind::Value &&
+              place->projections.empty() &&
+              place->sourceValue == instruction.hirValue)
+            materialized = place->value;
         }
         const auto schedule =
             programConstantScheduleValues.find(instruction.hirValue);
         if (schedule == programConstantScheduleValues.end() ||
-            !schedule->second.contains(instruction.operands.front().value)) {
+            !schedule->second.contains(materialized)) {
           continue;
         }
         const MirValue *staged = body.findValue(*instruction.result);

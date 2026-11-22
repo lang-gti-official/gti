@@ -5189,7 +5189,13 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
               function->hasFunctionAttribute("thread_confined_callback"),
-          .testFunction = function->hasFunctionAttribute("test"),
+          .testFunction = !function->generatedTestCaseName().empty() ||
+                          std::any_of(function->functionAttributes().begin(),
+                                      function->functionAttributes().end(),
+                                      [](const auto &a) {
+                                        return a.name.lexeme == "test" &&
+                                               !a.argument;
+                                      }),
           .linkage = function->linkage(),
           .externalSymbol =
               function->hasCLinkage()
@@ -9519,11 +9525,11 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
 
-  // Function-local thread storage has a persistent declaration identity even
-  // before its body is demanded. Publish only a prospective origin here; the
+  // A function-local static or TLS declaration has a storage identity before
+  // its body is demanded. Publish only a prospective origin here. The
   // resolved return check must still prove the exact symbol/path at every
   // executable return, so a shadowing automatic local can never escape.
-  const auto localThreadPlace =
+  const auto localStoragePlace =
       [&](const auto &self,
           const ExprPtr &value) -> std::optional<BorrowOriginPlace> {
     if (!value)
@@ -9548,16 +9554,21 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
           return std::nullopt;
         declaration = local;
       }
-    if (!declaration || !declaration->isThreadLocal())
+    if (!declaration ||
+        (!declaration->isThreadLocal() && !declaration->isStatic()))
       return std::nullopt;
     const SemanticType type =
         declaration->type().name.last().kind == TokenKind::AUTO
             ? SemanticType::Unknown
             : typeOf(declaration->type());
+    const bool threadLocal = declaration->isThreadLocal();
     const auto symbol = recordBindingOccurrence(
         declaration->name(), type, declaration->isMutable(),
-        SemanticBindingKind::LocalVariable, false, false, false, true);
-    requestSession.threadLocalDeclarations[symbol] = declaration;
+        threadLocal ? SemanticBindingKind::LocalVariable
+                    : SemanticBindingKind::GlobalVariable,
+        false, !threadLocal, false, threadLocal);
+    if (threadLocal)
+      requestSession.threadLocalDeclarations[symbol] = declaration;
     return BorrowOriginPlace{.root = symbol};
   };
 
@@ -9570,7 +9581,7 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     }
     SemanticPlace place = semanticPlace(*returned);
     std::optional<BorrowOriginPlace> candidate =
-        localThreadPlace(localThreadPlace, *returned);
+        localStoragePlace(localStoragePlace, *returned);
     if (!candidate && place.root != nullptr && !place.receiver &&
         (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
          place.root->bindingKind == SemanticBindingKind::StaticField)) {

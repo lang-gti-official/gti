@@ -1387,7 +1387,8 @@ auto SemanticVisitor::Impl::reportConcurrentGlobalPolicyFailure(
   }
 
   const std::string storageKind =
-      currentClass ? "static field" : "namespace global";
+      functionDepth > 0 ? "function-local static"
+                        : (currentClass ? "static field" : "namespace global");
   if (declaration.isMutable()) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2060", DiagnosticPhase::Semantics, declaration.name(),

@@ -152,7 +152,7 @@
 //@[phase25] stdout: 2
 //@[phase25] stdout: 1
 //@[phase25] stdout: 9
-//@[phase25] stderr-contains: <std/detail/memory_storage>:574: runtime error[GTI-R0010]: invalid_storage_state in uninitialized_access
+//@[phase25] stderr-contains: <std/detail/memory_storage>:610: runtime error[GTI-R0010]: invalid_storage_state in uninitialized_access
 //@[phase26] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
 //@[phase26] stdout: 2
 //@[phase26] stdout: 4
@@ -217,7 +217,7 @@
 //@[phase34] stdout: 2
 //@[phase34] stdout: 1
 //@[phase34] stdout: 9
-//@[phase34] stderr-contains: <std/vector>:513: runtime error[GTI-R0007]: index_out_of_bounds in vector
+//@[phase34] stderr-contains: <std/vector>:520: runtime error[GTI-R0007]: index_out_of_bounds in vector
 //@[phase35] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
 //@[phase35] stdout: 1
 //@[phase35] stdout: 4

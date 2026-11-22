@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "testing-cleanup"
+version = "0.1.0"
+[targets.probe]
+kind = "executable"
+root = "main.gti"

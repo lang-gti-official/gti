@@ -1,0 +1,8 @@
+// Implicit and explicit consteval class temporaries share read-only call materialization.
+//@ run-pass
+struct Checked {
+  int value;
+  implicit consteval Checked(int n) : value(n) {}
+};
+int read(Checked& value) { return value.value; }
+int main() { return read(21) + read(Checked(21)) - 42; }

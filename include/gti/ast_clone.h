@@ -9,6 +9,9 @@
 
 namespace lang {
 
+[[nodiscard]] CompileCondition
+cloneCompileCondition(const CompileCondition &condition);
+
 // Deep copies of body-level AST. Semantic analysis records facts by node
 // identity, so a construct whose body is analysed more than once with
 // different meaning (`constexpr for`) gives every analysis its own copy.

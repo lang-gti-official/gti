@@ -1,0 +1,4 @@
+// An implicit constructor must be accessible at the call site.
+class Box { implicit Box(int n) {} };
+void take(Box box) {}
+int main() { take(1); return 0; }  //~ ERROR GTI-S2007

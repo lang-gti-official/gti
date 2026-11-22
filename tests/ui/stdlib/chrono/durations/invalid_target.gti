@@ -1,0 +1,7 @@
+// Duration casts reject unrelated destination types through the public contract.
+import std.chrono;
+int main() {
+  std::chrono::seconds value{1i64};
+  auto result = value.try_cast<int64_t>();  //~ ERROR GTI-S2029
+  return 0;
+}

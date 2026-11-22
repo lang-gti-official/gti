@@ -1,0 +1,8 @@
+// A block-local static array emits constant data accessible through a checked borrow.
+//@ run-pass
+int value() {
+  static constexpr int items[2] = {4, 11};
+  int& entry = items[1];
+  return entry;
+}
+int main() { return value() - 11; }

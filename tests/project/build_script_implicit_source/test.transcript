@@ -1,0 +1,3 @@
+// A GTI build script can succeed without explicitly publishing outputs.
+$ gti build
+$ gti build

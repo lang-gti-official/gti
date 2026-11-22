@@ -461,6 +461,26 @@ auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
     measureTopLevelStatements = false;
     analyzeDeferredBodies();
   }
+  // Named rows use ordinary call resolution, but must invoke the declaration
+  // carrying the row rather than silently selecting another overload.
+  if (!hadError()) {
+    for (const FunctionInfo *function : semanticModel.testFunctions()) {
+      const auto *wrapper = function->declaration;
+      if (!wrapper || !wrapper->generatedTestCaseTarget())
+        continue;
+      const auto *statement =
+          stmtAs<ExpressionStmt>(wrapper->body()->statements().front().get());
+      const auto *call = exprAs<Call>(statement->expression().get());
+      const auto *resolved = semanticModel.findCall(*call);
+      const auto *target =
+          semanticModel.findFunction(*wrapper->generatedTestCaseTarget());
+      if (!resolved || !target || resolved->function != target->id)
+        diagnostics.push_back(makeDiagnostic(
+            DiagnosticId::InvalidFunctionContract, statement->expressionStart(),
+            {"Test case arguments must select the annotated function, not "
+             "another overload."}));
+    }
+  }
   bodyPhaseActive = false;
   // A resumed analysis records and validates only what it added.
   lateFinalization = scope;
@@ -3665,6 +3685,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  std::unordered_set<std::string> testCaseNames;
   validateCodegenAttributes(
       stmt.functionAttributes(),
       functionInfo != nullptr && !stmt.hasCLinkage() &&
@@ -3745,21 +3766,43 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       continue;
     }
     if (attribute.lexeme == "test") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+      if (contract.argument) {
+        const auto &label = std::get<std::string>(contract.argument->literal);
+        if (label.empty() || label.size() > 256 ||
+            source_text::firstInvalidUtf8(label) ||
+            std::any_of(label.begin(), label.end(), [](unsigned char c) {
+              return c < 32 || c == 127 || c == '/';
+            }))
+          reportContract(*contract.argument,
+                         "A test case name requires 1–256 UTF-8 bytes without "
+                         "'/' or control characters.");
+        else if (!testCaseNames.insert(label).second)
+          reportContract(*contract.argument,
+                         "Duplicate test case name '" + label + "'.");
+        if (std::any_of(stmt.functionAttributes().begin(),
+                        stmt.functionAttributes().end(), [](const auto &a) {
+                          return a.name.lexeme == "test" && !a.argument;
+                        }))
+          reportContract(
+              attribute,
+              "Named test cases cannot be combined with bare [[test]].");
+      } else if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute, "Duplicate function attribute 'test'.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 functionInfo->ownerClass != 0 ||
-                 functionInfo->internalLinkage || isEntryPoint ||
-                 !functionInfo->genericParameters.empty() ||
-                 !functionInfo->parameterTypes.empty() ||
-                 functionInfo->returnType != SemanticType::Void ||
-                 functionInfo->requiresUnsafe || stmt.hasCLinkage() ||
-                 stmt.runtimeBinding() || !stmt.body() || stmt.operatorName()) {
+      }
+      if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
+          functionInfo->internalLinkage || isEntryPoint ||
+          !functionInfo->genericParameters.empty() ||
+          functionInfo->parameterPack ||
+          (!contract.argument && !functionInfo->parameterTypes.empty()) ||
+          functionInfo->returnType != SemanticType::Void ||
+          functionInfo->requiresUnsafe || stmt.hasCLinkage() ||
+          stmt.runtimeBinding() || !stmt.body() || stmt.operatorName() ||
+          stmt.isConsteval()) {
         reportContract(
             attribute,
-            "A test requires a defined, safe, non-generic "
-            "non-static namespace-scope void function with no parameters "
-            "or attribute arguments.");
+            "A test requires a defined, safe, non-generic, non-static "
+            "namespace-scope void function; parameters require named "
+            "[[test(\"name\", arguments...)]].");
       }
       continue;
     }
@@ -6887,6 +6930,35 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
     return;
+  const bool localStatic =
+      functionDepth > 0 && stmt.isStatic() && !stmt.isThreadLocal();
+  if (localStatic) {
+    if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro()) {
+      // Typed macros already diagnose this in their body contract.
+      if (currentFunctionDeclaration->isProceduralMacro())
+        report(*stmt.staticKeyword(),
+               "Procedural macros cannot define persistent static storage.",
+               "GTI-S2057");
+      return;
+    }
+    if (lambdaDepth != 0 ||
+        (currentClass && !classInfo(*currentClass).genericParameters.empty()) ||
+        (currentFunctionDeclaration &&
+         !genericParametersFor(*currentFunctionDeclaration).empty()) ||
+        !constexprForFrames.empty()) {
+      report(*stmt.staticKeyword(),
+             "Function-local static storage in a generic body, lambda or "
+             "constexpr loop requires a concrete per-instance identity.",
+             "GTI-S2057");
+      return;
+    }
+    if (stmt.type().name.last().kind == TokenKind::AUTO) {
+      report(stmt.type().name.last(),
+             "Function-local static storage requires an explicit type.",
+             "GTI-S2028");
+      return;
+    }
+  }
   if (stmt.type().name.last().kind == TokenKind::AUTO) {
     semanticModel.recordFullExpression(stmt, stmt.initializer());
     const ProgramEffectOwner enclosingOwner = currentProgramEffectOwner;
@@ -6905,7 +6977,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     return;
   }
   validateType(stmt.type());
-  const bool localReference = functionDepth > 0;
+  const bool localReference = functionDepth > 0 && !localStatic;
   const bool instanceField =
       currentClass && functionDepth == 0 && !stmt.isStatic();
   const ClassInfo *fieldOwner =
@@ -6953,9 +7025,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       currentClass && functionDepth == 0
           ? (stmt.isStatic() ? SemanticBindingKind::StaticField
                              : SemanticBindingKind::Field)
-          : (functionDepth > 0 ? SemanticBindingKind::LocalVariable
-                               : SemanticBindingKind::GlobalVariable);
-  const bool internalLinkage = stmt.isStatic() && !currentClass;
+          : (functionDepth > 0 && !localStatic
+                 ? SemanticBindingKind::LocalVariable
+                 : SemanticBindingKind::GlobalVariable);
+  const bool internalLinkage =
+      localStatic || (stmt.isStatic() && !currentClass);
   const SymbolId symbol = recordBindingOccurrence(
       stmt.name(), declaredType, stmt.isMutable(), bindingKind,
       bindingKind == SemanticBindingKind::StaticField, internalLinkage, false,
@@ -6996,10 +7070,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     // construction of a type whose owning layout proof already failed.
     return;
   }
-  if (functionDepth > 0 && !stmt.isThreadLocal())
+  if (functionDepth > 0 && !stmt.isThreadLocal() && !localStatic)
     recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
   const bool globalStorage =
-      stmt.isThreadLocal() ||
+      stmt.isThreadLocal() || localStatic ||
       (functionDepth == 0 && (!currentClass || stmt.isStatic()));
   const bool processStorage = globalStorage && !stmt.isThreadLocal();
   SemanticType initializerType = SemanticType::Unknown;
@@ -7028,6 +7102,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Values carrying stored references cannot have global or static "
            "storage duration.",
            "GTI-S2045");
+  } else if (localStatic && requiresActiveCleanupFor(declaredType)) {
+    report(stmt.name(),
+           "Constant-initialized function-local static storage cannot "
+           "retain a value that requires cleanup.",
+           "GTI-S2061");
   } else if (processStorage && stmt.isConstexpr() &&
              requiresSourceCleanupFor(declaredType)) {
     const std::string storageKind =
@@ -7076,8 +7155,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         field && currentClass &&
         (classInfo(*currentClass).cAbiRecord ||
          classInfo(*currentClass).kind == ClassKind::Union);
-    if (stmt.isConstexpr()) {
-      // The constexpr contract reports its more specific initializer error.
+    if (stmt.isConstexpr() || localStatic) {
+      // Constant evaluation reports the missing initializer.
     } else if ((declaredType.kind == SemanticType::RawPointer ||
                 declaredType.kind == SemanticType::NativeFunction) &&
                !passiveStorageField && !(field && instanceClassContextActive)) {
@@ -7212,10 +7291,24 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const bool initializerAssignable =
       !initializer || contextualConstruction ||
       isOwnershipAssignable(declaredType, initializerType, initializer);
-  const std::optional<ConstantValue> constant =
+  const auto initialValue =
       constexprBindingValue(stmt, declaredType,
                             diagnostics.size() == declarationDiagnosticStart &&
                                 initializerAssignable);
+  const auto constant = stmt.isConstexpr() ? initialValue : std::nullopt;
+  if (localStatic && initialValue) {
+    programEffects.erase(
+        {.kind = ProgramEffectOwnerKind::Initializer, .id = symbol});
+    requestSession.localStaticSteps.insert_or_assign(
+        symbol, ProgramInitializationStep{
+                    .sourceUnit = sourceUnitFor(stmt.name()),
+                    .kind = ProgramStorageKind::FunctionLocal,
+                    .role = ProgramInitializationStepRole::DataOnly,
+                    .declaration = &stmt,
+                    .symbol = symbol,
+                    .declarationSpan = tokenSpan(stmt.name()),
+                    .dataConstant = initialValue});
+  }
   if (constant) {
     BindingInfo updated = *semanticModel.findBinding(stmt);
     updated.constant = *constant;
@@ -9041,17 +9134,33 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
           literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
-          if (checkedArgumentPotential(expr.arguments()[index],
-                                       argumentTypes[index],
-                                       resolved.parameterTypes[index])) {
+          if ((resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        argumentTypes[index],
+                                        resolved.parameterTypes[index])) {
             const Token parameter =
                 index < resolved.declaration->parameters().size()
                     ? resolved.declaration->parameters()[index].name
                     : resolved.declaration->name();
-            valid = applyCheckedArgument(
+            valid = applyImplicitArgument(
                         expr.arguments()[index], argumentTypes[index],
                         resolved.parameterTypes[index], parameter) &&
                     valid;
+            if (valid && resolved.parameterTypes[index].kind ==
+                             SemanticType::Reference) {
+              if (!temporaryReadBorrowArgumentMatches(
+                      resolved.parameterTypes[index],
+                      resolved.parameterTypes[index].arguments.front(),
+                      expr.arguments()[index])) {
+                reportCallArgumentMismatch(
+                    index, resolved.parameterTypes[index], argumentTypes[index],
+                    expr.arguments()[index], "Function");
+                valid = false;
+              } else {
+                ephemeralBorrowArguments.push_back(index);
+              }
+            }
             continue;
           }
           if (isContextualArrayArgument(expr.arguments()[index])) {
@@ -9164,15 +9273,16 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   bool rejectedCompilerPrivate = false;
   for (const bool allowChecked : {false, true}) {
     if (allowChecked) {
-      const bool hasCheckedParameter = std::any_of(
-          callee->overloads.begin(), callee->overloads.end(),
-          [&](const auto &candidate) {
-            return std::any_of(
-                candidate.parameterTypes.begin(),
-                candidate.parameterTypes.end(), [&](const auto &type) {
-                  return checkedArgumentNonDeduced(type, SemanticType::Unknown);
-                });
-          });
+      const bool hasCheckedParameter =
+          std::any_of(callee->overloads.begin(), callee->overloads.end(),
+                      [&](const auto &candidate) {
+                        return std::any_of(candidate.parameterTypes.begin(),
+                                           candidate.parameterTypes.end(),
+                                           [&](const auto &type) {
+                                             return implicitArgumentNonDeduced(
+                                                 type, SemanticType::Unknown);
+                                           });
+                      });
       if (!hasCheckedParameter)
         break;
       constraintFailures.clear();
@@ -9258,9 +9368,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
             continue;
           }
           if (allowChecked &&
-              checkedArgumentPotential(expr.arguments()[index],
-                                       candidateArguments.types[index],
-                                       resolved.parameterTypes[index])) {
+              (resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        candidateArguments.types[index],
+                                        resolved.parameterTypes[index])) {
             checkedArguments.push_back(index);
           } else {
             exact = false;
@@ -9540,11 +9652,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                       exactMatches, constraintFailures);
       if (!ordinaryTier && !exactMatches.empty()) {
         diagnostics.back().message =
-            "Call is ambiguous; multiple overloads accept checked implicit "
-            "consteval argument construction.";
+            "Call is ambiguous; multiple overloads accept implicit "
+            "argument construction.";
         for (auto &related : diagnostics.back().related)
           if (related.message.starts_with("Exact candidate: "))
-            related.message.replace(0, 17, "Checked candidate: ");
+            related.message.replace(0, 17, "Converting candidate: ");
       }
       if (!viable.empty() &&
           std::all_of(
@@ -9565,10 +9677,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const Token parameter = index < selected.declaration->parameters().size()
                                 ? selected.declaration->parameters()[index].name
                                 : selected.declaration->name();
-    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index],
-                              selected.parameterTypes[index], parameter)) {
+    if (!applyImplicitArgument(expr.arguments()[index], argumentTypes[index],
+                               selected.parameterTypes[index], parameter)) {
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (selected.parameterTypes[index].kind == SemanticType::Reference) {
+      if (!temporaryReadBorrowArgumentMatches(
+              selected.parameterTypes[index],
+              selected.parameterTypes[index].arguments.front(),
+              expr.arguments()[index])) {
+        reportCallArgumentMismatch(index, selected.parameterTypes[index],
+                                   argumentTypes[index],
+                                   expr.arguments()[index], "Function");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      viable.front().ephemeralBorrowArguments.push_back(index);
     }
   }
   adoptContextualIntegerLiteralArguments(
@@ -16649,13 +16774,19 @@ auto SemanticVisitor::Impl::reportConstexprConditionFailure(
 auto SemanticVisitor::Impl::constexprBindingValue(
     const VariableDecl &declaration, const SemanticType &type,
     bool initializerSemanticallyValid) -> std::optional<ConstantValue> {
-  if (!declaration.isConstexpr()) {
+  const bool localStatic = functionDepth > 0 && declaration.isStatic() &&
+                           !declaration.isThreadLocal();
+  if (!declaration.isConstexpr() && !localStatic)
     return std::nullopt;
-  }
+  if (localStatic && !initializerSemanticallyValid)
+    return std::nullopt;
 
   bool valid = initializerSemanticallyValid;
-  if (declaration.isMutable()) {
-    report(*declaration.constexprKeyword(),
+  const Token &specifier = declaration.isConstexpr()
+                               ? *declaration.constexprKeyword()
+                               : *declaration.staticKeyword();
+  if (declaration.isConstexpr() && declaration.isMutable()) {
+    report(specifier,
            "A constexpr binding is immutable and cannot be declared mut.",
            "GTI-S2057");
     valid = false;
@@ -16669,7 +16800,10 @@ auto SemanticVisitor::Impl::constexprBindingValue(
     valid = false;
   }
   if (!declaration.initializer()) {
-    report(declaration.name(), "A constexpr binding requires an initializer.",
+    report(declaration.name(),
+           declaration.isConstexpr()
+               ? "A constexpr binding requires an initializer."
+               : "A function-local static requires a constant initializer.",
            "GTI-S2057");
     valid = false;
   }
@@ -16677,7 +16811,7 @@ auto SemanticVisitor::Impl::constexprBindingValue(
   if (type.kind == SemanticType::Reference ||
       !isSupportedConstexprType(type, false, nullptr, false, &hasAddress)) {
     report(
-        *declaration.constexprKeyword(),
+        specifier,
         "The bounded constexpr evaluator supports fixed-width integers, "
         "float, double, bool, char, string_view, and nullptr_t values, "
         "plus scoped enums, concrete fixed arrays, structural "
@@ -16722,7 +16856,9 @@ auto SemanticVisitor::Impl::constexprBindingValue(
     reportConstexprFailure(declaration, type, evaluated);
     return std::nullopt;
   }
-  if (currentProgramEffectOwner.valid()) {
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
+      currentProgramEffectOwner.id ==
+          symbolForDeclaration(declaration.name())) {
     programEffects.erase(currentProgramEffectOwner);
   }
   return converted.value;

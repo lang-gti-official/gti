@@ -300,17 +300,19 @@ CompiledBorrowContract borrowContract(const MirFunctionInstance &function) {
 bool supportsCompiledStorage(const LoweredProgram &program) {
   // Object data has no startup/retirement ordering to compose. Admit only the
   // already verified passive MIR storage stages; executable initialization,
-  // lazy local storage and cleanup still need a per-library lifetime plan.
+  // first-use initialization and cleanup need a per-library lifetime plan.
   const auto &storage = program.mir().programInitializationPlan().steps;
   const bool passiveStorage =
       std::all_of(storage.begin(), storage.end(), [](const auto &step) {
         return step.role == ProgramInitializationStepRole::DataOnly &&
                (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
-                step.storageKind == ProgramStorageKind::StaticField) &&
+                step.storageKind == ProgramStorageKind::StaticField ||
+                step.storageKind == ProgramStorageKind::FunctionLocal) &&
                !step.requiresActiveCleanup && !step.nativeRetirement &&
                !step.sourceCleanup &&
                ((step.dataInitialization ==
                      MirProgramDataInitializationKind::ImplicitZero &&
+                 step.storageKind != ProgramStorageKind::FunctionLocal &&
                  !step.dataConstant) ||
                 (step.dataInitialization ==
                      MirProgramDataInitializationKind::Constant &&

@@ -4046,7 +4046,7 @@ int main() {
               borrow.receiver.reset();
               borrow.loan = child.id;
               borrow.operands = {{.kind = lang::MirOperandKind::Loan,
-                                  .loan = entry->id,
+                                  .loan = child.parent,
                                   .type = body.findPlace(child.source)->type}};
               borrow.info.access = lang::AccessMode::Mutable;
               block.instructions.insert(block.instructions.begin() + index,

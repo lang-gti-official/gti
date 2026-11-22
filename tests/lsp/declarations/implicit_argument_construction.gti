@@ -1,0 +1,12 @@
+// Editor argument construction follows compiler semantics across implicit/explicit edits.
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int read(Box& b) { return b.value; }
+int main() { return read(42); }
+// --- step 2
+struct Box { int value; Box(int n) : value(n) {} };
+int read(Box& b) { return b.value; }
+int main() { return read(42); }  //~ ERROR GTI-S2003
+// --- step 3
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int read(Box& b) { return b.value; }
+int main() { return read(42); }

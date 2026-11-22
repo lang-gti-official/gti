@@ -884,6 +884,14 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
             : callArgumentMatches(parameter, argument.type, expression);
     if (argument.type != SemanticType::Unknown &&
         parameter != SemanticType::Unknown && !matches) {
+      if (!argument.forwardedPackElement &&
+          parameter.kind != SemanticType::Reference &&
+          implicitArgumentPotential(expression, argument.type, parameter)) {
+        valid = applyImplicitArgument(expression, argument.type, parameter,
+                                      expressionToken(expression)) &&
+                valid;
+        continue;
+      }
       reportCallArgumentMismatch(index, parameter, argument.type, expression,
                                  "Lambda");
       valid = false;
@@ -1058,8 +1066,9 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
             ? forwardedPackArgumentMatches(parameter, argument.type)
             : callArgumentMatches(parameter, argument.type, expression);
     if (!matches && !argument.forwardedPackElement &&
-        checkedArgumentPotential(expression, argument.type, parameter)) {
-      valid = applyCheckedArgument(
+        parameter.kind != SemanticType::Reference &&
+        implicitArgumentPotential(expression, argument.type, parameter)) {
+      valid = applyImplicitArgument(
                   expression, argument.type, parameter,
                   target->declaration
                       ->parameters()[std::min(
@@ -2976,8 +2985,8 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
         std::min(fixedParameterCount(function), argumentTypes.size());
     for (std::size_t index = 0; index < count; ++index) {
       if (checkedArguments &&
-          checkedArgumentNonDeduced(function.parameterTypes[index],
-                                    argumentTypes[index]))
+          implicitArgumentNonDeduced(function.parameterTypes[index],
+                                     argumentTypes[index]))
         continue;
       valid = inferTypeArguments(
                   function.parameterTypes[index], argumentTypes[index],
@@ -3147,8 +3156,8 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   const GenericSubstitution explicitSubstitution = substitution;
   for (std::size_t index = 0; index < count; ++index) {
     if (checkedArguments &&
-        checkedArgumentNonDeduced(function.parameterTypes[index],
-                                  argumentTypes[index]))
+        implicitArgumentNonDeduced(function.parameterTypes[index],
+                                   argumentTypes[index]))
       continue;
     valid = inferTypeArguments(substituteType(function.parameterTypes[index],
                                               explicitSubstitution),
@@ -3574,8 +3583,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       std::min(fixedParameterCount(candidate), argumentTypes.size());
   for (std::size_t index = 0; index < count; ++index) {
     if (checkedArguments &&
-        checkedArgumentNonDeduced(candidate.parameterTypes[index],
-                                  argumentTypes[index]))
+        implicitArgumentNonDeduced(candidate.parameterTypes[index],
+                                   argumentTypes[index]))
       continue;
     const ExprPtr *expression =
         index < expressions.size() ? &expressions[index] : nullptr;
@@ -7587,7 +7596,8 @@ auto SemanticVisitor::Impl::warnCheckedOverloadOverlap(
   }
   const auto accepts = [&](const SemanticType &checked,
                            const SemanticType &plain) {
-    if (!checkedArgumentNonDeduced(checked, plain))
+    if (checked.kind != SemanticType::Class ||
+        !implicitArgumentNonDeduced(checked, plain))
       return false;
     for (const auto &constructor : classInfo(checked.classId).constructors) {
       if (!constructor.implicitConstruction || !constructor.declaration ||
@@ -7629,11 +7639,17 @@ auto SemanticVisitor::Impl::warnCheckedOverloadOverlap(
   diagnostics.push_back(std::move(diagnostic));
 }
 
-// A mismatched class parameter with an immediate converting constructor is a
+// A mismatched class parameter with an implicit converting constructor is a
 // non-deduced context. Its complete type must come from other arguments or
 // explicit generic arguments before constructor selection.
-auto SemanticVisitor::Impl::checkedArgumentNonDeduced(
-    const SemanticType &parameter, const SemanticType &argument) const -> bool {
+auto SemanticVisitor::Impl::implicitArgumentNonDeduced(
+    const SemanticType &writtenParameter, const SemanticType &argument) const
+    -> bool {
+  const auto &parameter =
+      writtenParameter.kind == SemanticType::Reference &&
+              writtenParameter.referenceAccess == AccessMode::ReadOnly
+          ? writtenParameter.arguments.front()
+          : writtenParameter;
   if (parameter.kind != SemanticType::Class || parameter.classId == 0 ||
       parameter.classId > classes.size() ||
       (argument.kind == SemanticType::Class &&
@@ -7643,18 +7659,25 @@ auto SemanticVisitor::Impl::checkedArgumentNonDeduced(
   return std::any_of(owner.constructors.begin(), owner.constructors.end(),
                      [](const ConstructorInfo &constructor) {
                        return constructor.implicitConstruction &&
-                              constructor.declaration &&
-                              constructor.declaration->isConsteval();
+                              constructor.declaration;
                      });
 }
 
-auto SemanticVisitor::Impl::checkedArgumentPotential(const ExprPtr &argument,
-                                                     const SemanticType &source,
-                                                     const SemanticType &target)
-    -> bool {
+auto SemanticVisitor::Impl::implicitArgumentPotential(
+    const ExprPtr &argument, const SemanticType &source,
+    const SemanticType &parameter) -> bool {
+  const auto &target = parameter.kind == SemanticType::Reference &&
+                               parameter.referenceAccess == AccessMode::ReadOnly
+                           ? parameter.arguments.front()
+                           : parameter;
   if (target.kind != SemanticType::Class || target.classId == 0 ||
-      target.classId > classes.size() ||
-      !declarationConstructionApplies(argument, target, source))
+      target.classId > classes.size() || !argument ||
+      source == SemanticType::Unknown || source == target ||
+      classInfo(target.classId).kind == ClassKind::Union ||
+      classInfo(target.classId).abstract ||
+      isContextualArrayArgument(argument) ||
+      isContextualCallableResultArgument(argument) ||
+      isContextualNativeFunctionArgument(argument))
     return false;
   std::vector<const ConstructorInfo *> candidates;
   const auto enclosingType = currentType;
@@ -7666,11 +7689,12 @@ auto SemanticVisitor::Impl::checkedArgumentPotential(const ExprPtr &argument,
   return !candidates.empty();
 }
 
-auto SemanticVisitor::Impl::applyCheckedArgument(const ExprPtr &argument,
-                                                 const SemanticType &source,
-                                                 const SemanticType &target,
-                                                 const Token &parameter)
-    -> bool {
+auto SemanticVisitor::Impl::applyImplicitArgument(
+    const ExprPtr &argument, const SemanticType &source,
+    const SemanticType &destination, const Token &parameter) -> bool {
+  const auto &target = destination.kind == SemanticType::Reference
+                           ? destination.arguments.front()
+                           : destination;
   const auto before = diagnostics.size();
   analyzeConstructorCallArguments(
       *argument, target.classId, target.arguments, target.valueArguments,
@@ -7680,6 +7704,10 @@ auto SemanticVisitor::Impl::applyCheckedArgument(const ExprPtr &argument,
       semanticModel.findContextualConstruction(*argument);
   if (diagnostics.size() != before || !construction)
     return false;
+  if (!construction->declaration->isConsteval()) {
+    finishContextualConstruction(argument, *construction);
+    return diagnostics.size() == before;
+  }
   if (!insideImmediateFunction() &&
       !immediateConstructionDependent(*construction)) {
     auto context = makeConstexprInterpreter();

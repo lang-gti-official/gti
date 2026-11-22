@@ -107,6 +107,23 @@ gti_process_error_v1 gti_rt_process_run_v1(gti_c_string_view arguments,
                                            int32_t *termination_value,
                                            int32_t *native_code);
 
+// Bounded captured execution. Exact argv, inherited environment, optional cwd,
+// stdin /dev/null. timeout_ms: 1..86400000; combined stdout/stderr limit:
+// 1..67108864 bytes. Child groups are killed/reaped on completion and limits.
+// Result uniquely owns captured bytes. Info selectors: 0 termination kind
+// (0 exited, 1 signaled), 1 status, 2 stdout size, 3 stderr size, 4 stop reason
+// (0 normal, 1 deadline exceeded, 2 output limit exceeded).
+gti_process_error_v1
+gti_rt_process_output_v1(gti_c_string_view arguments,
+                         gti_c_string_view working_directory,
+                         uint64_t timeout_ms, uint64_t output_limit,
+                         int64_t *result, int32_t *native_code);
+int64_t gti_rt_process_output_info_v1(int64_t result, uint32_t selector);
+uint64_t gti_rt_process_output_read_v1(int64_t result, uint32_t stream,
+                                       uint64_t offset, uint8_t *output,
+                                       uint64_t capacity);
+void gti_rt_process_output_destroy_v1(int64_t result);
+
 #ifdef __cplusplus
 }
 #endif

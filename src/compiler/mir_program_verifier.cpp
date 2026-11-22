@@ -2557,7 +2557,10 @@ mirFieldTypeThroughBases(const MirProgram &program,
                     (argumentPlace->type.kind == SemanticType::Enum &&
                      program.findPayloadEnum(argumentPlace->type) == nullptr) ||
                     (argumentPlace->type.kind == SemanticType::StringView &&
-                     producer->operation == MirOperation::Literal))) {
+                     producer->operation == MirOperation::Literal) ||
+                    (argumentPlace->type.kind == SemanticType::Class &&
+                     producer->operation == MirOperation::Literal &&
+                     producer->programConstantSubstitution))) {
           exactProducer = true;
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
@@ -8075,10 +8078,7 @@ forwardedBaseMutableEntry(const MirConstructorInstance &instance,
       program.programInitializationPlan().findStepForSymbol(place.symbol);
   const auto *storage =
       step ? program.module().findPlace(step->storagePlace) : nullptr;
-  return storage != nullptr &&
-         (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
-          step->storageKind == ProgramStorageKind::StaticField) &&
-         storage->access == AccessMode::ReadOnly &&
+  return storage != nullptr && storage->access == AccessMode::ReadOnly &&
          (!storage->traits.containsBorrowedState ||
           findMirConstantStorage(program, place.symbol));
 }
@@ -12117,8 +12117,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
           program.findClassInstance(step.ownerClass) == nullptr) {
         add("static-field initialization step has an invalid class owner");
       }
-    } else {
-      add("program-initialization step has an invalid storage kind");
+    } else if (step.storageKind != ProgramStorageKind::FunctionLocal ||
+               step.ownerClass != 0 || !step.dataConstant ||
+               step.role != ProgramInitializationStepRole::DataOnly ||
+               step.requiresActiveCleanup) {
+      add("program-initialization step has an invalid storage kind or "
+          "function-local initialization");
     }
     HirBindingId previousLocal = 0;
     for (const auto &local : step.locals) {

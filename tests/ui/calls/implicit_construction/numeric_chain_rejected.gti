@@ -1,0 +1,4 @@
+// A numeric literal conversion cannot precede an implicit constructor conversion.
+struct Box { implicit Box(int64_t n) {} };
+void take(Box box) {}
+int main() { take(1); return 0; }  //~ ERROR GTI-S2003

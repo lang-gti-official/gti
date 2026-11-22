@@ -495,8 +495,8 @@ def reporting_self_test(runner):
     expect(code == 2 and "is O0 or O3" in out, "--opt rejects other levels", out)
 
     code, out = run(runner, FIXTURES / "pass", "--filter", r"run_\w+\.gti$",
-                    "--list")
-    expect(code == 0 and sorted(line.split()[0].rsplit("/", 1)[1]
+                    "--lsp", "/nonexistent/gti_lsp", "--list")
+    expect(code == 0 and sorted(Path(line.partition(" ")[0]).name
                                 for line in out.splitlines()) ==
            ["run_exit.gti", "run_output.gti"], "--filter selects by regex", out)
     code, out = run(runner, FIXTURES / "pass", "--filter", "(")

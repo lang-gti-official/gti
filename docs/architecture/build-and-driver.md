@@ -1320,6 +1320,19 @@ establish runner completion,
 not proof against a compiler silently miscompiling both a test and its checks;
 independent compiler conformance oracles remain necessary.
 
+Named `[[test("label", arguments...)]]` rows are lowered to fresh zero-argument
+AST wrappers beside the annotated function, in its source unit and namespace.
+The parsed-unit cache remains immutable; only branches/namespaces containing
+rows are rebuilt. Each wrapper deep-copies its written input expressions and
+carries its exact annotated declaration and public `qualified_function/label`
+identity. Normal semantics resolves calls, types and ownership; the frontend
+checks that overload resolution selected the annotated declaration. HIR/MIR and
+LLVM consume ordinary checked calls, not a separate test execution path. Case
+arguments remain runtime expressions and listing performs no setup. Generated
+wrapper names avoid every source identifier in the graph; only public case
+identities enter discovery, filtering, JSON reports and the existing digested
+build-cache catalog. Duplicate identities fail before dispatcher construction.
+
 The frontend validates the attributes and selected-package source identities,
 then generates a dispatcher as ordinary GTI source in the suite's lexical
 entry context. A second semantic pass resolves that dispatcher before existing
@@ -2075,6 +2088,11 @@ using the installed standard library/runtime and host C++ toolchain; the
 package's requested target still governs the native artifacts it publishes.
 Compilation diagnostics retain `build.gti` source locations.
 
+A script that exits successfully without writing `GTI_BUILD_OUTPUT` contributes
+no native outputs; the driver records an empty manifest for cache validation.
+No explicit `publish()` call is needed in that case. The manifest requirements
+below apply only when the script supplies an output manifest.
+
 Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
@@ -2095,7 +2113,9 @@ profile, parallelism budget, and selected target C/C++ compilers.
 shell parsing. `std::build::outputs` records include directories, C and C++
 sources, library directories/files/names, and frameworks, then `publish`
 writes the versioned output manifest consumed by the same validation path as
-an external command.
+an external command. Scripts that only run a tool can return its exit status
+directly; they do not need an empty `outputs` object or a publication call.
+Existing malformed or unreadable manifests still fail validation.
 
 ```gti
 import std.build;
@@ -2125,7 +2145,11 @@ The cache identity includes the command or GTI source, host/target/profile,
 selected C/C++ compilers, and content of every declared input. GTI-authored
 programs additionally include the GTI compiler identity and host C++ compiler.
 A matching state is reused only when its structured output still validates;
-changed or missing inputs rerun the program. `--jobs N` is forwarded as the
+changed or missing inputs rerun the program. This also applies to the
+driver-recorded empty manifest: deleting it reruns the script rather than
+assuming its prior outputs were empty. Before execution, prior output and
+cache state are removed, so an output-free run cannot reuse old native outputs.
+`--jobs N` is forwarded as the
 program's parallelism budget and defaults to at most four jobs. `gti check`,
 `fetch`, `metadata`, and project resolution never compile or execute build
 programs or create their output directories; executable-producing `build`,
@@ -3433,8 +3457,8 @@ The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` uses the OS entropy backend. The public random module ships
 its GTI definitions in `std_random.gtilib`.
-The catalog packages 77 standard-library modules per target and profile.
-Alongside the two native libraries, 75 bundles carry parsed declarations
+The catalog packages 78 standard-library modules per target and profile.
+Alongside the two native libraries, 76 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
 assertions. The prelude and top-level re-export interface also load from source.

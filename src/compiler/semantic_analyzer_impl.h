@@ -19,6 +19,7 @@
 #include "semantic_overload_set.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
+#include "source_text.h"
 
 #include <cassert>
 #include <chrono>
@@ -3974,13 +3975,18 @@ private:
   void warnCheckedOverloadOverlap(const CallableCandidate &left,
                                   const CallableCandidate &right);
   [[nodiscard]] bool
-  checkedArgumentNonDeduced(const SemanticType &parameter,
-                            const SemanticType &argument) const;
-  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
-                                              const SemanticType &source,
-                                              const SemanticType &target);
-  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
-                            const SemanticType &target, const Token &parameter);
+  implicitArgumentNonDeduced(const SemanticType &parameter,
+                             const SemanticType &argument) const;
+  [[nodiscard]] bool implicitArgumentPotential(const ExprPtr &argument,
+                                               const SemanticType &source,
+                                               const SemanticType &target);
+  void
+  finishContextualConstruction(const ExprPtr &expr,
+                               const ResolvedConstructionInfo &construction);
+  bool applyImplicitArgument(const ExprPtr &argument,
+                             const SemanticType &source,
+                             const SemanticType &target,
+                             const Token &parameter);
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
@@ -7796,6 +7802,7 @@ private:
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
+    std::map<SymbolId, ProgramInitializationStep> localStaticSteps;
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     ProgramExpressionCache programExpressionCache;

@@ -2962,6 +2962,10 @@
             "named": true
           },
           {
+            "type": "static_variable_declaration",
+            "named": true
+          },
+          {
             "type": "structured_binding_declaration",
             "named": true
           },
@@ -2996,7 +3000,28 @@
   {
     "type": "function_contract_attribute",
     "named": true,
-    "fields": {}
+    "fields": {
+      "case_name": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "initializer_expression",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "function_declaration",
@@ -3687,6 +3712,10 @@
         "types": [
           {
             "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "static_variable_declaration",
             "named": true
           },
           {
@@ -6112,6 +6141,10 @@
         "types": [
           {
             "type": "expression_statement",
+            "named": true
+          },
+          {
+            "type": "static_variable_declaration",
             "named": true
           },
           {
