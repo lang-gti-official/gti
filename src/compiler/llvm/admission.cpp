@@ -6035,7 +6035,8 @@ public:
                   ? std::optional(Shape::NativeMemoryOperation)
               : nativeAddressConversion(stage) && validRaw
                   ? std::optional(Shape::NativeObjectAddress)
-              : erasedReference(mir, stage) ? std::optional(Shape::ErasedReference)
+              : erasedReference(mir, stage)
+                  ? std::optional(Shape::ErasedReference)
               : representedTextAddress(mir, stage)
                   ? std::optional(Shape::CountedText)
               : rawReference ? rawReferenceShape
