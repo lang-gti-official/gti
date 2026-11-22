@@ -298,6 +298,10 @@ int openFlags(gti_file_open_mode_v1 mode) {
     return O_RDWR | O_CREAT | O_TRUNC;
   case GTI_FILE_OPEN_READ_APPEND_V1:
     return O_RDWR | O_CREAT | O_APPEND;
+  case GTI_FILE_OPEN_WRITE_EXCLUSIVE_V1:
+    return O_WRONLY | O_CREAT | O_EXCL;
+  case GTI_FILE_OPEN_READ_WRITE_EXCLUSIVE_V1:
+    return O_RDWR | O_CREAT | O_EXCL;
   default:
     return -1;
   }

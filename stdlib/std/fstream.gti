@@ -1,0 +1,256 @@
+export module fstream;
+
+export import std.cstdio;
+import std.filesystem;
+import std.memory;
+import std.io;
+import std.span;
+import std.vector;
+import std.utility;
+import std.panic;
+
+export namespace std {
+namespace ios {
+  using openmode = uint32_t;
+  constexpr openmode in = uint32_t(1);
+  constexpr openmode out = uint32_t(2);
+  constexpr openmode app = uint32_t(4);
+  constexpr openmode ate = uint32_t(8);
+  constexpr openmode trunc = uint32_t(16);
+  constexpr openmode binary = uint32_t(32);
+  constexpr openmode noreplace = uint32_t(64);
+}
+}
+
+namespace std::detail {
+expected<file_mode, io_errc> file_access_mode(ios::openmode flags) {
+  auto mode = flags & ~(ios::binary | ios::ate);
+  if (mode == ios::in) { return file_mode::read; }
+  if (mode == ios::out || mode == (ios::out | ios::trunc)) { return file_mode::write; }
+  if (mode == ios::app || mode == (ios::out | ios::app)) { return file_mode::append; }
+  if (mode == (ios::in | ios::out)) { return file_mode::read_write; }
+  if (mode == (ios::in | ios::out | ios::trunc)) { return file_mode::read_write_truncate; }
+  if (mode == (ios::in | ios::app) || mode == (ios::in | ios::out | ios::app)) {
+    return file_mode::read_append;
+  }
+  if (mode == (ios::out | ios::noreplace) || mode == (ios::out | ios::trunc | ios::noreplace)) {
+    return file_mode::write_exclusive;
+  }
+  if (mode == (ios::in | ios::out | ios::trunc | ios::noreplace)) {
+    return file_mode::read_write_exclusive;
+  }
+  return unexpected(io_errc::unsupported_mode);
+}
+}
+
+export namespace std {
+/// A byte file buffer with one logical cursor shared by input and output.
+/// Switching to output reconciles unread lookahead. Switching to input drains pending writes.
+class filebuf {
+  mut unique_ptr<FILE> file = nullptr;
+  mut byte_buffer storage{};
+  mut size_t first = 0;
+  mut size_t last = 0;
+  mut ios::openmode mode = 0;
+  mut bool writing = false;
+
+  void forget_window() mut {
+    this.first = 0;
+    this.last = 0;
+  }
+
+  expected<void, io_errc> drain_writes() mut {
+    while (this.first < this.last) {
+      auto all = this.storage.as_span();
+      auto pending = all.subspan(this.first, this.last - this.first);
+      size_t count = ?this.file->write_some(pending);
+      if (count == 0 || count > this.last - this.first) { return unexpected(io_errc::write_failed); }
+      this.first += count;
+    }
+    this.forget_window();
+    return;
+  }
+
+  expected<void, io_errc> rewind_unread() mut {
+    size_t unread = this.last - this.first;
+    if (unread > 0) { ?this.file->seek(-int64_t(unread), seek_origin::current); }
+    this.forget_window();
+    return;
+  }
+
+public:
+  filebuf() {}
+  filebuf(filebuf& source) = delete;
+
+  ~filebuf() {
+    if (this.is_open()) { [[discard]] this.close(); }
+  }
+
+  bool is_open() { return this.file != nullptr; }
+
+  expected<void, io_errc> open(string_view path, ios::openmode flags) mut {
+    if (this.is_open()) { return unexpected(io_errc::open_failed); }
+    file_mode access = ?std::detail::file_access_mode(flags);
+    mut auto handle = ?std::fopen(path, access);
+    if ((flags & ios::ate) != 0) { ?handle->seek(int64_t(0), seek_origin::end); }
+    this.storage.resize(size_t(4096));
+    this.file = std::move(handle);
+    this.mode = flags;
+    this.writing = false;
+    this.forget_window();
+    return;
+  }
+
+  expected<void, io_errc> open(filesystem::path& path, ios::openmode flags) mut {
+    return this.open(path.view(), flags);
+  }
+
+  expected<void, io_errc> close() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    // Close even after a flush error. The first failure is the one the caller sees.
+    auto flushed = this.flush();
+    auto closed = this.file->close();
+    this.file.reset();
+    this.forget_window();
+    this.mode = 0;
+    this.writing = false;
+    if (!flushed) { return unexpected(flushed.error()); }
+    return closed;
+  }
+
+  size_t available() {
+    if (this.writing) { return size_t(0); }
+    return this.last - this.first;
+  }
+
+  expected<size_t, io_errc> fill_buffer() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if ((this.mode & ios::in) == 0) { return unexpected(io_errc::read_failed); }
+    if (this.writing) {
+      ?this.drain_writes();
+      this.writing = false;
+    }
+    if (this.first < this.last) { return this.last - this.first; }
+    mut auto bytes = this.storage.as_mutable_span();
+    size_t n = ?this.file->read_some(bytes);
+    // Preserve the previous byte after an unsuccessful EOF probe for putback/unget.
+    if (n != 0) {
+      this.first = 0;
+      this.last = n;
+    }
+    return n;
+  }
+
+  span<uint8_t> buffered() {
+    auto bytes = this.storage.as_span();
+    return bytes.subspan(this.first, this.available());
+  }
+
+  void consume(size_t count) mut {
+    if (count > this.available()) { std::panic("cannot consume past the file buffer"); }
+    this.first += count;
+  }
+
+  expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return size_t(0); }
+    mut size_t count = ?this.fill_buffer();
+    if (count > output.size()) { count = output.size(); }
+    for (mut size_t i = 0; i < count; i++) { output[i] = this.storage[this.first + i]; }
+    this.first += count;
+    return count;
+  }
+
+  expected<int32_t, io_errc> peek_byte() mut {
+    size_t count = ?this.fill_buffer();
+    if (count == 0) { return unexpected(io_errc::end_of_file); }
+    return int32_t(this.storage[this.first]);
+  }
+
+  expected<int32_t, io_errc> take_byte() mut {
+    int32_t byte = ?this.peek_byte();
+    this.first++;
+    return byte;
+  }
+
+  expected<void, io_errc> unget_byte() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if ((this.mode & ios::in) == 0) { return unexpected(io_errc::read_failed); }
+    if (!this.writing && this.first > 0) {
+      this.first--;
+      return;
+    }
+    return this.seek(int64_t(-1), seek_origin::current);
+  }
+
+  expected<void, io_errc> putback_byte(char byte) mut {
+    ?this.unget_byte();
+    size_t count = ?this.fill_buffer();
+    if (count == 0) { return unexpected(io_errc::end_of_file); }
+    this.storage[this.first] = uint8_t(byte);
+    return;
+  }
+
+  expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
+    if (input.empty()) { return size_t(0); }
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if ((this.mode & (ios::out | ios::app)) == 0) { return unexpected(io_errc::write_failed); }
+    if (!this.writing) {
+      ?this.rewind_unread();
+      this.writing = true;
+    }
+    if (this.last == this.storage.size()) { ?this.drain_writes(); }
+    mut size_t count = this.storage.size() - this.last;
+    if (count > input.size()) { count = input.size(); }
+    for (mut size_t i = 0; i < count; i++) { this.storage[this.last + i] = input[i]; }
+    this.last += count;
+    return count;
+  }
+
+  expected<void, io_errc> flush() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if (this.writing) { ?this.drain_writes(); }
+    return this.file->flush();
+  }
+
+  expected<void, io_errc> sync() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if (this.writing) { return this.flush(); }
+    return this.rewind_unread();
+  }
+
+  expected<int64_t, io_errc> tell() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    // In append mode only the host knows where an actual write landed.
+    if (this.writing) { ?this.drain_writes(); }
+    int64_t position = ?this.file->tell();
+    return position - int64_t(this.available());
+  }
+
+  expected<void, io_errc> seek(int64_t offset, seek_origin origin) mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if (this.writing) { ?this.drain_writes(); }
+    mut int64_t relative = offset;
+    if (origin == seek_origin::current) {
+      int64_t unread = int64_t(this.available());
+      if (relative < (int64_t(-9223372036854775807) - int64_t(1)) + unread) {
+        return unexpected(io_errc::seek_failed);
+      }
+      relative -= unread;
+    }
+    ?this.file->seek(relative, origin);
+    this.forget_window();
+    this.writing = false;
+    return;
+  }
+
+  // All owners and window offsets move together; no view of our own storage is retained.
+  void swap(mut filebuf& other) mut {
+    this.file.swap(other.file);
+    this.storage.swap(other.storage);
+    std::swap(this.first, other.first);
+    std::swap(this.last, other.last);
+    std::swap(this.mode, other.mode);
+    std::swap(this.writing, other.writing);
+  }
+};
+}

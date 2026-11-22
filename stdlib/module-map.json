@@ -21,6 +21,7 @@
     "functional": "std/functional.gti",
     "http": "std/http.gti",
     "io": "std/io.gti",
+    "ios": "std/ios.gti",
     "iterator": "std/iterator.gti",
     "json": "std/json.gti",
     "list": "std/list.gti",

@@ -9038,7 +9038,12 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
                                   name.kind == OverloadedOperator::LessEqual ||
                                   name.kind == OverloadedOperator::Greater ||
                                   name.kind == OverloadedOperator::GreaterEqual;
-  const bool valueOperator = isArithmeticOrBitwiseValueOperator(name.kind);
+  const bool mutableShift =
+      (name.kind == OverloadedOperator::ShiftLeft ||
+       name.kind == OverloadedOperator::ShiftRight) &&
+      function.receiverMutability() == ReceiverMutability::Mutable;
+  const bool valueOperator =
+      isArithmeticOrBitwiseValueOperator(name.kind) && !mutableShift;
   const bool mutationOperator = isCompoundOperator(name.kind) ||
                                 name.kind == OverloadedOperator::PreDecrement;
   std::optional<std::size_t> expectedArity = 0;
@@ -9184,6 +9189,13 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   if (name.kind == OverloadedOperator::PreIncrement &&
       function.receiverMutability() != ReceiverMutability::Mutable) {
     fail("Prefix operator++ must use a mutable receiver.");
+  }
+  if (mutableShift && currentClass &&
+      returnType != SemanticType::referenceTo(openClassType(*currentClass),
+                                               AccessMode::Mutable)) {
+    fail(std::string(operatorSourceSpelling(name.kind)) +
+         " with a mutable receiver must return a mutable reference to its "
+         "receiver type.");
   }
   if (valueOperator && (returnType == SemanticType::Void ||
                         returnType.kind == SemanticType::Reference ||

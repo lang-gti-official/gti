@@ -1,0 +1,116 @@
+export module ios;
+import std.cstdio;
+import std.panic;
+
+export namespace std::ios {
+using iostate = uint32_t;
+constexpr iostate goodbit = 0;
+constexpr iostate eofbit = 1;
+constexpr iostate failbit = 2;
+constexpr iostate badbit = 4;
+
+using seekdir = std::seek_origin;
+constexpr seekdir beg = std::seek_origin::begin;
+constexpr seekdir cur = std::seek_origin::current;
+constexpr seekdir end = std::seek_origin::end;
+
+using fmtflags = uint32_t;
+constexpr fmtflags boolalpha = 1;
+constexpr fmtflags dec = 2;
+constexpr fmtflags oct = 4;
+constexpr fmtflags hex = 8;
+constexpr fmtflags basefield = 14;
+constexpr fmtflags skipws = 16;
+constexpr fmtflags showbase = 32;
+constexpr fmtflags showpos = 64;
+constexpr fmtflags uppercase = 128;
+constexpr fmtflags left = 256;
+constexpr fmtflags right = 512;
+constexpr fmtflags internal = 1024;
+constexpr fmtflags adjustfield = 1792;
+constexpr fmtflags fixed = 2048;
+constexpr fmtflags scientific = 4096;
+constexpr fmtflags floatfield = 6144;
+constexpr fmtflags showpoint = 8192;
+constexpr fmtflags unitbuf = 16384;
+}
+
+export namespace std {
+/// Shared state for a byte stream. EOF alone is observable and still permits a
+/// successful extraction; failure and transport errors make the stream false.
+class ios_base {
+  mut ios::iostate state = ios::goodbit;
+  mut io_errc reason = io_errc::invalid_stream;
+  mut ios::fmtflags format_flags = ios::dec | ios::skipws;
+  mut size_t field_width = 0;
+  mut size_t floating_precision = 6;
+  mut char padding = ' ';
+protected:
+  void record_error(ios::iostate bits, io_errc error) mut {
+    this.state |= bits;
+    this.reason = error;
+  }
+  void set_error(io_errc error) mut { this.record_error(ios::failbit, error); }
+public:
+  ios_base() {}
+  ios::iostate rdstate() { return this.state; }
+  bool good() { return this.state == ios::goodbit; }
+  bool eof() { return (this.state & ios::eofbit) != 0; }
+  bool bad() { return (this.state & ios::badbit) != 0; }
+  bool fail() { return (this.state & (ios::failbit | ios::badbit)) != 0; }
+  operator bool() { return !this.fail(); }
+  io_errc error() {
+    if (this.good()) { std::panic("error() on a stream in good state"); }
+    return this.reason;
+  }
+  void clear(ios::iostate state = ios::goodbit) mut {
+    this.state = state;
+    if (state == ios::goodbit) { this.reason = io_errc::invalid_stream; }
+  }
+  void setstate(ios::iostate bits) mut { this.state |= bits; }
+  ios::fmtflags flags() { return this.format_flags; }
+  [[discardable]] ios::fmtflags flags(ios::fmtflags value) mut {
+    auto old = this.format_flags;
+    this.format_flags = value;
+    return old;
+  }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits) mut {
+    return this.flags(this.format_flags | bits);
+  }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits, ios::fmtflags mask) mut {
+    return this.flags((this.format_flags & ~mask) | (bits & mask));
+  }
+  void unsetf(ios::fmtflags bits) mut { this.format_flags &= ~bits; }
+  size_t precision() { return this.floating_precision; }
+  [[discardable]] size_t precision(size_t value) mut {
+    auto old = this.floating_precision;
+    this.floating_precision = value;
+    return old;
+  }
+  size_t width() { return this.field_width; }
+  [[discardable]] size_t width(size_t value) mut {
+    auto old = this.field_width;
+    this.field_width = value;
+    return old;
+  }
+  char fill() { return this.padding; }
+  [[discardable]] char fill(char value) mut {
+    auto old = this.padding;
+    this.padding = value;
+    return old;
+  }
+};
+}
+
+export namespace std {
+/// Owns the transport by value. The file types own one filebuf, so moving the
+/// stream never leaves a reference pointing into its old address.
+class basic_ios<B> : public ios_base {
+protected:
+  mut B buffer;
+public:
+  basic_ios(B value) : buffer(std::move(value)) {}
+  B& rdbuf() { return this.buffer; }
+  mut B& rdbuf() mut { return this.buffer; }
+};
+}
