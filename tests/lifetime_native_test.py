@@ -1935,7 +1935,7 @@ def main():
         "retained_other_supplier": {"GTI-S2017"},
         "retained_constructed_supplier": {"GTI-S2017"},
         "borrowed_destructor_copy": {"GTI-S2018"},
-        "local_record_escape": {"GTI-S2045", "GTI-S2085", "GTI-S2127"},
+        "local_record_escape": {"GTI-S2017"},
         "range_element_escape": {"GTI-S2017", "GTI-S2127"},
     }
     if rejection_codes.keys() != REJECTIONS.keys():
@@ -1950,6 +1950,8 @@ def main():
             expected = "|".join(sorted(rejection_codes[label]))
             owning_error = re.search(
                 rf"(?m)^[^\n]*{re.escape(path.name)}:\d+:\d+: error\[({expected})\]:", text)
+            if label == "local_record_escape" and "Local 'local' supplies storage retained by this result" not in text:
+                raise RuntimeError(f"{label}: missing the destroyed local supplying the returned borrow")
             if rejected.returncode == 0 or not owning_error or "GTI-B" in text:
                 raise RuntimeError(f"{label}: expected its owning lifetime diagnostic in the fixture; {output / (label + '-reject.log')}")
         checked(label + "/reject", reject)

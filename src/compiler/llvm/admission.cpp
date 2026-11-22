@@ -4418,8 +4418,9 @@ public:
     if (stage.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
         stage.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
       const auto representedAddress = [&](const SemanticType &type) {
-        return nativeValue(type) || (dispatchProofs.contains(type) &&
-                                     dispatchProofs.metadata(type).has_value());
+        return nativeValue(type) || mutexShape(type).has_value() ||
+               (dispatchProofs.contains(type) &&
+                dispatchProofs.metadata(type).has_value());
       };
       // Like a raw borrow, this publishes an already adjusted address. A
       // hierarchy view needs its dispatch layout, not by-value transport.

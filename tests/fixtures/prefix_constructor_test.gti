@@ -6,7 +6,7 @@ export void append_to_empty<T, Args...>(Args... args) requires std::storage_elem
   storage.append(args...); // capacity failure
 }
 
-export void append_same_type<T>(T value, uint64_t capacity) requires std::storage_element<T> {
+export void append_same_type<T>(T value, uint64_t capacity) requires std::storage_element<T> && std::move_constructible<T> {
   mut std::detail::prefix_owner<T> storage{capacity};
   storage.append_value(std::move(value)); // direct capacity
 }

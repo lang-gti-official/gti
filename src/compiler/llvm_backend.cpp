@@ -1,6 +1,6 @@
 #include "gti/llvm_backend.h"
 
-#include "gti/compiled_scalar_unit.h"
+#include "gti/compiled_interface_names.h"
 #include "gti/llvm_admission.h"
 #include "gti/lowered_program.h"
 #include "gti/native_header.h"
