@@ -651,7 +651,7 @@ void DebugInfo::beginNativeCallback(MirNativeCallbackAdapterId identity,
       flags |= llvm::DISubprogram::SPFlagOptimized;
     auto *file = impl->builder.createFile("<gti-generated>", ".");
     function->setSubprogram(impl->builder.createFunction(
-        file, function->getName(), {}, file, 0,
+        file, "<GTI native callback>", {}, file, 0,
         impl->builder.createSubroutineType(
             impl->builder.getOrCreateTypeArray({})),
         0, llvm::DINode::FlagArtificial, flags));
@@ -721,7 +721,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
       flags |= llvm::DISubprogram::SPFlagOptimized;
     auto *file = impl->builder.createFile("<gti-generated>", ".");
     function.setSubprogram(impl->builder.createFunction(
-        file, function.getName(), {}, file, 0,
+        file, "<GTI program startup>", {}, file, 0,
         impl->builder.createSubroutineType(
             impl->builder.getOrCreateTypeArray({})),
         0, llvm::DINode::FlagArtificial, flags));
@@ -736,7 +736,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     return;
   const SourceSpan *source = nullptr;
   std::string name;
-  std::vector<llvm::Metadata *> parameters{impl->type(body->returnType)};
+  std::vector<llvm::Metadata *> parameters{nullptr};
   if (address.kind == MirBodyKind::Function) {
     const auto *instance = program.findFunctionInstance(address.owner);
     const auto *mir = program.mir().findFunctionInstance(address.owner);
@@ -786,6 +786,13 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   if (impl->optimized())
     flags |= llvm::DISubprogram::SPFlagOptimized;
   auto *file = impl->file(*source);
+  // Native debuggers read the return register using the debug signature.
+  // A private ABI status or an indirect result cannot describe a source
+  // return value there. Leave that value unavailable to native step-out.
+  const auto abi = impl->parameters.find(&function);
+  if (!function.getReturnType()->isVoidTy() && abi != impl->parameters.end() &&
+      !abi->second.abi.statusResult)
+    parameters.front() = impl->type(body->returnType);
   // GTI's private execution symbols are not source-language manglings. A
   // linkage name makes debuggers prefer those opaque symbols to this name.
   function.setSubprogram(impl->builder.createFunction(
@@ -1045,15 +1052,21 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
     const auto *location = llvm::DILocation::get(
         impl->session.context(), begin ? local.variable->getLine() : 0, 0,
         local.variable->getScope());
-    if (begin)
+    if (begin && impl->optimized()) {
       impl->builder.insertDeclare(local.storage, local.variable,
                                   impl->builder.createExpression(), location,
                                   recordPosition(ir.GetInsertBlock()));
-    else
-      impl->builder.insertDbgValueIntrinsic(
-          llvm::PoisonValue::get(ir.getInt8Ty()), local.variable,
-          impl->builder.createExpression(), location,
-          recordPosition(ir.GetInsertBlock()));
+      return;
+    }
+    // A declaration for an entry alloca may become a function-wide DWARF
+    // location. At O0 describe the value through that same address only from
+    // the verified readable boundary, without introducing a load.
+    impl->builder.insertDbgValueIntrinsic(
+        begin ? local.storage : llvm::PoisonValue::get(ir.getInt8Ty()),
+        local.variable,
+        begin ? impl->builder.createExpression({llvm::dwarf::DW_OP_deref})
+              : impl->builder.createExpression(),
+        location, recordPosition(ir.GetInsertBlock()));
   };
   for (const auto id : event->second.ends)
     if (std::none_of(event->second.values.begin(), event->second.values.end(),

@@ -4995,7 +4995,15 @@ Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
 execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
-backtrace evidence exists. The exact hosted startup factory registers an
+backtrace evidence exists. Unoptimized storage-backed locals use indirect
+debug values at verified readability boundaries. A function-wide stack
+location can expose an incoming parameter's slot before the spill or a
+local's slot before its initializer. The indirect record describes existing
+storage and generates no load. The source subprogram exposes a return type
+to the native debugger when the ABI returns that value directly. Result
+destinations and internal success statuses have no native source return
+value for the debugger to read on step-out. The artificial entry and
+callback carriers have descriptive frame names. The exact hosted startup factory registers an
 artificial line-zero carrier, without a user source scope, to preserve inlined
 source locations in the executing native entry. Forged startup/body/location
 identities reject. The native macOS O3 scalar gate reaches the executing inline

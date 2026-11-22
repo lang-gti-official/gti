@@ -1110,9 +1110,12 @@ continue
 
 For a standalone program, `gti main.gti -g -O0 -o app` followed by `lldb ./app`
 uses the same path. No generated C++ file needs to remain beside the binary.
-The C++ backend's [source debug contract](backend.md#opt-in-source-debug-locations)
-describes the first-phase limits: statement lines work, but GTI variable names,
-rich types, and expression evaluation are not yet provided.
+LLVM debug builds expose source function names and supported parameters and
+locals to the native debugger. Variable availability depends on the current
+instruction and the compiler's verified locations. When a GTI callee uses a
+hidden result destination, inspect the destination in the caller after the
+assignment completes. See the [LLVM debugger contract](backend.md#llvm-target-layout-and-execution-abi)
+for optimized-code and debugger compatibility limits.
 
 The immutable compilation and native requests carry the debug policy; the
 native command adds `-g` after forwarded arguments. On ELF toolchains symbols
