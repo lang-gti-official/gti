@@ -2644,26 +2644,41 @@ bool carrierLoanDependency(
   }
   if (loan.kind != MirLoanKind::Return || !loan.escapes)
     return false;
-  const MirLoan *relayed = nullptr;
+  const MirOperand *operand = nullptr;
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
       if (!stage.tombstone && stage.kind == MirInstructionKind::Borrow &&
           stage.loan == loan.id) {
-        if (relayed || stage.operands.size() != 1 ||
-            stage.operands.front().kind != MirOperandKind::Loan)
+        if (operand || stage.operands.size() != 1)
           return false;
-        relayed = body.findLoan(stage.operands.front().loan);
-        if (!relayed)
-          return false;
+        operand = &stage.operands.front();
       }
-  return relayed && relayed->id != loan.id &&
-         relayed->storedDependency == loan.storedDependency &&
-         relayed->source == loan.source && supported(*relayed) &&
-         std::any_of(body.blocks.begin(), body.blocks.end(),
-                     [&](const auto &block) {
-                       return block.terminator.returnLoan == loan.id &&
-                              referenceReturn(block.terminator);
-                     });
+  if (!operand || !std::any_of(body.blocks.begin(), body.blocks.end(),
+                               [&](const auto &block) {
+                                 return block.terminator.returnLoan ==
+                                            loan.id &&
+                                        referenceReturn(block.terminator);
+                               }))
+    return false;
+  if (operand->kind == MirOperandKind::Loan) {
+    const auto *relayed = body.findLoan(operand->loan);
+    return relayed && relayed->id != loan.id &&
+           relayed->storedDependency == loan.storedDependency &&
+           relayed->source == loan.source && supported(*relayed);
+  }
+  // Returning the receiver itself passes its existing address. Its entry
+  // Stored loan tracks the fields' external owners; it supplies no address.
+  const auto *receiver = body.findPlace(loan.source);
+  const auto *entry = body.findPlace(stored->source);
+  return operand->kind == (loan.access == AccessMode::Mutable
+                               ? MirOperandKind::BorrowWrite
+                               : MirOperandKind::BorrowRead) &&
+         operand->place == loan.source && receiver && entry &&
+         receiver->root == MirPlaceRootKind::This &&
+         receiver->projections.empty() && stored->entry &&
+         stored->kind == MirLoanKind::Stored &&
+         entry->root == MirPlaceRootKind::This && entry->projections.empty() &&
+         entry->type == receiver->type;
 }
 
 } // namespace lang::native_llvm
