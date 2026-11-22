@@ -1,0 +1,24 @@
+// Borrowed storage: growable records selected outlives storage.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.vector;
+class Reading<lifetime a> {
+  int&<a> value;
+public:
+  Reading(int&<a> input) : value(input) {}
+  int read() { return this.value; }
+};
+Reading<a> pick<lifetime a>(int&<a> first, int&<a> second) {
+  mut std::vector<Reading<a>> values{};
+  values.push_back(Reading<a>(first)); values.push_back(Reading<a>(second));
+  Reading<a> selected = values[0];
+  values.reserve(32);
+  return selected;
+}
+int main() {
+  int first = 11; int second = 22;
+  Reading selected = pick(first, second);
+  return selected.read() == 11 ? 0 : 1;
+}

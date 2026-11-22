@@ -1,0 +1,7 @@
+// A record returned from a thread-local borrows that thread's storage through
+// the storage's own typed place; it is usable on the same thread.
+//@ run-pass
+struct View { int& item; View(int& source) : item(source) {} };
+thread_local mut int state = 1;
+View worker() { return View(state); }
+int main() { View v = worker(); int read = v.item; state = 4; return read - 1; }

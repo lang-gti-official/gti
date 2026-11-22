@@ -1,0 +1,58 @@
+// A native library with its sources removed accepts the same independent global loan
+// and diagnoses the same conflicting argument as source. An effectful overload stays opaque.
+$ cp producer/library.gti api.gti
+$ cp legal.gti main.gti
+$ sh -c "sed 's/live = other/live = counter/' legal.gti > conflict.gti"
+$ gti run app --release
+$ cp conflict.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+stderr: Retained borrow originates here.
+!stderr: GTI-S2045
+$ cp staged.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2045
+stderr: This call accesses persistent storage through an overlapping path
+!stderr: unresolved GTI storage effects
+$ cd producer
+$ gti build meter --release
+$ sh -c "cp build/gti/release/*/meter.gtilib .."
+$ sh -c "sed 's/return value + 2/return value + private_state/' library.gti > revised.gti"
+$ mv revised.gti library.gti
+$ gti build meter --release
+$ sh -c "cp build/gti/release/*/meter.gtilib ../revised.gtilib"
+$ cd ..
+$ rm -r producer api.gti build
+$ python3 check_native_bundle.py
+$ sh -c "cat dependency.toml >> gti.toml"
+$ cp legal.gti main.gti
+$ gti run app --release
+$ cp conflict.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+stderr: Retained borrow originates here.
+!stderr: GTI-S2045
+$ cp staged.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2045
+stderr: This call accesses persistent storage through an overlapping path
+!stderr: unresolved GTI storage effects
+$ cp unknown.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2045
+$ test ! -e api.gti
+$ cp legal.gti main.gti
+$ cp revised.gtilib meter.gtilib
+$ gti build app --release
+? 65
+stderr: GTI-S2045
+stderr: unresolved GTI storage effects
+$ cp mismatched.gtilib meter.gtilib
+$ gti check app --release
+? 65
+stderr: unexpected compiled scalar external definition

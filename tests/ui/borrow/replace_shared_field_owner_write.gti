@@ -1,0 +1,21 @@
+// The reference returned by a replaced field still borrows its new owner.
+class ReadView {
+  int& item;
+public:
+  ReadView(int& item) : item(item) {}
+  int& read() { return this.item; }
+};
+struct Pair {
+  mut ReadView first;
+  Pair(ReadView view) : first(view) {}
+};
+
+int main() {
+  int a = 1;
+  mut int b = 2;
+  mut auto result = Pair(ReadView(a));
+  result.first = ReadView(b);
+  int& r = result.first.read();
+  b = 3;  //~ ERROR GTI-S2017 overlapping borrow
+  return r;
+}

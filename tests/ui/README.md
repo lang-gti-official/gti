@@ -37,6 +37,9 @@ int main() {
   directive replaces the shared
   (unprefixed) one of that name. A revision's expected-output file is
   `name.<revision>.stdout`.
+
+`//@ stderr-empty` requires silent runtime stderr. `//@ diagnostic-note: text`
+requires a matching related diagnostic note; missing notes cannot be blessed.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
 - `//@ format-stable` (check-pass without annotations): formatting the test is
   a fixed point and the formatted program also checks.
@@ -214,6 +217,13 @@ goes to a sibling `name.stdout` and differing inline `//@ stdout:` lines are
 reported, not rewritten. One `--bless` writes annotations and the rendered
 snapshots that quote them. Review its diff.
 
+The runner groups cases with the same imports and compilation options so a
+worker can reuse checked standard-library declarations. A standalone check-pass
+case with no snapshots can use the ordinary frontend directly. If it passes but
+exceeds the applicable budget, the runner measures it through the usual cached
+path before applying the same limit. The JSON report's `cold` flag identifies
+measurements that include cache preparation.
+
 Tiers and reports: `--opt O3` (or `GTI_TEST_OPT=O3`) builds every run test
 that does not pin `//@ opt:` optimized; `--filter REGEX` selects tests whose
 path matches; `--slowest N` lists the N most expensive tests after the run;
@@ -225,3 +235,17 @@ checks tests/ui, tests/project, tests/lsp and tests/slow.
 Not built: symbol probes of built programs (the old `nm` checks inspect
 sanitizer-instrumented objects and package archives, which a per-test
 directive on a normal program cannot honestly stand for).
+
+### Registered source gates
+
+`gti_test_ui` checks the runner itself and tidies the shared inventory.
+`gti_test_ui_shard_1` through `gti_test_ui_shard_4` partition that same inventory
+with the runner's deterministic `--shard I/4` selection. Run the family with
+`ctest -R '^gti_test_ui(_shard_[1-4])?$'`. No case or per-case limit is changed by
+sharding, and each gate retains the 600-second aggregate timeout. Selected
+slow regressions, including borrowed storage and construction cleanup, remain
+in this inventory. Measured cases that exceed the nominal fast CPU budgets
+move to `tests/slow/` with `//@ slow`; cases retained for integration stay
+explicitly listed in `suite_roots` and the ownership map, together with their
+output companions. This classification does not remove their execution gate. Per-case JSON and failed-case records are retained under the build's
+`Testing/` directory, separately for each shard.

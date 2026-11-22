@@ -153,8 +153,10 @@ source loading, lexing and parsing. It uses the compiler's actual imports,
 conditional branches, error limit and source ranges. The worker then transfers
 the same program and source graph to semantic analysis, HIR and MIR. Publication
 runs outside the compiler crash guard and checks both the document generation
-and the inputs read by the parser. A parser quick fix can be applied at this
-stage while its root generation, source text and dependencies are still current.
+and the inputs read by the parser. Parser, semantic and isolated body diagnostics carry their compiler repairs
+as soon as the producing stage publishes them. Each partial publication binds
+its repairs to the root generation and the dependencies that stage checked.
+Exact undo rebinds verified repairs to the restored document version.
 Definition and reference lookups use the completed snapshot.
 
 On open, clients can request progressive diagnostics with the boolean
@@ -174,7 +176,11 @@ declaration as soon as it registers the current project's signatures. An
 isolated semantic worker checks the enclosing function with its type parameters
 and requirements, or uses the conformance validator for a pattern or associated
 type. A `nameLookup` notification reports the compiler's error at the edited
-identifier. Before the lexical walk has established namespace values, the
+identifier. Local spelling repairs can accompany this lookup or the isolated
+body check. The body check verifies that the suggested binding still has the
+reported spelling in the edited function or its unchanged header. Retyping a
+misspelling can replace a verified repair when the compiler produces a new
+repair for that same token. Before the lexical walk has established namespace values, the
 query admits a missing name only when its spelling occurs nowhere else in the
 active input tokens. Compiled inputs without that evidence, source macros and
 potentially discarded compile-time paths use the ordinary checks.
@@ -182,7 +188,8 @@ potentially discarded compile-time paths use the ordinary checks.
 When an edit replaces that identifier and the compiler observes a binding at
 the same occurrence, the server can withdraw its own provisional error. Each
 retained finding must still have current primary, related and fix-it source
-text. Verified errors stay under the full check's ownership. A corrected name
+text. Clearing a verified error still requires the full check or exact
+restoration of a verified buffer. A corrected name
 can therefore disappear from the editor before MIR checks the document and its
 callers. Exact restoration of a verified buffer still restores its warnings.
 
@@ -1367,6 +1374,9 @@ Diagnostic serialization preserves compiler codes, severities, groups, phases,
 hints, related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for
 universal display and are also exposed as structured data when supported.
+An empty diagnostic list in a code-action request discovers current repairs
+intersecting the requested range. When a client supplies diagnostics, the
+server checks their identity against the current publication.
 Ownership explanations use this same serialization: move-site notes,
 borrow-origin/later-statement notes, and read-only declaration notes remain
 compiler-owned half-open byte spans until protocol conversion. Their intentional
@@ -1408,7 +1418,9 @@ groups, invalid/reversed ranges, UTF-8/CRLF splits, overlaps, ambiguous touching
 insertions, no-op members, incomplete suggestions and mixed applicability.
 No fix-all operation is offered. Full captured text must match the target's
 current overlay; versioned `documentChanges` carry the live document version.
-The originating root and requested document must both have current snapshots.
+A repair published by the open file can use its producing stage's current
+inputs. Repairs reported by another root require current completed snapshots
+for both the originating root and the requested document.
 
 For clients negotiating diagnostic `dataSupport`, repair-bearing diagnostics
 carry `repairSnapshot` (root URI plus analysis generation), `repairId` and
@@ -1608,7 +1620,8 @@ function-local names: identities visible outside the entry document's
   Across the test fixtures the share is higher (542 of 1637). Removing that
   fallback needs the MIR rules listed there to take their facts from the
   signature contract.
-- Omitting a library-only body also leaves undiscovered the instances only
+- In the earlier restricted-container implementation, omitting a library-only
+  body also left undiscovered the instances only
   that body requests, and their instance diagnostics with them, even when a
   library-only argument causes the error: `std::vector<std::string_view>`'s
   `push_back` requests the storage helper whose analysis reports
@@ -1618,6 +1631,9 @@ function-local names: identities visible outside the entry document's
   test fixtures. Reporting them needs the closure of an omitted instance to
   be discovered, or remembered as diagnostic-free from an earlier complete
   lowering.
+  The cited fixture now checks an escaping owner lifetime rather than rejecting
+  borrowed container elements. The historical measurements above do not verify
+  editor parity for the new borrowed-storage implementation.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources

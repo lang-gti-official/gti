@@ -506,7 +506,8 @@ void validateCompiledInterfaceUnits(
   }
 }
 std::string compiledInterfaceNamespaceSource(std::string_view name,
-                                             std::string declaration) {
+                                             std::string declaration,
+                                             std::size_t *declarationStart) {
   if (!isCompiledInterfaceName(name))
     invalid("invalid qualified declaration name");
   std::string source;
@@ -517,6 +518,8 @@ std::string compiledInterfaceNamespaceSource(std::string_view name,
     name.remove_prefix(separator + 2);
     ++depth;
   }
+  if (declarationStart)
+    *declarationStart = source.size();
   source += declaration;
   for (std::size_t i = 0; i < depth; ++i)
     source += "}\n";

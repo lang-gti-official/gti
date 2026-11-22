@@ -1,0 +1,5 @@
+import "api.gti";
+int main() {
+  mut Meter meter{0};
+  return meter.advance();
+}

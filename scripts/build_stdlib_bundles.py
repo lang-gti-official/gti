@@ -15,7 +15,7 @@ import tomllib
 @dataclass(frozen=True)
 class InstalledModule:
     entry: Path
-    facade: Path | None  # The generic producer supplies its own declarations.
+    facade: Path | None  # Absent when the bundle carries its module recipe.
 
 
 def catalog(source):
@@ -24,14 +24,14 @@ def catalog(source):
         targets = tomllib.load(manifest)["targets"]
     facades = {path.stem for path in (directory / "facades").glob("*.gti")}
     native = {name for name, target in targets.items() if target.get("functions")}
-    if not targets or native != facades:
-        raise ValueError("each native library needs one source facade; generic libraries carry their declarations")
+    if not targets or not facades.issubset(native):
+        raise ValueError("a standalone facade requires a native library target")
     modules = {}
     for name, target in targets.items():
         entry = Path(target["root"]).relative_to("stdlib")
         if target["kind"] != "gti-library" or ".." in entry.parts or entry in {m.entry for m in modules.values()}:
             raise ValueError(f"invalid or duplicate installed library entry for {name}")
-        modules[name] = InstalledModule(entry, directory / "facades" / f"{name}.gti" if name in native else None)
+        modules[name] = InstalledModule(entry, directory / "facades" / f"{name}.gti" if name in facades else None)
     return modules
 
 
@@ -103,7 +103,7 @@ def build(stage, source):
         # Compile and execute a consumer-owned substitution after its producer
         # root has been removed from the toolchain used by the application.
         cases = (consumer / "array_consumer.gti",
-                 source / "tests/ui/stdlib/vector/constexpr_range_for_views.gti",
+                 source / "tests/slow/stdlib/vector/constexpr_range_for_views.gti",
                  source / "tests/ui/callables/borrowing_captures/borrowing_captures_19.gti")
         for case in cases:
             shutil.copyfile(case, consumer / "src/main.gti")

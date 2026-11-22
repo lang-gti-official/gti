@@ -1,0 +1,15 @@
+// Copying a text view through a span keeps the vector's storage borrowed.
+//@ check-fail
+import std.span;
+import std.string;
+import std.vector;
+
+int main() {
+  std::string name{"first"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(name.view());
+  auto view = values.as_span();
+  auto selected = view[0];
+  values.reserve(64);  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return selected == "first" ? 0 : 1;
+}

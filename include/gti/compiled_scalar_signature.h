@@ -24,6 +24,9 @@ struct CompiledScalarSignature {
   std::string resultRecipe;
   CompiledBorrowContract borrow;
   FunctionCodegenAttributes codegenAttributes;
+  // Verified across the concrete call graph. Explicit argument loans still
+  // apply.
+  bool noAmbientStorage = false;
   friend bool operator==(const CompiledScalarSignature &,
                          const CompiledScalarSignature &) = default;
 };

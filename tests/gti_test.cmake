@@ -45,6 +45,14 @@ if(NOT gti_test_timeout_scale MATCHES "^[1-9][0-9]*$")
 endif()
 math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
 
+# CTest reserves processors for each nested worker pool. Keep the pool and
+# reservation within the same budget that CI computed for this runner.
+set(gti_test_workers 4)
+if("$ENV{GTI_TEST_JOBS}" MATCHES "^[1-9][0-9]*$" AND
+   "$ENV{GTI_TEST_JOBS}" LESS gti_test_workers)
+  set(gti_test_workers "$ENV{GTI_TEST_JOBS}")
+endif()
+
 # The per-commit gti-test entries, all named gti_test_ui*, so `ctest -R
 # '^gti_test_ui'` runs every tests/ui, tests/project and tests/lsp case and
 # CI's gate selects them with one pattern. One entry for the whole tree
@@ -62,17 +70,17 @@ set(gti_test_ui_shards 8)
 gti_test_report(gti_test_ui gti_test_ui_report)
 add_test(NAME gti_test_ui
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
-    $<TARGET_FILE:gti-test> --jobs 4 --without-ui ${gti_test_ui_report})
-set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4 TIMEOUT 600
+    $<TARGET_FILE:gti-test> --jobs ${gti_test_workers} --without-ui ${gti_test_ui_report})
+set_tests_properties(gti_test_ui PROPERTIES PROCESSORS ${gti_test_workers} TIMEOUT 600
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
 foreach(gti_test_ui_shard RANGE 1 ${gti_test_ui_shards})
   set(gti_test_ui_name gti_test_ui_${gti_test_ui_shard})
   gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)
   add_test(NAME ${gti_test_ui_name}
     COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui"
-      --shard ${gti_test_ui_shard}/${gti_test_ui_shards} --jobs 4
+      --shard ${gti_test_ui_shard}/${gti_test_ui_shards} --jobs ${gti_test_workers}
       ${gti_test_ui_shard_report})
-  set_tests_properties(${gti_test_ui_name} PROPERTIES PROCESSORS 4 TIMEOUT 600
+  set_tests_properties(${gti_test_ui_name} PROPERTIES PROCESSORS ${gti_test_workers} TIMEOUT 600
     ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/${gti_test_ui_name}.last-run")
   # The seeded-bug measure's gate tier (suite-measures.yml) selects by label.
   set_property(TEST ${gti_test_ui_name} APPEND PROPERTY LABELS "gti-test-ui")
@@ -88,12 +96,12 @@ endforeach()
 file(GLOB gti_examples CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.gti")
 gti_test_report(gti_test_examples gti_test_examples_report)
 add_test(NAME gti_test_examples
-  COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs 4
+  COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs ${gti_test_workers}
     ${gti_test_examples_report} ${gti_examples})
 # Examples are whole programs, several above the 2 s check budget; the scaled
 # limit here only catches hangs.
 math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
-set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
+set_tests_properties(gti_test_examples PROPERTIES PROCESSORS ${gti_test_workers}
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-examples.last-run")
 
 # The daily slow tier's gti-test entries (TestThroughput.cmake labels them
@@ -104,15 +112,45 @@ set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
 #   users never take; this proves both paths agree.
 gti_test_report(gti_test_slow gti_test_slow_report)
 add_test(NAME gti_test_slow
-  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/slow" --jobs 4
+  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/slow" --jobs ${gti_test_workers}
     ${gti_test_slow_report})
-set_tests_properties(gti_test_slow PROPERTIES PROCESSORS 4 TIMEOUT 1800
+set_tests_properties(gti_test_slow PROPERTIES PROCESSORS ${gti_test_workers} TIMEOUT 1800
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-slow.last-run")
+# - gti_unit_tests_slow: the RFC 0003 retained-storage unit cases over about
+#   2 s each (forged and structural MIR checks over std-importing programs);
+#   gti_unit_tests skips them unless GTI_UNIT_SLOW=1.
+add_test(NAME gti_unit_tests_slow
+  COMMAND gti_unit_tests
+    --test ownerless_failure_snapshot_retention
+    --test ownerless_generic_array_element_return_proof
+    --test ownerless_inline_array_call_supplier_set
+    --test ownerless_multiple_text_owners
+    --test ownerless_owned_storage_borrowed_read
+    --test ownerless_owned_storage_multiple_owners
+    --test ownerless_owned_storage_multiple_records
+    --test ownerless_owned_storage_read_wrapper
+    --test ownerless_owned_storage_receiver_read
+    --test ownerless_owned_storage_receiver_write
+    --test ownerless_owned_storage_reference_argument
+    --test ownerless_owned_storage_reference_receiver
+    --test ownerless_replacement_dependency_verification
+    --test ownerless_retaining_call_conditional_cleanup_proof
+    --test ownerless_retaining_explicit_cleanup
+    --test ownerless_retaining_local_cleanup
+    --test ownerless_retaining_local_construction
+    --test ownerless_retaining_named_callable_escape
+    --test ownerless_retaining_store_contract_separation
+    --test ownerless_retaining_store_effects_on_lowered_program
+    --test ownerless_returned_text_retention
+    --test replaced_record_and_pack_proofs
+)
+set_tests_properties(gti_unit_tests_slow PROPERTIES TIMEOUT 1800
+  ENVIRONMENT "GTI_UNIT_SLOW=1;GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
 gti_test_report(gti_test_isolate gti_test_isolate_report)
 add_test(NAME gti_test_isolate
-  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui" --isolate --jobs 4
+  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui" --isolate --jobs ${gti_test_workers}
     ${gti_test_isolate_report})
-set_tests_properties(gti_test_isolate PROPERTIES PROCESSORS 4 TIMEOUT 3600
+set_tests_properties(gti_test_isolate PROPERTIES PROCESSORS ${gti_test_workers} TIMEOUT 3600
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-isolate.last-run")
 
 # gti-corpus: one walk of the example corpus checking the whole-program
@@ -121,9 +159,9 @@ set_tests_properties(gti_test_isolate PROPERTIES PROCESSORS 4 TIMEOUT 3600
 add_executable(gti-corpus "${PROJECT_SOURCE_DIR}/tests/corpus/gti_corpus.cpp")
 target_link_libraries(gti-corpus PRIVATE gti_compiler)
 add_test(NAME gti_corpus
-  COMMAND gti-corpus --root "${PROJECT_SOURCE_DIR}" --jobs 4
+  COMMAND gti-corpus --root "${PROJECT_SOURCE_DIR}" --jobs ${gti_test_workers}
           --json "${CMAKE_CURRENT_BINARY_DIR}/gti-corpus.json")
-set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS 4)
+set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS ${gti_test_workers})
 
 # gti_unit_tests: every tests/unit/*.cpp linked into one executable of C++
 # unit tests of library code (runtime, driver, LLVM passes, formatter). A file

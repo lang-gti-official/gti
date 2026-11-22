@@ -1,0 +1,5 @@
+// An implicitly constructed argument uses the explicit temporary read-borrow boundary.
+//@ run-pass
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int read(Box& b) { return b.value; }
+int main() { return read(42) - read(Box(42)); }

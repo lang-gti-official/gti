@@ -1,0 +1,13 @@
+// Returning a shared carrier cannot let its local owner escape.
+//@ check-fail
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+View local_view(int& source) {
+  int local = 1;
+  return View(local); //~ ERROR GTI-S2017 depends on storage the function owns
+}
+int main() { int source = 2; View view = local_view(source); return view.get(); }

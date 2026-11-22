@@ -607,6 +607,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (trimmed.empty())
         error(lineNumber, "stderr-contains needs text");
       target.stderrContains.push_back(trimmed);
+    } else if (name == "stderr-empty") {
+      if (value.find_first_not_of(" \t") != std::string::npos)
+        error(lineNumber, "stderr-empty takes no value");
+      target.stderrEmpty = true;
     } else if (name == "exit-code") {
       char *end = nullptr;
       const long code = std::strtol(trimmed.c_str(), &end, 10);
@@ -790,6 +794,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         error(lineNumber, "'" + name + "' takes no value");
       modes.push_back(name);
     } else if (runDirective(shared, name, value, trimmed, lineNumber)) {
+    } else if (name == "diagnostic-note") {
+      if (trimmed.empty())
+        error(lineNumber, "diagnostic-note needs text");
+      test.diagnosticNotes.push_back(trimmed);
     } else if (name == "revisions") {
       if (revisionsDeclared)
         error(lineNumber, "duplicate revisions");
@@ -936,6 +944,7 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   test.stdoutLines = shared.stdoutLines;
   test.hasInlineStdout = shared.hasInlineStdout;
   test.stderrContains = shared.stderrContains;
+  test.stderrEmpty = shared.stderrEmpty;
   test.exitCode = shared.exitCode;
   test.exitSignal = shared.exitSignal;
   test.args = shared.args;
@@ -1103,13 +1112,13 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
     if (!test.snapshots.empty() || !test.checks.empty() || test.optimize ||
         test.concurrent || test.requireFunctionDefinitions ||
-        test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
-        test.exitSignal || !test.args.empty() || test.stdinText ||
-        !test.env.empty() || !test.defines.empty() ||
-        test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings ||
-        !test.nativeArgs.empty() || !test.stdlibOverlay.empty() ||
-        !test.compileLimits.empty() || !test.target.empty() || test.noPrelude ||
-        test.stdoutClosed)
+        test.hasInlineStdout || !test.stderrContains.empty() ||
+        test.stderrEmpty || test.exitCode || test.exitSignal ||
+        !test.args.empty() || test.stdinText || !test.env.empty() ||
+        !test.defines.empty() || test.rawPointerAudit != "off" ||
+        test.rawPointerAuditLibraryFindings || !test.nativeArgs.empty() ||
+        !test.stdlibOverlay.empty() || !test.compileLimits.empty() ||
+        !test.target.empty() || test.noPrelude || test.stdoutClosed)
       error(0, "LSP tests take only LSP expectations, annotations, "
                "disk-only and the server's options (execution-profile, "
                "raw-pointer-audit)");
@@ -1223,11 +1232,12 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     error(0, "CHECK patterns apply to one output; snapshot mir or llvm-ir, "
              "not both");
   if (!modeRuns(test.mode) &&
-      (test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
-       test.exitSignal || !test.args.empty() || test.stdinText ||
-       !test.env.empty() || test.stdoutClosed))
-    error(0, "stdout/stdout-closed/stderr-contains/exit-code/exit-signal/"
-             "args/stdin/env need run-pass or run-fail");
+      (test.hasInlineStdout || !test.stderrContains.empty() ||
+       test.stderrEmpty || test.exitCode || test.exitSignal ||
+       !test.args.empty() || test.stdinText || !test.env.empty() ||
+       test.stdoutClosed))
+    error(0, "stdout/stdout-closed/stderr-contains/stderr-empty/exit-code/"
+             "exit-signal/args/stdin/env need run-pass or run-fail");
   // Native companions and stdlib overlays.
   std::set<std::string> overlay(test.stdlibOverlay.begin(),
                                 test.stdlibOverlay.end());
@@ -1303,6 +1313,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         }
         if (entry.given.contains("stderr-contains"))
           run.stderrContains = entry.spec.stderrContains;
+        if (entry.given.contains("stderr-empty"))
+          run.stderrEmpty = entry.spec.stderrEmpty;
         if (entry.given.contains("exit-code"))
           run.exitCode = entry.spec.exitCode;
         if (entry.given.contains("args"))
@@ -1316,6 +1328,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         if (entry.given.contains("stdout-closed"))
           run.stdoutClosed = true;
       }
+      if (run.stderrEmpty && !run.stderrContains.empty())
+        error(0, "stderr-empty conflicts with stderr-contains");
       const std::string where =
           revision.empty() ? "" : "revision '" + revision + "': ";
       if (!revision.empty()) {

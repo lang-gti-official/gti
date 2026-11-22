@@ -11,6 +11,18 @@
 
 namespace lang::mir_detail {
 
+// Every reachable normal return copies the whole value behind one shared
+// reference formal. This proves contents forwarding, not a borrow of the
+// formal's referent storage. Unknown or mixed return shapes have no proof.
+[[nodiscard]] std::optional<std::size_t>
+copiedReferenceParameter(const MirFunctionInstance &function);
+
+// Validate the selected process-runtime operation against its exact native
+// declaration and target. None is valid but grants no runtime contract.
+[[nodiscard]] bool
+exactProcessMemoryRuntimeFunction(const MirProgram &program,
+                                  const MirFunctionInstance &function);
+
 // Read-only verification acceleration, never proof authority. The body must
 // remain immutable for this scope. Nested scopes reuse the same body's index
 // or restore the previous body's index. No index survives an editor mutation.
@@ -147,10 +159,20 @@ scalarReturnConversion(const MirBody &body, const MirOperand &operand);
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
                                      const MirInstruction &instruction);
+// Exact explicit-failure call, including its authorized failure-site outcome.
+[[nodiscard]] bool explicitFailure(const MirProgram &program,
+                                   const MirInstruction &instruction);
+
 // Exact raw-address lifetime end. Cleanup/failure recipes are independently
 // derived by the program verifier; this query checks the operation's shape.
 [[nodiscard]] bool objectDestroy(const MirProgram &program,
                                  const MirInstruction &instruction);
+// Unsafe address validity is the caller's obligation; this shape binds the
+// transferred value to an explicit mutable storage-owner borrow.
+[[nodiscard]] bool objectRelocateOwned(const MirProgram &program,
+                                       const MirInstruction &instruction);
+[[nodiscard]] bool objectInitializeOwned(const MirProgram &program,
+                                         const MirInstruction &instruction);
 [[nodiscard]] bool objectConstruct(const MirProgram &program,
                                    const MirInstruction &instruction);
 [[nodiscard]] bool objectRelocate(const MirProgram &program,
@@ -166,6 +188,13 @@ scalarReturnConversion(const MirBody &body, const MirOperand &operand);
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+
+// Abstract dependencies of an opaque storage owner, proved by an exact
+// owner-aware read and kept separate from the physical reference entry.
+// With no program, checks the local edge shape only; whole-program callers
+// additionally trace static helper/formal chains to the concrete primitive.
+[[nodiscard]] bool ownedContentEntry(const MirBody &body, const MirLoan &loan,
+                                     const MirProgram *program = nullptr);
 [[nodiscard]] const MirLoan *
 erasedReferenceResultLoan(const MirProgram &program, const MirBody &body,
                           const MirInstruction &instruction);
@@ -293,11 +322,18 @@ borrowSourceForOperand(const MirBody &body, const MirOperand &operand,
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForValue(const MirBody &body, MirValueId value, std::size_t depth);
 // Whether `loan` protects `place`: its source or an additional source contains
-// the place, each binding resolved through the one loan it currently carries.
+// the place, with all possible carried groups supplied for each binding.
+// Ambiguous origins cannot establish one exact protected referent.
 // A Stored group protects only places reached through a dereference past its
 // source, since it retains what the source's stored references point at.
-[[nodiscard]] bool
-loanProtectsPlace(const MirBody &body, MirLoanId loan, MirPlaceId place,
-                  const std::unordered_map<HirBindingId, MirLoanId> &carried);
+[[nodiscard]] bool loanProtectsPlace(
+    const MirBody &body, MirLoanId loan, MirPlaceId place,
+    const std::unordered_map<HirBindingId, std::vector<MirLoanId>> &carried);
+
+// A retired local Stored capability may still name a caller-owned referent.
+// This proves only physical extent; the return signature must separately admit
+// the formal as a supplier, and carrier flow must prove the value carries it.
+[[nodiscard]] bool callerOwnedSharedContents(const MirBody &body,
+                                             const MirLoan &loan);
 
 } // namespace lang::mir_detail

@@ -1,0 +1,19 @@
+// Borrowed storage: observing cleanup replacement requires transfer.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+
+class Observer {
+  int& source;
+public:
+  Observer(int& source) : source(source) {}
+  ~Observer() { std::println(this.source); }
+};
+int main() {
+  int first = 1; int second = 2;
+  mut Observer left{first}; Observer right{second};
+  left = std::move(right);  //~ ERROR GTI-S2003 Move assignment is unavailable for type 'Observer'.
+  return 0;
+}

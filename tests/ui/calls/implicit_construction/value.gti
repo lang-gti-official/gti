@@ -1,0 +1,6 @@
+// A runtime argument initializes a by-value parameter through one implicit constructor.
+//@ run-pass
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int take(Box b) { return b.value; }
+int runtime() { return 42; }
+int main() { return take(runtime()) - 42; }

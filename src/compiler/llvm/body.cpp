@@ -850,7 +850,7 @@ private:
     // Retain the check whenever this frame can observe cleanup or contain a
     // worker emergency. The strict object gate still rejects such runtime
     // dependencies in the self-contained compiled-library profile.
-    if (!(session.program().compiledScalarProducer() && failureDestination &&
+    if (!(session.program().compiledNativeProducer() && failureDestination &&
           !cleanupToken && !failures.workerContainment()))
       failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
     abandonIfRequested();
@@ -1169,19 +1169,21 @@ private:
       return nullptr;
     }
     std::size_t argumentOffset = 0;
-    if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
+    if ((instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+         instruction.intrinsic == IntrinsicKind::ObjectConstructOwned)) {
       if (!nativeObjectConstructionShape(session.program().mir(), instruction))
         throw BackendUnsupportedError("LLVM object construction requires its "
                                       "exact selected/generated plan");
       constructed = operand(instruction.operands[0]);
-      argumentOffset = 1;
+      argumentOffset =
+          instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
       if (!instruction.constructorTarget) {
         const auto &type = instruction.parameterTypes[0].arguments[0];
-        if (instruction.operands.size() == 2 &&
+        if (instruction.operands.size() == argumentOffset + 1 &&
             containsHierarchyStorage(session.program().mir(), type)) {
           // A moved owned argument relocates with its exact cleanup state; a
           // copy writes logical fields and installs its own dispatch state.
-          auto *value = operand(instruction.operands[1]);
+          auto *value = operand(instruction.operands[argumentOffset]);
           if (instruction.constructorKind == ConstructorKind::Move)
             ir.CreateCall(lifetimes.generatedRelocation(type),
                           {constructed, value});
@@ -1189,8 +1191,8 @@ private:
             lifetimes.generatedCopy(ir, constructed, value, type);
           return nullptr;
         }
-        if (instruction.operands.size() == 2) {
-          auto *value = operand(instruction.operands[1]);
+        if (instruction.operands.size() == argumentOffset + 1) {
+          auto *value = operand(instruction.operands[argumentOffset]);
           store(value, constructed, type);
           if (instruction.constructorKind == ConstructorKind::Move &&
               addressValue(session.program().mir(), type))
@@ -1339,6 +1341,43 @@ private:
       }
       if (instruction.intrinsic == IntrinsicKind::RestoringExchange)
         return restoringExchange(instruction);
+      if (instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned) {
+        if (!mir_detail::objectRelocateOwned(session.program().mir(),
+                                             instruction))
+          throw std::logic_error(
+              "LLVM owned relocation lost its storage witnesses");
+        const auto &type = instruction.parameterTypes[0].arguments[0];
+        auto *target = operand(instruction.operands[0]);
+        auto *source = operand(instruction.operands[2]);
+        if (containsHierarchyStorage(session.program().mir(), type)) {
+          ir.CreateCall(lifetimes.generatedRelocation(type), {target, source});
+        } else {
+          store(load(source, type), target, type);
+          lifetimes.moved(ir, source, type);
+          lifetimes.active(ir, target, type, true);
+        }
+        return nullptr;
+      }
+      if (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned) {
+        if (!mir_detail::objectInitializeOwned(session.program().mir(),
+                                               instruction))
+          throw std::logic_error(
+              "LLVM owned initialization lost its storage witness");
+        const auto &type = instruction.parameterTypes[2];
+        auto *target = operand(instruction.operands[0]);
+        auto *value = operand(instruction.operands[2]);
+        // The owner operand is evaluated/staged normally, but carries only
+        // checked lifetime authority; it is not an extra runtime allocation.
+        if (containsHierarchyStorage(session.program().mir(), type)) {
+          ir.CreateCall(lifetimes.generatedRelocation(type), {target, value});
+        } else {
+          store(value, target, type);
+          if (addressValue(session.program().mir(), type))
+            lifetimes.moved(ir, value, type);
+          lifetimes.active(ir, target, type, true);
+        }
+        return nullptr;
+      }
       if (instruction.intrinsic == IntrinsicKind::ObjectTake) {
         if (!mir_detail::objectTake(session.program().mir(), instruction))
           throw std::logic_error(
@@ -1397,6 +1436,8 @@ private:
       case IntrinsicKind::RestoreReferenceMut:
         return memory.selected(instruction.operands.at(0));
       case IntrinsicKind::RawPointerConversion:
+      case IntrinsicKind::ObjectBorrowOwned:
+      case IntrinsicKind::ObjectBorrowOwnedMut:
       case IntrinsicKind::RawBorrow:
       case IntrinsicKind::RawBorrowMut:
         return operand(instruction.operands.at(0));
@@ -3244,11 +3285,16 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   for (const auto &step : steps) {
     const auto layout =
         session.layouts().get(module->findPlace(step.storagePlace)->type);
+    const auto &storage = session.program().compiledModuleStorage();
+    const auto shared = storage.find(step.symbol);
     auto *global = new llvm::GlobalVariable(
         session.module(), layout.storage, false,
-        llvm::GlobalValue::InternalLinkage,
+        shared == storage.end() ? llvm::GlobalValue::InternalLinkage
+                                : llvm::GlobalValue::WeakODRLinkage,
         llvm::Constant::getNullValue(layout.storage),
-        "__gti_native_v1_g" + std::to_string(step.symbol));
+        shared == storage.end()
+            ? "__gti_native_v1_g" + std::to_string(step.symbol)
+            : shared->second);
     global->setAlignment(llvm::Align(layout.alignment));
     globals.emplace(step.symbol, global);
   }
@@ -3271,7 +3317,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     // within byte-congruent storage. Opaque-pointer uses survive the swap.
     auto *replacement =
         new llvm::GlobalVariable(session.module(), initial->getType(), false,
-                                 llvm::GlobalValue::InternalLinkage, initial);
+                                 global->getLinkage(), initial);
     replacement->takeName(global);
     replacement->setAlignment(global->getAlign());
     global->replaceAllUsesWith(replacement);
@@ -3287,8 +3333,20 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     for (const auto &block :
          findMirBody(session.program().mir(), address)->blocks)
       for (const auto &stage : block.instructions)
-        if (!stage.tombstone && stage.nativeCallbackAdapter)
-          callbacks.push_back(*stage.nativeCallbackAdapter);
+        if (!stage.tombstone) {
+          // A private body's address can escape the object. Keep these bodies
+          // source-backed until native and recipe code share a code identity.
+          if (session.program().compiledModuleProducer() &&
+              (stage.functionPointerFunctionTarget ||
+               stage.functionPointerLambdaTarget ||
+               stage.nativeCallbackAdapter ||
+               stage.dispatch == CallDispatch::Virtual))
+            throw BackendUnsupportedError(
+                "native module closure requires shared function-address or "
+                "virtual dispatch identity");
+          if (stage.nativeCallbackAdapter)
+            callbacks.push_back(*stage.nativeCallbackAdapter);
+        }
   emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);

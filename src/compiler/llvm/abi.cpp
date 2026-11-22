@@ -297,7 +297,10 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
       "__gti_native_v";
 #endif
   const auto *compiled = session.program().compiledScalarBinding(id);
-  const auto name = compiled && compiled->imported ? compiled->symbol
+  const auto *module = session.program().compiledModuleBinding(id);
+  const bool importedBody = module && module->imported;
+  const auto name = module                           ? module->symbol
+                    : compiled && compiled->imported ? compiled->symbol
                     : native
                         ? function->externalSymbol
                         : privatePrefix + std::to_string(executionAbiVersion) +
@@ -309,7 +312,7 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
     auto *previous = llvm::dyn_cast<llvm::Function>(existing);
     if (!previous || previous->getFunctionType() != plan.type)
       throw std::logic_error("conflicting LLVM symbol declaration: " + name);
-    if (function->definitionKind == MirDefinitionKind::Source)
+    if (function->definitionKind == MirDefinitionKind::Source && !importedBody)
       session.requireSourceDefinition(id, *previous);
     if (native)
       verifyNativeCImport(*previous, plan);
@@ -331,7 +334,7 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
           *plan.resultDestination,
           llvm::Attribute::get(session.context(), "gti.scalar-result"));
   }
-  if (function->definitionKind == MirDefinitionKind::Source)
+  if (function->definitionKind == MirDefinitionKind::Source && !importedBody)
     session.requireSourceDefinition(id, *output);
   // Provenance survives independently of debug-info generation. This does not
   // manufacture DWARF or change function semantics.

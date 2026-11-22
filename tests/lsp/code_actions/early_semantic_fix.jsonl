@@ -1,0 +1,23 @@
+// A cold semantic spelling fix is discoverable by range as soon as its declaration reports the error.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {"workspace": {"workspaceEdit": {"documentChanges": true}}, "textDocument": {"publishDiagnostics": {"dataSupport": true}, "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}}}}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int main() { int result = 1; return reslt; }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int main() { int result = 1; return reslt; }"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "gtiDiagnosticStage": "declaration", "diagnostics": [{"code": "GTI-S2001", "data": {"repairSnapshot": "$URI:1", "fixes": [{"replacement": "result"}]}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 36}}, "context": {"diagnostics": [], "only": ["quickfix"], "triggerKind": 2}}, "id": 2}}
+{"expect": {"id": 2, "result": [{"title": "Replace with 'result'", "kind": "quickfix", "edit": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 1}, "edits": [{"newText": "result"}]}]}}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 36}}, "context": {"diagnostics": [{"source": "gti", "code": "GTI-S2001", "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 41}}, "message": "Undefined name 'reslt'. (fix available)\nhelp: Did you mean 'result'?", "data": {"repairSnapshot": "$URI:1"}}], "only": ["quickfix"], "triggerKind": 2}}, "id": 3}}
+{"expect": {"id": 3, "result": [{"title": "Replace with 'result'", "kind": "quickfix", "edit": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 1}, "edits": [{"newText": "result"}]}]}}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 36}}, "context": {"diagnostics": [{"source": "gti", "code": "GTI-S2001", "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 41}}, "message": "Undefined name 'reslt'. (fix available)\nhelp: Did you mean 'result'?", "data": {"repairSnapshot": "$URI:0"}}], "only": ["quickfix"], "triggerKind": 2}}, "id": 4}}
+{"expect": {"id": 4, "result": []}}
+{"send": {"jsonrpc": "2.0", "id": 6, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 6, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int main() { int result = 1; return resut; }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "gtiDiagnosticStage": "nameLookup", "diagnostics": [{"code": "GTI-S2001", "data": {"repairSnapshot": "$URI:2", "fixes": [{"replacement": "result"}]}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 36}, "end": {"line": 0, "character": 36}}, "context": {"diagnostics": [], "only": ["quickfix"], "triggerKind": 2}}, "id": 7}}
+{"expect": {"id": 7, "result": [{"title": "Replace with 'result'", "kind": "quickfix", "edit": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 2}, "edits": [{"newText": "result"}]}]}}]}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

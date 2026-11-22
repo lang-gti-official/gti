@@ -1,0 +1,15 @@
+// Retaining call conditional cleanup proof: conditional call cleanup has a valid source control.
+//@ check-pass
+import std.string;
+struct Sink {
+  mut std::string_view text;
+  Sink():text(""){}
+  void set(std::string_view value) mut { this.text = value; }
+};
+int main() {
+  std::string owner{"text"};
+  std::string_view view = owner.view();
+  mut Sink sink{};
+  sink.set("literal");
+  return int(view.size());
+}

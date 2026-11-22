@@ -1,0 +1,19 @@
+// Retaining callable escape: an erased callable cannot leave a view of a destroyed owner in its receiver.
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{
+    [](mut Holder& target, std::string_view input) -> void {
+      target.put(input);  //~ ERROR GTI-S2045
+    }
+  };
+  mut Holder holder{};
+
+  { std::string owner{"short"}; store(holder, owner.view()); }
+  return holder.value == "short" ? 0 : 1;
+}

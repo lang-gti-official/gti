@@ -8262,11 +8262,30 @@ auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
 auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
                                                const FunctionInfo &function,
                                                SemanticType ownerType) -> bool {
-  // A dynamic view cannot be stored in a field or a fixed array, so reading
-  // that storage copies an ownerless view: like a literal, it carries no
-  // receiver or parameter dependency. Only a pure place path whose final
-  // field or element is declared as the view itself qualifies; a reference
-  // field may name a dependent view shell, and a call proves nothing here.
+  // Legacy field/local-array reads do not invent a receiver or argument
+  // relation during prospective declaration analysis. Actual stored contents
+  // still need independent MIR publication proof; their declared text type
+  // is not evidence of static lifetime. A reference field may designate a
+  // dependent view shell, and a call is not a direct stored-place read.
+  // An indexed formal can contain caller-owned views. Let the ordinary
+  // prospective-source walk infer its argument relation instead of treating
+  // every fixed-array element as a literal-like value.
+  const Expr *root = expression.get();
+  bool indexed = false;
+  for (;;) {
+    if (const auto *group = exprAs<Grouping>(root)) {
+      root = group->expression().get();
+    } else if (const auto *index = exprAs<Index>(root)) {
+      indexed = true;
+      root = index->object().get();
+    } else
+      break;
+  }
+  if (indexed && function.bodyDeclaration())
+    if (const auto *variable = exprAs<Variable>(root))
+      for (const auto &parameter : function.bodyDeclaration()->parameters())
+        if (parameter.name.lexeme == variable->name().lexeme)
+          return false;
   const auto read = predeclaredPlace(expression.get(), function, ownerType);
   return read && read->stored &&
          (read->type.kind == SemanticType::StringView ||
@@ -8356,6 +8375,12 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
   const Expr *current = unwrap(expression.get());
   if (given != 0)
     return withField(origin(current), nullptr);
+  // Indexing an inline array copies one element's external dependencies.
+  // Keep the field as the conservative origin; the runtime index does not
+  // select a different owner contract. The field type check below excludes
+  // raw pointers and user-defined indexing.
+  while (const auto *index = exprAs<Index>(current))
+    current = unwrap(index->object().get());
   // An implicit member read names the receiver's field; a parameter of the
   // same name takes precedence, as in predeclaredTextBorrowSource.
   if (const auto *variable = exprAs<Variable>(current))

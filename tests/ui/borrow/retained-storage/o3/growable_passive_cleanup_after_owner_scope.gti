@@ -1,0 +1,19 @@
+// Borrowed storage: growable passive cleanup after owner scope.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.vector;
+import std.string;
+class Observed {
+  int& source;
+public:
+  Observed(int& input) : source(input) {}
+};
+int main() {
+  mut std::vector<Observed> values{};
+  { int owner = 11; values.push_back(Observed(owner)); }
+  return 0;
+}

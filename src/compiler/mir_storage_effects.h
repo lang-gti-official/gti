@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <span>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
@@ -36,9 +37,15 @@ using MirPersistentStorageEffectQuery =
     std::span<const MirPersistentStorageAccess> hidden,
     std::vector<MirPersistentStorageAccess> *direct = nullptr,
     const MirPersistentStorageEffectQuery *query = nullptr,
-    std::span<const SymbolId> persistent = {});
+    std::span<const SymbolId> persistent = {},
+    const MirProgram *program = nullptr,
+    MirCarrierAnalysis *analysis = nullptr);
 
 [[nodiscard]] MirVerificationResult
 verifyMirPersistentStorageEffects(const MirProgram &program);
+
+// Project only closed source-call graphs which cannot access ambient storage.
+[[nodiscard]] std::unordered_set<HirFunctionInstanceId>
+functionsWithoutAmbientStorage(const MirProgram &program);
 
 } // namespace lang

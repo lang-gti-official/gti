@@ -1,0 +1,16 @@
+// A verified generic body exposes a spelling fix from its current parameter before full verification.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {"workspace": {"workspaceEdit": {"documentChanges": true}}, "textDocument": {"publishDiagnostics": {"dataSupport": true}, "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}}}}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"expect": {"id": 1, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "T read<T>(T result) { return result; }\nint main() { return read<int>(1); }"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "T read<T>(T result) { return result; }\nint main() { return read<int>(1); }"}}}}
+{"send": {"jsonrpc": "2.0", "id": 6, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 6, "result": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "T read<T>(T result) { return reslt; }\nint main() { return read<int>(1); }"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "gtiDiagnosticStage": "bodyChecking", "diagnostics": [{"code": "GTI-S2001", "data": {"repairSnapshot": "$URI:2", "fixes": [{"replacement": "result"}]}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 29}, "end": {"line": 0, "character": 29}}, "context": {"diagnostics": [], "only": ["quickfix"], "triggerKind": 2}}, "id": 7}}
+{"expect": {"id": 7, "result": [{"title": "Replace with 'result'", "kind": "quickfix", "edit": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 2}, "edits": [{"newText": "result"}]}]}}]}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+{"exit": 0}

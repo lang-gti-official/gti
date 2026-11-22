@@ -1,0 +1,27 @@
+// Borrowed storage: borrowed enum copy retains old owner.
+//@ check-fail
+import std.string;
+import std.utility;
+class Carrier {
+  int& source;
+public:
+  Carrier(int& value) : source(value) {}
+  int read() { return this.source; }
+};
+enum Holder { one(Carrier value), none };
+int read(Holder& held) {
+  switch (held) {
+    case Holder::one(value): return value.read();
+    case Holder::none: return 0;
+  }
+}
+int main() {
+  mut int first = 3; mut int second = 8;  //~ WARN GTI-S2096 Mutable binding 'second' is never used mutably.
+  Carrier left{first}; Carrier right{second};
+  mut Holder held = Holder::one(left);
+  Holder replacement = Holder::one(right);
+  Holder saved = held;
+  held = replacement;
+  first = 4;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+  return read(saved) + read(held);
+}

@@ -1261,6 +1261,10 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
                                     candidate.parameterTypes) == argument;
                        });
   }
+  if (semanticModel.findContextualConstruction(*expression)) {
+    const auto assessment = freshTemporaryBorrowValue(expression, true);
+    return assessment.eligible && assessment.type == argument;
+  }
   // An explicit move transfers a whole local into a temporary owned by the
   // enclosing full expression, exactly as a moved receiver is; the call
   // borrows that temporary.
@@ -1696,8 +1700,9 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
               ? "Pass 'value.view()' to obtain the exact parameter type; keep "
                 "the "
                 "source value alive while the view is used."
-              : "Calls require exact argument types; pass the required type "
-                "or use a supported explicit conversion when intentional.");
+              : "Pass the required type or provide one eligible implicit "
+                "constructor; argument construction does not chain "
+                "conversions.");
     }
   }
   diagnostics.emplace_back(std::move(diagnostic));
@@ -1990,12 +1995,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
-    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument)
-    -> void {
-  selectConstructorCallArguments(
-      &construction, nullptr, classId, typeArguments, valueArguments,
-      std::move(arguments), paren, requireExactNullParameter,
-      contextualConstruction, candidateProbe, checkedArgument);
+    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument,
+    bool ownerTrackedStorage) -> void {
+  selectConstructorCallArguments(&construction, nullptr, classId, typeArguments,
+                                 valueArguments, std::move(arguments), paren,
+                                 requireExactNullParameter,
+                                 contextualConstruction, candidateProbe,
+                                 checkedArgument, ownerTrackedStorage);
 }
 
 auto SemanticVisitor::Impl::selectConstructorCallArguments(
@@ -2004,8 +2010,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
-    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument)
-    -> void {
+    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument,
+    bool ownerTrackedStorage) -> void {
   if ((construction == nullptr) == (emptyReturn == nullptr) ||
       (emptyReturn != nullptr &&
        (emptyReturn->value() || !arguments.empty() || !contextualConstruction ||
@@ -2154,8 +2160,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
     if (checkedArgument &&
-        (!constructor.implicitConstruction || !constructor.declaration ||
-         !constructor.declaration->isConsteval()))
+        (!constructor.implicitConstruction || !constructor.declaration))
       continue;
     // A declaration constructs only through a constructor declared implicit.
     if (contextualConstruction && !constructor.implicitConstruction) {
@@ -2323,7 +2328,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       const AnalyzedCallArgument &argument = arguments[index];
       bool matches =
-          checkedArgument && parameterType.kind == SemanticType::Reference &&
+          checkedArgument && constructor.declaration &&
+                  constructor.declaration->isConsteval() &&
+                  parameterType.kind == SemanticType::Reference &&
                   parameterType.referenceAccess == AccessMode::ReadOnly &&
                   parameterType.arguments.size() == 1 &&
                   parameterType.arguments.front() == argument.type
@@ -2979,6 +2986,27 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                             "field");
         continue;
       }
+      // In-place owner-tracked construction has no returned value on which
+      // to publish a field loan. Its typed MIR initializer store instead
+      // transfers the concrete pack lane into the explicit destination owner.
+      // Keep the existing passive publication boundary until reads during
+      // construction/destruction have their own checked field contracts.
+      if (ownerTrackedStorage && potentialPackView && !conditionalText &&
+          soleField && input.payload == 0 &&
+          index < selected.parameterTypes.size() &&
+          (selected.parameterTypes[index].kind == SemanticType::StringView ||
+           selected.parameterTypes[index].kind == SemanticType::CString) &&
+          textPublicationOwner(constructedType) &&
+          constructionKeepsPublishedText(constructedType,
+                                         selected.constructor->declaration) &&
+          initializer->target.name.segments.size() == 1) {
+        const auto member =
+            owner.members.find(initializer->target.name.last().lexeme);
+        if (member != owner.members.end() &&
+            directTextField(constructedType,
+                            toolingSymbolFor(member->second.symbol)))
+          continue;
+      }
       // A fresh value this function returns relays a formal stored in its
       // text field: each call publishes its own argument's owner there.
       if (!potentialPackView && soleField && input.payload == 0 &&
@@ -3016,14 +3044,6 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                                             selected.constructor->declaration);
         if (restrictedOwner || readingConstructor)
           dependencies.clear();
-        if (!dependencies.empty() && !textOrigins.empty()) {
-          // Phase 1 of L-OWN-02 publishes one owner per value.
-          report(expressionToken(*argument),
-                 "A value can hold dynamic text from one owner; this "
-                 "argument would add a second owner dependency.",
-                 "GTI-S2045");
-          continue;
-        }
         if (!dependencies.empty()) {
           textOrigins.push_back(
               {.resultFields = dependencies.front().designatedFields,
@@ -3184,6 +3204,50 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "An empty return cannot retain dependencies from constructor "
                "default arguments.",
                "GTI-S2045");
+    }
+  }
+  if (contextualConstruction && !conditionalFields && !storedPaths.empty() &&
+      !containsOpenTypeParameter(constructedType) && selected.constructor) {
+    FunctionBorrowDependencySummary summary;
+    for (const auto &binding : storedCarrierConstructorBindings(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes))
+      summary.dependencies.push_back(
+          {.resultFields =
+               storedFieldSymbols(constructedType, binding.destination.fields),
+           .origin = BorrowOriginKind::Argument,
+           .parameter = binding.parameter,
+           .sourceFields =
+               storedFieldSymbols(selected.parameterTypes[binding.parameter],
+                                  binding.sourceFields),
+           .access = binding.destination.reference.referenceAccess});
+    const bool complete = std::all_of(
+        storedPaths.begin(), storedPaths.end(), [&](const auto &path) {
+          const auto fields = storedFieldSymbols(constructedType, path.fields);
+          return fields.size() == path.fields.size() &&
+                 std::any_of(summary.dependencies.begin(),
+                             summary.dependencies.end(),
+                             [&](const auto &dependency) {
+                               return dependency.resultFields == fields;
+                             });
+        });
+    ResolvedCallInfo publication;
+    publication.returnType = constructedType;
+    publication.parameterTypes = selected.parameterTypes;
+    std::vector<const ExprPtr *> inputs;
+    for (const auto &argument : arguments)
+      inputs.push_back(argument.expression);
+    const auto dependencies =
+        complete
+            ? instantiateCompleteBorrowArguments(publication, summary, inputs)
+            : std::nullopt;
+    if (!dependencies) {
+      report(paren,
+             "Implicit construction requires a complete checked dependency "
+             "contract for every borrowed field.",
+             "GTI-S2045");
+    } else {
+      resolved.contextualBorrowDependencies = *dependencies;
     }
   }
   // RFC 0004: a carrier's constructor signature names the suppliers of its
@@ -4775,11 +4839,9 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     const auto payload = typeOf(type.arguments.front());
     if (payload != SemanticType::Unknown &&
         !containsOpenTypeParameter(payload) &&
-        (!runtimeObjectLayoutType(payload) ||
-         typeTraits(payload).containsBorrowedState)) {
+        !runtimeObjectLayoutType(payload)) {
       report(type.arguments.front().name.last(),
-             "Uninitialized storage requires a complete object type without "
-             "checked borrowed state.",
+             "Uninitialized storage requires a complete object type.",
              "GTI-S2019");
     }
   }
@@ -5519,6 +5581,29 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       initializerInfo != nullptr &&
       (isTextDependentValue(*initializerInfo) ||
        contextualTextValue(*initializer, type));
+  // Local inline arrays retain the dependencies of their actual elements in
+  // MIR. An array index is not a stored-field path, so the scalar/record path
+  // inventory alone cannot decide whether this aggregate is representable.
+  // Keep this admission confined to executable local arrays of shared
+  // reference-bearing values; initializer/escape contracts remain separate.
+  const auto localSharedArray = [&] {
+    if (type.kind != SemanticType::Array || !currentFunctionDeclaration ||
+        functionDepth == 0 || analyzingFieldInitializer ||
+        analyzingDefaultArgument)
+      return false;
+    const SemanticType *element = &type;
+    while (element->kind == SemanticType::Array &&
+           element->arguments.size() == 1)
+      element = &element->arguments.front();
+    const auto paths = storedReferencePaths(*element);
+    return !paths.empty() &&
+           std::all_of(paths.begin(), paths.end(), [](const auto &path) {
+             return path.reference.kind == SemanticType::Reference &&
+                    path.reference.referenceAccess == AccessMode::ReadOnly;
+           });
+  }();
+  if (localSharedArray)
+    return; // Independent MIR aggregate flow must preserve every actual owner.
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !textDependentValue) {
@@ -6243,6 +6328,14 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
+  // A by-value borrowed record can acquire its contents through opaque
+  // container storage. Syntax-level origin chasing sees the local container,
+  // not the external owners carried by the copied value. MIR validates the
+  // returned Stored groups against the already established signature contract,
+  // including every supplier and the absence of escaping local storage.
+  if (valueInfo->type == function->returnType &&
+      isDirectStoredReferenceType(function->returnType))
+    return;
   if (storedReferencePaths(valueInfo->type).size() > 1) {
     const auto dependencies = storedBorrowDependencies(value);
     const SymbolId parameterSymbol =

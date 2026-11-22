@@ -243,7 +243,7 @@ public:
   Node(Tree<T> value) : data(std::move(value)) {}
   Node(Node<T>&& other) = default;
 };
-Node<T> branch<T>(T first, T second) requires std::vector_element<T> {
+Node<T> branch<T>(T first, T second) requires std::vector_element<T> && std::vector_element<Node<T>> {  // issue #547
   mut std::vector<Node<T>> children{};
   children.push_back(Node<T>(Tree<T>::leaf(std::move(first))));
   children.push_back(Node<T>(Tree<T>::leaf(std::move(second))));

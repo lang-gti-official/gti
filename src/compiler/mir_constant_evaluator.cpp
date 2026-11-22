@@ -3077,7 +3077,9 @@ private:
         evaluated.value = arguments.front();
         reference = std::move(origin);
       } else if (instruction.intrinsic == IntrinsicKind::RawBorrow ||
-                 instruction.intrinsic == IntrinsicKind::RawBorrowMut) {
+                 instruction.intrinsic == IntrinsicKind::RawBorrowMut ||
+                 instruction.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+                 instruction.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
         // A checked borrow of the object a constant pointer designates; the
         // owner witness is a verifier fact, the pointee's validity is ours.
         if (arguments.empty())
@@ -3086,9 +3088,11 @@ private:
         const auto resolved = resolvePointer(arguments[0], 0, target, true);
         if (resolved.failure != ConstantEvaluationFailure::None)
           return fail(frame, resolved.failure);
-        target.access = instruction.intrinsic == IntrinsicKind::RawBorrowMut
-                            ? AccessMode::Mutable
-                            : AccessMode::ReadOnly;
+        target.access =
+            (instruction.intrinsic == IntrinsicKind::RawBorrowMut ||
+             instruction.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut)
+                ? AccessMode::Mutable
+                : AccessMode::ReadOnly;
         evaluated = readLocation(target);
         if (evaluated)
           reference = std::move(target);
@@ -3130,8 +3134,14 @@ private:
                               ? layout->size
                               : layout->alignment},
             *domain);
-      } else if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
-        if (arguments.empty())
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+                 instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) {
+        // The checked storage owner is proof metadata, not a constructor
+        // argument. Both forms use the same object-lifetime execution rules.
+        const std::size_t inputStart =
+            instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2
+                                                                         : 1;
+        if (arguments.size() < inputStart)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         Location slot;
         const auto resolved = resolvePointer(arguments[0], 0, slot, true);
@@ -3144,9 +3154,10 @@ private:
         if (instruction.constructorTarget) {
           const auto *callee =
               program.findConstructorInstance(*instruction.constructorTarget);
-          if (!callee || callee->parameterTypes.size() + 1 != arguments.size())
+          if (!callee ||
+              callee->parameterTypes.size() + inputStart != arguments.size())
             return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-          std::vector<ConstantValue> inputs(arguments.begin() + 1,
+          std::vector<ConstantValue> inputs(arguments.begin() + inputStart,
                                             arguments.end());
           std::vector<std::optional<Location>> origins(inputs.size());
           for (std::size_t index = 0; index < inputs.size(); ++index) {
@@ -3154,8 +3165,8 @@ private:
             if (type.kind != SemanticType::Reference)
               continue;
             Location location;
-            const auto located =
-                locateOperand(frame, instruction.operands[index + 1], location);
+            const auto located = locateOperand(
+                frame, instruction.operands[index + inputStart], location);
             if (located.failure != ConstantEvaluationFailure::None)
               return fail(frame, located.failure);
             location.access = type.referenceAccess;
@@ -3166,13 +3177,31 @@ private:
           if (!result)
             return throughCall(std::move(result), frame);
           value.value = std::move(result.value);
-        } else if (arguments.size() == 1) {
+        } else if (arguments.size() == inputStart) {
           value = defaultValue(*slot.type);
-        } else if (arguments.size() == 2) {
-          value = convertValue(arguments[1], *slot.type);
+        } else if (arguments.size() == inputStart + 1) {
+          value = convertValue(arguments[inputStart], *slot.type);
         } else {
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         }
+        if (!value)
+          return fail(frame, value.failure);
+        const auto stored = writeLocation(slot, *value.value, true);
+        if (!stored)
+          return fail(frame, stored.failure);
+        voidResult = true;
+      } else if (instruction.intrinsic ==
+                 IntrinsicKind::ObjectInitializeOwned) {
+        if (arguments.size() != 3)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location slot;
+        const auto resolved = resolvePointer(arguments[0], 0, slot, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return fail(frame, resolved.failure);
+        if (storage(slot))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                      "An object was initialized over a live object.");
+        const auto value = convertValue(arguments[2], *slot.type);
         if (!value)
           return fail(frame, value.failure);
         const auto stored = writeLocation(slot, *value.value, true);
@@ -3213,10 +3242,13 @@ private:
         held.reset();
         ++epoch(slot);
       } else if (instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
-                 instruction.intrinsic == IntrinsicKind::ObjectRelocateRange) {
+                 instruction.intrinsic == IntrinsicKind::ObjectRelocateRange ||
+                 instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned) {
+        const bool owned =
+            instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned;
         const bool range =
             instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
-        if (arguments.size() != (range ? 3u : 2u))
+        if (arguments.size() != (owned ? 4u : range ? 3u : 2u))
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         std::int64_t count = 1;
         if (range) {
@@ -3230,7 +3262,8 @@ private:
         for (std::int64_t index = 0; index < count; ++index) {
           Location target, source;
           const auto a = resolvePointer(arguments[0], index, target, true);
-          const auto b = resolvePointer(arguments[1], index, source, true);
+          const auto b =
+              resolvePointer(arguments[owned ? 2 : 1], index, source, true);
           if (a.failure != ConstantEvaluationFailure::None)
             return fail(frame, a.failure);
           if (b.failure != ConstantEvaluationFailure::None)

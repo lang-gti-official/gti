@@ -1,0 +1,4 @@
+// Storage payload admission: enum payload use protects the retained owner after moving a view.
+import std.string;
+enum Text { empty, value(std::string_view text) };
+int main() { mut std::string owner{"owned"}; std::string_view view = owner.view(); auto text = Text::value(owner.view()); owner.clear(); switch (text) { case Text::value(selected): return int(selected.size()); case Text::empty: return 0; } }  //~ ERROR GTI-S2017

@@ -419,7 +419,8 @@ The current implemented foundation includes:
   indexed access and read-only `contains(T& value)` membership search,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
   read-only traversal, in-place emplacement, explicit cloneable-element
-  cloning, consuming `into_range() &&` traversal on LLVM, and construction from one contextual fixed-array value such as
+  cloning, consuming `into_range() &&` traversal for `std::relocatable<T>` on
+  LLVM, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used.
   `contains` borrows a named `T` value, compares in order until the first match,
@@ -1525,12 +1526,28 @@ retained. The factories, classes and sparse slot bookkeeping are ordinary GTI
 source; general layout, object-lifetime and checked-reference operations retain
 compiler authority.
 
-`std::vector<T>` requires `vector_element<T>`: a complete independent storage
-element with structural, failure-free relocation. It rejects retained checked
-borrows and address-stable host state; a custom move constructor alone does not
-establish relocation. Empty-slot growth and shifting do not require
+`std::vector<T>` requires `vector_element<T>`: a complete object representation,
+move construction, and either borrow-free structural relocation or a borrowed
+payload admitted by the owner-aware storage operations. Shared borrowed values,
+including `std::string_view` and ordinary records containing shared references,
+retain their actual external owners through insertion, growth and movement.
+The compiler independently checks generated, failure-free relocation and the
+storage-owner witnesses; satisfying the concept alone grants no unchecked
+relocation permission. Borrow-free, non-text elements keep the existing raw
+construction and relocation paths, including bulk relocation where permitted.
+Text views use owner-aware transfer even
+when their representation is bitwise relocatable, because an individual value
+may retain an external owner. Exclusive borrowed payloads and address-stable host
+state remain unsupported, and a custom move constructor alone does not establish
+relocation. Empty-slot growth and shifting do not require
 element assignment or grant permission to assign an otherwise nonassignable
 element. The vector is move-only even when `T` is copyable.
+Direct indexed copies of shared borrowed elements may outlive the vector when
+their external owners remain live. Iterator-derived copies conservatively retain
+the physical vector borrow too. Consuming `into_range()` still requires
+`std::relocatable<T>`: moving borrowed elements out through raw `take_at` is not
+part of this support. Clearing elements does not promise to shorten the
+container's retained dependency set; whole-value replacement can retire it.
 `vector(n)` constructs `n` value-initialized elements, matching the familiar
 C++ size-constructor meaning; it is not a reserve-only constructor. `at` and
 `operator[]` are both checked in this initial safe surface.
@@ -1582,10 +1599,12 @@ pair. Local copies, moves, exact factory/relay returns, empty views, checked
 indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
-The element contract is `std::storage_element<T>`. Generic span relays must
-carry `requires std::storage_element<T>` and import `std.memory` when
-spelling it; a span
-neither requires copying/moving its elements nor grants independent ownership.
+A span requires a complete object layout. Built-in array views require
+`std::storage_element<T>`, and vector views also accept the shared borrowed
+elements supported by the vector. Copying an element with live borrowed
+dependencies through a span or a read-only cursor retains those dependencies
+and the physical container borrow through the copy's last use. Generic span
+relays can use `requires std::layout_queryable<T>` from `std.memory`.
 
 The same module provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable
@@ -1600,7 +1619,7 @@ progress and error semantics.
 
 `std.paired_span` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
-types, each satisfying the span's `storage_element` contract. Its constructor
+types, each satisfying the `storage_element` contract. Its constructor
 takes the two spans by value; `size()` is the smaller
 input length, `empty()` tests that length, and `first(index)`/`second(index)`
 return checked references into the corresponding buffer. `subspan(offset,

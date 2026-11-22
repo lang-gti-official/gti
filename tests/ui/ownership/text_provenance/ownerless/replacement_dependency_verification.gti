@@ -1,0 +1,9 @@
+// Replacement dependency verification: ownerless replacement is a valid control.
+//@ check-pass
+import std.string;
+int main() {
+  std::string owner{"text"};
+  mut std::string_view view = owner.view();
+  view = "literal";
+  return int(view.size());
+}

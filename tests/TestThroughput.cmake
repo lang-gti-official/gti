@@ -284,6 +284,8 @@ set(gti_slow_test_patterns
   "^lowered_program_corpus_census$"
   # gti-test's tests/slow cases and its --isolate run (tests/gti_test.cmake).
   "^gti_test_(slow|isolate)$"
+  # Unit cases over about 2 s each (tests/gti_test.cmake).
+  "^gti_unit_tests_slow$"
   # Raw-pointer-audit independence, including the >20-minute std import.
   "^allocator_raw_audit_independence(_.+)?$"
   # Whole-program MIR mutation loops.

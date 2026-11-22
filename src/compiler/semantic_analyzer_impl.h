@@ -2883,6 +2883,7 @@ private:
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
+  [[nodiscard]] bool hasMirRetainingReceiver(const SemanticPlace &place) const;
   [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
   // Whether `result`, this function's returned value of type `type`, relays
   // the formal `argument` names at its text field `field` (L-OWN-02),
@@ -3972,13 +3973,18 @@ private:
   void warnCheckedOverloadOverlap(const CallableCandidate &left,
                                   const CallableCandidate &right);
   [[nodiscard]] bool
-  checkedArgumentNonDeduced(const SemanticType &parameter,
-                            const SemanticType &argument) const;
-  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
-                                              const SemanticType &source,
-                                              const SemanticType &target);
-  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
-                            const SemanticType &target, const Token &parameter);
+  implicitArgumentNonDeduced(const SemanticType &parameter,
+                             const SemanticType &argument) const;
+  [[nodiscard]] bool implicitArgumentPotential(const ExprPtr &argument,
+                                               const SemanticType &source,
+                                               const SemanticType &target);
+  void
+  finishContextualConstruction(const ExprPtr &expr,
+                               const ResolvedConstructionInfo &construction);
+  bool applyImplicitArgument(const ExprPtr &argument,
+                             const SemanticType &source,
+                             const SemanticType &target,
+                             const Token &parameter);
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
@@ -4549,7 +4555,7 @@ private:
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
       std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
-      bool checkedArgument = false);
+      bool checkedArgument = false, bool ownerTrackedStorage = false);
 
   void selectConstructorCallArguments(
       const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
@@ -4558,7 +4564,7 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
       std::vector<const ConstructorInfo *> *candidateProbe,
-      bool checkedArgument = false);
+      bool checkedArgument = false, bool ownerTrackedStorage = false);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -6801,8 +6807,9 @@ private:
   [[nodiscard]] const MemberInfo *findMember(const SemanticType &objectType,
                                              const Token &name) const;
 
-  [[nodiscard]] const MemberInfo *resolveMember(const SemanticType &objectType,
-                                                const Token &name);
+  [[nodiscard]] const MemberInfo *
+  resolveMember(const SemanticType &objectType, const Token &name,
+                std::optional<AccessMode> fieldAccess);
 
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const;
 

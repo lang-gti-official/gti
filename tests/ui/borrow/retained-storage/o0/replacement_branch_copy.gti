@@ -1,0 +1,14 @@
+// Borrowed storage: replacement branch copy.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int check(bool replace) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  if (replace) { view = second.view(); }
+  auto copied = view; view = "replacement";
+  if (replace) { return copied == "second" ? 0 : 1; }
+  return copied == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

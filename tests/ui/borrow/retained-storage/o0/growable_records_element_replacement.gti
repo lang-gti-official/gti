@@ -1,0 +1,22 @@
+// Borrowed storage: growable records element replacement.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.vector;
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.emplace_back(Reading(first));
+  auto old = values[0];
+  values[0] = Reading(second);
+  values.reserve(32);
+  auto current = values[0];
+  return old.read() == 11 && current.read() == 22 ? 0 : 1;
+}

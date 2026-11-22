@@ -1,0 +1,15 @@
+// Borrowed storage: growable views coverage expired owner.
+//@ check-fail
+import std.string;
+import std.utility;
+// INVALID: a view in a dynamic container must not outlive its original owner.
+import std.string;
+import std.vector;
+int main() {
+  mut std::vector<std::string_view> views{};
+  {
+    std::string owner = std::string("abc");
+    views.push_back(owner.view());
+  }
+  return views[0] == "abc" ? 0 : 1;  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+}

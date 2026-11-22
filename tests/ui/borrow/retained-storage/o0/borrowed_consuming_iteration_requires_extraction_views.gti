@@ -1,0 +1,14 @@
+// Borrowed storage: borrowed consuming iteration requires extraction views.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  values.reserve(32);
+  for (std::string_view value : std::move(values).into_range()) {}  //~ ERROR GTI-S2083 A consuming range requires an exact mutable take_next() returning an independent owned value.
+  return 0;
+}

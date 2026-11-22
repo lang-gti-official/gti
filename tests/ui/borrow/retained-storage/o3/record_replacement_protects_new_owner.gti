@@ -1,0 +1,24 @@
+// Borrowed storage: record replacement protects new owner.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;  //~ WARN GTI-S2096 Mutable binding 'first_owner' is never used mutably.
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  second_owner = 3;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+  return left.referent - 2;
+}
+int main() { return use(); }

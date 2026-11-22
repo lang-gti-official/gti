@@ -389,9 +389,9 @@ void annotationTests(const std::filesystem::path &root,
   for (const auto &[from, to] :
        std::vector<std::pair<std::string, std::string>>{
            {"7:default", "6:always"},
-           {"1:0\n", "1:2\n"},
-           {"1:0\n", "2:00\n"},
-           {"gti.callable-interface.4", "gti.callable-interface.3"}}) {
+           {"1:04:none", "1:24:none"},
+           {"1:04:none", "2:004:none"},
+           {"gti.callable-interface.5", "gti.callable-interface.3"}}) {
     auto malformed = bytes;
     const auto offset = malformed.find(from);
     expect(offset != std::string::npos, "missing wire mutation target");

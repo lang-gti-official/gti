@@ -1,0 +1,21 @@
+// Retaining callable escape: a lambda can retain an input in storage local to its invocation.
+//@ check-pass
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+int main() {
+  std::function_ptr<void(mut Holder&, std::string_view)> store{
+    [](mut Holder& target, std::string_view input) -> void {
+      mut Holder local{}; local.put(input);
+    }
+  };
+  mut Holder holder{};
+
+  std::string owner{"local"};
+  store(holder, owner.view());
+  return 0;
+}

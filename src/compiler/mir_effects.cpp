@@ -464,6 +464,27 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .maySynchronize = true},   // ThreadScope
     MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
     MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .writesUnknownMemory = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectInitializeOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // ObjectBorrowOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectRelocateOwned
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .invokesUserCode = true}, // ObjectConstructOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // ObjectBorrowOwnedMut
     harmless(), // ConstantEvaluation: a pure constant per execution context.
     // The constant byte provider has the effects of the native provider it
     // stands in for: obtaining fresh storage reads and writes no existing
@@ -794,6 +815,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-scope",
     "atomic-fetch-add-wrapping",
     "atomic-fetch-sub-wrapping",
+    "object-initialize-owned",
+    "object-borrow-owned",
+    "object-relocate-owned",
+    "object-construct-owned",
+    "object-borrow-owned-mut",
     "constant-evaluation",
     "constant-allocate",
     "constant-release",
@@ -940,8 +966,12 @@ namespace {
 // constructor, cleanup, adapter or lifecycle event. Returns its pointee type.
 const SemanticType *
 scalarFinalAddressPointee(const MirInstruction &instruction) {
+  const bool owned =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ||
+      instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned;
+  const std::size_t offset = owned ? 2 : 1;
   if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      (!owned && instruction.intrinsic != IntrinsicKind::ObjectConstruct) ||
       instruction.constructorTarget || instruction.elementCleanup ||
       instruction.receiver || instruction.nativeCallbackAdapter ||
       instruction.threadTaskAdapter || instruction.result ||
@@ -952,13 +982,28 @@ scalarFinalAddressPointee(const MirInstruction &instruction) {
       instruction.constructorKind != ConstructorKind::Ordinary ||
       instruction.operation != MirOperation::None ||
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
-      instruction.operands.empty() || instruction.operands.size() > 2)
+      instruction.operands.size() < offset ||
+      instruction.operands.size() > offset + 1 ||
+      (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned &&
+       instruction.operands.size() != 3))
     return nullptr;
+  if (owned) {
+    const auto &owner = instruction.operands[1].type;
+    if (owner.kind != SemanticType::Reference ||
+        owner.referenceAccess != AccessMode::Mutable ||
+        owner.arguments.size() != 1 ||
+        instruction.parameterTypes.size() != instruction.operands.size())
+      return nullptr;
+  }
+  if (owned)
+    for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+      if (instruction.operands[index].type != instruction.parameterTypes[index])
+        return nullptr;
   const auto &address = instruction.operands.front().type;
   if (address.kind != SemanticType::RawPointer ||
       address.arguments.size() != 1 ||
       address.pointerAccess != AccessMode::Mutable ||
-      (instruction.operands.size() == 2 &&
+      (instruction.operands.size() == offset + 1 &&
        instruction.operands.back().type != address.arguments.front()))
     return nullptr;
   return &address.arguments.front();
@@ -1042,10 +1087,28 @@ bool isMirStructuralValueType(const MirProgram &program,
 
 bool isMirStructuralFinalAddressConstruction(
     const MirProgram &program, const MirInstruction &instruction) {
+  if (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned) {
+    if (!mir_detail::objectInitializeOwned(program, instruction) ||
+        std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                    [](const MirLifecycleEvent &event) {
+                      return event.kind != MirLifecycleEventKind::TransferOut;
+                    }))
+      return false;
+    const auto &element = instruction.operands.back().type;
+    return isMirScalarValueType(&program, element) ||
+           isMirStructuralValueType(program, element,
+                                    MirStructuralValueOperation::Move);
+  }
+  if (instruction.intrinsic == IntrinsicKind::ObjectConstructOwned &&
+      !mir_detail::objectConstruct(program, instruction))
+    return false;
   if (const auto *pointee = scalarFinalAddressPointee(instruction);
       pointee && isMirScalarValueType(&program, *pointee))
     return true;
-  if (instruction.constructorTarget || instruction.operands.size() != 2 ||
+  const std::size_t offset =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
+  if (instruction.constructorTarget ||
+      instruction.operands.size() != offset + 1 ||
       (instruction.constructorKind != ConstructorKind::Copy &&
        instruction.constructorKind != ConstructorKind::Move) ||
       !mir_detail::objectConstruct(program, instruction) ||
@@ -1311,7 +1374,8 @@ exactInvocationShell(const MirInstruction &instruction,
   return finishInstructionEffects(
       instruction, result, false, false,
       instruction.kind == MirInstructionKind::Call &&
-          instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+          (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+           instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
           instruction.constructorTarget.has_value());
 }
 
@@ -1828,7 +1892,8 @@ exactWholeObjectVirtualTarget(const MirProgram &program, const MirBody &body,
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
              instruction.constructorTarget) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared
@@ -2391,16 +2456,23 @@ RelocationKind relocationKind(const MirProgram &program,
                    : RelocationKind::Unavailable;
     } else if (owner->compilerCapability ==
                CompilerCapabilityTypeKind::UninitializedStorage) {
-      result = candidate.arguments.size() == 1 &&
-                       self(self, candidate.arguments.front()) ==
-                           RelocationKind::Bitwise
-                   ? RelocationKind::Bitwise
-                   : RelocationKind::Unavailable;
+      // These bytes do not themselves carry the payload's checked loans.
+      // Keep their movement tied to raw payload relocation even while
+      // deriving generated value moves for enclosing ordinary records.
+      result =
+          candidate.arguments.size() == 1 &&
+                  mirTypeRelocationKind(program, candidate.arguments.front()) ==
+                      RelocationKind::Bitwise
+              ? RelocationKind::Bitwise
+              : RelocationKind::Unavailable;
     } else if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
                owner->moveConstructor != SpecialMemberStatus::Generated ||
                owner->abstract || owner->cOpaqueHandle ||
-               (!carriers && (owner->lifecycleBoundBorrowCarrier ||
-                              owner->traits.containsBorrowedState)) ||
+               // Cleanup can observe value-specific text dependencies even
+               // when the layout has no declared reference fields. That
+               // determines loan endpoints, not structural relocatability;
+               // actual dependency transfers remain checked at their uses.
+               (!carriers && owner->traits.containsBorrowedState) ||
                (carriers && !owner->traits.movable)) {
       result = RelocationKind::Unavailable;
     } else {

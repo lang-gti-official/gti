@@ -1,0 +1,13 @@
+// Borrowed storage: replacement loop early return.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int check(int count) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  for (mut int i = 0; i < count; i += 1) { if (i == 1) { return 0; } view = second.view(); }
+  if (count == 0) { return view == "first" ? 0 : 1; }
+  return view == "second" ? 0 : 2;
+}
+int main() { return check(0) + check(3); }

@@ -1,0 +1,12 @@
+// Borrowed storage: nested copy outlives slot.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+int main() {
+  std::string owner{"retained"}; mut std::string_view outer = "";
+  { mut std::string_view inner = ""; inner = owner.view(); outer = inner; }
+  return outer == "retained" ? 0 : 1;
+}

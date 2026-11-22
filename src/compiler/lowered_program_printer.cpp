@@ -934,6 +934,7 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
              << " codegen-inline="
              << static_cast<unsigned>(binding.codegenAttributes.inlining)
              << " codegen-cold=" << binding.codegenAttributes.cold
+             << (binding.noAmbientStorage ? " ambient-storage=none" : "")
              << " symbol=" << std::quoted(binding.symbol) << '\n';
       if (binding.optimizationBody) {
         // Include the full portable body in the construction seal.

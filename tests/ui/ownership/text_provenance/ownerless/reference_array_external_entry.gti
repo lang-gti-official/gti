@@ -1,0 +1,7 @@
+// Reference array external entry: a reference-array formal separates element owners from physical storage.
+//@ check-pass
+std::string_view<a> select_view<lifetime a, lifetime shell>(
+    std::string_view<a>[2]&<shell> values, int index) {
+  return values[index];
+}
+int main() { return 0; }

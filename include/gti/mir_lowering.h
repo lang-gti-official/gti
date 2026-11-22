@@ -90,16 +90,18 @@ private:
   [[nodiscard]] MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,
-               bool includeHostedStartup,
-               mir_detail::LoweringRounds *rounds) const;
+               bool includeHostedStartup, mir_detail::LoweringRounds *rounds,
+               const MirProgram *retainingProgram = nullptr,
+               MirCarrierAnalysis *sharedRetainingAnalysis = nullptr) const;
 
   [[nodiscard]] MirBody lowerBody(
       mir_detail::LoweringRounds *rounds, const HirProgram &program,
       const FailureMetadata &failureMetadata, const HirBody &body,
       MirBodyKind kind, SemanticType returnType,
       const std::vector<HirValueId> &prologueValues,
-      const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
-      std::vector<MirLoweringError> &errors, std::size_t owner,
+      const MirDefinedFailureEffects &definedFailureEffects,
+      const MirProgram *retainingProgram, MirCarrierAnalysis *retainingAnalysis,
+      bool &valid, std::vector<MirLoweringError> &errors, std::size_t owner,
       bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,
       const HirFunctionInstance *function = nullptr,

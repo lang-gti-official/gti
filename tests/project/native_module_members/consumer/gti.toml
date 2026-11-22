@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "app"
+version = "1.0.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "readings"
+target = "readings"
+path = "readings.gtilib"
+interface = "api.gti"

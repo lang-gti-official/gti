@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "reader"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"

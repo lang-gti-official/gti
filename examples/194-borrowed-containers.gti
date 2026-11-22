@@ -1,0 +1,53 @@
+import std.string;
+import std.vector;
+
+// Elements may borrow different external owners. A direct indexed copy
+// keeps those owners alive independently of the vector's allocation.
+int text_views() {
+  std::string first{"first"};
+  std::string second{"second"};
+  mut std::string_view selected = "";
+  {
+    mut std::vector<std::string_view> values{};
+    values.push_back(first.view());
+    values.push_back(second.view());
+    selected = values[0];
+    values.reserve(32);
+  }
+  return selected == "first" ? 0 : 1;
+}
+
+// The same storage rules apply to ordinary records with shared references.
+class Reading {
+  int& value;
+public:
+  Reading(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+
+int reference_records() {
+  int first = 11;
+  int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first));
+  values.push_back(Reading(second));
+  Reading selected = values[0];
+  values.reserve(32);
+  return selected.read() == 11 && values[1].read() == 22 ? 0 : 1;
+}
+
+// Inline arrays retain the owners of their initializer elements too.
+int fixed_array_views() {
+  std::string first{"first"};
+  std::string second{"second"};
+  mut std::string_view selected = "";
+  {
+    std::string_view values[2] = {first.view(), second.view()};
+    selected = values[0];
+  }
+  return selected == "first" ? 0 : 1;
+}
+
+int main() {
+  return text_views() + reference_records() + fixed_array_views();
+}

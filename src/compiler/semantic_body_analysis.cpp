@@ -7585,10 +7585,9 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
-  // A local view may take a capture's text, whose owner has no name; it
-  // then holds that text for its whole scope and cannot escape. Text that
-  // keeps a dynamic view's owner borrowed is not reassignable, as that view
-  // itself is not (L-OWN-02).
+  // Captured text has an owner the local replacement machinery cannot name.
+  // Preserve its separate escape restriction; ordinary direct local text
+  // slots use the MIR dependency flow checked below.
   const bool textTarget =
       simpleAssignment && (targetType.kind == SemanticType::StringView ||
                            targetType.kind == SemanticType::CString);
@@ -7601,11 +7600,43 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   else if (textTarget)
     noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
                         "assigned into an existing binding");
-  if (simpleAssignment &&
-      (targetType.kind == SemanticType::StringView ||
-       targetType.kind == SemanticType::CString) &&
+  // A direct automatic text binding is a tracked value slot: MIR derives
+  // replacement dependencies from each actual write and checks their owners
+  // along every control-flow path. Reference referents, captures and persistent
+  // storage do not acquire that permission merely because their text type
+  // matches a local value.
+  const bool trackedTextSlot =
+      textTarget && !symbol.lambdaCapture && localTextView(symbol).has_value();
+  const bool requiresOwnerlessFormal =
+      textTarget && !trackedTextSlot &&
+      requireOwnerlessTextParameter(expr.value());
+  // A source call may select a text element from an inline array whose
+  // actual contents are all ownerless. Its argument relation describes
+  // capacity, not the caller's current contents. MIR reconstructs the
+  // returned element and independently checks this persistent store.
+  const bool mirArrayResult = [&] {
+    if (!textTarget || trackedTextSlot)
+      return false;
+    const Expr *value = expr.value().get();
+    while (const auto *group = exprAs<Grouping>(value))
+      value = group->expression().get();
+    const auto *call = exprAs<Call>(value);
+    const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
+    const auto *target =
+        resolved ? semanticModel.findFunction(resolved->function) : nullptr;
+    if (!resolved || !target || !target->bodyDeclaration() ||
+        target->linkage != LanguageLinkage::Gti || target->virtualMethod ||
+        target->overrideMethod ||
+        resolved->borrowOrigin != BorrowOriginKind::Argument ||
+        !resolved->borrowFields.empty() ||
+        resolved->borrowArgument >= resolved->parameterTypes.size())
+      return false;
+    const auto &formal = resolved->parameterTypes[resolved->borrowArgument];
+    return formal.kind == SemanticType::Array;
+  }();
+  if (textTarget && !trackedTextSlot &&
       isOwnerDependentTextExpression(expr.value()) &&
-      !requireOwnerlessTextParameter(expr.value())) {
+      !requiresOwnerlessFormal && !mirArrayResult) {
     reportOwnerDependentTextStorage(expr.value(),
                                     "assigned into an existing binding");
   }
@@ -7945,7 +7976,12 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
     if ((elementType.kind == SemanticType::StringView ||
          elementType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(element)) {
-      reportOwnerDependentTextStorage(element, "nested in a fixed array");
+      // Executable function bodies retain the aggregate's complete owner
+      // set in MIR. Initializer/default-argument contexts still require the
+      // existing ownerless contract; lexical nesting alone grants no escape.
+      if (!currentFunctionDeclaration || functionDepth == 0 ||
+          analyzingFieldInitializer || analyzingDefaultArgument)
+        reportOwnerDependentTextStorage(element, "nested in a fixed array");
     } else if (elementType.kind == SemanticType::StringView ||
                elementType.kind == SemanticType::CString) {
       noteLocalTextEscape(element, LocalTextEscapeKind::Storage,
@@ -9048,17 +9084,33 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
           literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
-          if (checkedArgumentPotential(expr.arguments()[index],
-                                       argumentTypes[index],
-                                       resolved.parameterTypes[index])) {
+          if ((resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        argumentTypes[index],
+                                        resolved.parameterTypes[index])) {
             const Token parameter =
                 index < resolved.declaration->parameters().size()
                     ? resolved.declaration->parameters()[index].name
                     : resolved.declaration->name();
-            valid = applyCheckedArgument(
+            valid = applyImplicitArgument(
                         expr.arguments()[index], argumentTypes[index],
                         resolved.parameterTypes[index], parameter) &&
                     valid;
+            if (valid && resolved.parameterTypes[index].kind ==
+                             SemanticType::Reference) {
+              if (!temporaryReadBorrowArgumentMatches(
+                      resolved.parameterTypes[index],
+                      resolved.parameterTypes[index].arguments.front(),
+                      expr.arguments()[index])) {
+                reportCallArgumentMismatch(
+                    index, resolved.parameterTypes[index], argumentTypes[index],
+                    expr.arguments()[index], "Function");
+                valid = false;
+              } else {
+                ephemeralBorrowArguments.push_back(index);
+              }
+            }
             continue;
           }
           if (isContextualArrayArgument(expr.arguments()[index])) {
@@ -9171,15 +9223,16 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   bool rejectedCompilerPrivate = false;
   for (const bool allowChecked : {false, true}) {
     if (allowChecked) {
-      const bool hasCheckedParameter = std::any_of(
-          callee->overloads.begin(), callee->overloads.end(),
-          [&](const auto &candidate) {
-            return std::any_of(
-                candidate.parameterTypes.begin(),
-                candidate.parameterTypes.end(), [&](const auto &type) {
-                  return checkedArgumentNonDeduced(type, SemanticType::Unknown);
-                });
-          });
+      const bool hasCheckedParameter =
+          std::any_of(callee->overloads.begin(), callee->overloads.end(),
+                      [&](const auto &candidate) {
+                        return std::any_of(candidate.parameterTypes.begin(),
+                                           candidate.parameterTypes.end(),
+                                           [&](const auto &type) {
+                                             return implicitArgumentNonDeduced(
+                                                 type, SemanticType::Unknown);
+                                           });
+                      });
       if (!hasCheckedParameter)
         break;
       constraintFailures.clear();
@@ -9265,9 +9318,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
             continue;
           }
           if (allowChecked &&
-              checkedArgumentPotential(expr.arguments()[index],
-                                       candidateArguments.types[index],
-                                       resolved.parameterTypes[index])) {
+              (resolved.parameterTypes[index].kind != SemanticType::Reference ||
+               ephemeralBorrowTargetSupported(resolved, index)) &&
+              implicitArgumentPotential(expr.arguments()[index],
+                                        candidateArguments.types[index],
+                                        resolved.parameterTypes[index])) {
             checkedArguments.push_back(index);
           } else {
             exact = false;
@@ -9547,11 +9602,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                       exactMatches, constraintFailures);
       if (!ordinaryTier && !exactMatches.empty()) {
         diagnostics.back().message =
-            "Call is ambiguous; multiple overloads accept checked implicit "
-            "consteval argument construction.";
+            "Call is ambiguous; multiple overloads accept implicit "
+            "argument construction.";
         for (auto &related : diagnostics.back().related)
           if (related.message.starts_with("Exact candidate: "))
-            related.message.replace(0, 17, "Checked candidate: ");
+            related.message.replace(0, 17, "Converting candidate: ");
       }
       if (!viable.empty() &&
           std::all_of(
@@ -9572,10 +9627,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const Token parameter = index < selected.declaration->parameters().size()
                                 ? selected.declaration->parameters()[index].name
                                 : selected.declaration->name();
-    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index],
-                              selected.parameterTypes[index], parameter)) {
+    if (!applyImplicitArgument(expr.arguments()[index], argumentTypes[index],
+                               selected.parameterTypes[index], parameter)) {
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (selected.parameterTypes[index].kind == SemanticType::Reference) {
+      if (!temporaryReadBorrowArgumentMatches(
+              selected.parameterTypes[index],
+              selected.parameterTypes[index].arguments.front(),
+              expr.arguments()[index])) {
+        reportCallArgumentMismatch(index, selected.parameterTypes[index],
+                                   argumentTypes[index],
+                                   expr.arguments()[index], "Function");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      viable.front().ephemeralBorrowArguments.push_back(index);
     }
   }
   adoptContextualIntegerLiteralArguments(
@@ -10326,13 +10394,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
            !constructionKeepsPublishedText(target, nullptr));
       if (restrictedOwner)
         dependencies.clear();
-      if (!dependencies.empty() && !textOrigins.empty()) {
-        report(expressionToken(expr.arguments()[i]),
-               "A value can hold dynamic text from one owner; this "
-               "argument would add a second owner dependency.",
-               "GTI-S2045");
-        valid = false;
-      } else if (!dependencies.empty()) {
+      if (!dependencies.empty()) {
         textOrigins.push_back({.resultFields = {field},
                                .origin = BorrowOriginKind::Argument,
                                .parameter = index,
@@ -10818,7 +10880,9 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     }
     return;
   }
-  const MemberInfo *member = resolveMember(objectType, expr.name());
+  const MemberInfo *member = resolveMember(
+      objectType, expr.name(),
+      analyzingCallCallee ? std::nullopt : std::optional{AccessMode::ReadOnly});
   if (member == nullptr) {
     currentType = SemanticType::Unknown;
     return;
@@ -10847,6 +10911,35 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
     report(expr.name(),
            "Function names must be called; function values are not "
            "supported yet.");
+    // An explicit call can have effects, even on a read-only receiver. Offer
+    // it for review only when the declaration itself proves a zero-arg call.
+    if (expr.access().kind == TokenKind::DOT && !expr.name().generated &&
+        !macroExpansionDepth && !macroContext(expr.name()) &&
+        !instanceAnalysisActive &&
+        classInfo(objectType)->kind != ClassKind::Union &&
+        member->symbol.overloads.size() == 1) {
+      const CallableCandidate &method = member->symbol.overloads.front();
+      if (method.declarationRecord && method.declaration &&
+          !method.declaration->isConsteval() &&
+          !method.record().macroExpansion && !method.compilerPrivate &&
+          !method.record().requiresUnsafe && !method.staticMember &&
+          method.receiverMutability == ReceiverMutability::ReadOnly &&
+          method.parameterTypes.empty() && !method.parameterPack &&
+          method.record().genericParameters.empty() &&
+          method.requirements.empty() &&
+          method.returnType != SemanticType::Void &&
+          !semanticModel.isCompilerPrivateType(method.returnType) &&
+          canAccessMember(method.access, method.ownerClass, objectType)) {
+        auto insertion = tokenSpan(expr.name());
+        insertion.start = insertion.end;
+        diagnostics.back().fixes.push_back(
+            {.span = std::move(insertion),
+             .replacement = "()",
+             .message = "Call '" + expr.name().lexeme + "()'",
+             .preferred = false,
+             .applicability = RepairApplicability::RequiresReview});
+      }
+    }
   }
 }
 
@@ -11110,12 +11203,36 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   const bool valueAssignable =
       !simpleAssignment ||
       isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
-  if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
+  // Preserve a conditional text-storage obligation in the open generic
+  // body. Concrete non-text instances clear and rederive their contracts;
+  // forwarding helpers need this relation before the writer is instantiated.
+  // A checked source accessor publishes a typed mutable place. Its retaining
+  // write is proved in MIR against the actual owner and source dependencies;
+  // this is not the ownerless-only fixed-array/raw-storage contract.
+  const auto *accessor =
+      resolvedOperator ? semanticModel.findFunction(resolvedOperator->function)
+                       : nullptr;
+  const bool checkedRetainingAccessor =
+      resolvedOperator && mutableElement &&
+      resolvedOperator->dispatch == CallDispatch::Static &&
+      resolvedOperator->borrowOrigin == BorrowOriginKind::Receiver &&
+      resolvedOperator->borrowFields.empty() &&
+      resolvedOperator->borrowArguments.empty() && accessor &&
+      accessor->bodyDeclaration() && accessor->linkage == LanguageLinkage::Gti;
+  const bool retainingReceiver =
+      hasMirRetainingReceiver(targetPlace) || checkedRetainingAccessor;
+  if (simpleAssignment && !overloadedMutation && !retainingReceiver &&
+      objectType.kind == SemanticType::Array &&
+      elementType.kind == SemanticType::TypeParameter)
+    (void)requireOwnerlessTextParameter(expr.value());
+  if (simpleAssignment && !checkedRetainingAccessor &&
+      objectType.kind != SemanticType::RawPointer &&
       (elementType.kind == SemanticType::StringView ||
        elementType.kind == SemanticType::CString))
     noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
                         "assigned through a checked index");
-  if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
+  if (simpleAssignment && !retainingReceiver &&
+      objectType.kind != SemanticType::RawPointer &&
       (elementType.kind == SemanticType::StringView ||
        elementType.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value()) &&
@@ -13253,7 +13370,9 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
     }
   }
 
-  const MemberInfo *member = resolveMember(objectType, expr.name());
+  const MemberInfo *member = resolveMember(
+      objectType, expr.name(),
+      mutableReceiver ? std::optional{AccessMode::Mutable} : std::nullopt);
   if (member == nullptr) {
     analyze(expr.value());
     currentType = SemanticType::Unknown;
@@ -13300,11 +13419,15 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  const bool retainingReceiver = hasMirRetainingReceiver(targetPlace);
+  if (simpleAssignment && !retainingReceiver &&
+      targetType.kind == SemanticType::TypeParameter)
+    (void)requireOwnerlessTextParameter(expr.value());
   if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
                            targetType.kind == SemanticType::CString))
     noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
                         "stored in a field");
-  if (simpleAssignment &&
+  if (simpleAssignment && !retainingReceiver &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value()) &&
@@ -13836,6 +13959,8 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
         // An existing lexical repair is not a missing-import diagnostic.
         if (diagnostics.back().fixes.empty())
           diagnostics.back().missingIncludeName = expr.name().lexeme;
+        else
+          diagnostics.back().localNameRepair = true;
       }
     }
     requestSession.recoveryCauses.insert_or_assign(
@@ -17184,6 +17309,44 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
        initializerType.kind == SemanticType::CString) &&
       initializerInfo != nullptr &&
       initializerInfo->traits.containsBorrowedState;
+  const bool ownerDependentValue = !type.reference && !rangeOwnerReference &&
+                                   initializerInfo != nullptr &&
+                                   isTextDependentValue(*initializerInfo);
+  if (ownerDependentValue) {
+    // Inference must retain the same value-level borrowing facts as an
+    // explicitly typed declaration. It does not grant extraction of a
+    // dependent subobject or a reference alias of that subobject.
+    const Expr *source = declaration.initializer().get();
+    while (source != nullptr) {
+      if (const auto *group = exprAs<Grouping>(source))
+        source = group->expression().get();
+      else if (const auto *call = exprAs<Call>(source);
+               call != nullptr && call->arguments().size() == 1 &&
+               resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+        source = call->arguments().front().get();
+      else
+        break;
+    }
+    const auto *variable = exprAs<Variable>(source);
+    const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
+    const bool alias =
+        symbol && symbol->type.kind == SemanticType::Reference &&
+        symbol->variableDeclaration &&
+        dependentReferenceAliases.contains(symbol->variableDeclaration);
+    consumeTextDependentValue(declaration.initializer());
+    if (exprAs<Get>(source) != nullptr || alias ||
+        (!variable && initializerInfo->category == ValueCategory::Place))
+      report(expressionToken(declaration.initializer()),
+             "This field holds dynamic text from a local owner; a switch on "
+             "the field can observe it, but it cannot yet be copied or moved "
+             "out of its value.",
+             "GTI-S2045");
+    if (!local || declaration.isStatic() || declaration.isThreadLocal())
+      report(declaration.name(),
+             "A value holding dynamic text cannot have global or static "
+             "storage duration because its owner dependency is local.",
+             "GTI-S2045");
+  }
   if (rangeOwnerReference) {
     inferredType = SemanticType::referenceTo(
         initializerType,
@@ -17286,7 +17449,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       !local || declaration.isThreadLocal(), false);
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
       (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
-       dependentValueTraits.has_value())) {
+       ownerDependentValue || dependentValueTraits.has_value())) {
     validateStoredBorrowInitialization(inferredType, declaration.initializer());
   }
 
@@ -17309,7 +17472,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                             diagnostics.size() == declarationDiagnosticStart &&
                                 initializerAssignable);
   BindingInfo info = bindingInfo(inferredType, access);
-  if (ownerDependentText) {
+  if (ownerDependentText || ownerDependentValue) {
     info.traits = initializerInfo->traits;
   } else if (dependentValueTraits) {
     info.traits = *dependentValueTraits;
@@ -17325,9 +17488,10 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
          .symbol = symbol,
          .name = type.name.last().lexeme,
          .type = inferredType,
-         .traits = ownerDependentText ? initializerInfo->traits
-                                      : dependentValueTraits.value_or(
-                                            typeTraits(inferredType)),
+         .traits =
+             ownerDependentText || ownerDependentValue
+                 ? initializerInfo->traits
+                 : dependentValueTraits.value_or(typeTraits(inferredType)),
          .access = access,
          .mutableBinding = declaration.isMutable()});
   }
@@ -17371,7 +17535,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   const bool retainedStoredValue =
       !type.reference && !rangeOwnerReference &&
       (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
-       dependentValueTraits.has_value());
+       ownerDependentValue || dependentValueTraits.has_value());
   const auto *rangeIteratorCall =
       declaration.isRangeIterator() && declaration.initializer()
           ? exprAs<Call>(declaration.initializer().get())

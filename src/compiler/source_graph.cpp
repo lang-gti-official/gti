@@ -8,6 +8,9 @@
 #include <utility>
 
 namespace lang {
+std::string EmbeddedFile::storageIdentifier(std::size_t offset) {
+  return "$embed_bytes:" + std::to_string(offset);
+}
 Token EmbeddedFile::storageName() const {
   // The name cannot be written as a single GTI identifier. Source-local
   // storage supplies the unit identity, and the keyword offset supplies
@@ -16,7 +19,7 @@ Token EmbeddedFile::storageName() const {
   name.kind = TokenKind::IDENTIFIER;
   name.sourceLength = static_cast<std::uint32_t>(keyword.lexeme.size());
   name.position = storageOffset;
-  name.lexeme = "$embed_bytes:" + std::to_string(storageOffset);
+  name.lexeme = storageIdentifier(storageOffset);
   name.generated = true;
   return name;
 }
@@ -68,11 +71,13 @@ void SourceGraph::attachCompiledTemplate(
   unit->compiledTemplate = std::move(module);
 }
 
-void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
+void SourceGraph::markCompiledScalarInterface(
+    SourceUnitId id, std::vector<std::size_t> noAmbientStorage) {
   auto *unit = findUnit(id);
   if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
     throw std::invalid_argument("invalid compiled scalar interface unit");
   unit->compiledScalarInterface = true;
+  unit->noAmbientStorageDeclarations = std::move(noAmbientStorage);
 }
 
 std::uint64_t sourceTextDigest(std::string_view source) {

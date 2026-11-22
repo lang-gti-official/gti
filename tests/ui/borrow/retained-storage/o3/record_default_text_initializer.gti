@@ -1,0 +1,10 @@
+// Borrowed storage: record default text initializer.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+
+struct P { std::string_view name = "Ada"; uint32_t health = 7; public: P() = default; };
+int main() { P value{}; return value.name == "Ada" && value.health == 7 ? 0 : 1; }

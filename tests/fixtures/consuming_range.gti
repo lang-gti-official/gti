@@ -59,7 +59,8 @@ int consume<R, T>(R source) requires produces<R, T> &&
   return count;
 }
 
-int consume_vector<std::vector_element T>(std::vector<T> source) {
+int consume_vector<std::vector_element T>(std::vector<T> source)
+    requires std::relocatable<T> {
   mut int count = 0;
   for (auto item : std::move(source).into_range()) { count++; }
   return count;

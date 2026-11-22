@@ -976,8 +976,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    move-state rules. Calls require one unique exact
    parameter match after generic substitution, apart from the bounded raw-
    pointer `nullptr` and added-pointee-`const` compatibility. GTI performs no
-   other implicit argument conversions and has no general conversion-ranking
-   or best-match rules. A declaration with trailing defaults is viable when the
+   conversion chains or general conversion-ranking rules. After existing exact
+   and temporary/literal tiers fail, ordinary function arguments may use one
+   unique implicit constructor, including read-only reference parameters whose
+   constructed temporary passes the existing borrow and escape checks. A declaration with trailing defaults is viable when the
    supplied argument count is between its required and total parameter counts;
    only supplied arguments participate in exact matching. Defaults do not
    distinguish overload identities or rank otherwise-exact candidates, so two

@@ -1,0 +1,13 @@
+// Borrowed storage: fixed array global publication literals.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+mut std::string_view escaped = "";
+void publish(std::string_view values[2]) { escaped = values[0]; }
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {"dynamic", "literal"};
+  publish(values);
+  return 0;
+}

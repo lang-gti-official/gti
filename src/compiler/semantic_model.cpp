@@ -311,7 +311,8 @@ SemanticAnalysisSeal makeSemanticAnalysisSeal(const Program &program,
          .role = unit.role,
          .entry = unit.entry,
          .prelude = unit.prelude,
-         .compiledScalarInterface = unit.compiledScalarInterface});
+         .compiledScalarInterface = unit.compiledScalarInterface,
+         .noAmbientStorageDeclarations = unit.noAmbientStorageDeclarations});
   }
   result.sourceGraph.dependencies.reserve(
       sourceGraph->dependencyEdges().size());

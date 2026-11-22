@@ -225,6 +225,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/borrow_dependency_monotonicity.py"
             --self-test)
 endif()
+
 add_executable(gti_mir_loan_normalization_tests mir_loan_normalization_tests.cpp)
 target_link_libraries(gti_mir_loan_normalization_tests PRIVATE gti_compiler)
 add_test(NAME mir_loan_normalization COMMAND gti_mir_loan_normalization_tests)

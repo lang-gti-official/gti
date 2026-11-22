@@ -1,0 +1,23 @@
+// Borrowed storage: projected owned storage reference shell.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+
+import std.string;
+import std.vector;
+struct State {
+  mut std::size_t position = 0;
+  std::vector<std::string> values;
+  State(std::vector<std::string> values) : values(std::move(values)) {}
+};
+int inspect(mut State& state) {
+  state.position = state.position + std::size_t(1);
+  return state.values[0].size() == std::size_t(5) && state.position == std::size_t(1) ? 0 : 1;
+}
+int main() {
+  mut std::vector<std::string> values{};
+  values.push_back(std::string("hello"));
+  mut State state{std::move(values)};
+  return inspect(state);
+}

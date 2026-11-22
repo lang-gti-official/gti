@@ -63,12 +63,16 @@ int main() { auto result = bad(); return result.first.read(); }
   auto copy = result.first;
   return 0;
 }""",
-        "reseat-field": """int main() {
+        "reseat-field": """struct Direct {
+  int& item;
+  Direct(int& source) : item(source) {}
+};
+int main() {
   int a = 1;
   int b = 2;
-  mut auto result = std::pair<ReadView, bool>(ReadView(a), true);
-  result.first = ReadView(b);
-  return result.first.read();
+  mut auto result = std::pair<Direct, bool>(Direct(a), true);
+  result.first.item = b;
+  return result.first.item;
 }""",
         "constructor-selected-owner-mutation": """class Selected {
   ReadView view;
@@ -127,7 +131,7 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
         "local-owner-return": "GTI-S2127",
         "exclusive-copy": "GTI-S2003",
         "exclusive-extraction-copy": "GTI-S2003",
-        "reseat-field": "GTI-S2003",
+        "reseat-field": "GTI-S2000",
         "constructor-selected-owner-mutation": "GTI-S2017",
         # Legacy semantics names the constructor's field selection; the MIR
         # borrow checker reports the returned value's escape.

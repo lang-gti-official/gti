@@ -1,0 +1,21 @@
+// Opaque retaining direct escape: copying text into owned storage does not retain its source lifetime.
+//@ check-pass
+import std.string;
+extern "C" { void opaque_effect(); }
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain_opaque(mut Holder& target, std::string_view input) {
+  target.put(input); opaque_effect();
+}
+void copy_opaque(mut std::string& target, std::string_view input) {
+  target.append(input); opaque_effect();
+}
+
+int main() {
+  mut std::string output{""};
+  { std::string owner{"short"}; copy_opaque(output, owner.view()); }
+  return output.view() == "short" ? 0 : 1;
+}

@@ -4595,16 +4595,28 @@ schemas and staged query work in [ADR 032](../decisions/032-compiled-library-bun
 See the [scalar driver profile](build-and-driver.md#executable-scalar-separate-compilation-profile)
 for linkage, compatibility and the runnable source-absent example.
 
-### Checked immediate call arguments
+### Implicit call argument construction
 
 Ordinary call resolution completes its exact and temporary-reference pass before
-probing implicit immediate construction. The final pass skips inference through
-a mismatched checked class parameter, resolves other arguments, and selects one
-function and constructor without conversion ranking. Semantics records the
-contextual construction on the original argument and the resulting constant
-through the existing immediate publication path. The operand retains its source
-type and identity; HIR/MIR consume the proved destination constant. Operator
-resolution does not opt into this tier.
+probing one-step implicit construction. The final pass skips inference through
+a mismatched converting class parameter (including a read-only reference), resolves
+other arguments, and selects one function and constructor without conversion
+ranking. Semantics records contextual construction on the original argument,
+which retains its source type and identity. Runtime constructions use the same
+synthetic HIR direct initializer, selected constructor, argument stages, effects
+and MIR cleanup as declaration construction. Consteval constructors retain the
+existing immediate constant publication path. Operator resolution does not opt
+into this tier.
+
+A converted reference argument must pass the existing temporary read-borrow
+assessment and the selected function's escape contract. Its index is published
+in `ephemeralBorrowArguments`; lowering materializes and borrows the constructed
+value, never the original operand. Complete stored-field dependencies accompany
+borrow-carrying contextual constructions, including unconditional region carriers.
+No protocol-side conversion decision or temporary lifetime extension is added.
+A published immediate class constant is also a materialized temporary: MIR's
+literal verifier checks its exact constant and type, while the ordinary
+call-input loan and drop proofs govern a read-only borrow of that value.
 
 `ResolvedCallInfo::checkedArguments` retains the selected construction and argument
 index for hover. The original occurrence remains the source identifier; adding

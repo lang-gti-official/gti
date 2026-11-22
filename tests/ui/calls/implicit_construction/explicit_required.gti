@@ -1,0 +1,4 @@
+// A constructor without implicit never participates in argument conversion.
+struct Box { Box(int n) {} };
+void take(Box b) {}
+int main() { take(1); return 0; }  //~ ERROR GTI-S2003

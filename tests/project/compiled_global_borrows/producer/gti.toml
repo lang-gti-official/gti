@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "meter"
+version = "0.1.0"
+[targets.meter]
+kind = "gti-library"
+root = "library.gti"

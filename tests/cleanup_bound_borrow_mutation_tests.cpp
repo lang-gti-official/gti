@@ -608,6 +608,62 @@ int main() {
          "nested fixture contains exact field ownership transfer");
 }
 
+void checkMovedReturnFailureCleanup() {
+  const auto control = analyze("moved-return-failure-cleanup", R"gti(
+class Trace {
+  int divisor;
+public:
+  Trace(int divisor) : divisor(divisor) {}
+  ~Trace() { observed = 9 / this.divisor; }
+};
+Box<Guard> acquire(Resource& owner, int divisor) {
+  Trace trace{divisor};
+  Guard guard{owner};
+  Box<Guard> result{std::move(guard)};
+  return std::move(result);
+}
+int main() { Resource owner{}; auto result = acquire(owner, 1); return 0; }
+)gti");
+  if (!control)
+    return;
+  bool checked = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Return || !loan.lifecycleBound)
+        continue;
+      for (const auto &block : function.body.blocks)
+        for (const auto &drop : block.instructions) {
+          if (drop.kind != lang::MirInstructionKind::Drop ||
+              !drop.destination ||
+              !std::any_of(
+                  drop.lifecycle.begin(), drop.lifecycle.end(),
+                  [](const auto &event) { return event.failureCleanup; }))
+            continue;
+          const auto *place = function.body.findPlace(*drop.destination);
+          if (!place || place->root != lang::MirPlaceRootKind::Value ||
+              place->sourceValue != loan.producedBy)
+            continue;
+          auto malformed = *control;
+          auto &changed = body(malformed, key);
+          auto *target = changed.findBlock(block.id);
+          const auto at = std::find_if(
+              target->instructions.begin(), target->instructions.end(),
+              [&](const auto &candidate) { return candidate.id == drop.id; });
+          target->instructions.insert(
+              at, {.id = freshInstructionId(changed),
+                   .kind = lang::MirInstructionKind::EndBorrow,
+                   .hirValue = loan.producedBy,
+                   .loan = loan.id});
+          rejected(malformed,
+                   "prepared moved return retains its loan through rollback");
+          checked = true;
+        }
+    }
+  }
+  expect(checked, "moved return exercises fallible prepared-value cleanup");
+}
+
 void checkReturnedAndNestedLifetime() {
   const auto control = analyze("returned-and-nested", R"gti(
 Guard acquire(Resource& owner) { return Guard(owner); }
@@ -1731,6 +1787,7 @@ int main() {
   checkClosureCarrier();
   checkNestedPublication();
   checkReturnedAndNestedLifetime();
+  checkMovedReturnFailureCleanup();
   checkCompleteDependencySet();
   checkMandatoryLocalRetention();
   checkTransitiveCleanupDependency();

@@ -10099,10 +10099,12 @@ compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 failed/invalid detection falls back to one. Repository variables `GTI_JOBS`
 and `GTI_TEST_JOBS` independently override those defaults and must be positive
 integers. A workflow step that states `GTI_MEMORY_PER_JOB_MIB` additionally
-caps the detected compile default by the memory `/proc/meminfo` reports
-(`GTI_MEMINFO` names another file for tests), never below one job and never
+caps the detected compile default by the memory reported by Linux procfs
+(`GTI_MEMINFO` selects a test file) or macOS `sysctl -n hw.memsize`, never below one job and never
 touching an explicit override; `GTI_MEMORY_PER_TEST_MIB` bounds the detected
-CTest worker default the same way. The release build states 3072 MiB per
+CTest worker default the same way. Nested test pools and their CTest processor
+reservations use at most four workers and respect a smaller configured CI
+budget. The release build states 3072 MiB per
 compile job because its bundled LLVM/Clang units compile beside GTI's largest
 units, the native CI build 2048 MiB per compile job and 3072 MiB per test worker,
 and the ASan/UBSan build 3072 MiB per

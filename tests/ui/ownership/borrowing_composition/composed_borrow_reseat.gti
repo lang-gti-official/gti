@@ -1,0 +1,15 @@
+// Reseating a composed borrow with owners that outlive it is whole-value
+// replacement of a shared carrier, which RFC 0003 admits.
+//@ run-pass
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int main() {
+  int a = 1; int b = 2; int c = 3;
+  mut PairView view{a, b}; view = PairView(a, c); return view.sum() - 4;
+}

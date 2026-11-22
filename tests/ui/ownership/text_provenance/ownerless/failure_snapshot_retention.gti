@@ -1,0 +1,6 @@
+// Failure snapshot retention: borrowed panic message compiles.
+//@ check-pass
+import std.string;
+import std.panic;
+void fail(std::string_view message) { std::panic(message); }
+int main() { fail("snapshot"); return 0; }

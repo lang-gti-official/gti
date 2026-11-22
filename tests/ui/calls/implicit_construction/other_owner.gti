@@ -1,0 +1,5 @@
+// A result may retain a different caller-owned input, never the converted temporary.
+//@ run-pass
+struct Box { implicit Box(int n) {} };
+int&<a> other<lifetime a>(Box& ignored, int&<a> kept) { return kept; }
+int main() { int kept = 42; return other(1, kept) - 42; }

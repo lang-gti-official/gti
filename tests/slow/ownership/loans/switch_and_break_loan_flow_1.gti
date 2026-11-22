@@ -1,0 +1,119 @@
+// Switch and break loan flow: switch exits and paths proven to terminate with break should end one retained loan before owner invalidation.
+//@ slow
+//@ check-pass
+import std.string;
+
+int switch_merge(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+    default:
+      break;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int switch_arm_paths(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      value.push_back('!');
+      break;
+    default:
+      char first = *iterator;
+      value.push_back('?');
+      break;
+  }
+  return 0;
+}
+
+int switch_without_default(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int while_break_path(bool leave) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  mut int count = 0;
+  while (count < 2) {
+    if (leave) {
+      char first = *iterator;
+      value.push_back('!');
+      break;
+    }
+    char repeated = *iterator;
+    count++;
+  }
+  value.push_back('?');
+  return 0;
+}
+
+int while_break_entry(bool leave) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  while (true) {
+    if (leave) {
+      value.push_back('!');
+      break;
+    }
+    char retained = *iterator;
+    return retained == 'g' ? 0 : 1;
+  }
+  return 0;
+}
+
+int do_break_path() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  do {
+    char first = *iterator;
+    value.push_back('!');
+    break;
+  } while (true);
+  return 0;
+}
+
+int for_break_path() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  for (mut int index = 0; index < 1; index++) {
+    char first = *iterator;
+    value.push_back('!');
+    break;
+  }
+  return 0;
+}
+
+int generic_switch<T>(T input, int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+    default:
+      break;
+  }
+  value.push_back('!');
+  return selected;
+}
+
+int main() {
+  return switch_merge(0) + switch_arm_paths(0) +
+         switch_without_default(1) + while_break_path(true) +
+         while_break_entry(true) + do_break_path() + for_break_path() +
+         generic_switch<int>(0, 0);
+}
