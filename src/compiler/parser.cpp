@@ -333,14 +333,15 @@ private:
       const Token keyword = peekAt(*offset);
       reportMisplacedExport(*offset);
       if (peekAt(*offset + 1).kind == TokenKind::EXPORT) {
-        throw error(peekAt(*offset + 1),
-                    "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(peekAt(*offset + 1),
+                                  "A declaration cannot repeat 'export'.");
       }
       tokens.erase(tokens.begin() +
                    static_cast<std::ptrdiff_t>(current + *offset));
       StmtPtr result = declaration();
       if (result->exportKeyword()) {
-        throw error(keyword, "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(keyword,
+                                  "A declaration cannot repeat 'export'.");
       }
       result->setExportKeyword(keyword);
       return result;
@@ -349,7 +350,8 @@ private:
       const Token keyword = previous();
       StmtPtr result = declaration();
       if (result->exportKeyword()) {
-        throw error(keyword, "A declaration cannot repeat 'export'.");
+        throw redundantTokenError(*result->exportKeyword(),
+                                  "A declaration cannot repeat 'export'.");
       }
       result->setExportKeyword(keyword);
       return result;
@@ -1629,7 +1631,8 @@ private:
         std::exchange(conformanceRequirement, std::nullopt);
     if (match({TokenKind::UNSAFE})) {
       if (unsafeKeyword) {
-        throw error(previous(), "A function cannot repeat 'unsafe'.");
+        throw redundantTokenError(previous(),
+                                  "A function cannot repeat 'unsafe'.");
       }
       unsafeKeyword = previous();
     }
@@ -1640,7 +1643,7 @@ private:
                   "not a native binding.");
     }
     if (unsafeKeyword && check(TokenKind::UNSAFE)) {
-      throw error(peek(), "A function cannot repeat 'unsafe'.");
+      throw redundantTokenError(peek(), "A function cannot repeat 'unsafe'.");
     }
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
@@ -1652,7 +1655,8 @@ private:
       auto &keyword = previous().kind == TokenKind::STATIC ? staticKeyword
                                                            : threadLocalKeyword;
       if (keyword)
-        throw error(previous(), "A storage specifier cannot be repeated.");
+        throw redundantTokenError(previous(),
+                                  "A storage specifier cannot be repeated.");
       keyword = previous();
     }
     if (staticKeyword && runtimeBinding) {
@@ -2806,8 +2810,8 @@ private:
     if (match({TokenKind::COMMA})) {
       comma = previous();
       if (check(TokenKind::RIGHT_PAREN)) {
-        throw error(peek(),
-                    "A trailing comma is not allowed in 'static_assert'.");
+        throw redundantTokenError(
+            *comma, "A trailing comma is not allowed in 'static_assert'.");
       }
       message = consume(TokenKind::STRING_LITERAL,
                         "Expect a quoted string message after ','.");
@@ -2829,9 +2833,10 @@ private:
 
   StmtPtr groupedFieldDeclaration() {
     if (match({TokenKind::MUT})) {
-      throw error(previous(),
-                  "Fields inside a 'mut { ... }' group are already mutable; "
-                  "remove the redundant 'mut'.");
+      throw redundantTokenError(
+          previous(),
+          "Fields inside a 'mut { ... }' group are already mutable; "
+          "remove the redundant 'mut'.");
     }
     if (match({TokenKind::STATIC, TokenKind::THREAD_LOCAL})) {
       throw error(previous(),
@@ -5676,6 +5681,20 @@ private:
     diagnostics.push_back(makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing,
                                          token, std::string(message)));
     return ParseError{};
+  }
+
+  ParseError redundantTokenError(const Token &token, std::string_view message) {
+    const auto failure = error(token, message);
+    if (!token.generated && !token.completion &&
+        token.position <= source.size() &&
+        source.substr(token.position, token.lexeme.size()) == token.lexeme) {
+      diagnostics.back().fixes.push_back(
+          {.span = tokenSpan(token),
+           .replacement = "",
+           .message = "Remove redundant '" + token.lexeme + "'",
+           .applicability = RepairApplicability::MachineApplicable});
+    }
+    return failure;
   }
 
   void checkNestingDepth(const Token &token, std::size_t additionalDepth = 0) {

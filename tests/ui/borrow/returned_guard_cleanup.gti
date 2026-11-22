@@ -1,0 +1,21 @@
+// A discarded, relayed guard observes its unique owner exactly once.
+//@ run-pass
+import std.utility;
+
+class Guard {
+  mut int& drops;
+public:
+  Guard(mut int& drops) : drops(drops) {}
+  ~Guard() { this.drops += 1; }
+};
+
+[[discardable]] Guard relay(Guard guard) { return std::move(guard); }
+
+int main() {
+  mut int drops = 0;
+  {
+    auto guard = Guard(drops);
+    relay(std::move(guard));
+  }
+  return drops - 1;
+}

@@ -1,0 +1,32 @@
+// Redundant tokens have precise removals that preserve the original declaration and nearby comments.
+//@ code-action @storage: "Remove redundant 'static'" => step 2
+static /*keep*/ /*^storage*/static int count = 1;  //~ ERROR GTI-P0001
+// --- step 2
+static /*keep*/  int count = 1;
+// --- step 3
+//@ code-action @unsafe: "Remove redundant 'unsafe'" => step 4
+unsafe /*keep*/ /*^unsafe*/unsafe int read() { return 0; }  //~ ERROR GTI-P0001
+// --- step 4
+unsafe /*keep*/  int read() { return 0; }
+// --- step 5
+//@ code-action @comma: "Remove redundant ','" => step 6
+static_assert(true/*^comma*/, /*keep*/);  //~ ERROR GTI-P0001
+// --- step 6
+static_assert(true /*keep*/);
+// --- step 7
+//@ code-action @export: "Remove redundant 'export'" => step 8
+export module api;
+export /*keep*/ /*^export*/export int read() { return 3; }  //~ ERROR GTI-P0001
+// --- step 8
+export module api;
+export /*keep*/  int read() { return 3; }
+// --- step 9
+//@ code-action @mut: "Remove redundant 'mut'" => step 10
+struct Rect { mut { /*keep*/ /*^mut*/mut int width = 0; int height = 0; } };  //~ ERROR GTI-P0001
+// --- step 10
+struct Rect { mut { /*keep*/  int width = 0; int height = 0; } };
+// --- step 11
+//@ code-action @thread: "Remove redundant 'thread_local'" => step 12
+thread_local /*keep*/ /*^thread*/thread_local int slot = 0;  //~ ERROR GTI-P0001
+// --- step 12
+thread_local /*keep*/  int slot = 0;

@@ -1,0 +1,22 @@
+// A replacement field cannot outlive its new owner.
+class ReadView {
+  int& item;
+public:
+  ReadView(int& item) : item(item) {}
+  int& read() { return this.item; }
+};
+struct Pair {
+  mut ReadView first;
+  Pair(ReadView view) : first(view) {}
+};
+
+int main() {
+  int a = 1;
+
+  mut auto result = Pair(ReadView(a));
+  {
+    int b = 2;
+    result.first = ReadView(b);
+  }
+  return result.first.read();  //~ ERROR GTI-S2017 unavailable
+}
