@@ -1,4 +1,5 @@
 // Package metadata completion exposes both constants in the owning project.
+//@ slow
 //@ completion @member: name version
 // --- app/main.gti
 import std.package;
