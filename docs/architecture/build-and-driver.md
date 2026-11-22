@@ -2075,6 +2075,11 @@ using the installed standard library/runtime and host C++ toolchain; the
 package's requested target still governs the native artifacts it publishes.
 Compilation diagnostics retain `build.gti` source locations.
 
+A script that exits successfully without writing `GTI_BUILD_OUTPUT` contributes
+no native outputs; the driver records an empty manifest for cache validation.
+No explicit `publish()` call is needed in that case. The manifest requirements
+below apply only when the script supplies an output manifest.
+
 Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
@@ -2095,7 +2100,9 @@ profile, parallelism budget, and selected target C/C++ compilers.
 shell parsing. `std::build::outputs` records include directories, C and C++
 sources, library directories/files/names, and frameworks, then `publish`
 writes the versioned output manifest consumed by the same validation path as
-an external command.
+an external command. Scripts that only run a tool can return its exit status
+directly; they do not need an empty `outputs` object or a publication call.
+Existing malformed or unreadable manifests still fail validation.
 
 ```gti
 import std.build;
@@ -2125,7 +2132,11 @@ The cache identity includes the command or GTI source, host/target/profile,
 selected C/C++ compilers, and content of every declared input. GTI-authored
 programs additionally include the GTI compiler identity and host C++ compiler.
 A matching state is reused only when its structured output still validates;
-changed or missing inputs rerun the program. `--jobs N` is forwarded as the
+changed or missing inputs rerun the program. This also applies to the
+driver-recorded empty manifest: deleting it reruns the script rather than
+assuming its prior outputs were empty. Before execution, prior output and
+cache state are removed, so an output-free run cannot reuse old native outputs.
+`--jobs N` is forwarded as the
 program's parallelism budget and defaults to at most four jobs. `gti check`,
 `fetch`, `metadata`, and project resolution never compile or execute build
 programs or create their output directories; executable-producing `build`,
