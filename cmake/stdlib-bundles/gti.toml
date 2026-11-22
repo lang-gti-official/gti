@@ -120,6 +120,10 @@ root = "stdlib/std/detail/filesystem_result.gti"
 kind = "gti-library"
 root = "stdlib/std/detail/function_pointer.gti"
 
+[targets.detail_istream_view]
+kind = "gti-library"
+root = "stdlib/std/detail/istream_view.gti"
+
 [targets.detail_iterator]
 kind = "gti-library"
 root = "stdlib/std/detail/iterator.gti"
@@ -148,6 +152,10 @@ root = "stdlib/std/detail/memory_core.gti"
 kind = "gti-library"
 root = "stdlib/std/detail/memory_storage.gti"
 
+[targets.detail_ostream_view]
+kind = "gti-library"
+root = "stdlib/std/detail/ostream_view.gti"
+
 [targets.detail_panic]
 kind = "gti-library"
 root = "stdlib/std/detail/panic.gti"
@@ -163,6 +171,14 @@ root = "stdlib/std/detail/resource_lease.gti"
 [targets.detail_sequence_removal]
 kind = "gti-library"
 root = "stdlib/std/detail/sequence_removal.gti"
+
+[targets.detail_stream_format]
+kind = "gti-library"
+root = "stdlib/std/detail/stream_format.gti"
+
+[targets.detail_stream_view]
+kind = "gti-library"
+root = "stdlib/std/detail/stream_view.gti"
 
 [targets.detail_unordered_map_iterators]
 kind = "gti-library"
@@ -192,6 +208,10 @@ root = "stdlib/std/format.gti"
 kind = "gti-library"
 root = "stdlib/std/forward_list.gti"
 
+[targets.fstream]
+kind = "gti-library"
+root = "stdlib/std/fstream.gti"
+
 [targets.http]
 kind = "gti-library"
 root = "stdlib/std/http.gti"
@@ -199,6 +219,18 @@ root = "stdlib/std/http.gti"
 [targets.io]
 kind = "gti-library"
 root = "stdlib/std/io.gti"
+
+[targets.ios]
+kind = "gti-library"
+root = "stdlib/std/ios.gti"
+
+[targets.iostream]
+kind = "gti-library"
+root = "stdlib/std/iostream.gti"
+
+[targets.istream]
+kind = "gti-library"
+root = "stdlib/std/istream.gti"
 
 [targets.iterator]
 kind = "gti-library"
@@ -235,6 +267,10 @@ root = "stdlib/std/numeric.gti"
 [targets.optional]
 kind = "gti-library"
 root = "stdlib/std/optional.gti"
+
+[targets.ostream]
+kind = "gti-library"
+root = "stdlib/std/ostream.gti"
 
 [targets.paired_span]
 kind = "gti-library"
