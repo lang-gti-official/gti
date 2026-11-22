@@ -1,0 +1,14 @@
+// Package metadata hover exposes the compiler-owned string-view type.
+//@ hover @member: std::string_view
+// --- app/main.gti
+import std.package;
+int main() { auto value = std::package::/*^member*/name; return 0; }
+// --- app/gti.toml
+manifest-version = 1
+[package]
+name = "editor-package"
+version = "3.2.1"
+source-root = "."
+[targets.app]
+kind = "executable"
+root = "main.gti"

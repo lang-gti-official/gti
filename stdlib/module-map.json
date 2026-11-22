@@ -30,6 +30,7 @@
     "mutex": "std/mutex.gti",
     "numeric": "std/numeric.gti",
     "optional": "std/optional.gti",
+    "package": "std/package.gti",
     "paired_span": "std/paired_span.gti",
     "panic": "std/panic.gti",
     "polymorphic": "std/polymorphic.gti",

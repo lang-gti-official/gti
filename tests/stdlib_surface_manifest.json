@@ -3807,6 +3807,8 @@
         "std::build::context::output_dir",
         "std::build::context::output_file",
         "std::build::context::package_dir",
+        "std::build::context::package_name",
+        "std::build::context::package_version",
         "std::build::context::profile",
         "std::build::context::target",
         "std::build::context::target_os",
@@ -3826,13 +3828,16 @@
       ],
       "required_instantiations": [
         "exact host argv and nonzero exit status",
-        "all structured native output categories"
+        "all structured native output categories",
+        "package metadata agrees with std.package in build programs"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_build.gti",
         "tests/project_cli_smoke_test.py",
         "stdlib/std/build.gti",
-        "runtime/src/process.cpp"
+        "runtime/src/process.cpp",
+        "tests/project/package_metadata/test.transcript",
+        "tests/ui/stdlib/build_context_metadata.gti"
       ]
     },
     {
@@ -6803,6 +6808,31 @@
         "tests/ui/stdlib/optional/compiler",
         "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
+      ]
+    },
+    {
+      "id": "package.generated",
+      "source": "stdlib/std/package.gti",
+      "status": "executable",
+      "operations": [
+        "std::package::name",
+        "std::package::version"
+      ],
+      "case_ids": [
+        "build"
+      ],
+      "required_instantiations": [
+        "project-owned constexpr name and version materialized as ordinary source",
+        "dependency metadata isolation and manifest-only cache invalidation"
+      ],
+      "evidence": [
+        "src/compiler/source_loader.cpp",
+        "tests/project/package_metadata/test.transcript",
+        "tests/ui/modules/package_without_manifest.gti",
+        "tests/lsp/modules/package_metadata.gti",
+        "tests/slow/lsp/modules/package_metadata_completion.gti",
+        "tests/project/package_metadata_compiled/test.transcript",
+        "tests/lsp/modules/package_metadata_reload.jsonl"
       ]
     },
     {

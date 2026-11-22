@@ -1,0 +1,12 @@
+import std.package;
+import std.build;
+import std.string;
+import std.vector;
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 11) { return 64; }
+  auto context = std::build::context_from_args(argv);
+  if (context.package_name() != std::package::name ||
+      context.package_version() != std::package::version) { return 9; }
+  auto outputs = std::build::outputs();
+  return outputs.publish(context);
+}

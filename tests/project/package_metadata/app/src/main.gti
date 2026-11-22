@@ -1,0 +1,14 @@
+import std.package;
+import dep.info;
+static_assert(!std::package::name.empty());
+static_assert(!std::package::version.empty());
+int main() {
+  if (!dep_has_metadata<int>()) { return 1; }
+  std::print(std::package::name);
+  std::print(" ");
+  std::println(std::package::version);
+  std::print(dep_name());
+  std::print(" ");
+  std::println(dep_version());
+  return 0;
+}

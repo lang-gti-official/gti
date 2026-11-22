@@ -1,5 +1,15 @@
 # 7. Standard Library
 
+`import std.package;` exposes immutable `constexpr std::string_view` constants
+`std::package::name` and `std::package::version` from the source package's
+resolved manifest. Dependencies observe their own package, and build programs
+observe the package whose script is running. The spelling is preserved exactly;
+these are strings, not semantic-version comparison objects. The import requires
+a project/package compilation (`GTI-I0012` otherwise) and remains explicit
+rather than joining the portable `std` aggregate. Build scripts additionally
+have `std::build::context::package_name()` and `package_version()` accessors.
+
+
 Status: Partial normative draft
 
 ## 7.1 Library Boundary
@@ -157,8 +167,9 @@ source ownership and public module names confer no compiler privilege.
 `import std;` imports the portable public standard library in one declaration.
 It is an ordinary source interface in `stdlib/std.gti`, re-exporting the named
 standard modules. It excludes the currently POSIX-only `std.environment`,
-`std.process`, and `std.tcp`, which require explicit imports on supported targets,
-and it excludes experimental facilities. Individual imports remain useful for
+`std.process`, `std.tcp`, and `std.testing.resources`, which require explicit
+imports on supported targets. Package-context metadata (`std.package`) also
+requires an explicit import, and experimental facilities remain excluded. Individual imports remain useful for
 documenting dependencies and reducing source-loading/registration work.
 
 Imports use the ordinary compilation pipeline; an import does not
