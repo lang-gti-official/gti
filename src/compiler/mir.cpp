@@ -4854,17 +4854,28 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const auto appendLoanSources = [&](const MirLoan &loan,
                                            bool mutableInput) {
           const auto appendSources = [&](const MirLoan &record, bool write) {
-            const auto append = [&](MirPlaceId source, AccessMode permission) {
+            const bool abstractEntry = abstractStoredEntry(body, record);
+            const auto append = [&](MirPlaceId source, AccessMode permission,
+                                    const std::vector<SymbolId> &fields) {
               if (source == 0)
                 return;
+              auto place = canonicalPlace(body, source, bindingLoans, active);
+              // An abstract entry names the enclosing formal and records the
+              // path to each borrowed field separately. Its unrelated fields
+              // remain usable alongside a borrow returned by a nested method.
+              if (abstractEntry && source == record.source)
+                for (const SymbolId field : fields)
+                  place.projections.push_back(
+                      {.kind = MirProjectionKind::Field, .field = field});
               borrows.push_back(
-                  {.place = canonicalPlace(body, source, bindingLoans, active),
+                  {.place = std::move(place),
                    .write = write && permission == AccessMode::Mutable,
                    .input = inputIndex});
             };
-            append(record.source, record.access);
+            append(record.source, record.access, record.designatedFields);
             for (const auto &dependency : record.additionalDependencies)
-              append(dependency.source, dependency.access);
+              append(dependency.source, dependency.access,
+                     dependency.designatedFields);
           };
           bool writable = mutableInput;
           const MirLoan *record = &loan;

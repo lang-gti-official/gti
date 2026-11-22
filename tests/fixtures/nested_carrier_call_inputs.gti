@@ -1,0 +1,19 @@
+// Reading a sibling field and mutating the external owner through a nested field are disjoint.
+//@ run-pass
+void add(int& increment, mut int& output) { output += increment; }
+struct State {
+  mut int& number;
+  State(mut int& n) : number(n) {}
+  mut int& owner() mut { return this.number; }
+};
+struct Writer {
+  mut State state;
+  int increment = 3;
+  Writer(mut int& n) : state(State(n)) {}
+  void apply() mut { add(this.increment, this.state.owner()); }
+};
+int main() {
+  mut int n = 2;
+  { mut Writer writer{n}; writer.apply(); }
+  return n == 5 ? 0 : 1;
+}
