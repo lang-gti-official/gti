@@ -2136,8 +2136,9 @@ private:
            (loan.kind == MirLoanKind::Local ||
             (loan.kind == MirLoanKind::Parameter && loan.entry));
   }
-  // The accessor call of a reserved two-phase borrow store carries the
-  // store's own value facts; its reserved loan carries the result's access.
+  // A two-phase accessor reserves the returned address until the store.
+  // Its SSA result is unused; the destination is the place rooted in the
+  // reserved loan. A place-category result has the loan's mutable access.
   bool reservedStore(const MirBody &body, const MirInstruction &stage) const {
     const auto *loan =
         stage.kind == MirInstructionKind::Call && stage.loan && stage.result
@@ -2145,7 +2146,10 @@ private:
             : nullptr;
     return loan && loan->twoPhase && !loan->escapes &&
            loan->kind == MirLoanKind::CallResult &&
-           stage.info.category == ValueCategory::Value &&
+           loan->access == AccessMode::Mutable &&
+           (stage.info.category == ValueCategory::Value ||
+            (stage.info.category == ValueCategory::Place &&
+             stage.info.access == loan->access)) &&
            body.usesOf(*stage.result).empty();
   }
   bool borrowedCallResult(const MirBody &body,

@@ -5371,7 +5371,9 @@ generated logical-field copy of a checked view, then publishes the new object
 with its own dispatch state. A polymorphic destination must be a complete
 object: a whole binding, value or hidden temporary, a field or array element,
 or an object of a class nothing derives from. An accessor result reserved by a
-two-phase borrow store qualifies on the same terms. Replacing a base view
+two-phase borrow store qualifies on the same terms. A mutable place returned
+by the accessor supplies the reserved address through its call-result loan.
+The backend uses that address when the store activates the loan. Replacing a base view
 inside a larger object could change that object's dynamic type and stays
 `PolymorphicTransfer`.
 

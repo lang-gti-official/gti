@@ -1,0 +1,21 @@
+// Replacing a derived object through a mutable accessor uses its reserved address.
+//@ run-pass
+interface Shape { int size(); };
+class Box : public Shape {
+  int value;
+public:
+  Box(int n) : value(n) {}
+  int size() override { return this.value; }
+};
+class Holder {
+  mut Box box;
+public:
+  Holder() : box(Box(1)) {}
+  mut Box& operator*() mut { return this.box; }
+  int size() { return this.box.size(); }
+};
+int main() {
+  mut Holder owner{};
+  *owner = Box(42);
+  return owner.size() - 42;
+}
