@@ -1317,16 +1317,18 @@ private:
       return false;
     const auto &parameter = target->parameterTypes[index];
     const auto *value = findValue(initializer.arguments[index]);
-    return (parameter.kind == SemanticType::Class ||
-            parameter.kind == SemanticType::Enum ||
-            parameter.kind == SemanticType::Lambda) &&
-           value != nullptr && value->dropObligation &&
-           value->info.type == parameter &&
-           value->info.category == ValueCategory::Value &&
-           value->info.traits.movable &&
-           value->info.traits.drop != DropKind::Trivial &&
-           !resolvedTraits(parameter).containsBorrowedState &&
-           preparedParameterDropType(parameter).has_value();
+    if (!value || value->info.type != parameter ||
+        value->info.category != ValueCategory::Value ||
+        !value->info.traits.movable ||
+        value->info.traits.drop == DropKind::Trivial ||
+        resolvedTraits(parameter).containsBorrowedState)
+      return false;
+    const auto cleanup = preparedParameterDropType(parameter);
+    // A move of a cleanup-free aggregate does not arm a temporary. Its
+    // by-value parameter still needs the normal InitializeBase handoff.
+    return cleanup && (value->dropObligation ||
+                       (value->kind == HirValueKind::Move &&
+                        !cleanup->requiresActiveCleanup));
   }
 
   const HirClassInstance *

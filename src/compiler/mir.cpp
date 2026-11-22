@@ -11592,9 +11592,11 @@ static MirVerificationResult verifyBaseInitializations(const MirBody &body,
             event.kind == MirLifecycleEventKind::TransferOut &&
             event.source == rollback->id && event.target == 0 &&
             !event.conditional && !event.failureCleanup;
+        // Prepared-argument transfers may precede the single final
+        // activation. The InitializeBase shape verifies that prefix.
         const bool activation =
             stage && instruction.definedFailure.empty() &&
-            instruction.lifecycle.size() == 1 &&
+            &event == &instruction.lifecycle.back() &&
             event.kind == MirLifecycleEventKind::Initialize &&
             event.source == 0 && event.target == rollback->id &&
             !event.conditional && !event.failureCleanup;
