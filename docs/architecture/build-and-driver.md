@@ -2075,14 +2075,16 @@ using the installed standard library/runtime and host C++ toolchain; the
 package's requested target still governs the native artifacts it publishes.
 Compilation diagnostics retain `build.gti` source locations.
 
+A script that exits successfully without writing `GTI_BUILD_OUTPUT` contributes
+no native outputs; the driver records an empty manifest for cache validation.
+No explicit `publish()` call is needed in that case. The manifest requirements
+below apply only when the script supplies an output manifest.
+
 Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
 `GTI_BUILD_HOST`, `GTI_BUILD_TARGET`, `GTI_BUILD_PROFILE`, `GTI_BUILD_JOBS`,
-`CC`, and `CXX`. A script that exits successfully without writing
-`GTI_BUILD_OUTPUT` contributes no native outputs; the driver records an empty
-manifest for cache validation. No explicit `publish()` call is needed in that
-case. If supplied, `GTI_BUILD_OUTPUT` must be TOML with `version = 1`
+`CC`, and `CXX`. `GTI_BUILD_OUTPUT` must be written as TOML with `version = 1`
 and may declare `include-dirs`, `c-sources`, `cpp-sources`, `library-dirs`,
 `link-files`, `libraries`, and `frameworks`. Paths are relative to
 `GTI_BUILD_OUT_DIR`, must remain inside it, and must name existing files or
