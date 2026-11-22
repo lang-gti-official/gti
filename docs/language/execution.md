@@ -644,8 +644,9 @@ Program source units are initialized by this deterministic walk:
    on its first visit; and
 4. within a unit, initialize selected namespace globals and non-generic class
    static fields by increasing source position. A static field occupies the
-   position of its field declaration. Inactive compile-time declarations
-   contribute no step.
+   position of its field declaration. A constant-initialized function-local
+   static contributes a data-only step at its declaration. Inactive
+   compile-time declarations contribute no step.
 
 Implicit prelude edges injected into ordinary units do not repeat step 1.
 An interface and its registered implementation files form one logical module
@@ -671,6 +672,20 @@ code remains responsible for its separately stated lifetime obligations. Using
 a frontend-computed `constexpr` value without forming a place, address,
 reference, or runtime load does not access its storage and is independent of
 the runtime step.
+
+A function-local declaration such as `static mut int count = 0;` has one
+storage slot for the program and can be named within its lexical scope.
+The explicit initializer is evaluated at compile time and emitted as data.
+All calls share the slot, including when the declaration appears in a nested
+block or loop. The declaration performs no work when execution reaches it.
+
+The initializer must produce a supported constant value of the declared
+type. Types requiring runtime cleanup are outside this constant-data slice.
+The ownership and access rules for program storage also apply here. The
+concurrent profile requires an immutable binding with a share-capable type.
+The `constexpr` specifier additionally permits constant-expression reads.
+Static declarations in generic bodies, lambdas and expanded constexpr loops
+require per-instance storage identities. First-use initialization is deferred.
 
 Hosted programs admit namespace objects and non-generic class static fields
 with source-defined destruction, including nested fields, bases and fixed

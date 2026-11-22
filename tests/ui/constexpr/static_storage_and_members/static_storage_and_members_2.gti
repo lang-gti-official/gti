@@ -1,2 +1,6 @@
-// Static storage and members: block-scope static should fail with a focused parser diagnostic.
-int main() { static int value = 1; return value; }  //~ ERROR GTI-P0001 Block-scope static declarations are not supported
+// A function-local static initializer cannot read a runtime parameter.
+int read(int value) {
+  static int saved = value;  //~ ERROR GTI-S2057
+  return saved;
+}
+int main() { return read(1); }

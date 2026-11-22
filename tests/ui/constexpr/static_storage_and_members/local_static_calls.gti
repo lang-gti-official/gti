@@ -1,0 +1,26 @@
+// Local static storage persists across calls and shadowed declarations have distinct slots.
+//@ run-pass
+constexpr int initial(int value) { return value * 2; }
+
+int next() {
+  static mut int count = initial(2);
+  {
+    static mut int count = 100;
+    count += 2;
+    if (count == 104) { return 42; }
+  }
+  count += 1;
+  return count;
+}
+
+int other() {
+  static mut int count = 7;
+  count += 1;
+  return count;
+}
+
+int main() {
+  if (next() != 5 || other() != 8) { return 1; }
+  if (next() != 42 || other() != 9) { return 2; }
+  return next() - 6;
+}

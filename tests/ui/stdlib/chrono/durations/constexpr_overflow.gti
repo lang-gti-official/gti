@@ -1,0 +1,9 @@
+// A required constant cast diagnoses overflow instead of producing a wrapped value.
+import std.chrono;
+constexpr int64_t bad() {
+  std::chrono::hours value{9223372036854775807i64};
+  auto result = value.cast<std::chrono::nanoseconds>();  //~ ERROR GTI-S2057
+  return result.count();
+}
+constexpr int64_t result = bad();
+int main() { return 0; }

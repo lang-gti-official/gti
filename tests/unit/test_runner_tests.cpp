@@ -10,7 +10,9 @@
 #include <iostream>
 #include <thread>
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -91,30 +93,22 @@ GTI_UNIT_TEST(test_runner) {
         std::this_thread::sleep_for(10ms);
     }
     if (mode == "background" || mode == "background_timeout") {
-      const int lifetimeRead = std::atoi(std::getenv("GTI_LIFETIME_READ"));
-      const int lifetimeWrite = std::atoi(std::getenv("GTI_LIFETIME_WRITE"));
-      const int releaseRead = std::atoi(std::getenv("GTI_RELEASE_READ"));
-      const int releaseWrite = std::atoi(std::getenv("GTI_RELEASE_WRITE"));
-      close(lifetimeRead);
-      close(releaseWrite);
-      const pid_t descendant = fork();
+      const int peer = std::stoi(std::getenv("GTI_RUNNER_PEER"));
+      const auto descendant = fork();
       if (descendant < 0)
         return 1;
       if (descendant == 0) {
-        if (write(lifetimeWrite, "R", 1) != 1)
+        if (write(peer, "R", 1) != 1)
           _exit(1);
-        // Stay alive with the lifetime writer open. The test closes the release
-        // pipe on failure as well, so a broken group kill cannot leak a child.
-        char byte;
-        while (read(releaseRead, &byte, 1) < 0 && errno == EINTR) {
+        // Hold the endpoint until killed or the test releases us on failure.
+        char release;
+        while (read(peer, &release, 1) < 0 && errno == EINTR) {
         }
         _exit(0);
       }
-      close(lifetimeWrite);
-      close(releaseRead);
       if (mode == "background_timeout")
         for (;;)
-          std::this_thread::sleep_for(10ms);
+          pause();
       return 0;
     }
     if (mode == "barrier_a" || mode == "barrier_b") {
@@ -269,49 +263,39 @@ GTI_UNIT_TEST(test_runner) {
             !moved.wait().succeeded(),
         "process ownership must move once and reject a second wait");
   for (const auto *mode : {"background", "background_timeout"}) {
-    int lifetime[2], release[2];
-    if (pipe(lifetime) != 0) {
-      check(false, "create descendant lifetime pipe");
-      break;
+    int endpoints[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, endpoints) != 0) {
+      check(false, "create lifetime probe for background descendants");
+      continue;
     }
-    if (pipe(release) != 0) {
-      close(lifetime[0]);
-      close(lifetime[1]);
-      check(false, "create descendant cleanup pipe");
-      break;
+    if (fcntl(endpoints[0], F_SETFD, FD_CLOEXEC) != 0) {
+      close(endpoints[0]);
+      close(endpoints[1]);
+      check(false, "isolate the controller's endpoint");
+      continue;
     }
+    const bool timeout = std::string(mode) == "background_timeout";
     auto child = startProcess(
         {executable.string(), mode},
         {.captureSuccessfulOutput = true,
-         .environment = {{"GTI_LIFETIME_READ", std::to_string(lifetime[0])},
-                         {"GTI_LIFETIME_WRITE", std::to_string(lifetime[1])},
-                         {"GTI_RELEASE_READ", std::to_string(release[0])},
-                         {"GTI_RELEASE_WRITE", std::to_string(release[1])}},
-         .timeout = 2s,
+         .environment = {{"GTI_RUNNER_PEER", std::to_string(endpoints[1])}},
+         .timeout = timeout ? 2s : 10s,
          .isolateProcessGroup = true});
-    close(lifetime[1]);
-    close(release[0]);
+    close(endpoints[1]);
     char ready = 0;
-    check(readLifetimeByte(lifetime[0], ready) == 1 && ready == 'R',
+    check(readLifetimeByte(endpoints[0], ready) == 1 && ready == 'R',
           "background descendant must start before owner wait");
-    // Exercise delayed observation of ordinary completion, the scheduling
-    // condition that made the previous timed marker report a false escape.
-    if (std::string(mode) == "background")
+    // Exercise delayed observation of ordinary completion without depending on
+    // a marker being written before the caller is scheduled again.
+    if (!timeout)
       std::this_thread::sleep_for(600ms);
-    const auto result = child.wait();
-    const bool timedOut = std::string(mode) == "background_timeout";
-    check(result.timedOut == timedOut && (timedOut || result.succeeded()),
-          "completion and timeout facts must reflect the actual child result");
-    const bool closed = readLifetimeByte(lifetime[0], ready) == 0;
-    if (!closed)
-      std::cerr << mode << ": descendant retained its lifetime pipe\n";
-    check(closed, "completion and timeout must both terminate background group "
-                  "descendants");
-    close(release[1]);
-    if (!closed)
-      check(readLifetimeByte(lifetime[0], ready) == 0,
-            "release must clean up a descendant after a failed group kill");
-    close(lifetime[0]);
+    const auto completion = child.wait();
+    check(timeout ? completion.timedOut : completion.succeeded(),
+          "background helper must complete or time out as requested");
+    check(readLifetimeByte(endpoints[0], ready) == 0,
+          "completion and timeout must both close all descendant endpoints");
+    // Closing the controller also releases a surviving descendant on failure.
+    close(endpoints[0]);
   }
   std::filesystem::remove_all(directory);
   return failures == 0 ? 0 : 1;

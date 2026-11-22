@@ -5954,78 +5954,6 @@
         }
       ]
     },
-    "_block_thread_local_declaration": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "FIELD",
-                  "name": "storage",
-                  "content": {
-                    "type": "STRING",
-                    "value": "static"
-                  }
-                },
-                {
-                  "type": "FIELD",
-                  "name": "thread_storage",
-                  "content": {
-                    "type": "STRING",
-                    "value": "thread_local"
-                  }
-                }
-              ]
-            },
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "FIELD",
-                  "name": "thread_storage",
-                  "content": {
-                    "type": "STRING",
-                    "value": "thread_local"
-                  }
-                },
-                {
-                  "type": "FIELD",
-                  "name": "storage",
-                  "content": {
-                    "type": "STRING",
-                    "value": "static"
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "FIELD",
-              "name": "constant",
-              "content": {
-                "type": "STRING",
-                "value": "constexpr"
-              }
-            },
-            {
-              "type": "BLANK"
-            }
-          ]
-        },
-        {
-          "type": "SYMBOL",
-          "name": "_variable_declaration_body"
-        }
-      ]
-    },
     "_variable_declaration_body": {
       "type": "SEQ",
       "members": [
@@ -7084,13 +7012,8 @@
           "name": "variable_declaration"
         },
         {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_block_thread_local_declaration"
-          },
-          "named": true,
-          "value": "static_variable_declaration"
+          "type": "SYMBOL",
+          "name": "static_variable_declaration"
         },
         {
           "type": "SYMBOL",
@@ -7544,6 +7467,10 @@
         {
           "type": "SYMBOL",
           "name": "variable_declaration"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "static_variable_declaration"
         },
         {
           "type": "SYMBOL",

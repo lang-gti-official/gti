@@ -756,6 +756,7 @@ int main(int argc, char **argv) {
   // Without paths or --root: tests/ui, tests/project and tests/lsp (the
   // last only when gti_lsp exists); tidy also covers tests/slow.
   std::vector<fs::path> defaultRoots;
+  bool skippedDefaultLsp = false;
   if (options.rootGiven) {
     defaultRoots.push_back(options.root);
   } else {
@@ -766,8 +767,7 @@ int main(int argc, char **argv) {
         continue;
       if (std::string(root) == "tests/lsp" && !fs::exists(lspPath) &&
           !options.tidy) {
-        std::cout << "gti-test: no gti_lsp at " << lspPath
-                  << "; tests/lsp skipped\n";
+        skippedDefaultLsp = true;
         continue;
       }
       defaultRoots.push_back(root);
@@ -792,8 +792,12 @@ int main(int argc, char **argv) {
     else
       substrings.push_back(selector);
   }
-  if (roots.empty())
+  if (roots.empty()) {
     roots = defaultRoots;
+    if (skippedDefaultLsp)
+      std::cout << "gti-test: no gti_lsp at " << lspPath
+                << "; tests/lsp skipped\n";
+  }
   std::optional<std::set<fs::path>> changed;
   if (options.changed) {
     std::string error;

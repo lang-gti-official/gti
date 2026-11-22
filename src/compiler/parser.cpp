@@ -578,7 +578,7 @@ private:
               "An extern \"C\" block may contain only function or variable "
               "declarations.");
         } else {
-          declaration = typedDeclaration(true, std::nullopt, false, false, true,
+          declaration = typedDeclaration(true, std::nullopt, false, false,
                                          LanguageLinkage::C);
         }
         stampExtent(declaration, declarationStart);
@@ -1203,7 +1203,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1246,7 +1246,7 @@ private:
                .message = "Replace obsolete '[[unsafe]]' with 'unsafe'"});
         }
         diagnostics.emplace_back(std::move(diagnostic));
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::nullopt, std::nullopt, std::move(keyword),
                                 std::move(functionAttributes));
       }
@@ -1305,7 +1305,7 @@ private:
           throw error(peek(), "A native function attribute must annotate a "
                               "function declaration.");
         }
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::move(nativeCArray),
                                 std::move(nativeLinkName), std::nullopt,
                                 std::move(functionAttributes));
@@ -1460,7 +1460,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1625,7 +1625,7 @@ private:
       bool allowFunction,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false, bool allowOperators = false,
-      bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
+      LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
@@ -1665,12 +1665,6 @@ private:
         throw redundantTokenError(previous(),
                                   "A storage specifier cannot be repeated.");
       keyword = previous();
-    }
-    if (staticKeyword && !allowStatic && !threadLocalKeyword) {
-      throw error(
-          *staticKeyword,
-          "Block-scope static declarations are not supported yet; declare "
-          "static storage at namespace or class scope.");
     }
     if (staticKeyword && runtimeBinding) {
       throw error(*staticKeyword,
@@ -3517,7 +3511,7 @@ private:
       return structuredBindingDeclaration();
     }
     if (isTypedDeclaration()) {
-      return typedDeclaration(false, std::nullopt, false, false, false);
+      return typedDeclaration(false);
     }
     return statement();
   }
@@ -3920,7 +3914,7 @@ private:
       }
       result = structuredBindingDeclaration();
     } else if (isTypedDeclaration()) {
-      result = typedDeclaration(false, std::nullopt, false, false, false);
+      result = typedDeclaration(false);
     } else {
       result = expressionStatement();
     }
