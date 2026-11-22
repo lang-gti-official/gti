@@ -2184,6 +2184,12 @@ private:
              (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
               stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
               stage.intrinsic == IntrinsicKind::SharedOwnerBorrow ||
+              ((stage.intrinsic == IntrinsicKind::EraseReference ||
+                stage.intrinsic == IntrinsicKind::EraseReferenceMut ||
+                stage.intrinsic == IntrinsicKind::RestoreReference ||
+                stage.intrinsic == IntrinsicKind::RestoreReferenceMut) &&
+               mir_detail::erasedReferenceResultLoan(program, body, stage) ==
+                   loan) ||
               stage.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
               stage.intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
               // A guard read selects the complete payload inside the shell.
@@ -2242,6 +2248,91 @@ private:
                  borrowedUse(body, operand) && borrowed(body, operand);
         });
   }
+  // A constructor or factory supplies the by-value view's own storage. Its
+  // verified argument supplies the borrow. An entry dependency on the owner
+  // protects its stored references without supplying another runtime address.
+  bool argumentViewSelection(const MirBody &body, const MirInstruction &stage,
+                             const MirLoan &loan) {
+    if (!stage.result || !stage.hirValue || stage.hirValue != loan.producedBy ||
+        stage.info.type.kind != SemanticType::Class ||
+        related(stage.info.type) ||
+        stage.borrowOrigin != BorrowOriginKind::Argument ||
+        stage.borrowArgument >= stage.operands.size() ||
+        stage.borrowArgument >= stage.parameterTypes.size() ||
+        !stage.borrowArguments.empty() || stage.borrowAccess != loan.access)
+      return false;
+    if (stage.kind == MirInstructionKind::Construct) {
+      const auto *ctor =
+          stage.constructorTarget
+              ? program.findConstructorInstance(*stage.constructorTarget)
+              : nullptr;
+      if (!ctor || ctor->definitionKind != MirDefinitionKind::Source ||
+          ctor->borrowOrigin != stage.borrowOrigin ||
+          ctor->borrowParameter != stage.borrowArgument ||
+          ctor->borrowAccess != stage.borrowAccess ||
+          !ctor->borrowParameters.empty())
+        return false;
+    } else {
+      const auto *factory = gtiCallee(stage);
+      if (!factory || stage.kind != MirInstructionKind::Call ||
+          stage.dispatch != CallDispatch::Static || stage.receiver ||
+          stage.intrinsic != IntrinsicKind::None ||
+          factory->returnType != stage.info.type ||
+          factory->returnBorrowOrigin != stage.borrowOrigin ||
+          factory->returnBorrowParameter != stage.borrowArgument ||
+          factory->returnBorrowAccess != stage.borrowAccess ||
+          !factory->returnBorrowParameters.empty())
+        return false;
+    }
+    const auto &operand = stage.operands[stage.borrowArgument];
+    if (operand.kind != MirOperandKind::Value)
+      return false;
+    const auto *input = mir_detail::definitionFor(body, operand.value);
+    if (!input || input->tombstone ||
+        input->kind != MirInstructionKind::CallInput ||
+        input->callInputRole != MirCallInputRole::Argument ||
+        input->callInputIndex != stage.borrowArgument ||
+        input->callSite != stage.callSite || input->operands.size() != 1)
+      return false;
+    if (input->callInputKind == HirCallInputKind::MoveValue) {
+      // Moving the carrier transfers its existing checked borrow. The value
+      // argument supplies the shell; the entry loan still supplies the owner.
+      const auto *parent = body.findLoan(loan.parent);
+      const auto *source = body.findPlace(loan.source);
+      const auto carriedSource =
+          mir_detail::borrowSourceForOperand(body, input->operands.front());
+      const auto *carried =
+          carriedSource ? body.findPlace(*carriedSource) : nullptr;
+      if (!parent || !parent->entry || parent->kind != MirLoanKind::Parameter ||
+          parent->source != loan.source || parent->access != loan.access ||
+          !source || !related(source->type) ||
+          input->info.type.kind != SemanticType::Class ||
+          stage.parameterTypes[stage.borrowArgument] != input->info.type ||
+          !carried ||
+          (carried->id != loan.source &&
+           (carried->root != MirPlaceRootKind::Loan ||
+            carried->loan != parent->id || !carried->projections.empty())) ||
+          !borrowed(body, {.kind = MirOperandKind::Loan,
+                           .loan = parent->id,
+                           .type = source->type}))
+        return false;
+    } else if (!stagedBorrow(body, operand) ||
+               mir_detail::borrowSourceForOperand(
+                   body, input->operands.front()) != loan.source ||
+               !borrowedUse(body, operand) || !borrowed(body, operand)) {
+      return false;
+    }
+    if (!loan.storedDependency)
+      return true;
+    const auto *dependency = body.findLoan(loan.storedDependency);
+    const auto *source = body.findPlace(loan.source);
+    const auto *owner =
+        dependency ? body.findPlace(dependency->source) : nullptr;
+    return source && owner && dependency->entry &&
+           dependency->kind == MirLoanKind::Stored && !dependency->escapes &&
+           source->type == owner->type && source->projections.empty() &&
+           sameStorageRoot(*owner, *source);
+  }
   // A call that selected a non-hierarchy result out of hierarchy storage it
   // borrowed: a checked address, or a view returned by value whose Stored
   // loan names that storage. The result is the callee's own, not a view of
@@ -2249,17 +2340,28 @@ private:
   const MirInstruction *selection(const MirBody &body, const MirLoan &loan) {
     const MirInstruction *call = callResult(body, loan);
     if (!call && loan.kind == MirLoanKind::Stored && !loan.entry &&
-        !loan.escapes && !loan.storedDependency && !loan.storedField &&
-        !loan.referenceSelection && loan.additionalDependencies.empty() &&
-        loan.conditions.empty() && !loan.twoPhase && !loan.lifecycleBound)
+        !loan.escapes && !loan.storedField && !loan.referenceSelection &&
+        loan.additionalDependencies.empty() && loan.conditions.empty() &&
+        !loan.twoPhase && !loan.lifecycleBound)
       for (const auto &block : body.blocks)
         for (const auto &stage : block.instructions)
           if (!stage.tombstone && stage.loan == loan.id &&
-              stage.kind == MirInstructionKind::Call) {
+              (stage.kind == MirInstructionKind::Call ||
+               stage.kind == MirInstructionKind::Construct)) {
             if (call)
               return nullptr;
             call = &stage;
           }
+    if (call && (call->intrinsic == IntrinsicKind::EraseReference ||
+                 call->intrinsic == IntrinsicKind::EraseReferenceMut))
+      return mir_detail::erasedReferenceResultLoan(program, body, *call) ==
+                         &loan &&
+                     borrowed(body, call->operands.front())
+                 ? call
+                 : nullptr;
+    if (call && (call->kind == MirInstructionKind::Construct ||
+                 (loan.kind == MirLoanKind::Stored && loan.storedDependency)))
+      return argumentViewSelection(body, *call, loan) ? call : nullptr;
     if (!call || call->tombstone || call->kind != MirInstructionKind::Call ||
         call->intrinsic != IntrinsicKind::None ||
         call->info.type.kind == SemanticType::Reference ||
@@ -2294,12 +2396,22 @@ private:
         !relay->escapes || relay->entry || relay->twoPhase ||
         relay->lifecycleBound || relay->referenceSelection ||
         !relay->additionalDependencies.empty() || !relay->conditions.empty() ||
-        relay->source != selected->source || !selection(body, *selected))
+        relay->source != selected->source)
+      return false;
+    const auto *producer = selection(body, *selected);
+    if (!producer)
       return false;
     bool returned = false;
     for (const auto &block : body.blocks)
       if (block.terminator.returnLoan == relay->id) {
-        if (block.terminator.kind != MirTerminatorKind::Return)
+        const auto &term = block.terminator;
+        if (term.kind != MirTerminatorKind::Return ||
+            ((producer->kind == MirInstructionKind::Construct ||
+              (selected->kind == MirLoanKind::Stored &&
+               selected->storedDependency)) &&
+             (relay->storedDependency != selected->storedDependency ||
+              !term.value || term.value->kind != MirOperandKind::Value ||
+              term.value->value != producer->result)))
           return false;
         returned = true;
       }
@@ -4281,6 +4393,10 @@ public:
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
   }
   bool representedErasureObject(const SemanticType &type) const {
+    // Erasure transports a checked address. The native layout/dispatch proof
+    // establishes the class referent's storage independently of by-value ABI.
+    if (type.kind == SemanticType::Class && dispatchProofs.contains(type))
+      return dispatchProofs.metadata(type).has_value();
     if (!nativeValue(type))
       return false;
     if (mir_detail::completeObjectType(program, type))
@@ -4309,7 +4425,7 @@ public:
     return scalar.kind == SemanticType::Enum && types.integralEnum(scalar) &&
            !types.payloadEnum(scalar) && nativeValue(scalar);
   }
-  bool erasedReference(const MirInstruction &stage) const {
+  bool erasedReference(const MirBody &body, const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
         stage.functionTarget || stage.operands.size() != 1 ||
         stage.parameterTypes.size() != 1 ||
@@ -4321,7 +4437,12 @@ public:
                        stage.intrinsic == IntrinsicKind::EraseReferenceMut;
     const bool restore = stage.intrinsic == IntrinsicKind::RestoreReference ||
                          stage.intrinsic == IntrinsicKind::RestoreReferenceMut;
+    if ((!erase && !restore) ||
+        !mir_detail::erasedReferenceResultLoan(program, body, stage))
+      return false;
     return (erase && opaqueReferent(stage.info.type) &&
+            (!dispatchProofs.related(stage.parameterTypes.front()) ||
+             dispatchProofs.borrowed(body, stage.operands.front())) &&
             representedErasureReference(stage.parameterTypes[0])) ||
            (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
             representedErasureReference(stage.info.type));
@@ -5914,7 +6035,7 @@ public:
                   ? std::optional(Shape::NativeMemoryOperation)
               : nativeAddressConversion(stage) && validRaw
                   ? std::optional(Shape::NativeObjectAddress)
-              : erasedReference(stage) ? std::optional(Shape::ErasedReference)
+              : erasedReference(mir, stage) ? std::optional(Shape::ErasedReference)
               : representedTextAddress(mir, stage)
                   ? std::optional(Shape::CountedText)
               : rawReference ? rawReferenceShape
@@ -6177,7 +6298,7 @@ public:
                    UnsafeOperationKind::ErasedReferenceRestore ||
                stage.unsafeOperation ==
                    UnsafeOperationKind::DeclaredUnsafeCall) &&
-                    (erasedReference(stage) ||
+                    (erasedReference(mir, stage) ||
                      restoredLoanTransport(mir, stage))
                 ? std::optional(Shape::ErasedReference)
             : stage.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&

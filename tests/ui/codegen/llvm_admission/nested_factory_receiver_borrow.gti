@@ -1,0 +1,35 @@
+// A factory can move a nested view and return it through a receiver that stores a borrow.
+//@ run-pass
+struct Base {
+  mut int& number;
+  Base(mut int& n) : number(n) {}
+};
+struct Inner<T> {
+  mut T& source;
+  Inner(mut T& owner) : source(owner) {}
+};
+struct Outer<T> {
+  mut Inner<T> state;
+  Outer(Inner<T> original) : state(std::move(original)) {}
+  void update() mut requires requires(mut T& target) { { target.update() } -> void; } {
+    this.state.source.update();
+  }
+};
+Outer<T> make_view<T>(mut T& owner) {
+  Inner<T> nested{owner};
+  return Outer<T>(std::move(nested));
+}
+struct Target : public Base {
+  Target(mut int& n) : Base(n) {}
+  void update() mut { this.number = 42; }
+  Outer<Target> as_view() mut { return make_view(this); }
+};
+int main() {
+  mut int n = 1;
+  {
+    mut Target source{n};
+    mut auto view = source.as_view();
+    view.update();
+  }
+  return n == 42 ? 0 : 1;
+}
