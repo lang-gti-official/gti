@@ -11202,12 +11202,17 @@ private:
               }))
         sharedMovedCarriers.emplace(loan, moved);
     };
+    const bool constructsCarrier = value.constructorTarget && exactCarrierRelay;
     for (std::size_t index = 0;
-         !construction && !value.constructorTarget &&
+         ((!construction && !value.constructorTarget) || constructsCarrier) &&
          (!value.borrowFields.empty() || exactCarrierRelay ||
           completeSet(value.id).has_value()) &&
          index < arguments.size() && index < call.parameterTypes.size();
          ++index) {
+      // A nested carrier constructor transfers its selected by-value input
+      // into the result. Its old exclusive group ends on successful handoff.
+      if (constructsCarrier && index != value.borrowArgument)
+        continue;
       if (call.parameterTypes[index].kind == SemanticType::Reference)
         continue;
       const auto *argument = findValue(arguments[index]);

@@ -6607,11 +6607,16 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                }) == 1 &&
                  std::any_of(binding->second.begin(), binding->second.end(),
                              inheritedParent));
-            if (movedCarrier && exactAncestry &&
-                instruction.kind == MirInstructionKind::Call &&
-                instruction.functionTarget &&
-                instruction.borrowOrigin == BorrowOriginKind::Argument &&
-                body.loans[loan - 1].kind == MirLoanKind::CallResult) {
+            const auto resultKind = body.loans[loan - 1].kind;
+            const bool transfersBorrow =
+                (instruction.kind == MirInstructionKind::Call &&
+                 instruction.functionTarget &&
+                 resultKind == MirLoanKind::CallResult) ||
+                (instruction.kind == MirInstructionKind::Construct &&
+                 instruction.constructorTarget &&
+                 resultKind == MirLoanKind::Stored);
+            if (movedCarrier && exactAncestry && transfersBorrow &&
+                instruction.borrowOrigin == BorrowOriginKind::Argument) {
               const auto *stage = callInputDefinition(operand);
               const auto &result = body.loans[loan - 1];
               const auto uses = stage && stage->result
