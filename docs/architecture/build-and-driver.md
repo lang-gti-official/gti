@@ -3430,7 +3430,10 @@ The catalog packages 77 standard-library modules per target and profile.
 Alongside the two native libraries, 75 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
-assertions. The prelude and top-level re-export interface also load from source.
+assertions. `std.package` is also excluded from the precompiled catalog: the
+source loader materializes its constants from the importing package manifest,
+so installed toolchains never substitute the standard-library producer’s name
+or version. The prelude and top-level re-export interface also load from source.
 The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,
