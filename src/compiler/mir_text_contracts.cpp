@@ -4027,8 +4027,8 @@ bool privateLiteralTextArray(const MirBody &body, const MirPlace &root) {
                                 self(self, v);
                        }))
         return false;
-    } else if (!textType(op.type) || value->operation != MirOperation::Literal ||
-               !value->literal ||
+    } else if (!textType(op.type) ||
+               value->operation != MirOperation::Literal || !value->literal ||
                (!std::holds_alternative<std::string>(*value->literal) &&
                 !std::holds_alternative<std::nullptr_t>(*value->literal)))
       return false;
