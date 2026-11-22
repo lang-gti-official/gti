@@ -1,8 +1,8 @@
-// Package metadata has ordinary compiler-owned hover and completion facts.
-//@ hover @name: std::string_view
+// Package metadata hover exposes the compiler-owned string-view type.
+//@ hover @member: std::string_view
 // --- app/main.gti
 import std.package;
-int main() { return std::package::/*@name*/name.empty() ? 1 : 0; }
+int main() { auto value = std::package::/*^member*/name; return 0; }
 // --- app/gti.toml
 manifest-version = 1
 [package]
@@ -12,7 +12,3 @@ source-root = "."
 [targets.app]
 kind = "executable"
 root = "main.gti"
-// --- step 2 app/main.gti
-//@ completion @member: name version
-import std.package;
-int main() { return std::package::/*^member*/name.empty() ? 1 : 0; }

@@ -6825,6 +6825,7 @@
         "tests/project/package_metadata/test.transcript",
         "tests/ui/modules/package_without_manifest.gti",
         "tests/lsp/modules/package_metadata.gti",
+        "tests/lsp/modules/package_metadata_completion.gti",
         "tests/project/package_metadata_compiled/test.transcript",
         "tests/lsp/modules/package_metadata_reload.jsonl"
       ]

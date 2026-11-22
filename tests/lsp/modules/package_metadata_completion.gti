@@ -1,0 +1,14 @@
+// Package metadata completion exposes both constants in the owning project.
+//@ completion @member: name version
+// --- app/main.gti
+import std.package;
+int main() { auto value = std::package::/*^member*/name; return 0; }
+// --- app/gti.toml
+manifest-version = 1
+[package]
+name = "editor-package"
+version = "3.2.1"
+source-root = "."
+[targets.app]
+kind = "executable"
+root = "main.gti"
