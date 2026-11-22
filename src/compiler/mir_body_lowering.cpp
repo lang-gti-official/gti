@@ -12465,10 +12465,14 @@ private:
       if (auto instantiated = instantiateCallSet(value, 0))
         output.values[*call.result - 1].borrowDependencies =
             std::move(*instantiated);
+    // Moving the binding consumes its shell. If the result reborrows the
+    // input's authority, that authority still has to outlive the result;
+    // its ordinary scope endpoint will retire it after its children.
+    if (call.loan && !movedArgumentLoans.empty())
+      std::erase_if(movedArgumentLoans, [&](MirLoanId input) {
+        return mirLoanRetainsDependency(output, *call.loan, input);
+      });
     (void)appendInstruction(std::move(call), true, true, !deferredUnreachable);
-    // A by-value move transfers the shell and every dependency to the callee.
-    // A returned carrier publishes its own checked dependency set; it is not
-    // a child reborrow of the now-consumed caller shell.
     for (const auto loan : movedArgumentLoans) {
       if (const auto shared = sharedMovedCarriers.find(loan);
           shared != sharedMovedCarriers.end()) {
