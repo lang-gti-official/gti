@@ -1,14 +1,11 @@
 #pragma once
+#include "gti/compiled_interface_names.h"
 #include "gti/compiled_mir.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/lowered_program.h"
 #include <span>
 namespace lang {
 struct PersistentDeclarationOwner;
-inline constexpr std::string_view compiledModuleFunctionPrefix =
-    "__gtilib_module_v1_";
-inline constexpr std::string_view compiledModuleDataPrefix =
-    "__gtilib_data_v1_";
 // A recipe retains the exact source declaration and its verified body. Its
 // byte offset distinguishes overloads within that immutable module snapshot.
 struct CompiledModuleEntry {
