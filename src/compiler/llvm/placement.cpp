@@ -1148,11 +1148,14 @@ public:
     // and never moves out of it.
     const bool programSource = place->root == MirPlaceRootKind::Symbol &&
                                result.kind == ConstructorKind::Copy;
+    const bool returnedValue = result.kind == ConstructorKind::Move &&
+                               ownedCallResult(*place, producer);
     if (unreference(place->type) != owner.type || place->foreignStorage ||
         place->capture ||
         (place->root != MirPlaceRootKind::Binding &&
          place->root != MirPlaceRootKind::This &&
-         place->root != MirPlaceRootKind::Loan && !programSource) ||
+         place->root != MirPlaceRootKind::Loan && !programSource &&
+         !returnedValue) ||
         (!packElement(*place) &&
          std::any_of(place->projections.begin(), place->projections.end(),
                      [&](const auto &projection) {
@@ -1376,13 +1379,14 @@ public:
         }();
     if (result.kind == ConstructorKind::Move) {
       // A by-value parameter is an owned binding of this body too.
-      if (!wholeBinding(*place) || place->type != owner.type || source.loan ||
-          !place->key || !producer.ownership ||
-          producer.ownership->kind != OwnershipEventKind::Move ||
-          producer.ownership->place != *place->key ||
-          producer.ownership->before != OwnershipStateSet::Available ||
-          producer.ownership->after != OwnershipStateSet::Moved ||
-          !producer.ownership->reachable)
+      if (!returnedValue &&
+          (!wholeBinding(*place) || place->type != owner.type || source.loan ||
+           !place->key || !producer.ownership ||
+           producer.ownership->kind != OwnershipEventKind::Move ||
+           producer.ownership->place != *place->key ||
+           producer.ownership->before != OwnershipStateSet::Available ||
+           producer.ownership->after != OwnershipStateSet::Moved ||
+           !producer.ownership->reachable))
         unsupported(
             "LLVM move requires its exact whole-binding ownership event");
       if (!producer.lifecycle.empty()) {
@@ -1397,7 +1401,8 @@ public:
         const auto &from = drop(result.sourceDrop, owner, parameter(*place));
         const auto &to = drop(result.valueDrop, owner);
         const auto *temporary = body.findPlace(to.place);
-        if (from.kind != MirDropObligationKind::Binding ||
+        if (from.kind != (returnedValue ? MirDropObligationKind::Value
+                                        : MirDropObligationKind::Binding) ||
             from.place != place->id || from.binding != place->binding ||
             to.kind != MirDropObligationKind::Value || !temporary ||
             (receiverTemporary ? temporary != receiverTemporary
@@ -2254,6 +2259,34 @@ private:
     return target && target->owner && !target->staticMember &&
            target->receiverMutability == ReceiverMutability::Consuming;
   }
+  // An owning call result can be inspected and then consumed, for example
+  // by the success arm of `?factory()`. Its value place has a drop obligation
+  // rather than a binding ownership event. The call must publish that exact
+  // obligation and the move must take it from the complete result.
+  bool ownedCallResult(const MirPlace &place,
+                       const MirInstruction &move) const {
+    if (place.root != MirPlaceRootKind::Value || place.initiallyAvailable ||
+        !place.projections.empty() || place.key || move.ownership ||
+        move.lifecycle.size() != 1 || move.operands.front().loan)
+      return false;
+    const auto &event = move.lifecycle.front();
+    if (event.kind != MirLifecycleEventKind::Move || !event.source)
+      return false;
+    const auto *value = body.findValue(place.value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!block || value->info.type != place.type)
+      return false;
+    return std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [&](const MirInstruction &call) {
+                         return !call.tombstone &&
+                                call.id == value->definition &&
+                                call.kind == MirInstructionKind::Call &&
+                                call.result == place.value &&
+                                call.successResultDrop == event.source;
+                       });
+  }
+
   bool parameter(const MirPlace &place) const {
     const std::vector<HirBindingId> *formal = nullptr;
     if (identity.kind == MirBodyKind::Function)

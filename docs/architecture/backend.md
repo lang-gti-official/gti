@@ -5308,6 +5308,9 @@ a checked selected source, or whole-binding Move, and exactly one Initialize
 into a fresh whole local. The producer, publication, ownership event and source,
 value and destination drop identities must agree. Explicit staged Move Construct,
 source-defined special members, borrowed fields and active-copy lifetimes reject.
+An owning call result can also move from its whole value place when the call
+published that exact drop obligation and the generated move transfers it to the
+next owner. Propagating a checked factory result with `?` uses this path.
 Scalar and ordinary record fields compose recursively; a function-pointer
 handle field, one code address, copies as bytes. Each field retains its
 own generated-member contract; an outer generated move does not bypass a
