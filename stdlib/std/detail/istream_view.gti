@@ -112,7 +112,7 @@ public:
         mut S& input = std::restore_mut<S>(object);
         if (available) { return input.readsome(output); }
         input.read(output, n);
-        return input.gcount();
+        return size_t(0); // Only readsome consumes the callback result.
       }
     });
     auto text = gti_internal::function_pointer_from_item<text_signature>(

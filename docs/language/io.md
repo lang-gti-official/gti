@@ -282,7 +282,9 @@ failure. Destruction releases the file handle.
 
 Use `as_istream()` for a reader and `as_ostream()` for a writer. Each view
 borrows its stream. Formatting, file position and errors are visible to the
-caller after the borrow ends.
+caller after the borrow ends. A view made from an intermediate stream or
+view also needs that intermediate object to stay alive. To return a writer
+for a caller-owned file, return `file.as_ostream()` directly.
 
 ```gti
 import std.fstream;

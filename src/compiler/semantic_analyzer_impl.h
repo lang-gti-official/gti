@@ -3405,6 +3405,8 @@ private:
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const Expr *expression);
+  [[nodiscard]] const ExprPtr *
+  storedArgumentShell(const Expr *expression) const;
   [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
   [[nodiscard]] bool receiverStorageBorrow(const Expr *expression) const;
 
