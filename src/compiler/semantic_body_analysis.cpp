@@ -17380,17 +17380,31 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
 
   const AccessMode access =
       declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
+  // A nongeneric member of a generic class can also acquire the type of
+  // an inferred local only when the concrete owner is instantiated.
   const bool instanceDependentType =
-      local && !instanceAnalysisActive &&
-      currentFunctionDeclaration != nullptr &&
-      !genericParametersFor(*currentFunctionDeclaration).empty() &&
-      declaration.initializer() && inferredType == SemanticType::Unknown &&
-      diagnostics.size() == declarationDiagnosticStart;
+      local && !instanceAnalysisActive && declaration.initializer() &&
+      inferredType == SemanticType::Unknown &&
+      diagnostics.size() == declarationDiagnosticStart &&
+      ((currentFunctionDeclaration &&
+        !genericParametersFor(*currentFunctionDeclaration).empty()) ||
+       (currentClass && !classInfo(*currentClass).genericParameters.empty()));
   const SymbolId symbol = recordBindingOccurrence(
       declaration.name(), inferredType, declaration.isMutable(),
       local ? SemanticBindingKind::LocalVariable
             : SemanticBindingKind::GlobalVariable,
       false, false, instanceDependentType);
+  // A trusted preamble holds this body's diagnostics until the body is
+  // requested. A local recovered after a real error belongs to that same
+  // exact declaration; it is still available for editor queries.
+  if (buildingPreamble && local && !instanceAnalysisActive &&
+      currentFunctionDeclaration && inferredType == SemanticType::Unknown &&
+      !instanceDependentType &&
+      hasErrorDiagnostics(
+          std::span(diagnostics).subspan(declarationDiagnosticStart)) &&
+      reachableDeferrable(*currentFunctionDeclaration))
+    semanticModel.recordPreambleRecoveryLocal(symbol,
+                                              *currentFunctionDeclaration);
   attachDeclarationDocumentation(symbol, declaration);
   const std::optional<ConstantValue> constant =
       constexprBindingValue(declaration, inferredType,
