@@ -1,0 +1,96 @@
+export module testing.resources;
+
+import std.filesystem;
+import std.string;
+import std.cstdio;
+import std.process;
+
+export namespace std::testing {
+
+/// A private temporary directory removed by ordinary deterministic cleanup.
+/// Cleanup does not follow symlink entries. It is best effort in a destructor;
+/// call remove() explicitly when the test must assert successful removal.
+class temporary_directory {
+  std::filesystem::path root;
+  mut bool active = true;
+  temporary_directory(std::filesystem::path value) : root(std::move(value)) {}
+public:
+  temporary_directory(temporary_directory&) = delete;
+  temporary_directory(temporary_directory&&) = default;
+  ~temporary_directory() {
+    if (this.active) { auto ignored = std::filesystem::remove_all(this.root); }
+  }
+  static expected<temporary_directory, std::filesystem::errc> create(std::filesystem::path& parent) {
+    auto value = ?std::filesystem::create_temp_directory(parent);
+    return temporary_directory(std::move(value));
+  }
+  static expected<temporary_directory, std::filesystem::errc> create() {
+    auto parent = ?std::filesystem::temp_directory_path();
+    return temporary_directory::create(parent);
+  }
+  std::filesystem::path& path() { return this.root; }
+  expected<void, std::filesystem::errc> remove() mut {
+    if (this.active) {
+      auto count = ?std::filesystem::remove_all(this.root);
+      this.active = false;
+    }
+    return;
+  }
+};
+
+enum file_error {
+  io(std::io_errc code),
+  limit_exceeded,
+};
+
+/// Read exact file bytes up to a limit, including embedded NULs. The file owner
+/// closes on all paths; input beyond the limit is a failure, never truncation.
+expected<std::string, file_error> read_file(std::filesystem::path& path, uint64_t limit = uint64_t(1024 * 1024)) {
+  auto opened = std::fopen(path.view(), std::file_mode::read);
+  if (!opened) { return unexpected(file_error::io(opened.error())); }
+  mut auto file = std::move(opened).value();
+  mut std::string text{};
+  while (true) {
+    auto chunk = std::fread(*file, std::size_t(4096));
+    if (!chunk) { return unexpected(file_error::io(chunk.error())); }
+    if (chunk.value().empty()) { break; }
+    if (uint64_t(chunk.value().size()) > limit - uint64_t(text.size())) {
+      return unexpected(file_error::limit_exceeded);
+    }
+    text.append(chunk.value().view());
+  }
+  auto closed = file->close();
+  if (!closed) { return unexpected(file_error::io(closed.error())); }
+  return std::move(text);
+}
+
+/// Write exact bytes, replacing an existing file; parents must already exist.
+/// This convenience follows normal filesystem links and is not a sandbox.
+expected<void, file_error> write_file(std::filesystem::path& path, std::string_view contents) {
+  auto opened = std::fopen(path.view(), std::file_mode::write);
+  if (!opened) { return unexpected(file_error::io(opened.error())); }
+  mut auto file = std::move(opened).value();
+  auto written = std::fwrite(contents, *file);
+  if (!written) { return unexpected(file_error::io(written.error())); }
+  auto closed = file->close();
+  if (!closed) { return unexpected(file_error::io(closed.error())); }
+  return;
+}
+
+/// Bounded subprocess setup without shell interpolation or parent cwd changes.
+/// Environment is inherited and stdin is /dev/null. Capture limits are shared
+/// by stdout/stderr; a limit result never reports success.
+class subprocess {
+  mut std::process::command command;
+  mut std::process::output_options options{};
+public:
+  subprocess(std::string_view executable) : command(std::process::command(executable)) {}
+  subprocess(subprocess&) = delete;
+  subprocess(subprocess&&) = default;
+  void arg(std::string_view value) mut { this.command.arg(value); }
+  void working_directory(std::filesystem::path& value) mut { this.options.working_directory = value.string(); }
+  void timeout_ms(uint64_t value) mut { this.options.timeout_ms = value; }
+  void output_limit(uint64_t value) mut { this.options.output_limit = value; }
+  expected<std::process::output, std::process::errc> run() { return this.command.output(this.options); }
+};
+}

@@ -304,6 +304,10 @@ root = "stdlib/std/tcp.gti"
 kind = "gti-library"
 root = "stdlib/std/testing.gti"
 
+[targets.testing_resources]
+kind = "gti-library"
+root = "stdlib/std/testing/resources.gti"
+
 [targets.thread]
 kind = "gti-library"
 root = "stdlib/std/thread.gti"

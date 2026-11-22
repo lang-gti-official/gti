@@ -26,6 +26,24 @@ void check(bool value, const char *message) {
     ++failures;
   }
 }
+#if !defined(_WIN32)
+// EOF proves the descendant closed its last writer, including when the caller
+// was descheduled. A missing marker after a sleep cannot prove termination.
+int readLifetimeByte(int descriptor, char &byte) {
+  pollfd channel{descriptor, POLLIN, 0};
+  int ready;
+  do {
+    ready = poll(&channel, 1, 2000);
+  } while (ready < 0 && errno == EINTR);
+  if (ready <= 0)
+    return -1;
+  ssize_t count;
+  do {
+    count = read(descriptor, &byte, 1);
+  } while (count < 0 && errno == EINTR);
+  return static_cast<int>(count);
+}
+#endif
 } // namespace
 GTI_UNIT_TEST(test_runner) {
 #if defined(_WIN32)
@@ -80,14 +98,14 @@ GTI_UNIT_TEST(test_runner) {
       if (descendant < 0)
         return 1;
       if (descendant == 0) {
+        if (write(peer, "R", 1) != 1)
+          _exit(1);
         // Hold the endpoint until killed or the test releases us on failure.
         char release;
         while (read(peer, &release, 1) < 0 && errno == EINTR) {
         }
         _exit(0);
       }
-      if (write(peer, "R", 1) != 1)
-        return 1;
       if (mode == "background_timeout")
         for (;;)
           pause();
@@ -257,23 +275,27 @@ GTI_UNIT_TEST(test_runner) {
       continue;
     }
     const bool timeout = std::string(mode) == "background_timeout";
-    const auto child = invokeProcess(
+    auto child = startProcess(
         {executable.string(), mode},
         {.captureSuccessfulOutput = true,
          .environment = {{"GTI_RUNNER_PEER", std::to_string(endpoints[1])}},
          .timeout = timeout ? 2s : 10s,
          .isolateProcessGroup = true});
     close(endpoints[1]);
-    check(timeout ? child.timedOut : child.succeeded(),
+    char ready = 0;
+    check(readLifetimeByte(endpoints[0], ready) == 1 && ready == 'R',
+          "background descendant must start before owner wait");
+    // Exercise delayed observation of ordinary completion without depending on
+    // a marker being written before the caller is scheduled again.
+    if (!timeout)
+      std::this_thread::sleep_for(600ms);
+    const auto completion = child.wait();
+    check(timeout ? completion.timedOut : completion.succeeded(),
           "background helper must complete or time out as requested");
-    char ready;
-    pollfd endpoint{endpoints[0], POLLIN, 0};
-    check(poll(&endpoint, 1, 1000) > 0 && read(endpoint.fd, &ready, 1) == 1 &&
-              ready == 'R',
-          "background helper must have forked its descendant");
-    check(poll(&endpoint, 1, 1000) > 0 && read(endpoint.fd, &ready, 1) == 0,
+    check(readLifetimeByte(endpoints[0], ready) == 0,
           "completion and timeout must both close all descendant endpoints");
-    close(endpoint.fd);
+    // Closing the controller also releases a surviving descendant on failure.
+    close(endpoints[0]);
   }
   std::filesystem::remove_all(directory);
   return failures == 0 ? 0 : 1;

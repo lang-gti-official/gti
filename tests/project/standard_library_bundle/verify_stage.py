@@ -124,6 +124,11 @@ int main() {
         for profile in ([], ["--release"]):
             run("run", *profile)
 
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         for profile in ([], ["--release"]):
             run("check", *profile)
@@ -263,6 +268,11 @@ int main() {
         # receipt must still fail before any cache hit can publish that output.
         # The random-only consumer is independent of a corrupt math module.
         random_source = source.read_text()
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         run("run", "--release")
         bundle, = bundles.glob("*/release/cmath.gtilib")

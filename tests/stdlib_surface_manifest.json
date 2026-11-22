@@ -4723,6 +4723,7 @@
         "std::filesystem::create_directory_symlink",
         "std::filesystem::create_hard_link",
         "std::filesystem::create_symlink",
+        "std::filesystem::create_temp_directory",
         "std::filesystem::current_path",
         "std::filesystem::directory_entries",
         "std::filesystem::directory_iterator::entry_path",
@@ -4757,7 +4758,11 @@
       "evidence": [
         "tests/ui/stdlib/filesystem/operations.gti",
         "tests/unit/runtime_filesystem_tests.cpp",
-        "docs/language/filesystem.md"
+        "docs/language/filesystem.md",
+        "tests/unit/runtime_capture.cpp"
+      ],
+      "test_paths": [
+        "tests/slow/testing/temporary_files.gti"
       ]
     },
     {
@@ -4771,7 +4776,7 @@
         "filesystem-operations"
       ],
       "required_instantiations": [
-        "Shared immutable native result owner; directory and path operations preserve cleanup."
+        "Shared immutable native result owner; directory, temporary-directory and path operations preserve cleanup."
       ],
       "evidence": [
         "tests/ui/chrono/discovery.gti",
@@ -7136,6 +7141,7 @@
         "std::process::command::arg",
         "std::process::command::argument_count",
         "std::process::command::command",
+        "std::process::command::output",
         "std::process::command::run",
         "std::process::command::valid",
         "std::process::errc",
@@ -7144,7 +7150,14 @@
         "std::process::exit_status::exited",
         "std::process::exit_status::signaled",
         "std::process::exit_status::success",
-        "std::process::exit_status::terminating_signal"
+        "std::process::exit_status::terminating_signal",
+        "std::process::output::output_limited",
+        "std::process::output::status",
+        "std::process::output::stderr_text",
+        "std::process::output::stdout_text",
+        "std::process::output::success",
+        "std::process::output::timed_out",
+        "std::process::output_options"
       ],
       "case_ids": [
         "process"
@@ -7160,7 +7173,12 @@
         "stdlib/std/process.gti",
         "tests/fixtures/stdlib_surface_process.gti",
         "tests/process_runtime_test.py",
-        "tests/unit/runtime_process_tests.cpp"
+        "tests/unit/runtime_process_tests.cpp",
+        "tests/unit/runtime_capture.cpp"
+      ],
+      "test_paths": [
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti"
       ]
     },
     {
@@ -8354,6 +8372,45 @@
         "tests/slow/stdlib/testing/assertions.gti",
         "tests/fixtures/protocol_testing_assertions.gti",
         "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
+      ]
+    },
+    {
+      "id": "testing.resources",
+      "source": "stdlib/std/testing/resources.gti",
+      "status": "executable",
+      "operations": [
+        "std::testing::file_error",
+        "std::testing::read_file",
+        "std::testing::subprocess::arg",
+        "std::testing::subprocess::output_limit",
+        "std::testing::subprocess::run",
+        "std::testing::subprocess::subprocess",
+        "std::testing::subprocess::timeout_ms",
+        "std::testing::subprocess::working_directory",
+        "std::testing::temporary_directory::create",
+        "std::testing::temporary_directory::path",
+        "std::testing::temporary_directory::remove",
+        "std::testing::temporary_directory::~temporary_directory",
+        "std::testing::write_file"
+      ],
+      "case_ids": [],
+      "test_paths": [
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti",
+        "tests/slow/testing/temporary_files.gti"
+      ],
+      "required_instantiations": [
+        "move-only temporary directory ownership and deterministic cleanup",
+        "exact binary file contents and bounded reads",
+        "exact argv, separate output streams, child working directory, timeout and output limits"
+      ],
+      "evidence": [
+        "docs/language/standard-library.md",
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti",
+        "tests/slow/testing/temporary_files.gti",
+        "tests/project/testing_resource_cleanup/test.transcript",
+        "tests/unit/runtime_capture.cpp"
       ]
     },
     {

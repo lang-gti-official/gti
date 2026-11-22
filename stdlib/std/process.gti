@@ -4,10 +4,9 @@ export module process;
 //
 // This first public process slice deliberately does not invoke a shell. A
 // command owns one executable plus its exact argument vector, inherits the
-// caller's environment, working directory, and standard streams, and waits for
-// the child to terminate. Redirection, captured output, environment overrides,
-// working-directory selection, and asynchronous child ownership remain later
-// extensions of this contract.
+// caller's environment and waits for the child. run() inherits stdio/cwd;
+// output() captures both streams with bounded time/bytes and optional cwd.
+// Environment overrides and asynchronous child ownership remain later work.
 
 #if target.os == "windows"
 #error "std/process is not yet available on Windows."
@@ -22,11 +21,44 @@ namespace process_runtime {
 extern "C" {
 uint32_t gti_rt_process_exec_v1(
     gti_internal::text_view arguments, int32_t* native_code);
+uint32_t gti_rt_process_output_v1(gti_internal::text_view arguments,
+    gti_internal::text_view working_directory, uint64_t timeout_ms,
+    uint64_t output_limit, int64_t* result, int32_t* native_code);
+int64_t gti_rt_process_output_info_v1(int64_t result, uint32_t selector);
+uint64_t gti_rt_process_output_read_v1(int64_t result, uint32_t stream,
+    uint64_t offset, uint8_t* output, uint64_t capacity);
+void gti_rt_process_output_destroy_v1(int64_t result);
 uint32_t gti_rt_process_run_v1(
     gti_internal::text_view arguments, int32_t* termination_kind,
     int32_t* termination_value, int32_t* native_code);
 }
 }
+}
+
+namespace gti_internal {
+export [[no_transfer, no_share]] class process_output_owner {
+  int64_t handle;
+public:
+  process_output_owner(int64_t value) : handle(value) {}
+  process_output_owner(process_output_owner&) = delete;
+  process_output_owner(process_output_owner&&) = default;
+  ~process_output_owner() { process_runtime::gti_rt_process_output_destroy_v1(this.handle); }
+  int64_t info(uint32_t selector) { return process_runtime::gti_rt_process_output_info_v1(this.handle, selector); }
+  std::string text(uint32_t stream) {
+    mut std::string value{};
+    uint64_t length = uint64_t(this.info(stream + uint32_t(2)));
+    value.reserve(std::size_t(length));
+    mut uint64_t offset = 0;
+    mut uint8_t buffer[4096] = {};
+    while (offset < length) {
+      mut uint64_t count = 0;
+      unsafe { count = process_runtime::gti_rt_process_output_read_v1(this.handle, stream, offset, &buffer[0], uint64_t(4096)); }
+      for (mut uint64_t i = 0; i < count; i++) { value.push_back(char(buffer[std::size_t(i)])); }
+      offset += count;
+    }
+    return std::move(value);
+  }
+};
 }
 
 export namespace std {
@@ -87,6 +119,34 @@ public:
   bool success() {
     return this.exited_value && this.value == int32_t(0);
   }
+};
+
+/// Bounded capture options. Limits apply to the whole child process group.
+struct output_options {
+  output_options() = default;
+  mut uint64_t timeout_ms = 5000;
+  mut uint64_t output_limit = uint64_t(1024 * 1024);
+  mut std::string working_directory{};
+};
+
+/// Captured bytes and the actual termination status, with limit outcomes kept
+/// separate from normal exit codes or signals. Strings preserve embedded NUL.
+class output {
+  exit_status child_status;
+  int32_t stop_reason;
+  std::string out;
+  std::string err;
+public:
+  output(exit_status status, int32_t reason, std::string standard_output, std::string standard_error)
+      : child_status(status), stop_reason(reason), out(std::move(standard_output)), err(std::move(standard_error)) {}
+  output(output&) = delete;
+  output(output&&) = default;
+  exit_status status() { return this.child_status; }
+  bool timed_out() { return this.stop_reason == int32_t(1); }
+  bool output_limited() { return this.stop_reason == int32_t(2); }
+  bool success() { return this.stop_reason == int32_t(0) && this.child_status.success(); }
+  std::string_view stdout_text() { return this.out.view(); }
+  std::string_view stderr_text() { return this.err.view(); }
 };
 
 /// One exact argv command. No shell parsing, expansion, or interpolation is
@@ -157,6 +217,36 @@ public:
     default:
       return exec_error(errc::execute_failed, native_code);
     }
+  }
+
+  /// Executes with /dev/null stdin, captured stdout/stderr, inherited environment
+  /// and optional child-only working directory. Never interpolates a shell.
+  expected<std::process::output, errc> output(output_options& options) {
+    if (!this.valid()) { return unexpected(errc::invalid_argument); }
+    mut int64_t handle = 0;
+    mut int32_t native_code = 0;
+    mut uint32_t result = 0;
+    unsafe {
+      result = gti_internal::process_runtime::gti_rt_process_output_v1(
+          this.encoded.view(), options.working_directory.view(), options.timeout_ms,
+          options.output_limit, &handle, &native_code);
+    }
+    if (result != uint32_t(0)) {
+      switch (result) {
+      case uint32_t(1): return unexpected(errc::invalid_argument);
+      case uint32_t(2): return unexpected(errc::unsupported);
+      case uint32_t(4): return unexpected(errc::execute_failed);
+      case uint32_t(5): return unexpected(errc::wait_failed);
+      default: return unexpected(errc::spawn_failed);
+      }
+    }
+    auto owned = gti_internal::process_output_owner(handle);
+    auto status = exit_status(owned.info(uint32_t(0)) == int64_t(0), int32_t(owned.info(uint32_t(1))));
+    return std::process::output(status, int32_t(owned.info(uint32_t(4))), owned.text(uint32_t(0)), owned.text(uint32_t(1)));
+  }
+  expected<std::process::output, errc> output() {
+    auto options = output_options();
+    return this.output(options);
   }
 
   /// Executes and waits for the child while inheriting the caller's current

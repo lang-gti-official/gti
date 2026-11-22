@@ -1,0 +1,7 @@
+// Owned temporary test resources clean up on panic without deleting symlink targets.
+$ cd project
+$ gti build --offline
+$ gti run --no-build
+? 70
+stderr: expected cleanup probe
+$ python3 -c "from pathlib import Path; assert list(Path('scratch').iterdir()) == []; assert Path('outside/sentinel').read_bytes() == b'keep'"

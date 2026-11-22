@@ -1,0 +1,4 @@
+// A case's argument types are checked even outside test execution mode.
+[[test("wrong", "text")]] //~ ERROR GTI-S2003
+void values(int value) {}
+int main() { return 0; }
