@@ -1,6 +1,7 @@
 export module fstream;
 
 export import std.cstdio;
+export import std.iostream;
 import std.filesystem;
 import std.memory;
 import std.io;
@@ -78,6 +79,27 @@ class filebuf {
     return;
   }
 
+  expected<void, io_errc> prepare_read() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if ((this.mode & ios::in) == 0) { return unexpected(io_errc::read_failed); }
+    if (this.writing) {
+      ?this.drain_writes();
+      this.writing = false;
+    }
+    return;
+  }
+
+  expected<void, io_errc> prepare_write() mut {
+    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
+    if ((this.mode & (ios::out | ios::app)) == 0) { return unexpected(io_errc::write_failed); }
+    if (!this.writing) {
+      ?this.rewind_unread();
+      this.writing = true;
+    }
+    if (this.last == this.storage.size()) { ?this.drain_writes(); }
+    return;
+  }
+
 public:
   filebuf() {}
   filebuf(filebuf& source) = delete;
@@ -124,12 +146,7 @@ public:
   }
 
   expected<size_t, io_errc> fill_buffer() mut {
-    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
-    if ((this.mode & ios::in) == 0) { return unexpected(io_errc::read_failed); }
-    if (this.writing) {
-      ?this.drain_writes();
-      this.writing = false;
-    }
+    ?this.prepare_read();
     if (this.first < this.last) { return this.last - this.first; }
     mut auto bytes = this.storage.as_mutable_span();
     size_t n = ?this.file->read_some(bytes);
@@ -153,6 +170,17 @@ public:
 
   expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
     if (output.empty()) { return size_t(0); }
+    if (this.available() == 0 && output.size() >= this.storage.size()) {
+      ?this.prepare_read();
+      size_t n = ?this.file->read_some(output);
+      if (n != 0) {
+        // Retain the last byte for unget, including on a non-seekable file.
+        this.storage[0] = output[n - 1];
+        this.first = 1;
+        this.last = 1;
+      }
+      return n;
+    }
     mut size_t count = ?this.fill_buffer();
     if (count > output.size()) { count = output.size(); }
     for (mut size_t i = 0; i < count; i++) { output[i] = this.storage[this.first + i]; }
@@ -192,13 +220,11 @@ public:
 
   expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
     if (input.empty()) { return size_t(0); }
-    if (!this.is_open()) { return unexpected(io_errc::invalid_stream); }
-    if ((this.mode & (ios::out | ios::app)) == 0) { return unexpected(io_errc::write_failed); }
-    if (!this.writing) {
-      ?this.rewind_unread();
-      this.writing = true;
+    ?this.prepare_write();
+    if (input.size() >= this.storage.size()) {
+      ?this.drain_writes();
+      return this.file->write_some(input);
     }
-    if (this.last == this.storage.size()) { ?this.drain_writes(); }
     mut size_t count = this.storage.size() - this.last;
     if (count > input.size()) { count = input.size(); }
     for (mut size_t i = 0; i < count; i++) { this.storage[this.last + i] = input[i]; }
@@ -243,6 +269,51 @@ public:
     return;
   }
 
+  // Familiar stream-buffer access uses counted, bounds-checked GTI byte spans.
+  size_t in_avail() { return this.available(); }
+  expected<int32_t, io_errc> sgetc() mut { return this.peek_byte(); }
+  expected<int32_t, io_errc> sbumpc() mut { return this.take_byte(); }
+  expected<int32_t, io_errc> snextc() mut {
+    ?this.take_byte();
+    return this.peek_byte();
+  }
+  expected<int32_t, io_errc> sputbackc(char value) mut {
+    ?this.putback_byte(value);
+    return this.peek_byte();
+  }
+  expected<int32_t, io_errc> sungetc() mut {
+    ?this.unget_byte();
+    return this.peek_byte();
+  }
+  expected<int32_t, io_errc> sputc(char value) mut {
+    ?this.prepare_write();
+    this.storage[this.last] = uint8_t(value);
+    this.last++;
+    return int32_t(uint8_t(value));
+  }
+  expected<size_t, io::error> sgetn(mut mutable_span<uint8_t>& destination) mut {
+    mut size_t done = 0;
+    while (done < destination.size()) {
+      mut auto remaining = destination.subspan(done, destination.size() - done);
+      auto read = this.read_some(remaining);
+      if (!read) { return unexpected(io::error(read.error(), done)); }
+      if (read.value() == 0) { break; }
+      done += read.value();
+    }
+    return done;
+  }
+  expected<size_t, io::error> sputn(span<uint8_t>& source) mut {
+    return io::write_all(this, source);
+  }
+  expected<void, io_errc> pubsync() mut { return this.sync(); }
+  expected<int64_t, io_errc> pubseekoff(int64_t offset, seek_origin origin) mut {
+    ?this.seek(offset, origin);
+    return this.tell();
+  }
+  expected<int64_t, io_errc> pubseekpos(int64_t position) mut {
+    return this.pubseekoff(position, seek_origin::begin);
+  }
+
   // All owners and window offsets move together; no view of our own storage is retained.
   void swap(mut filebuf& other) mut {
     this.file.swap(other.file);
@@ -252,5 +323,144 @@ public:
     std::swap(this.mode, other.mode);
     std::swap(this.writing, other.writing);
   }
+};
+
+}
+
+namespace std::detail {
+/// Both file-stream construction forms use try_open and preserve its exact failure.
+expected<S, io_errc> create_file_stream<S>(string_view path, ios::openmode mode)
+    requires std::default_initializable<S> && requires(mut S& s, string_view p, ios::openmode m) {
+      { s.try_open(p, m) } -> expected<void, io_errc>;
+    } {
+  mut S stream = S();
+  auto opened = stream.try_open(path, mode);
+  if (!opened) { return unexpected(opened.error()); }
+  return std::move(stream);
+}
+}
+
+export namespace std {
+class ifstream : public basic_istream<filebuf> {
+public:
+  ifstream() : basic_istream<filebuf>(filebuf()) {}
+  ifstream(string_view path, ios::openmode mode = ios::in)
+      : basic_istream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path, mode);
+  }
+  ifstream(filesystem::path& path, ios::openmode mode = ios::in)
+      : basic_istream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path.view(), mode);
+  }
+
+  static expected<ifstream, io_errc> open(string_view path, ios::openmode mode = ios::in) {
+    return detail::create_file_stream<ifstream>(path, mode);
+  }
+  static expected<ifstream, io_errc> open(filesystem::path& path, ios::openmode mode = ios::in) {
+    return ifstream::open(path.view(), mode);
+  }
+
+  expected<void, io_errc> try_open(string_view path, ios::openmode mode = ios::in) mut {
+    auto opened = this.buffer.open(path, mode | ios::in);
+    if (!opened) {
+      this.set_error(opened.error());
+      return unexpected(opened.error());
+    }
+    this.clear();
+    return;
+  }
+  expected<void, io_errc> try_open(filesystem::path& path, ios::openmode mode = ios::in) mut {
+    return this.try_open(path.view(), mode);
+  }
+
+  bool is_open() { return this.buffer.is_open(); }
+  [[discardable]] expected<void, io_errc> close() mut {
+    auto closed = this.buffer.close();
+    if (!closed) { this.set_error(closed.error()); }
+    return closed;
+  }
+  void swap(mut ifstream& other) mut { std::swap(this, other); }
+};
+
+class ofstream : public basic_ostream<filebuf> {
+public:
+  ofstream() : basic_ostream<filebuf>(filebuf()) {}
+  ofstream(string_view path, ios::openmode mode = ios::out)
+      : basic_ostream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path, mode);
+  }
+  ofstream(filesystem::path& path, ios::openmode mode = ios::out)
+      : basic_ostream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path.view(), mode);
+  }
+
+  static expected<ofstream, io_errc> open(string_view path, ios::openmode mode = ios::out) {
+    return detail::create_file_stream<ofstream>(path, mode);
+  }
+  static expected<ofstream, io_errc> open(filesystem::path& path, ios::openmode mode = ios::out) {
+    return ofstream::open(path.view(), mode);
+  }
+
+  expected<void, io_errc> try_open(string_view path, ios::openmode mode = ios::out) mut {
+    auto opened = this.buffer.open(path, mode | ios::out);
+    if (!opened) {
+      this.set_error(opened.error());
+      return unexpected(opened.error());
+    }
+    this.clear();
+    return;
+  }
+  expected<void, io_errc> try_open(filesystem::path& path, ios::openmode mode = ios::out) mut {
+    return this.try_open(path.view(), mode);
+  }
+
+  bool is_open() { return this.buffer.is_open(); }
+  [[discardable]] expected<void, io_errc> close() mut {
+    auto closed = this.buffer.close();
+    if (!closed) { this.set_error(closed.error()); }
+    return closed;
+  }
+  void swap(mut ofstream& other) mut { std::swap(this, other); }
+};
+
+class fstream : public basic_iostream<filebuf> {
+public:
+  fstream() : basic_iostream<filebuf>(filebuf()) {}
+  fstream(string_view path, ios::openmode mode = ios::in | ios::out)
+      : basic_iostream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path, mode);
+  }
+  fstream(filesystem::path& path, ios::openmode mode = ios::in | ios::out)
+      : basic_iostream<filebuf>(filebuf()) {
+    [[discard]] this.try_open(path.view(), mode);
+  }
+
+  static expected<fstream, io_errc> open(string_view path, ios::openmode mode = ios::in | ios::out) {
+    return detail::create_file_stream<fstream>(path, mode);
+  }
+  static expected<fstream, io_errc> open(filesystem::path& path, ios::openmode mode = ios::in | ios::out) {
+    return fstream::open(path.view(), mode);
+  }
+
+  expected<void, io_errc> try_open(string_view path, ios::openmode mode = ios::in | ios::out) mut {
+    auto opened = this.buffer.open(path, mode);
+    if (!opened) {
+      this.set_error(opened.error());
+      return unexpected(opened.error());
+    }
+    this.clear();
+    return;
+  }
+  expected<void, io_errc> try_open(filesystem::path& path, ios::openmode mode = ios::in | ios::out) mut {
+    return this.try_open(path.view(), mode);
+  }
+
+  bool is_open() { return this.buffer.is_open(); }
+  [[discardable]] expected<void, io_errc> close() mut {
+    auto closed = this.buffer.close();
+    if (!closed) { this.set_error(closed.error()); }
+    return closed;
+  }
+  void swap(mut fstream& other) mut { std::swap(this, other); }
 };
 }

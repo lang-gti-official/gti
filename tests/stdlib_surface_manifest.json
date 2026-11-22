@@ -1250,6 +1250,48 @@
       }
     },
     {
+      "id": "file-stream-bulk",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_bulk.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-format",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_format.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-open",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_open.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "filesystem",
       "mode": "run",
       "source": "tests/fixtures/filesystem_path.gti",
@@ -1910,6 +1952,34 @@
       "id": "memory-layout",
       "mode": "run",
       "source": "examples/119-runtime-object-layout.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-duplex",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_duplex_cursor.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-extraction",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_input_extraction.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4931,6 +5001,20 @@
       ]
     },
     {
+      "id": "format.stream-insertion",
+      "source": "stdlib/std/detail/stream_format.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_render"
+      ],
+      "case_ids": [
+        "file-stream-format"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti"
+      ]
+    },
+    {
       "id": "forward-list.empty",
       "source": "stdlib/std/forward_list.gti",
       "status": "executable",
@@ -5079,12 +5163,25 @@
       "operations": [
         "std::filebuf::available",
         "std::filebuf::close",
-        "std::filebuf::is_open"
+        "std::filebuf::is_open",
+        "std::fstream::close",
+        "std::fstream::open",
+        "std::ifstream::close",
+        "std::ifstream::is_open",
+        "std::ifstream::open",
+        "std::ifstream::try_open",
+        "std::ofstream::close",
+        "std::ofstream::is_open",
+        "std::ofstream::open"
       ],
       "case_ids": [
-        "closed-filebuf"
+        "closed-filebuf",
+        "file-stream-format",
+        "file-stream-open"
       ],
       "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
         "tests/ui/stdlib/io/closed_filebuf.gti"
       ]
     },
@@ -5488,6 +5585,49 @@
       ],
       "evidence": [
         "tests/ui/stdlib/io/ios_state.gti"
+      ]
+    },
+    {
+      "id": "iostream.bidirectional",
+      "source": "stdlib/std/iostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_iostream::operator<<",
+        "std::basic_iostream::put",
+        "std::basic_iostream::tellp"
+      ],
+      "case_ids": [
+        "file-stream-open",
+        "memory-stream-duplex"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_duplex_cursor.gti"
+      ]
+    },
+    {
+      "id": "istream.unformatted",
+      "source": "stdlib/std/istream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_istream::gcount",
+        "std::basic_istream::get",
+        "std::basic_istream::operator>>",
+        "std::basic_istream::peek",
+        "std::basic_istream::read",
+        "std::basic_istream::unget"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open",
+        "memory-stream-extraction"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_input_extraction.gti"
       ]
     },
     {
@@ -6889,6 +7029,26 @@
         "tests/ui/stdlib/optional/compiler",
         "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
+      ]
+    },
+    {
+      "id": "ostream.insertion",
+      "source": "stdlib/std/ostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_ostream::operator<<",
+        "std::basic_ostream::put",
+        "std::basic_ostream::write"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti"
       ]
     },
     {

@@ -237,6 +237,66 @@ complete `expected` until every loop exit has cleaned up. Moving, replacing,
 or dropping `chunk` during the loop is rejected, and so is any other mutation
 of it; see [`ranges.md`](ranges.md#ranges-over-expected-payloads).
 
+## Opening a file stream
+
+Import `std.fstream`. Use `std::ifstream` for reading, `std::ofstream` for
+writing and `std::fstream` for reading and writing. Each accepts a
+`std::string_view` or a `std::filesystem::path`.
+
+| Operation | Result | How to check an open failure |
+| --- | --- | --- |
+| `mut std::ifstream file{path};` | A stream with its open state recorded | Test `!file` and read `file.error()` |
+| `std::ifstream::open(path)` | `expected<std::ifstream, std::io_errc>` | Use `?` to propagate the error |
+| `file.try_open(path)` | `expected<void, std::io_errc>` | Use `?` to propagate the error from this attempt |
+
+For example, a caller can reuse the same stream for two files.
+
+```gti
+import std.fstream;
+import std.cstdio;
+
+expected<void, std::io_errc> process_files(std::string_view first, std::string_view second) {
+  mut auto file = ?std::ifstream::open(first);
+  // Read the first file.
+  ?file.close();
+  ?file.try_open(second);
+  // Read the second file.
+  ?file.close();
+  return;
+}
+```
+
+An unsuccessful open records the error on the stream. Calling `try_open` on
+an already open stream reports failure and preserves its file. Call `clear()`
+to continue using that file or `close()` before opening a different one. A
+successful open clears the previous error. Use `is_open()` to test ownership
+of the file handle and `fail()` or `!file` to test the current stream state.
+Call `close()` explicitly when the caller needs to observe a flush or close
+failure. Destruction releases the file handle.
+
+### Reading, writing and positioning
+
+| Task | Stream operations |
+| --- | --- |
+| Read a formatted value | `in >> value`, including chained extraction |
+| Write a formatted value | `out << value`, including chained insertion |
+| Inspect or consume input | `peek()`, `get()`, `getline(line)`, `ignore(count)`, `unget()`, `putback(ch)` |
+| Transfer bytes | `read(mutable_span)`, `gcount()`, `write(span)`, `put(ch)`, `flush()` |
+| Inspect or change the position | `tellg()`, `seekg(offset, origin)`, `tellp()`, `seekp(offset, origin)` |
+| Inspect or reset the state | `good()`, `eof()`, `fail()`, `bad()`, `rdstate()`, `clear()` |
+| Format the next value | `width(n)` sets the minimum width for one insertion. `fill(ch)`, `precision(n)` and flags set with `setf` persist. |
+
+`peek()` and the zero-argument `get()` return an integer so every byte,
+including zero, is distinct from the end-of-file result of `-1`. A short
+`read` at EOF sets the EOF and failure bits. `gcount()` gives the number of
+bytes that reached the destination. A successful extraction that reaches
+the end of input can set EOF alone. Use `!in` to check for a failed extraction.
+
+An `fstream` has one file position shared by reads and writes. After a read
+that fetched extra bytes into the buffer, the next write begins at the
+position the caller reached. Reading after a write drains pending output.
+Large byte spans can transfer directly between the file and caller storage.
+
 ## Composable buffered I/O
 
 `std.io` defines `std::byte_buffer` as `vector<uint8_t>` and source-defined
