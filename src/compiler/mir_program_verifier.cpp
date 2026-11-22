@@ -5383,7 +5383,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           !findStoredCarrierReferences(program, instruction.receiver->type)
                .empty();
       const bool shellResult =
-          isCarrierReferenceResult(program, instruction) ||
+          isCarrierReferenceResult(program, instruction, true) ||
           (instruction.info.category == ValueCategory::Place &&
            // An opaque range cursor carries the traversal authority, not a
            // borrow of its own shell (lowering's borrowsCarrierStorage):

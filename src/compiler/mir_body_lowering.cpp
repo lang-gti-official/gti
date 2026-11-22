@@ -9639,10 +9639,7 @@ private:
             (reference &&
              (reference->arguments ==
                   value.parameterTypes[value.borrowArgument].arguments ||
-              // Closure erasure already retains its environment and each
-              // capture through the closure dependency group.
-              (input->info.type.kind != SemanticType::Lambda &&
-               opaqueWitnessReference(*reference)))));
+              opaqueWitnessReference(*reference))));
   }
 
   // Whether a reference argument names exactly the referent an accessor call
