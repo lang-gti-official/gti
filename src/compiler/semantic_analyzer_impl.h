@@ -7799,6 +7799,7 @@ private:
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
+    std::map<SymbolId, ProgramInitializationStep> localStaticSteps;
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     ProgramExpressionCache programExpressionCache;

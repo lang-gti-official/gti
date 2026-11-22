@@ -18346,13 +18346,13 @@ private:
         if (step.initializer || step.statement != 0) {
           valid = false;
         }
+        lowered.dataConstant = step.dataConstant;
+        if (!lowered.dataConstant && binding != nullptr)
+          lowered.dataConstant = binding->info.constant;
         lowered.dataInitialization =
-            binding != nullptr && binding->info.constant
+            lowered.dataConstant
                 ? MirProgramDataInitializationKind::Constant
                 : MirProgramDataInitializationKind::ImplicitZero;
-        if (binding != nullptr && binding->info.constant) {
-          lowered.dataConstant = binding->info.constant;
-        }
         lowered.storageInitialization = appendInstruction(
             {.kind = MirInstructionKind::Initialize,
              .destination = storagePlace,
