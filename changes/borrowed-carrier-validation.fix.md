@@ -1,0 +1,1 @@
+Fix false borrow errors when returning a shared field through a function, copying a record with two shared references, replacing a borrowed field, or passing a cleanup-bearing guard by value. LLVM also accepts verified borrows of mutex-bearing storage when an owning container grows.

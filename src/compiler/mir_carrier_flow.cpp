@@ -1958,6 +1958,68 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                                         part.access == AccessMode::ReadOnly;
                                });
           };
+          // Moving a guard by value transfers its cleanup to the callee.
+          // On success its returned guard protects the very same owner. A
+          // borrowed input or a result with different provenance cannot
+          // retire that input's exclusive capability.
+          if (cleanupBoundResult &&
+              represented->access == AccessMode::Mutable && retained &&
+              expiredCallReturned &&
+              (instruction.successResultDrop ||
+               std::any_of(instruction.lifecycle.begin(),
+                           instruction.lifecycle.end(), [&](const auto &event) {
+                             const auto *drop =
+                                 body.findDropObligation(event.target);
+                             return event.kind ==
+                                        MirLifecycleEventKind::Initialize &&
+                                    drop && drop->value == instruction.hirValue;
+                           }))) {
+            for (const auto &input : instruction.operands) {
+              const auto *stage =
+                  input.kind == MirOperandKind::Value
+                      ? mir_detail::definitionFor(body, input.value)
+                      : nullptr;
+              if (!stage || stage->kind != MirInstructionKind::CallInput ||
+                  stage->callSite != instruction.hirValue ||
+                  stage->callInputKind != HirCallInputKind::MoveValue ||
+                  !stage->preparedParameterDrop ||
+                  !std::any_of(
+                      instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(), [&](const auto &event) {
+                        return event.kind ==
+                                   MirLifecycleEventKind::TransferOut &&
+                               event.source == *stage->preparedParameterDrop;
+                      }))
+                continue;
+              const auto moved = operandFact(body, state, input);
+              if (!moved)
+                continue;
+              for (const auto id : *moved) {
+                const auto *old = body.findLoan(id);
+                if (old && old->kind == MirLoanKind::Stored &&
+                    represented->kind == MirLoanKind::Stored &&
+                    old->id != represented->id && old->lifecycleBound &&
+                    !old->twoPhase && !represented->twoPhase && !old->escapes &&
+                    !represented->escapes &&
+                    old->access == represented->access &&
+                    old->source == represented->source &&
+                    old->parent == represented->parent &&
+                    old->storedDependency == represented->storedDependency &&
+                    old->storedField == represented->storedField &&
+                    old->referenceSelection ==
+                        represented->referenceSelection &&
+                    old->designatedFields == represented->designatedFields &&
+                    old->conditions == represented->conditions &&
+                    old->additionalDependencies ==
+                        represented->additionalDependencies &&
+                    !state.unavailable.contains(id) &&
+                    std::find(expiredCallReturned->begin(),
+                              expiredCallReturned->end(),
+                              id) == expiredCallReturned->end())
+                  std::erase(*retained, id);
+              }
+            }
+          }
           if (retained && independentShared(represented)) {
             // A fresh, independently checked result can replace an input's
             // capability for the same external owners. Field provenance may

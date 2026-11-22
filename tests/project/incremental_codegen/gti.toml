@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "incremental_codegen"
+version = "0.1.0"
+
+[targets.incremental_codegen]
+kind = "executable"
+root = "main.gti"

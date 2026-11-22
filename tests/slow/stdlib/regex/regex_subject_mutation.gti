@@ -4,11 +4,11 @@
 import std.regex;
 import std.string;
 
-int main() {
-  std::regex re = std::regex("b+");
+int read_match(std::regex& re) {
   mut std::string input{"abbbc"};
   std::match_results m = std::regex_search(input.view(), re);
   input.append("x");  //~ ERROR GTI-S2017
-  if (m) { std::println(m.str()); }
-  return 0;
+  return int(m.str().size());
 }
+
+int main() { return 0; }
