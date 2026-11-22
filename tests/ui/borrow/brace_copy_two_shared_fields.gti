@@ -1,0 +1,17 @@
+// Copying both references preserves their field paths even for a repeated owner.
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+};
+
+int read<lifetime a>(int&<a> owner) {
+  Pair<a, a> original{owner, owner};
+  Pair<a, a> copy{original};
+  return copy.first + copy.second;
+}
+
+int main() {
+  int value = 7;
+  return read(value) - 14;
+}

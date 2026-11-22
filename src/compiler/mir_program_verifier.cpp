@@ -3135,6 +3135,25 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                    MirProjectionKind::PackElement &&
                lane->type.kind == SemanticType::Reference;
       }();
+      // Borrowing an embedded receiver takes its address. Historical
+      // contents of the owning local may have several suppliers after a
+      // field replacement, but the receiver's physical place stays exact.
+      if (!source && definition &&
+          definition->kind == MirInstructionKind::CallInput &&
+          definition->callInputRole == MirCallInputRole::Receiver &&
+          definition->callInputKind == HirCallInputKind::ReadBorrow &&
+          definition->operands.size() == 1 &&
+          definition->operands.front().kind == MirOperandKind::BorrowRead) {
+        const auto *field = body.findPlace(definition->operands.front().place);
+        if (field && field->root == MirPlaceRootKind::Binding &&
+            field->type.kind == SemanticType::Class &&
+            !field->projections.empty() &&
+            std::all_of(field->projections.begin(), field->projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind == MirProjectionKind::Field;
+                        }))
+          return std::optional<MirPlaceId>{field->id};
+      }
       if ((source || packLaneLoan) && definition != nullptr &&
           definition->kind == MirInstructionKind::CallInput &&
           definition->operands.size() == 1) {
@@ -5742,18 +5761,30 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           // loan. Multiple groups have no single storedDependency; each group
           // must nevertheless be present and completely checked by carrier
           // flow.
-          if (exactFieldSource && exactSource && source &&
+          const bool mappedReceiver =
+              exactFieldSource && source && source->projections.empty() &&
+              instruction.borrowFields.size() == 1 &&
+              instruction.borrowFields.front().origin ==
+                  BorrowOriginKind::Receiver &&
+              instruction.borrowFields.front().resultFields.empty();
+          // A method borrowing a shared carrier field can likewise address its
+          // physical shell after a replacement. The root conservatively keeps
+          // all suppliers; only a live and fully known set can prove the call.
+          const bool embeddedReceiver =
+              receiverStorageResult && source && !source->projections.empty() &&
+              std::all_of(source->projections.begin(),
+                          source->projections.end(),
+                          [](const auto &p) {
+                            return p.kind == MirProjectionKind::Field;
+                          }) &&
+              !receiverAllowsMutation(target->receiverMutability);
+          if ((mappedReceiver || embeddedReceiver) && exactSource && source &&
               source->root == MirPlaceRootKind::Binding &&
-              source->projections.empty() &&
               source->type.kind != SemanticType::Reference &&
               instruction.kind == MirInstructionKind::Call &&
               instruction.dispatch == CallDispatch::Static && target &&
               target->definitionKind == MirDefinitionKind::Source &&
               instruction.borrowOrigin == BorrowOriginKind::Receiver &&
-              instruction.borrowFields.size() == 1 &&
-              instruction.borrowFields.front().origin ==
-                  BorrowOriginKind::Receiver &&
-              instruction.borrowFields.front().resultFields.empty() &&
               target->returnBorrowFields == instruction.borrowFields &&
               loan->kind == MirLoanKind::CallResult &&
               loan->access == AccessMode::ReadOnly && !loan->parent &&

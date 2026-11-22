@@ -1,0 +1,14 @@
+// A checked identity call can relay a by-value carrier's external referent.
+struct Carrier {
+  int& referent;
+  int shell = 0;
+  Carrier(int& owner) : referent(owner) {}
+};
+int& identity(int& source) { return source; }
+int& relay(Carrier carrier) { return identity(carrier.referent); }
+
+int main() {
+  int value = 3;
+  Carrier carrier{value};
+  return relay(carrier) - 3;
+}
