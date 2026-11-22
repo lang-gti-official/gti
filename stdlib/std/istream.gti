@@ -245,6 +245,12 @@ public:
     this.read_line(out, size_t(18446744073709551615), delimiter, true);
     return this;
   }
+  /// The free string getline operation preserves the previous unformatted count.
+  void read_string_line(mut string& out, char delimiter) mut {
+    size_t previous_count = this.extracted;
+    this.read_line(out, size_t(18446744073709551615), delimiter, true);
+    this.extracted = previous_count;
+  }
   [[discardable]] mut basic_istream<B>& getline(mut string& out, size_t limit, char delimiter = '\n') mut {
     this.read_line(out, limit, delimiter, true);
     return this;
@@ -419,5 +425,13 @@ public:
     return this;
   }
 };
+
+/// Extract up to and including the delimiter into a string, omitting the
+/// delimiter from the result and preserving the last unformatted gcount.
+[[discardable]] mut S&<stream> getline<S, lifetime stream>(mut S&<stream> source, mut string& output, char delimiter = '\n')
+    requires requires(mut S& input, mut string& line, char byte) { { input.read_string_line(line, byte) }; } {
+  source.read_string_line(output, delimiter);
+  return source;
+}
 }
 
