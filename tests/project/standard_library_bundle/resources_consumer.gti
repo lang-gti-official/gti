@@ -1,0 +1,9 @@
+// Installed test-resource recipes preserve ordinary creation and cleanup without source.
+import std.testing.resources;
+int main() {
+  mut auto directory = std::testing::temporary_directory::create().expect("create temporary directory");
+  auto location = directory.path();
+  if (!std::filesystem::exists(location).expect("directory exists")) { return 1; }
+  directory.remove().expect("remove temporary directory");
+  return std::filesystem::exists(location).expect("directory removed") ? 2 : 0;
+}

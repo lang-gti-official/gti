@@ -3398,8 +3398,8 @@ The release artifact supplies the draw's MIR, so a caller can keep state in
 registers across iterations after the engine implementation source is removed.
 `std::random_device` uses the OS entropy backend. The public random module ships
 its GTI definitions in `std_random.gtilib`.
-The catalog packages 77 standard-library modules per target and profile.
-Alongside the two native libraries, 75 bundles carry parsed declarations
+The catalog packages 78 standard-library modules per target and profile.
+Alongside the two native libraries, 76 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
 assertions. The prelude and top-level re-export interface also load from source.
