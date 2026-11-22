@@ -50,6 +50,44 @@ constructorStoresArgument(const MirConstructorInstance &constructor,
                                        index) != suppliers.end();
 }
 
+// Inline arrays of text carry their elements' external owners. A physical
+// array of characters can instead be the owner of a scalar text view.
+const SemanticType &arrayLeafType(const SemanticType &type) {
+  const auto *leaf = &type;
+  while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1)
+    leaf = &leaf->arguments.front();
+  return *leaf;
+}
+
+bool inlineTextStorage(const SemanticType &type) {
+  const auto &leaf = arrayLeafType(type);
+  return leaf.kind == SemanticType::StringView ||
+         leaf.kind == SemanticType::CString;
+}
+
+bool inlineTextArrayReturn(const SemanticType &result,
+                           const std::vector<SemanticType> &parameters,
+                           std::size_t primary,
+                           const std::vector<std::size_t> &suppliers) {
+  if (!inlineTextStorage(result))
+    return false;
+  if (result.kind == SemanticType::Array)
+    return true;
+  const auto textArray = [&](std::size_t index) {
+    if (index >= parameters.size())
+      return false;
+    const auto &parameter = parameters[index];
+    const auto &value = parameter.kind == SemanticType::Reference &&
+                                parameter.arguments.size() == 1
+                            ? parameter.arguments.front()
+                            : parameter;
+    return value.kind == SemanticType::Array && inlineTextStorage(value);
+  };
+  return suppliers.empty()
+             ? textArray(primary)
+             : std::any_of(suppliers.begin(), suppliers.end(), textArray);
+}
+
 [[nodiscard]] const MirClassInstance *
 exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                         CompilerCapabilityTypeKind capability);
@@ -5137,27 +5175,13 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       // evaluation. Binding inventories and the primary input alone cannot
       // prove the owner set after replacement or aggregate construction.
       std::optional<std::vector<MirLoanDependency>> inlineSources;
-      const auto inlineText = [](const SemanticType &type) {
-        const SemanticType *leaf = &type;
-        while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1)
-          leaf = &leaf->arguments.front();
-        return leaf->kind == SemanticType::StringView ||
-               leaf->kind == SemanticType::CString;
-      };
       if (instruction.borrowOrigin == BorrowOriginKind::Argument &&
           instruction.borrowAccess == AccessMode::ReadOnly &&
           instruction.info.category == ValueCategory::Value &&
           instruction.borrowFields.empty() &&
-          inlineText(instruction.info.type) &&
-          (instruction.info.type.kind == SemanticType::Array ||
-           std::any_of(
-               instruction.parameterTypes.begin(),
-               instruction.parameterTypes.end(), [](const SemanticType &type) {
-                 return type.kind == SemanticType::Array ||
-                        (type.kind == SemanticType::Reference &&
-                         type.arguments.size() == 1 &&
-                         type.arguments.front().kind == SemanticType::Array);
-               }))) {
+          inlineTextArrayReturn(
+              instruction.info.type, instruction.parameterTypes,
+              instruction.borrowArgument, instruction.borrowArguments)) {
         const auto suppliers =
             instruction.borrowArguments.empty()
                 ? std::vector<std::size_t>{instruction.borrowArgument}
@@ -5169,7 +5193,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         for (const auto index : suppliers) {
           if (index >= instruction.operands.size() ||
               index >= instruction.parameterTypes.size() ||
-              !inlineText(
+              !inlineTextStorage(
                   instruction.parameterTypes[index].kind ==
                               SemanticType::Reference &&
                           instruction.parameterTypes[index].arguments.size() ==
@@ -8275,22 +8299,10 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
   // reference to the callee's array storage. Reconstruct that set from actual
   // MIR operations. The declared supplier list alone is never a publication
   // proof, and unknown provenance is not an empty set.
-  const SemanticType *arrayLeaf = &instance.returnType;
-  while (arrayLeaf->kind == SemanticType::Array &&
-         arrayLeaf->arguments.size() == 1)
-    arrayLeaf = &arrayLeaf->arguments.front();
-  const bool arrayInput =
-      std::any_of(instance.parameterTypes.begin(),
-                  instance.parameterTypes.end(), [](const SemanticType &type) {
-                    return type.kind == SemanticType::Array ||
-                           (type.kind == SemanticType::Reference &&
-                            type.arguments.size() == 1 &&
-                            type.arguments.front().kind == SemanticType::Array);
-                  });
-  if ((instance.returnType.kind == SemanticType::Array || arrayInput) &&
-      (arrayLeaf->kind == SemanticType::StringView ||
-       arrayLeaf->kind == SemanticType::CString) &&
-      instance.returnBorrowOrigin == BorrowOriginKind::Argument) {
+  if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+      inlineTextArrayReturn(instance.returnType, instance.parameterTypes,
+                            instance.returnBorrowParameter,
+                            instance.returnBorrowParameters)) {
     if (instance.returnBorrowAccess != AccessMode::ReadOnly ||
         instance.returnBorrowPlace || !instance.returnBorrowFields.empty() ||
         instance.completeReturnBorrow || instance.dependentTextReturn)
@@ -8319,9 +8331,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       if (input->kind == SemanticType::Reference &&
           input->arguments.size() == 1)
         input = &input->arguments.front();
-      while (input->kind == SemanticType::Array && input->arguments.size() == 1)
-        input = &input->arguments.front();
-      if (input->kind != arrayLeaf->kind)
+      if (arrayLeafType(*input).kind != arrayLeafType(instance.returnType).kind)
         return invalidSummary("inline text array return supplier has an "
                               "incompatible element type");
     }
