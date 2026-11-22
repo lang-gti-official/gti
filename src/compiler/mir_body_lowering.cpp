@@ -629,18 +629,24 @@ public:
             constructorRollback.push_back(rollback);
           }
           if (initializer.kind == ConstructorInitializerTargetKind::Base) {
-            // A base that stores references keeps the supplied referents in
-            // this object's base subobject: each reference argument its
-            // constructor summarizes escapes into `this`, exactly as a
-            // reference field initializer does.
-            for (const std::size_t index :
-                 storedBaseReferenceArguments(initializer))
-              markStoredBorrow(
-                  initializer.arguments[index], 0,
+            for (const std::size_t index : storedBaseArguments(initializer)) {
+              const auto &parameter =
                   program
                       .findConstructorInstance(*initializer.constructorTarget)
-                      ->parameterTypes[index]
-                      .referenceAccess);
+                      ->parameterTypes[index];
+              const auto argument = initializer.arguments[index];
+              if (parameter.kind == SemanticType::Reference) {
+                markStoredBorrow(argument, 0, parameter.referenceAccess);
+              } else {
+                // The base takes ownership of the carrier, including the
+                // caller-owned referents stored inside it.
+                const auto stored = storedReferenceEntries(parameter);
+                const auto transferred = markStoredCarrierBorrow(
+                    argument, 0, stored.front().reference.referenceAccess);
+                for (Scope &scope : incomingScopes)
+                  std::erase(scope.loans, transferred);
+              }
+            }
           }
           if (initializer.storesReference &&
               initializer.arguments.size() == 1) {
@@ -1233,14 +1239,10 @@ private:
             !resolvedTraits(referent).containsBorrowedState);
   }
 
-  // A reference-base family forwards one exact incoming reference. The
-  // semantic formal supplies access and referent type; the existing place
-  // engine supplies its evaluated address. No referent value is loaded merely
-  // to pass this borrow, and the base cannot retain it.
-  // The reference arguments a base initializer's selected constructor stores
-  // in the base subobject, by its own borrow summary.
-  std::vector<std::size_t> storedBaseReferenceArguments(
-      const HirConstructorInitializer &initializer) const {
+  // The formal arguments whose external references the selected constructor
+  // retains in the base subobject, either directly or inside a carrier.
+  std::vector<std::size_t>
+  storedBaseArguments(const HirConstructorInitializer &initializer) const {
     const auto *target =
         initializer.kind == ConstructorInitializerTargetKind::Base &&
                 initializer.constructorTarget
@@ -1254,9 +1256,39 @@ private:
     std::erase_if(result, [&](std::size_t index) {
       return index >= initializer.arguments.size() ||
              index >= target->parameterTypes.size() ||
-             target->parameterTypes[index].kind != SemanticType::Reference;
+             (target->parameterTypes[index].kind != SemanticType::Reference &&
+              storedReferenceEntries(target->parameterTypes[index]).empty());
     });
     return result;
+  }
+
+  bool forwardedBaseCarrier(const HirConstructorInitializer &initializer,
+                            std::size_t index) const {
+    const auto *target =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (!constructor ||
+        initializer.kind != ConstructorInitializerTargetKind::Base || !target ||
+        index >= initializer.arguments.size() ||
+        index >= target->parameterTypes.size())
+      return false;
+    const auto &parameter = target->parameterTypes[index];
+    const auto id = initializer.arguments[index];
+    const auto *value = findValue(id);
+    if (!value || value->info.type != parameter ||
+        storedReferenceEntries(parameter).empty())
+      return false;
+    const auto binding = movedBorrowCarrierBinding(id);
+    const auto formal =
+        std::find(constructor->parameterBindings.begin(),
+                  constructor->parameterBindings.end(), binding);
+    if (binding == 0 || formal == constructor->parameterBindings.end())
+      return false;
+    const auto ordinal = static_cast<std::size_t>(
+        formal - constructor->parameterBindings.begin());
+    return ordinal < constructor->parameterTypes.size() &&
+           constructor->parameterTypes[ordinal] == parameter;
   }
 
   bool forwardedBaseReference(const HirConstructorInitializer &initializer,
@@ -1320,15 +1352,20 @@ private:
     if (!value || value->info.type != parameter ||
         value->info.category != ValueCategory::Value ||
         !value->info.traits.movable ||
-        value->info.traits.drop == DropKind::Trivial ||
-        resolvedTraits(parameter).containsBorrowedState)
+        value->info.traits.drop == DropKind::Trivial)
       return false;
+    if (resolvedTraits(parameter).containsBorrowedState) {
+      const auto stored = storedBaseArguments(initializer);
+      if (std::find(stored.begin(), stored.end(), index) == stored.end() ||
+          !forwardedBaseCarrier(initializer, index))
+        return false;
+    }
     const auto cleanup = preparedParameterDropType(parameter);
     // A move of a cleanup-free aggregate does not arm a temporary. Its
     // by-value parameter still needs the normal InitializeBase handoff.
-    return cleanup && (value->dropObligation ||
-                       (value->kind == HirValueKind::Move &&
-                        !cleanup->requiresActiveCleanup));
+    return cleanup &&
+           (value->dropObligation || (value->kind == HirValueKind::Move &&
+                                      !cleanup->requiresActiveCleanup));
   }
 
   const HirClassInstance *
@@ -1370,12 +1407,13 @@ private:
     // A base storing references stages like any other when each reference
     // its constructor stores is one forwarded incoming reference; that
     // argument's escape into the base subobject is published separately.
-    const auto stored = storedBaseReferenceArguments(initializer);
+    const auto stored = storedBaseArguments(initializer);
     if (base == program.classInstances().end() ||
         (base->traits.containsBorrowedState &&
          (stored.empty() ||
           !std::all_of(stored.begin(), stored.end(), [&](std::size_t index) {
-            return forwardedBaseReference(initializer, index);
+            return forwardedBaseReference(initializer, index) ||
+                   forwardedBaseCarrier(initializer, index);
           })))) {
       return nullptr;
     }

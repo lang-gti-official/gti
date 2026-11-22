@@ -3175,6 +3175,61 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
   return authority;
 }
 
+// A base publication uses field zero. Its source is the very value handed
+// to the base constructor, and the publication follows the constructor's
+// successful completion. A reference borrowed from the shell itself cannot
+// supply this proof.
+[[nodiscard]] bool
+publishesForwardedBaseCarrier(const MirBody &body, const MirBlock &block,
+                              const MirInstruction &publish) {
+  if (body.kind != MirBodyKind::Constructor ||
+      publish.kind != MirInstructionKind::Borrow || !publish.loan ||
+      publish.operands.size() != 1)
+    return false;
+  const auto *loan = body.findLoan(*publish.loan);
+  const auto &source = publish.operands.front();
+  if (!loan || !loan->escapes || loan->kind != MirLoanKind::Stored ||
+      loan->storedField || source.kind != MirOperandKind::Loan ||
+      !source.value || !publish.hirValue ||
+      loan->producedBy != publish.hirValue)
+    return false;
+  const auto matches = [&](const MirInstruction &stage) {
+    if (stage.kind != MirInstructionKind::InitializeBase)
+      return false;
+    return std::any_of(
+        stage.operands.begin(), stage.operands.end(),
+        [&](const MirOperand &arg) {
+          const auto *input = arg.kind == MirOperandKind::Value
+                                  ? mir_detail::definitionFor(body, arg.value)
+                                  : nullptr;
+          return input && input->kind == MirInstructionKind::CallInput &&
+                 input->constructorInitializer ==
+                     stage.constructorInitializer &&
+                 input->callInputKind == HirCallInputKind::MoveValue &&
+                 input->hirValue == publish.hirValue &&
+                 input->operands.size() == 1 &&
+                 input->operands.front().kind == MirOperandKind::Value &&
+                 input->operands.front().value == source.value;
+        });
+  };
+  for (const auto &stage : block.instructions) {
+    if (&stage == &publish)
+      break;
+    if (stage.definedFailure.empty() && matches(stage))
+      return true;
+  }
+  const auto predecessors = blockPredecessors(body);
+  const auto found = predecessors.find(block.id);
+  if (found == predecessors.end() || found->second.size() != 1)
+    return false;
+  const auto &site = *found->second.front();
+  const auto &term = site.terminator;
+  return term.kind == MirTerminatorKind::Invoke && term.target == block.id &&
+         term.elseTarget != block.id && !site.instructions.empty() &&
+         term.invokeInstruction == site.instructions.back().id &&
+         matches(site.instructions.back());
+}
+
 [[nodiscard]] MirVerificationResult
 verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   std::span<const MirPersistentStorageAccess> hidden = {},
@@ -3185,6 +3240,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   const MirProgram *program = nullptr,
                   MirCarrierAnalysis *analysis = nullptr) {
   const mir_detail::MirBodyReadScope readScope(body);
+  std::unordered_set<MirLoanId> baseCarrierLoans;
+  if (body.kind == MirBodyKind::Constructor)
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (publishesForwardedBaseCarrier(body, block, instruction))
+          baseCarrierLoans.insert(*instruction.loan);
   // Reconstruct replacement uses from actual stores, not MirLoan::carriers.
   // The carrier list is a lowering aid and must not let an early EndBorrow
   // hide a later read of the value that was stored. Unknown flow adds no
@@ -4086,7 +4147,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const bool externalCarrierTransfer =
             loan.kind == MirLoanKind::Return ||
             (body.kind == MirBodyKind::Constructor &&
-             loan.kind == MirLoanKind::Stored && loan.storedField != 0);
+             loan.kind == MirLoanKind::Stored &&
+             (loan.storedField != 0 || baseCarrierLoans.contains(loan.id)));
         const MirPlace *returnSource =
             write && externalCarrierTransfer && loan.escapes
                 ? body.findPlace(loan.source)
@@ -5132,7 +5194,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const MirLoanId loan = *instruction.loan;
         const auto &record = body.loans[loan - 1];
         if (body.kind == MirBodyKind::Constructor && record.escapes &&
-            record.kind == MirLoanKind::Stored && record.storedField != 0 &&
+            record.kind == MirLoanKind::Stored &&
+            (record.storedField != 0 || baseCarrierLoans.contains(loan)) &&
             block.activeFailure == 0) {
           return failure(body, owner,
                          "constructor field dependency cannot retire on a "
@@ -15384,6 +15447,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             }
             return initialized;
           };
+      const bool baseCarrierPublication =
+          publishesForwardedBaseCarrier(body, block, instruction);
       const bool invalidLoanValueEvidence = std::any_of(
           instruction.operands.begin(), instruction.operands.end(),
           [&](const MirOperand &operand) {
@@ -15434,7 +15499,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                    (published->kind != MirLoanKind::Return &&
                     !(body.kind == MirBodyKind::Constructor &&
                       published->kind == MirLoanKind::Stored &&
-                      published->storedField != 0 &&
+                      (published->storedField != 0 || baseCarrierPublication) &&
                       (storedCarrier || constructedField))) ||
                    (!storedCarrier && !dynamicTextCarrier &&
                     !constructedField &&
@@ -15761,9 +15826,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                          block.id, instruction.id);
         }
         const bool storedCarrierReturnTransfer = [&] {
-          const bool fieldPublication = body.kind == MirBodyKind::Constructor &&
-                                        produced.kind == MirLoanKind::Stored &&
-                                        produced.storedField != 0;
+          const bool fieldPublication =
+              body.kind == MirBodyKind::Constructor &&
+              produced.kind == MirLoanKind::Stored &&
+              (produced.storedField != 0 || baseCarrierPublication);
           if ((produced.kind != MirLoanKind::Return && !fieldPublication) ||
               produced.entry || !produced.escapes || produced.parent != 0 ||
               source.kind != MirOperandKind::Loan ||

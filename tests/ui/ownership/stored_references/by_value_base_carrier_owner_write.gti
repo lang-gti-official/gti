@@ -1,0 +1,21 @@
+// A moved carrier's second owner stays borrowed when a base constructor stores the carrier.
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& first, int& second) : first(first), second(second) {}
+};
+struct Storage<B> {
+  B buffer;
+  Storage(B value) : buffer(std::move(value)) {}
+};
+struct Input<B> : public Storage<B> {
+  Input(B value) : Storage<B>(std::move(value)) {}
+};
+
+int main() {
+  int first = 3;
+  mut int second = 7;
+  Input<Pair> input{Pair(first, second)};
+  second = 8;  //~ ERROR GTI-S2017
+  return input.buffer.second;
+}
