@@ -1,4 +1,6 @@
 // Importing std.http exposes the server codec and its progress operations in the editor.
+// The complete std.http editor query used 10.98 CPU seconds on the Linux CI runner.
+//@ slow
 //@ hover @codec: server_codec
 //@ completion @member: parse_head parse_body begin_response finish_flush
 import std.http;
