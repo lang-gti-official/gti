@@ -1,0 +1,23 @@
+// Exclusive create modes reject existing paths and preserve their bytes.
+//@ run-pass
+import std.cstdio;
+import std.memory;
+import std.string;
+
+expected<int, std::io_errc> check(std::string_view path, std::file_mode mode) {
+  mut auto file = ?std::fopen(path, mode);
+  if (?file->write("keep") != std::size_t(4)) { return 1; }
+  ?file->close();
+  if (std::fopen(path, mode)) { return 2; }
+  mut auto reader = ?std::fopen(path, std::file_mode::read);
+  auto contents = ?reader->read_some(std::size_t(4));
+  if (contents.view() != "keep") { return 3; }
+  return 0;
+}
+
+int main() {
+  auto a = check("exclusive-write.txt", std::file_mode::write_exclusive);
+  if (!a || a.value() != 0) { return 1; }
+  auto b = check("exclusive-update.txt", std::file_mode::read_write_exclusive);
+  return b && b.value() == 0 ? 0 : 2;
+}

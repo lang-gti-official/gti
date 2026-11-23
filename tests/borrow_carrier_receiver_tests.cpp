@@ -353,6 +353,49 @@ void localHolderFields() {
                          std::to_string(named) + ")");
 }
 
+void nestedCarrierCallInputs() {
+  const auto frontend = analyzeFixture("nested_carrier_call_inputs.gti", false);
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *decl = frontend.semantics.findFunction(function.declaration);
+    if (!decl || decl->qualifiedName != "Writer::apply")
+      continue;
+    const auto &body = function.body;
+    const auto entry = std::ranges::find_if(body.loans, [](const auto &loan) {
+      return loan.entry && loan.designatedFields.size() == 2;
+    });
+    if (entry == body.loans.end())
+      break;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            stage.operands.size() != 1 ||
+            stage.operands.front().kind != lang::MirOperandKind::BorrowRead)
+          continue;
+        // Point the read at the same nested referent as the mutable input.
+        auto aliased = body;
+        auto &place = aliased.places.at(stage.operands.front().place - 1);
+        place.projections.clear();
+        for (const auto field : entry->designatedFields)
+          place.projections.push_back(
+              {.kind = lang::MirProjectionKind::Field, .field = field});
+        place.projections.push_back(
+            {.kind = lang::MirProjectionKind::Dereference});
+        const auto verification = lang::verifyMirBody(aliased);
+        expect(std::ranges::any_of(verification.errors,
+                                   [](const auto &error) {
+                                     return error.message.find(
+                                                "overlapping call-duration") !=
+                                            std::string::npos;
+                                   }),
+               "two call inputs cannot use the same mutable nested referent");
+        return;
+      }
+  }
+  expect(false, "the nested call has a shared input beside a mutable referent");
+}
+
 // An owned closure parameter that its callee returns carries its borrowed
 // captures out only through that exact return.
 void returnedOwnedClosures() {
@@ -399,6 +442,7 @@ int main() {
   synchronizedReferenceFields();
   returnedConfinedCallables();
   localHolderFields();
+  nestedCarrierCallInputs();
   returnedOwnedClosures();
   return failures == 0 ? 0 : 1;
 }

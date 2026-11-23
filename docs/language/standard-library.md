@@ -1630,6 +1630,14 @@ reader/writer contracts, exact transfer/copy/line helpers, memory and native
 stream adapters, and explicit-flush buffering. See [I/O](io.md) for partial
 progress and error semantics.
 
+`std.istream`, `std.ostream`, and `std.iostream` provide formatted extraction
+and insertion over a buffer type, including memory readers and writers.
+`std.fstream` supplies the file buffer and the `ifstream`, `ofstream`, and
+`fstream` classes. A bidirectional stream uses one cursor and one set of
+formatting flags and error bits for both directions. See
+[opening a file stream](io.md#opening-a-file-stream) and
+[reading, writing and positioning](io.md#reading-writing-and-positioning).
+
 `std.paired_span` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
 types, each satisfying the `storage_element` contract. Its constructor

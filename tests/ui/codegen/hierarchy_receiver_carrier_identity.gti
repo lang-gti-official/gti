@@ -1,0 +1,28 @@
+// A returned receiver reference keeps the same object address and borrowed-field dependency across chained calls.
+//@ run-pass
+struct Cursor {
+  int& source;
+  Cursor(int& owner) : source(owner) {}
+};
+class Holder<B> {
+protected:
+  mut B buffer;
+public:
+  Holder(B value) : buffer(std::move(value)) {}
+};
+class Reader<B> : public Holder<B> {
+  mut int count = 0;
+public:
+  Reader(B data) : Holder<B>(std::move(data)) {}
+  mut Reader<B>& next() mut {
+    this.count++;
+    return this;
+  }
+  Reader<B>& inspect() { return this; }
+  int position() { return this.count; }
+};
+int main() {
+  int owner = 17;
+  mut Reader<Cursor> reader{Cursor(owner)};
+  return reader.next().next().inspect().position() == 2 ? 0 : 1;
+}

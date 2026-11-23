@@ -1,0 +1,15 @@
+// Receiver mutability selects the appropriate shift when owned and borrowed results coexist.
+//@ run-pass
+struct Stream {
+  Stream() {}
+  mut int n = 0;
+  mut Stream& operator<<(int v) mut { this.n = this.n * 10 + v; return this; }
+  int operator<<(int v) { return this.n + v; }
+};
+int main() {
+  mut Stream s{};
+  (s << 1 << 2).n += 1;
+  Stream readonly{};
+  if ((readonly << 3) != 3) { return 1; }
+  return s.n - 13;
+}

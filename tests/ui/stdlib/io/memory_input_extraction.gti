@@ -1,0 +1,21 @@
+// A memory input stream leaves delimiters for unformatted access and distinguishes EOF from extraction failure.
+//@ run-pass
+import std.istream;
+import std.io;
+import std.cstdio;
+
+int main() {
+  uint8_t text[5] = {uint8_t(32), uint8_t(52), uint8_t(50), uint8_t(44), uint8_t(55)};
+  mut auto reader = std::io::memory_reader(text.as_span());
+  mut std::basic_istream<std::io::memory_reader> input{std::move(reader)};
+  mut int first = 0;
+  input >> std::ws >> std::dec >> first;
+  if (input.fail() || first != 42 || input.peek() != 44 || input.gcount() != 0) { return 1; }
+  mut char separator = '?';
+  mut int last = 0;
+  input >> separator >> last;
+  if (separator != ',' || last != 7 || !input.eof() || input.fail()) { return 2; }
+  if (input.get() != -1 || !input.fail() || input.bad() || input.gcount() != 0) { return 3; }
+  if (input.error() != std::io_errc::end_of_file) { return 4; }
+  return 0;
+}

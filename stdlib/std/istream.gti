@@ -1,0 +1,438 @@
+export module istream;
+export import std.ios;
+export import "detail/istream_view.gti";
+import std.io;
+import std.cstdio;
+import std.charconv;
+import std.string;
+import std.span;
+import std.vector;
+
+namespace std::detail {
+constexpr bool stream_space(int32_t byte) {
+  return byte == 32 || (byte >= 9 && byte <= 13);
+}
+constexpr int stream_digit(int32_t byte) {
+  if (byte >= 48 && byte <= 57) { return int(byte - 48); }
+  if (byte >= 65 && byte <= 70) { return int(byte - 65 + 10); }
+  if (byte >= 97 && byte <= 102) { return int(byte - 97 + 10); }
+  return -1;
+}
+}
+
+export namespace std {
+/// Reusable byte-oriented input with classic-locale formatting. A transport
+/// with its own get area owns all lookahead and positioning; a plain reader
+/// needs only a single pending byte to leave a delimiter available.
+class basic_istream<B> : public basic_ios<B> {
+  mut size_t extracted = 0;
+  mut byte_buffer scratch{size_t(1)};
+  expected<int32_t, io_errc> probe() mut {
+    if constexpr (requires(mut B& source) { { source.peek_byte() } -> expected<int32_t, io_errc>; }) {
+      return this.buffer.peek_byte();
+    } else {
+      if (this.pending >= 0) { return this.pending; }
+      mut auto byte = this.scratch.as_mutable_span();
+      auto count = ?this.buffer.read_some(byte);
+      if (count == 0) { return unexpected(io_errc::end_of_file); }
+      if (count != 1) { return unexpected(io_errc::read_failed); }
+      this.pending = int32_t(this.scratch[size_t(0)]);
+      return this.pending;
+    }
+  }
+  expected<int32_t, io_errc> take() mut {
+    if constexpr (requires(mut B& source) { { source.take_byte() } -> expected<int32_t, io_errc>; }) {
+      return this.buffer.take_byte();
+    } else {
+      int32_t value = ?this.probe();
+      this.pending = -1;
+      this.previous = value;
+      return value;
+    }
+  }
+  int32_t look() mut {
+    auto next = this.probe();
+    if (next) { return next.value(); }
+    io_errc code = next.error();
+    if (code == io_errc::end_of_file) { this.record_error(ios::eofbit, code); }
+    else { this.record_error(ios::badbit, code); }
+    return -1;
+  }
+  int32_t consume() mut {
+    auto next = this.take();
+    if (next) { return next.value(); }
+    io_errc code = next.error();
+    if (code == io_errc::end_of_file) { this.record_error(ios::eofbit, code); }
+    else { this.record_error(ios::badbit, code); }
+    return -1;
+  }
+  void no_input() mut {
+    if (this.eof()) { this.set_error(io_errc::end_of_file); }
+    else if (!this.bad()) { this.set_error(io_errc::read_failed); }
+  }
+  bool sentry(bool skip) mut {
+    if (!this.good()) { this.setstate(ios::failbit); return false; }
+    if (skip && (this.flags() & ios::skipws) != 0) {
+      mut int32_t value = this.look();
+      while (detail::stream_space(value)) {
+        if (this.consume() < 0) { break; }
+        value = this.look();
+      }
+      if (value < 0) { this.no_input(); return false; }
+    }
+    return true;
+  }
+  void read_line(mut string& out, size_t limit, char delimiter, bool eat_delimiter) mut {
+    this.extracted = 0;
+    out.clear();
+    if (!this.sentry(false)) { return; }
+    while (true) {
+      int32_t c = this.look();
+      if (c < 0) { break; }
+      if (c == int32_t(uint8_t(delimiter))) {
+        if (eat_delimiter && this.consume() >= 0) { this.extracted += 1; }
+        break;
+      }
+      if (out.size() >= limit) {
+        if (eat_delimiter) { this.set_error(io_errc::read_failed); }
+        break;
+      }
+      if (this.consume() < 0) { break; }
+      out.push_back(char(uint8_t(c)));
+      this.extracted += 1;
+    }
+    if (this.extracted == 0) { this.no_input(); }
+  }
+  void extract_integer<std::integral T>(mut T& out) mut {
+    if (!this.sentry(true)) { return; }
+    mut string text{};
+    mut int32_t c = this.look();
+    if (c == 43 || c == 45) {
+      if (c == 45) { text.push_back('-'); }
+      if (this.consume() < 0) { this.no_input(); return; }
+      c = this.look();
+    }
+    auto mode = this.flags() & ios::basefield;
+    mut int base = 10;
+    if (mode == ios::hex) { base = 16; }
+    else if (mode == ios::oct) { base = 8; }
+    mut size_t digits = 0;
+    if (c == 48 && (mode == 0 || base == 16)) {
+      if (this.consume() < 0) { this.no_input(); return; }
+      c = this.look();
+      if (c == 120 || c == 88) {
+        base = 16;
+        if (this.consume() < 0) { this.no_input(); return; }
+        c = this.look();
+      } else {
+        digits = 1;
+        text.push_back('0');
+        if (mode == 0) { base = 8; }
+      }
+    }
+    while (detail::stream_digit(c) >= 0 && detail::stream_digit(c) < base) {
+      if (this.consume() < 0) { break; }
+      text.push_back(char(uint8_t(c)));
+      digits += 1;
+      c = this.look();
+    }
+    if (digits == 0) { this.set_error(io_errc::read_failed); return; }
+    auto parsed = std::from_chars(text.view(), out, base);
+    if (parsed.ec != parse_errc::none) { this.set_error(io_errc::read_failed); }
+  }
+  std::string extract_float_token() mut {
+    mut string text{};
+    if (!this.sentry(true)) { return std::move(text); }
+    mut int32_t c = this.look();
+    if (c == 43 || c == 45) {
+      if (c == 45) { text.push_back('-'); }
+      if (this.consume() < 0) { this.no_input(); return std::move(text); }
+      c = this.look();
+    }
+    mut bool point = false;
+    mut bool exponent = false;
+    while (c >= 0) {
+      if (c >= 48 && c <= 57) {
+        text.push_back(char(uint8_t(c)));
+      } else if (c == 46 && !point && !exponent) {
+        point = true;
+        text.push_back('.');
+      } else if ((c == 69 || c == 101) && !exponent) {
+        exponent = true;
+        text.push_back('e');
+        if (this.consume() < 0) { break; }
+        c = this.look();
+        if (c != 43 && c != 45) { continue; }
+        text.push_back(char(uint8_t(c)));
+      } else { break; }
+      if (this.consume() < 0) { break; }
+      c = this.look();
+    }
+    return std::move(text);
+  }
+  void extract_float(mut float& out) mut {
+    auto text = this.extract_float_token();
+    if (this.fail()) { return; }
+    auto parsed = std::from_chars(text.view(), out);
+    if (parsed.ec != parse_errc::none || parsed.position != text.size()) {
+      this.set_error(io_errc::read_failed);
+    }
+  }
+  void extract_float(mut double& out) mut {
+    auto text = this.extract_float_token();
+    if (this.fail()) { return; }
+    auto parsed = std::from_chars(text.view(), out);
+    if (parsed.ec != parse_errc::none || parsed.position != text.size()) {
+      this.set_error(io_errc::read_failed);
+    }
+  }
+  void extract_bool(mut bool& out) mut {
+    if ((this.flags() & ios::boolalpha) == 0) {
+      mut int n = 0;
+      this.extract_integer(n);
+      if (!this.fail()) { out = n != 0; if (n != 0 && n != 1) { this.set_error(io_errc::read_failed); } }
+      return;
+    }
+    if (!this.sentry(true)) { return; }
+    int32_t initial = this.look();
+    if (initial != 116 && initial != 102) { this.set_error(io_errc::read_failed); return; }
+    string_view word = initial == 116 ? "true" : "false";
+    for (mut size_t i = 0; i < word.size(); i += 1) {
+      if (this.look() != int32_t(uint8_t(word[i]))) { this.set_error(io_errc::read_failed); return; }
+      if (this.consume() < 0) { this.no_input(); return; }
+    }
+    out = initial == 116;
+  }
+  void extract_string(mut string& out) mut {
+    if (!this.sentry(true)) { return; }
+    out.clear();
+    size_t limit = this.width(size_t(0));
+    while (limit == 0 || out.size() < limit) {
+      int32_t c = this.look();
+      if (c < 0 || detail::stream_space(c)) { break; }
+      if (this.consume() < 0) { break; }
+      out.push_back(char(uint8_t(c)));
+    }
+    if (out.empty()) { this.no_input(); }
+  }
+public:
+  basic_istream(B value) : basic_ios<B>(std::move(value)) {}
+  istream as_istream() mut requires detail::input_stream_source<basic_istream<B>> { return istream::from(this); }
+  size_t gcount() { return this.extracted; }
+  int32_t peek() mut {
+    this.extracted = 0;
+    if (!this.sentry(false)) { return -1; }
+    return this.look();
+  }
+  int32_t get() mut {
+    this.extracted = 0;
+    if (!this.sentry(false)) { return -1; }
+    int32_t c = this.consume();
+    if (c < 0) { this.no_input(); } else { this.extracted = 1; }
+    return c;
+  }
+  [[discardable]] mut basic_istream<B>& get(mut char& out) mut {
+    int32_t c = this.get();
+    if (c >= 0) { out = char(uint8_t(c)); }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& get(mut string& out, size_t limit, char delimiter = '\n') mut {
+    this.read_line(out, limit, delimiter, false);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& getline(mut string& out, char delimiter = '\n') mut {
+    this.read_line(out, size_t(18446744073709551615), delimiter, true);
+    return this;
+  }
+  /// The free string getline operation preserves the previous unformatted count.
+  void read_string_line(mut string& out, char delimiter) mut {
+    size_t previous_count = this.extracted;
+    this.read_line(out, size_t(18446744073709551615), delimiter, true);
+    this.extracted = previous_count;
+  }
+  [[discardable]] mut basic_istream<B>& getline(mut string& out, size_t limit, char delimiter = '\n') mut {
+    this.read_line(out, limit, delimiter, true);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& ignore(size_t count = size_t(1), int32_t delimiter = -1) mut {
+    this.extracted = 0;
+    if (this.sentry(false)) {
+      while (this.extracted < count) {
+        int32_t c = this.consume();
+        if (c < 0) { break; }
+        this.extracted += 1;
+        if (c == delimiter) { break; }
+      }
+    }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& read(mut mutable_span<uint8_t>& output, size_t count) mut requires io::reader<B> {
+    this.extracted = 0;
+    if (!this.sentry(false)) { return this; }
+    if (count > output.size()) { this.set_error(io_errc::read_failed); return this; }
+    if (this.pending >= 0 && count != 0) {
+      unsafe { output.get_unchecked_mut(size_t(0)) = uint8_t(this.pending); }
+      this.previous = this.pending;
+      this.pending = -1;
+      this.extracted = 1;
+    }
+    while (this.extracted < count) {
+      mut auto tail = output.subspan(this.extracted, count - this.extracted);
+      auto n = this.buffer.read_some(tail);
+      if (!n) { this.record_error(ios::badbit, n.error()); break; }
+      if (n.value() == 0) { this.record_error(ios::eofbit | ios::failbit, io_errc::end_of_file); break; }
+      if (n.value() > count - this.extracted) { this.record_error(ios::badbit, io_errc::read_failed); break; }
+      this.extracted += n.value();
+      unsafe { this.previous = int32_t(output.get_unchecked(this.extracted - size_t(1))); }
+    }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& read(mut mutable_span<uint8_t>& output) mut requires io::reader<B> {
+    size_t count = output.size();
+    return this.read(output, count);
+  }
+  size_t readsome(mut mutable_span<uint8_t>& output) mut requires io::reader<B> {
+    this.extracted = 0;
+    if (!this.sentry(false)) { return size_t(0); }
+    mut size_t available = this.pending >= 0 ? size_t(1) : size_t(0);
+    if constexpr (requires(B& source) { { source.available() } -> size_t; }) {
+      available += this.buffer.available();
+    }
+    if (available > output.size()) { available = output.size(); }
+    if (available != 0) { this.read(output, available); }
+    return this.extracted;
+  }
+  [[discardable]] mut basic_istream<B>& unget() mut {
+    this.extracted = 0;
+    this.clear(this.rdstate() & ~ios::eofbit);
+    if (!this.sentry(false)) { return this; }
+    if constexpr (requires(mut B& source) { { source.unget_byte() } -> expected<void, io_errc>; }) {
+      auto result = this.buffer.unget_byte();
+      if (!result) { this.record_error(ios::badbit, result.error()); }
+    } else if (this.pending == -1 && this.previous >= 0) {
+      this.pending = this.previous;
+      this.previous = -1;
+    } else { this.record_error(ios::badbit, io_errc::read_failed); }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& putback(char ch) mut {
+    this.extracted = 0;
+    this.clear(this.rdstate() & ~ios::eofbit);
+    if (!this.sentry(false)) { return this; }
+    if constexpr (requires(mut B& source) { { source.putback_byte(ch) } -> expected<void, io_errc>; }) {
+      auto result = this.buffer.putback_byte(ch);
+      if (!result) { this.record_error(ios::badbit, result.error()); }
+    } else if (this.pending == -1 && this.previous == int32_t(uint8_t(ch))) {
+      this.pending = this.previous;
+      this.previous = -1;
+    } else { this.record_error(ios::badbit, io_errc::read_failed); }
+    return this;
+  }
+  int32_t sync() mut {
+    if (!this.sentry(false)) { return -1; }
+    if constexpr (requires(mut B& source) { { source.sync() } -> expected<void, io_errc>; }) {
+      auto result = this.buffer.sync();
+      if (!result) { this.record_error(ios::badbit, result.error()); return -1; }
+    }
+    return 0;
+  }
+
+
+  int64_t tellg() mut {
+    if (this.fail()) { return -1; }
+    auto pos = detail::stream_tell(this.buffer);
+    if (!pos) { this.set_error(pos.error()); return -1; }
+    if (this.pending >= 0) { return pos.value() - int64_t(1); }
+    return pos.value();
+  }
+  [[discardable]] mut basic_istream<B>& seekg(int64_t offset, seek_origin origin = seek_origin::begin) mut {
+    this.clear(this.rdstate() & ~ios::eofbit);
+    if (this.fail()) { return this; }
+    mut int64_t displacement = offset;
+    if (this.pending >= 0 && origin == seek_origin::current) {
+      if (offset == (-int64_t(9223372036854775807) - int64_t(1))) { this.set_error(io_errc::seek_failed); return this; }
+      displacement -= int64_t(1);
+    }
+    auto pos = detail::stream_seek(this.buffer, displacement, origin);
+    if (!pos) { this.set_error(pos.error()); }
+    else { this.pending = -1; this.previous = -1; }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(stream_setting setting) mut {
+    this.apply(setting);
+    return this;
+  }
+  void skip_whitespace() mut {
+    if (this.sentry(false)) {
+      while (detail::stream_space(this.look())) { if (this.consume() < 0) { break; } }
+    }
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(input_manipulator operation) mut {
+    if (operation == input_manipulator::whitespace) { this.skip_whitespace(); }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut char& out) mut {
+    if (this.sentry(true)) {
+      int32_t c = this.consume();
+      if (c >= 0) { out = char(uint8_t(c)); } else { this.no_input(); }
+    }
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut bool& out) mut {
+    this.extract_bool(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut string& out) mut {
+    this.extract_string(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut int8_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut uint8_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut int16_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut uint16_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut int32_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut uint32_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut int64_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut uint64_t& out) mut {
+    this.extract_integer(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut float& out) mut {
+    this.extract_float(out);
+    return this;
+  }
+  [[discardable]] mut basic_istream<B>& operator>>(mut double& out) mut {
+    this.extract_float(out);
+    return this;
+  }
+};
+
+/// Extract up to and including the delimiter into a string, omitting the
+/// delimiter from the result and preserving the last unformatted gcount.
+[[discardable]] mut S&<stream> getline<S, lifetime stream>(mut S&<stream> source, mut string& output, char delimiter = '\n')
+    requires requires(mut S& input, mut string& line, char byte) { { input.read_string_line(line, byte) }; } {
+  source.read_string_line(output, delimiter);
+  return source;
+}
+}

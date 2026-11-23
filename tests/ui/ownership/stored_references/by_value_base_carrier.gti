@@ -1,0 +1,19 @@
+// Moving a borrowed buffer through a generic base constructor preserves its original referent.
+//@ run-pass
+struct Reader {
+  int& source;
+  Reader(int& source) : source(source) {}
+};
+struct Storage<B> {
+  B buffer;
+  Storage(B value) : buffer(std::move(value)) {}
+};
+struct Input<B> : public Storage<B> {
+  Input(B value) : Storage<B>(std::move(value)) {}
+};
+
+int main() {
+  int owner = 7;
+  Input<Reader> stream{Reader(owner)};
+  return stream.buffer.source - 7;
+}

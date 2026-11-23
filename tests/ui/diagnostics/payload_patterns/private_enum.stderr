@@ -1,13 +1,13 @@
 main.gti:5:23: error[GTI-S2024]: Declaration 'sample::Value::item' is private to module 'types'; it is not exported.
- 5 |   case sample::Value::item(auto& number): return number;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
+ 5 |   case sample::Value::item(auto& inaccessible_payload_binding): return inaccessible_payload_binding;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
    |                       ^~~~
 types.gti:3:22: note: Declaration is in this source unit.
  3 |   enum Value { none, item(int value) };
    |                      ^~~~
 help: Use the module's public API, or explicitly export this declaration in its defining interface.
-main.gti:5:50: error[GTI-S2001]: Undefined name 'number'.
- 5 |   case sample::Value::item(auto& number): return number;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
-   |                                                  ^~~~~~
+main.gti:5:72: error[GTI-S2001]: Undefined name 'inaccessible_payload_binding'.
+ 5 |   case sample::Value::item(auto& inaccessible_payload_binding): return inaccessible_payload_binding;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
+   |                                                                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
 main.gti:6:23: error[GTI-S2024]: Declaration 'sample::Value::none' is private to module 'types'; it is not exported.
  6 |   case sample::Value::none: return 0;  //~ ERROR GTI-S2024
    |                       ^~~~

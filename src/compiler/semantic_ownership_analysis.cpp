@@ -11032,6 +11032,53 @@ auto SemanticVisitor::Impl::recordParameterEntryDependency(
   }
 }
 
+// An empty source path for a reference parameter can designate the address
+// of the argument itself. Keep this distinct from a mapped field's referent
+// and from transferring a borrow-carrying value into the result.
+auto SemanticVisitor::Impl::storedArgumentShell(const Expr *expression) const
+    -> const ExprPtr * {
+  if (!expression)
+    return nullptr;
+  const auto *call = exprAs<Call>(expression);
+  const auto *construction = semanticModel.findConstruction(*expression);
+  const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
+  if (!construction &&
+      (!resolved || resolved->intrinsic != IntrinsicKind::None))
+    return nullptr;
+  const auto select = [&](const auto &producer,
+                          const SemanticType &result) -> const ExprPtr * {
+    const auto index = producer.borrowArgument;
+    if (producer.borrowOrigin != BorrowOriginKind::Argument ||
+        !producer.borrowArguments.empty() ||
+        index >= producer.parameterTypes.size() ||
+        !isBorrowedCarrierReference(producer.parameterTypes[index]))
+      return nullptr;
+    const auto &fields = producer.borrowFields;
+    if (!fields.empty() &&
+        (fields.size() != 1 || !fields.front().sourceFields.empty() ||
+         fields.front().origin != BorrowOriginKind::Argument ||
+         fields.front().parameter != index))
+      return nullptr;
+    const auto path = storedReferencePath(result);
+    if (!path || path->reference.arguments.size() != 1)
+      return nullptr;
+    if (path->reference.arguments != producer.parameterTypes[index].arguments) {
+      const auto *owner = classInfo(path->reference.arguments.front());
+      if (!owner ||
+          owner->compilerCapability != CompilerCapabilityTypeKind::ErasedObject)
+        return nullptr;
+    }
+    if (call)
+      return resolvedCallArgument(*call, resolved, index);
+    const auto *initializer = exprAs<DirectInitializer>(expression);
+    return initializer && index < initializer->arguments().size()
+               ? &initializer->arguments()[index]
+               : nullptr;
+  };
+  return construction ? select(*construction, construction->constructedType)
+                      : select(*resolved, resolved->returnType);
+}
+
 auto SemanticVisitor::Impl::receiverStorageBorrow(
     const ExprPtr &expression) const -> bool {
   return receiverStorageBorrow(expression.get());
@@ -11332,75 +11379,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       call == nullptr ? nullptr : semanticModel.findCall(*call);
   const auto storedPath =
       retainedStoredBorrow ? storedReferencePath(carrier->type) : std::nullopt;
-  const auto shellOrigin = construction != nullptr ? construction->borrowOrigin
-                           : resolved != nullptr   ? resolved->borrowOrigin
-                                                   : BorrowOriginKind::None;
-  const auto shellArgument = construction != nullptr
-                                 ? construction->borrowArgument
-                             : resolved != nullptr ? resolved->borrowArgument
-                                                   : std::size_t{0};
-  const auto *shellParameters =
-      construction != nullptr ? &construction->parameterTypes
-      : resolved != nullptr && resolved->intrinsic == IntrinsicKind::None
-          ? &resolved->parameterTypes
-          : nullptr;
-  const auto *shellFields = construction != nullptr
-                                ? &construction->borrowFields
-                            : resolved != nullptr ? &resolved->borrowFields
-                                                  : nullptr;
-  const auto *shellArguments =
-      construction != nullptr ? &construction->borrowArguments
-      : resolved != nullptr   ? &resolved->borrowArguments
-                              : nullptr;
-  if (shellParameters != nullptr && storedPath &&
-      shellOrigin == BorrowOriginKind::Argument && shellArguments != nullptr &&
-      shellArguments->empty() && shellFields != nullptr &&
-      shellFields->size() <= 1 &&
-      (shellFields->empty() ||
-       (shellFields->front().sourceFields.empty() &&
-        shellFields->front().origin == BorrowOriginKind::Argument &&
-        shellFields->front().parameter == shellArgument)) &&
-      shellArgument < shellParameters->size() &&
-      isBorrowedCarrierReference((*shellParameters)[shellArgument]) &&
-      storedPath->reference.arguments ==
-          (*shellParameters)[shellArgument].arguments) {
-    const auto *initializer = exprAs<DirectInitializer>(expression);
-    const ResolvedCallArguments arguments =
-        call != nullptr ? ResolvedCallArguments(*call, resolved)
-        : initializer != nullptr
-            ? ResolvedCallArguments(initializer->arguments())
-            : ResolvedCallArguments{};
-    if (shellArgument < arguments.size()) {
-      const auto &argument = arguments[shellArgument];
-      const auto source = retainedDependencySource(argument);
-      BindingDependencyRef sourceLoan =
-          source ? source->summary : BindingDependencyRef{};
-      if (sourceLoan != nullptr) {
-        // Storing Carrier& borrows the actual carrier object as well as its
-        // external owner. It is not a by-value copy of the carrier's view.
-        const auto dependency =
-            sourceLoan->kind == BindingDependencyKind::StoredValue
-                ? sourceLoan
-                : sourceLoan->storedDependency;
-        // Storing the referent's address retains its physical reference even
-        // when access is shared. Otherwise its semantic endpoint can retire
-        // the named accessor before the adapter and its copied results.
-        const auto parent = sourceLoan->kind == BindingDependencyKind::Reference
-                                ? sourceLoan
-                                : BindingDependencyRef{};
-        SemanticLoanPlace shell = loanPlace(argument);
-        if (dependency != nullptr && (shell.root != 0 || shell.receiver)) {
-          const auto owner = shell.root;
-          const auto receiver = shell.receiver;
-          auto id = formBindingDependency(
-              *carrier, carrierSymbol, BindingDependencyKind::StoredValue,
-              expression, std::move(shell), owner, receiver, carrierAccess,
-              true, parent);
-          refineBindingDependency(*carrier, id, [&](BindingDependency &loan) {
-            loan.storedDependency = dependency;
-          });
-          return;
-        }
+  if (const auto *shell =
+          retainedStoredBorrow ? storedArgumentShell(expression) : nullptr) {
+    const auto &argument = *shell;
+    const auto source = retainedDependencySource(argument);
+    BindingDependencyRef sourceLoan =
+        source ? source->summary : BindingDependencyRef{};
+    if (sourceLoan != nullptr) {
+      // Storing Carrier& borrows the actual carrier object as well as its
+      // external owner. It is not a by-value copy of the carrier's view.
+      const auto dependency =
+          sourceLoan->kind == BindingDependencyKind::StoredValue
+              ? sourceLoan
+              : sourceLoan->storedDependency;
+      // Storing the referent's address retains its physical reference even
+      // when access is shared. Otherwise its semantic endpoint can retire
+      // the named accessor before the adapter and its copied results.
+      const auto parent = sourceLoan->kind == BindingDependencyKind::Reference
+                              ? sourceLoan
+                              : BindingDependencyRef{};
+      SemanticLoanPlace shell = loanPlace(argument);
+      if (dependency != nullptr && (shell.root != 0 || shell.receiver)) {
+        const auto owner = shell.root;
+        const auto receiver = shell.receiver;
+        auto id = formBindingDependency(*carrier, carrierSymbol,
+                                        BindingDependencyKind::StoredValue,
+                                        expression, std::move(shell), owner,
+                                        receiver, carrierAccess, true, parent);
+        refineBindingDependency(*carrier, id, [&](BindingDependency &loan) {
+          loan.storedDependency = dependency;
+        });
+        return;
       }
     }
   }

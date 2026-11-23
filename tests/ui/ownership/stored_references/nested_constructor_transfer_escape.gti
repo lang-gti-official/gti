@@ -1,0 +1,20 @@
+// A nested constructor cannot return the borrow of a local hidden in a moved carrier.
+struct State {
+  mut int& object;
+  State(mut int& x) : object(x) {}
+  mut int& owner() mut { return this.object; }
+};
+struct View {
+  mut State state;
+  int tag;
+  View(State s, int tag) : state(std::move(s)), tag(tag) {}
+};
+View make(mut int& x) {
+  State s{x};
+  return View(std::move(s), 4);
+}
+View escape() { //~ ERROR GTI-S2045
+  mut int local = 0;
+  return make(local);
+}
+int main() { return 0; }

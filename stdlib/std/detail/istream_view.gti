@@ -1,0 +1,288 @@
+export module detail_borrowed_istream;
+export import "stream_view.gti";
+import "function_pointer.gti";
+import std.ios;
+import std.memory;
+import std.cstdio;
+import std.span;
+import std.string;
+
+export namespace std {
+enum input_manipulator { whitespace };
+constexpr input_manipulator ws = input_manipulator::whitespace;
+}
+
+namespace std::detail {
+enum input_cursor { peek, get, ignore, unget, putback, sync, tell, seek, whitespace };
+enum input_text { get, getline, string_line };
+enum input_scalar { boolean, character, i8, u8, i16, u16, i32, u32, i64, u64, f32, f64, text };
+export concept input_stream_source<S> = stream_state_source<S> &&
+    requires(S& source, mut S& input, size_t n, int64_t offset, int32_t delimiter,
+             char ch, seek_origin origin, mut mutable_span<uint8_t>& bytes,
+             mut bool& boolean_out, mut char& character_out, mut int8_t& i8_out, mut uint8_t& u8_out, mut int16_t& i16_out, mut uint16_t& u16_out, mut int32_t& i32_out, mut uint32_t& u32_out, mut int64_t& i64_out, mut uint64_t& u64_out, mut float& f32_out, mut double& f64_out, mut string& text_out) {
+  { source.gcount() } -> size_t;
+  { input.get() } -> int32_t;
+  { input.peek() } -> int32_t;
+  { input.ignore(n, delimiter) };
+  { input.unget() };
+  { input.putback(ch) };
+  { input.sync() } -> int32_t;
+  { input.tellg() } -> int64_t;
+  { input.seekg(offset, origin) };
+  { input.skip_whitespace() } -> void;
+  { input.get(text_out, n, ch) };
+  { input.getline(text_out, n, ch) };
+  { input.read_string_line(text_out, ch) } -> void;
+  { input.read(bytes, n) };
+  { input.readsome(bytes) } -> size_t;
+  { input >> boolean_out };
+  { input >> character_out };
+  { input >> i8_out };
+  { input >> u8_out };
+  { input >> i16_out };
+  { input >> u16_out };
+  { input >> i32_out };
+  { input >> u32_out };
+  { input >> i64_out };
+  { input >> u64_out };
+  { input >> f32_out };
+  { input >> f64_out };
+  { input >> text_out };
+};
+}
+
+export namespace std {
+/// A checked, exclusive view of an existing stream. Every operation uses the
+/// owner's live buffer, cursor, extraction count and formatting state.
+class istream {
+  mut detail::stream_view_state state;
+  using count_signature = size_t(erased_object&);
+  using cursor_signature = int64_t(mut erased_object&, detail::input_cursor, size_t, int64_t, seek_origin);
+  using bulk_signature = size_t(mut erased_object&, mut mutable_span<uint8_t>&, size_t, bool);
+  using text_signature = void(mut erased_object&, detail::input_text, mut string&, size_t, char);
+  using scalar_signature = void(mut erased_object&, detail::input_scalar, mut erased_object&);
+  gti_internal::function_pointer<count_signature> count;
+  gti_internal::function_pointer<cursor_signature> cursor;
+  gti_internal::function_pointer<bulk_signature> bulk;
+  gti_internal::function_pointer<text_signature> text;
+  gti_internal::function_pointer<scalar_signature> scalar;
+
+  int64_t control(detail::input_cursor op, size_t n = 0, int64_t arg = 0, seek_origin dir = seek_origin::begin) mut {
+    return gti_internal::function_pointer_invoke(this.cursor, this.state.owner_mut(), op, n, arg, dir);
+  }
+  void read_text(detail::input_text op, mut string& out, size_t limit, char delimiter) mut {
+    gti_internal::function_pointer_invoke(this.text, this.state.owner_mut(), op, out, limit, delimiter);
+  }
+
+  // Only this factory can pair directional operations with their checked owner.
+  istream(detail::stream_view_state state,
+      gti_internal::function_pointer<count_signature> count,
+      gti_internal::function_pointer<cursor_signature> cursor,
+      gti_internal::function_pointer<bulk_signature> bulk,
+      gti_internal::function_pointer<text_signature> text,
+      gti_internal::function_pointer<scalar_signature> scalar) :
+    state(std::move(state)), count(count), cursor(cursor), bulk(bulk), text(text), scalar(scalar) {}
+public:
+  static istream from<detail::input_stream_source S>(mut S& owner) {
+    detail::stream_view_state state{owner};
+    auto count = gti_internal::function_pointer_from_item<count_signature>([](erased_object& object) -> size_t {
+      unsafe { return std::restore_ref<S>(object).gcount(); }
+    });
+    auto cursor = gti_internal::function_pointer_from_item<cursor_signature>(
+        [](mut erased_object& object, detail::input_cursor op, size_t n, int64_t arg, seek_origin dir) -> int64_t {
+      unsafe {
+        mut S& input = std::restore_mut<S>(object);
+        switch (op) {
+        case detail::input_cursor::peek: return int64_t(input.peek());
+        case detail::input_cursor::get: return int64_t(input.get());
+        case detail::input_cursor::ignore: input.ignore(n, int32_t(arg)); return 0;
+        case detail::input_cursor::unget: input.unget(); return 0;
+        case detail::input_cursor::putback: input.putback(char(uint8_t(arg))); return 0;
+        case detail::input_cursor::sync: return int64_t(input.sync());
+        case detail::input_cursor::tell: return input.tellg();
+        case detail::input_cursor::seek: input.seekg(arg, dir); return 0;
+        case detail::input_cursor::whitespace: input.skip_whitespace(); return 0;
+        default: return -1;
+        }
+      }
+    });
+    auto bulk = gti_internal::function_pointer_from_item<bulk_signature>(
+        [](mut erased_object& object, mut mutable_span<uint8_t>& output, size_t n, bool available) -> size_t {
+      unsafe {
+        mut S& input = std::restore_mut<S>(object);
+        if (available) { return input.readsome(output); }
+        input.read(output, n);
+        return size_t(0); // Only readsome consumes the callback result.
+      }
+    });
+    auto text = gti_internal::function_pointer_from_item<text_signature>(
+        [](mut erased_object& object, detail::input_text op, mut string& out, size_t limit, char delimiter) -> void {
+      unsafe {
+        mut S& input = std::restore_mut<S>(object);
+        switch (op) {
+        case detail::input_text::get: input.get(out, limit, delimiter); break;
+        case detail::input_text::getline: input.getline(out, limit, delimiter); break;
+        case detail::input_text::string_line: input.read_string_line(out, delimiter); break;
+        }
+      }
+    });
+    auto scalar = gti_internal::function_pointer_from_item<scalar_signature>(
+        [](mut erased_object& object, detail::input_scalar kind, mut erased_object& output) -> void {
+      unsafe {
+        // Each typed extraction overload below supplies its own tag and the
+        // matching destination. Neither the tag nor this thunk escapes.
+        mut S& input = std::restore_mut<S>(object);
+        switch (kind) {
+        case detail::input_scalar::boolean: input >> std::restore_mut<bool>(output); break;
+        case detail::input_scalar::character: input >> std::restore_mut<char>(output); break;
+        case detail::input_scalar::i8: input >> std::restore_mut<int8_t>(output); break;
+        case detail::input_scalar::u8: input >> std::restore_mut<uint8_t>(output); break;
+        case detail::input_scalar::i16: input >> std::restore_mut<int16_t>(output); break;
+        case detail::input_scalar::u16: input >> std::restore_mut<uint16_t>(output); break;
+        case detail::input_scalar::i32: input >> std::restore_mut<int32_t>(output); break;
+        case detail::input_scalar::u32: input >> std::restore_mut<uint32_t>(output); break;
+        case detail::input_scalar::i64: input >> std::restore_mut<int64_t>(output); break;
+        case detail::input_scalar::u64: input >> std::restore_mut<uint64_t>(output); break;
+        case detail::input_scalar::f32: input >> std::restore_mut<float>(output); break;
+        case detail::input_scalar::f64: input >> std::restore_mut<double>(output); break;
+        case detail::input_scalar::text: input >> std::restore_mut<string>(output); break;
+        }
+      }
+    });
+    return istream(std::move(state), count, cursor, bulk, text, scalar);
+  }
+
+  ios::iostate rdstate() { return this.state.rdstate(); }
+  bool good() { return this.rdstate() == ios::goodbit; }
+  bool eof() { return (this.rdstate() & ios::eofbit) != 0; }
+  bool bad() { return (this.rdstate() & ios::badbit) != 0; }
+  bool fail() { return (this.rdstate() & (ios::failbit | ios::badbit)) != 0; }
+  operator bool() { return !this.fail(); }
+  io_errc error() { return this.state.error(); }
+  void clear(ios::iostate bits = ios::goodbit) mut { this.state.clear(bits); }
+  void setstate(ios::iostate bits) mut { this.state.setstate(bits); }
+  void apply(stream_setting setting) mut { this.state.apply(setting); }
+  ios::fmtflags flags() { return this.state.flags(); }
+  [[discardable]] ios::fmtflags flags(ios::fmtflags value) mut { return this.state.flags(value); }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits) mut { return this.flags(this.flags() | bits); }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits, ios::fmtflags mask) mut {
+    return this.flags((this.flags() & ~mask) | (bits & mask));
+  }
+  void unsetf(ios::fmtflags bits) mut { this.flags(this.flags() & ~bits); }
+  size_t width() { return this.state.width(); }
+  [[discardable]] size_t width(size_t value) mut { return this.state.width(value); }
+  size_t precision() { return this.state.precision(); }
+  [[discardable]] size_t precision(size_t value) mut { return this.state.precision(value); }
+  char fill() { return this.state.fill(); }
+  [[discardable]] char fill(char value) mut { return this.state.fill(value); }
+
+  size_t gcount() { return gti_internal::function_pointer_invoke(this.count, this.state.owner()); }
+  int32_t peek() mut { return int32_t(this.control(detail::input_cursor::peek)); }
+  int32_t get() mut { return int32_t(this.control(detail::input_cursor::get)); }
+  [[discardable]] mut istream& get(mut char& out) mut {
+    int32_t c = this.get();
+    if (c >= 0) { out = char(uint8_t(c)); }
+    return this;
+  }
+  [[discardable]] mut istream& get(mut string& out, size_t limit, char delimiter = '\n') mut {
+    this.read_text(detail::input_text::get, out, limit, delimiter);
+    return this;
+  }
+  [[discardable]] mut istream& getline(mut string& out, char delimiter = '\n') mut {
+    return this.getline(out, string::npos, delimiter);
+  }
+  [[discardable]] mut istream& getline(mut string& out, size_t limit, char delimiter = '\n') mut {
+    this.read_text(detail::input_text::getline, out, limit, delimiter);
+    return this;
+  }
+  void read_string_line(mut string& out, char delimiter) mut {
+    this.read_text(detail::input_text::string_line, out, size_t(0), delimiter);
+  }
+  [[discardable]] mut istream& ignore(size_t n = 1, int32_t delimiter = -1) mut {
+    [[discard]] this.control(detail::input_cursor::ignore, n, int64_t(delimiter));
+    return this;
+  }
+  [[discardable]] mut istream& unget() mut {
+    [[discard]] this.control(detail::input_cursor::unget);
+    return this;
+  }
+  [[discardable]] mut istream& putback(char ch) mut {
+    [[discard]] this.control(detail::input_cursor::putback, size_t(0), int64_t(uint8_t(ch)));
+    return this;
+  }
+  int32_t sync() mut { return int32_t(this.control(detail::input_cursor::sync)); }
+  int64_t tellg() mut { return this.control(detail::input_cursor::tell); }
+  [[discardable]] mut istream& seekg(int64_t offset, seek_origin origin = seek_origin::begin) mut {
+    [[discard]] this.control(detail::input_cursor::seek, size_t(0), offset, origin);
+    return this;
+  }
+  [[discardable]] mut istream& read(mut mutable_span<uint8_t>& output, size_t n) mut {
+    [[discard]] gti_internal::function_pointer_invoke(this.bulk, this.state.owner_mut(), output, n, false);
+    return this;
+  }
+  [[discardable]] mut istream& read(mut mutable_span<uint8_t>& output) mut {
+    size_t n = output.size();
+    return this.read(output, n);
+  }
+  size_t readsome(mut mutable_span<uint8_t>& output) mut {
+    return gti_internal::function_pointer_invoke(this.bulk, this.state.owner_mut(), output, size_t(0), true);
+  }
+  [[discardable]] mut istream& operator>>(stream_setting setting) mut { this.apply(setting); return this; }
+  [[discardable]] mut istream& operator>>(input_manipulator setting) mut {
+    if (setting == input_manipulator::whitespace) { [[discard]] this.control(detail::input_cursor::whitespace); }
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut bool& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::boolean, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut char& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::character, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut int8_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::i8, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut uint8_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::u8, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut int16_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::i16, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut uint16_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::u16, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut int32_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::i32, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut uint32_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::u32, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut int64_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::i64, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut uint64_t& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::u64, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut float& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::f32, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut double& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::f64, std::erase_mut(out));
+    return this;
+  }
+  [[discardable]] mut istream& operator>>(mut string& out) mut {
+    gti_internal::function_pointer_invoke(this.scalar, this.state.owner_mut(), detail::input_scalar::text, std::erase_mut(out));
+    return this;
+  }
+};
+}

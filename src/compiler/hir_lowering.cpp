@@ -8020,8 +8020,15 @@ private:
           receiver->info.traits.containsBorrowedState;
       const bool temporaryArguments =
           resolved != nullptr && !resolved->ephemeralBorrowArguments.empty();
+      // A chained mutable shift reborrows its left operand exactly as a
+      // mutable method call would. Stage the receiver before the RHS.
+      const bool mutableShift =
+          resolved &&
+          resolved->receiverMutability == ReceiverMutability::Mutable &&
+          (resolved->kind == OverloadedOperator::ShiftLeft ||
+           resolved->kind == OverloadedOperator::ShiftRight);
       if ((freshReceiver || borrowedValueReceiver || explicitConversion ||
-           temporaryArguments) &&
+           temporaryArguments || mutableShift) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(

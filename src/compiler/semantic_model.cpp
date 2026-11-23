@@ -2177,6 +2177,7 @@ void SemanticModel::clear() {
   sourceDebugProfile_ = SourceDebugProfile::None;
   foreignStorage_.clear();
   analyzedFunctionBodies.clear();
+  preambleRecoveryLocals.clear();
   expressions.clear();
   statementFullExpressions.clear();
   constructorFullExpressions.clear();
@@ -3368,6 +3369,21 @@ void SemanticModel::recordCompilerCapabilityType(
 
 SymbolId SemanticModel::recordSymbol(SymbolRecord symbol) {
   return semanticDatabase.recordSymbol(std::move(symbol));
+}
+
+void SemanticModel::recordPreambleRecoveryLocal(SymbolId id,
+                                                const FunctionDecl &body) {
+  if (id != 0)
+    preambleRecoveryLocals.try_emplace(id, &body);
+}
+
+bool SemanticModel::isUnreachedPreambleRecoveryLocal(SymbolId id) const {
+  for (const auto *model = this; model; model = model->base) {
+    const auto found = model->preambleRecoveryLocals.find(id);
+    if (found != model->preambleRecoveryLocals.end())
+      return !hasAnalyzedFunctionBody(*found->second);
+  }
+  return false;
 }
 
 void SemanticModel::setSymbolDocumentation(SymbolId symbol,

@@ -1044,6 +1044,15 @@ consuming overload is preferred for those forms. A named value is never
 implicitly consumed. Read-only, mutable, and consuming overloads may coexist;
 arithmetic/bitwise value operators admit read-only and consuming forms.
 
+A shift overload with a trailing `mut` receiver takes one parameter and
+returns a mutable reference to the receiver type. Its result borrows the
+receiver, with an elided or explicit `this` region. In `out << a << b` the
+second call reborrows the result of the first. In `in >> a >> b` each call
+can also borrow its destination mutably. Ordinary borrow checks require the
+destination to be disjoint from the receiver for that call. Binding a chain's
+result to a reference keeps the receiver borrowed through the reference's
+last use.
+
 An accessor pair is the exception to the mutable preference: a read-only
 overload returning `T&` and an otherwise exact `mut` overload returning
 `mut T&` to the same referent, as a method, `operator[]`, `operator*` or

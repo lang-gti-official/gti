@@ -1,0 +1,208 @@
+export module detail_borrowed_ostream;
+import std.cstdio;
+import std.ios;
+import std.panic;
+import std.span;
+import std.string;
+import std.memory;
+export import "stream_view.gti";
+import "function_pointer.gti";
+
+export namespace std {
+enum output_manipulator { newline_and_flush, null_character, flush_buffer };
+constexpr output_manipulator endl = output_manipulator::newline_and_flush;
+constexpr output_manipulator ends = output_manipulator::null_character;
+constexpr output_manipulator flush = output_manipulator::flush_buffer;
+}
+
+namespace std::detail {
+// Keep the source type for width-dependent integer formatting and floating precision.
+enum output_number {
+  boolean(bool value),
+  character(char value),
+  i8(int8_t value),
+  u8(uint8_t value),
+  i16(int16_t value),
+  u16(uint16_t value),
+  i32(int32_t value),
+  u32(uint32_t value),
+  i64(int64_t value),
+  u64(uint64_t value),
+  f32(float value),
+  f64(double value),
+};
+enum output_control { put, flush, tell, seek };
+
+export concept output_view_source<S> = stream_state_source<S> && requires(mut S& s,
+    char byte, span<uint8_t>& data, string_view text, size_t count,
+    int64_t offset, seek_origin origin,
+    bool boolean, char character, int8_t i8, uint8_t u8, int16_t i16, uint16_t u16, int32_t i32, uint32_t u32, int64_t i64, uint64_t u64, float f32, double f64) {
+  { s.put(byte) };
+  { s.write(data) };
+  { s.write(text, count) };
+  { s.flush() };
+  { s.tellp() } -> int64_t;
+  { s.seekp(offset, origin) };
+  { s << text };
+  { s << boolean };
+  { s << character };
+  { s << i8 };
+  { s << u8 };
+  { s << i16 };
+  { s << u16 };
+  { s << i32 };
+  { s << u32 };
+  { s << i64 };
+  { s << u64 };
+  { s << f32 };
+  { s << f64 };
+};
+
+void insert_number<output_view_source S>(mut S& s, output_number& value) {
+  switch (value) {
+  case output_number::boolean(item): s << item; return;
+  case output_number::character(item): s << item; return;
+  case output_number::i8(item): s << item; return;
+  case output_number::u8(item): s << item; return;
+  case output_number::i16(item): s << item; return;
+  case output_number::u16(item): s << item; return;
+  case output_number::i32(item): s << item; return;
+  case output_number::u32(item): s << item; return;
+  case output_number::i64(item): s << item; return;
+  case output_number::u64(item): s << item; return;
+  case output_number::f32(item): s << item; return;
+  case output_number::f64(item): s << item; return;
+  }
+}
+}
+
+export namespace std {
+/// A move-only exclusive view of an existing output stream. The owner keeps its
+/// file or memory buffer, cursor, formatting state and error state.
+class ostream {
+  mut detail::stream_view_state state;
+  gti_internal::function_pointer<int64_t(mut erased_object&, detail::output_control, int64_t, seek_origin, char)> control;
+  gti_internal::function_pointer<void(mut erased_object&, detail::output_number&)> insert;
+  gti_internal::function_pointer<void(mut erased_object&, string_view, size_t, bool)> text;
+  gti_internal::function_pointer<void(mut erased_object&, span<uint8_t>&)> bytes;
+
+  void number(detail::output_number value) mut {
+    gti_internal::function_pointer_invoke(this.insert, this.state.owner_mut(), value);
+  }
+  // Only this factory can pair directional operations with their checked owner.
+  ostream(detail::stream_view_state state,
+      gti_internal::function_pointer<int64_t(mut erased_object&, detail::output_control, int64_t, seek_origin, char)> control,
+      gti_internal::function_pointer<void(mut erased_object&, detail::output_number&)> insert,
+      gti_internal::function_pointer<void(mut erased_object&, string_view, size_t, bool)> text,
+      gti_internal::function_pointer<void(mut erased_object&, span<uint8_t>&)> bytes) :
+    state(std::move(state)), control(control), insert(insert), text(text), bytes(bytes) {}
+public:
+  static ostream from<detail::output_view_source S>(mut S& owner) {
+    detail::stream_view_state state{owner};
+    auto control = gti_internal::function_pointer_from_item<int64_t(mut erased_object&, detail::output_control, int64_t, seek_origin, char)>(
+        [](mut erased_object& object, detail::output_control operation, int64_t offset, seek_origin origin, char byte) -> int64_t {
+      unsafe {
+        mut S& target = std::restore_mut<S>(object);
+        switch (operation) {
+        case detail::output_control::put: target.put(byte); return int64_t(0);
+        case detail::output_control::flush: target.flush(); return int64_t(0);
+        case detail::output_control::tell: return target.tellp();
+        case detail::output_control::seek: target.seekp(offset, origin); return int64_t(0);
+        default: std::panic("invalid borrowed output operation");
+        }
+      }
+    });
+    auto insert = gti_internal::function_pointer_from_item<void(mut erased_object&, detail::output_number&)>(
+        [](mut erased_object& object, detail::output_number& value) -> void {
+      unsafe { mut S& target = std::restore_mut<S>(object); detail::insert_number(target, value); }
+    });
+    auto text = gti_internal::function_pointer_from_item<void(mut erased_object&, string_view, size_t, bool)>(
+        [](mut erased_object& object, string_view value, size_t count, bool formatted) -> void {
+      unsafe {
+        mut S& target = std::restore_mut<S>(object);
+        if (formatted) { target << value; } else { target.write(value, count); }
+      }
+    });
+    auto bytes = gti_internal::function_pointer_from_item<void(mut erased_object&, span<uint8_t>&)>(
+        [](mut erased_object& object, span<uint8_t>& value) -> void {
+      unsafe { mut S& target = std::restore_mut<S>(object); target.write(value); }
+    });
+    return ostream(std::move(state), control, insert, text, bytes);
+  }
+
+  ios::iostate rdstate() { return this.state.rdstate(); }
+  bool good() { return this.rdstate() == ios::goodbit; }
+  bool eof() { return (this.rdstate() & ios::eofbit) != 0; }
+  bool bad() { return (this.rdstate() & ios::badbit) != 0; }
+  bool fail() { return (this.rdstate() & (ios::failbit | ios::badbit)) != 0; }
+  operator bool() { return !this.fail(); }
+  io_errc error() { return this.state.error(); }
+  void clear(ios::iostate bits = ios::goodbit) mut { this.state.clear(bits); }
+  void setstate(ios::iostate bits) mut { this.state.setstate(bits); }
+  void apply(stream_setting setting) mut { this.state.apply(setting); }
+  ios::fmtflags flags() { return this.state.flags(); }
+  [[discardable]] ios::fmtflags flags(ios::fmtflags value) mut { return this.state.flags(value); }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits) mut { return this.flags(this.flags() | bits); }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits, ios::fmtflags mask) mut {
+    return this.flags((this.flags() & ~mask) | (bits & mask));
+  }
+  void unsetf(ios::fmtflags bits) mut { this.flags(this.flags() & ~bits); }
+  size_t width() { return this.state.width(); }
+  [[discardable]] size_t width(size_t value) mut { return this.state.width(value); }
+  size_t precision() { return this.state.precision(); }
+  [[discardable]] size_t precision(size_t value) mut { return this.state.precision(value); }
+  char fill() { return this.state.fill(); }
+  [[discardable]] char fill(char value) mut { return this.state.fill(value); }
+
+  [[discardable]] mut ostream& put(char value) mut {
+    [[discard]] gti_internal::function_pointer_invoke(this.control, this.state.owner_mut(), detail::output_control::put, int64_t(0), seek_origin::begin, value);
+    return this;
+  }
+  [[discardable]] mut ostream& flush() mut {
+    [[discard]] gti_internal::function_pointer_invoke(this.control, this.state.owner_mut(), detail::output_control::flush, int64_t(0), seek_origin::begin, '\0');
+    return this;
+  }
+  int64_t tellp() mut {
+    return gti_internal::function_pointer_invoke(this.control, this.state.owner_mut(), detail::output_control::tell, int64_t(0), seek_origin::begin, '\0');
+  }
+  [[discardable]] mut ostream& seekp(int64_t offset, seek_origin origin = seek_origin::begin) mut {
+    [[discard]] gti_internal::function_pointer_invoke(this.control, this.state.owner_mut(), detail::output_control::seek, offset, origin, '\0');
+    return this;
+  }
+  [[discardable]] mut ostream& write(span<uint8_t>& value) mut {
+    gti_internal::function_pointer_invoke(this.bytes, this.state.owner_mut(), value);
+    return this;
+  }
+  [[discardable]] mut ostream& write(string_view value, size_t count) mut {
+    gti_internal::function_pointer_invoke(this.text, this.state.owner_mut(), value, count, false);
+    return this;
+  }
+  [[discardable]] mut ostream& write(string_view value) mut {
+    return this.write(value, value.size());
+  }
+  [[discardable]] mut ostream& operator<<(string_view value) mut {
+    gti_internal::function_pointer_invoke(this.text, this.state.owner_mut(), value, value.size(), true);
+    return this;
+  }
+  [[discardable]] mut ostream& operator<<(string& value) mut { return this << value.view(); }
+  [[discardable]] mut ostream& operator<<(stream_setting setting) mut { this.apply(setting); return this; }
+  [[discardable]] mut ostream& operator<<(output_manipulator setting) mut {
+    if (setting == output_manipulator::newline_and_flush) { this.put('\n'); this.flush(); }
+    if (setting == output_manipulator::flush_buffer) { this.flush(); }
+    if (setting == output_manipulator::null_character) { this.put('\0'); }
+    return this;
+  }
+  [[discardable]] mut ostream& operator<<(bool value) mut { this.number(detail::output_number::boolean(value)); return this; }
+  [[discardable]] mut ostream& operator<<(char value) mut { this.number(detail::output_number::character(value)); return this; }
+  [[discardable]] mut ostream& operator<<(int8_t value) mut { this.number(detail::output_number::i8(value)); return this; }
+  [[discardable]] mut ostream& operator<<(uint8_t value) mut { this.number(detail::output_number::u8(value)); return this; }
+  [[discardable]] mut ostream& operator<<(int16_t value) mut { this.number(detail::output_number::i16(value)); return this; }
+  [[discardable]] mut ostream& operator<<(uint16_t value) mut { this.number(detail::output_number::u16(value)); return this; }
+  [[discardable]] mut ostream& operator<<(int32_t value) mut { this.number(detail::output_number::i32(value)); return this; }
+  [[discardable]] mut ostream& operator<<(uint32_t value) mut { this.number(detail::output_number::u32(value)); return this; }
+  [[discardable]] mut ostream& operator<<(int64_t value) mut { this.number(detail::output_number::i64(value)); return this; }
+  [[discardable]] mut ostream& operator<<(uint64_t value) mut { this.number(detail::output_number::u64(value)); return this; }
+  [[discardable]] mut ostream& operator<<(float value) mut { this.number(detail::output_number::f32(value)); return this; }
+  [[discardable]] mut ostream& operator<<(double value) mut { this.number(detail::output_number::f64(value)); return this; }
+};
+}

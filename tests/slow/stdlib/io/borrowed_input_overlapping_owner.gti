@@ -1,0 +1,13 @@
+// A live mutable input view excludes simultaneous reads through the owner.
+//@ slow
+import std.istream;
+import std.io;
+import std.span;
+int main() {
+  uint8_t bytes[1] = {uint8_t(65)};
+  mut auto memory = std::io::memory_reader(bytes.as_span());
+  mut std::basic_istream<std::io::memory_reader> owner{std::move(memory)};
+  mut std::istream view = owner.as_istream();
+  int c = owner.get();  //~ ERROR GTI-S2017
+  return c + view.get();
+}

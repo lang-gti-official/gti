@@ -1,0 +1,31 @@
+// The nested constructor's temporary borrows a by-value lease until field initialization.
+//@ run-pass
+mut int observed = 0;
+struct Ref {
+  int& value;
+  Ref(int& value) : value(value) {}
+};
+struct Lease {
+  Ref resource;
+  Lease(Ref resource) : resource(resource) {}
+  Lease(Lease& other) = delete;
+  Lease(Lease&& other) = default;
+  ~Lease() { observed += this.resource.value; }
+};
+struct Buffer {
+  Lease lease;
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+};
+struct Slots {
+  Buffer buffer;
+  Slots(Lease lease) : buffer(Buffer(std::move(lease))) {}
+};
+int main() {
+  int value = 42;
+  {
+    Ref resource{value};
+    Slots slots{Lease(resource)};
+    if (slots.buffer.lease.resource.value != 42) { return 1; }
+  }
+  return observed - 42;
+}

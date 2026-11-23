@@ -1,0 +1,20 @@
+// A base stores exactly the two mutable references forwarded in reverse order.
+//@ run-pass
+struct Base {
+  mut int& first;
+  mut int& second;
+  Base(mut int& a, mut int& b) : first(a), second(b) {}
+};
+struct Derived : public Base {
+  Derived(mut int& left, mut int& right) : Base(right, left) {}
+};
+int main() {
+  mut int left = 11;
+  mut int right = 17;
+  {
+    mut Derived d{left, right};
+    d.first = 9;
+    d.second = 4;
+  }
+  return left == 4 && right == 9 ? 0 : 1;
+}

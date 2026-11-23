@@ -1,0 +1,59 @@
+// Construction, checked open and retry share a typed error and one RAII file owner.
+//@ slow
+//@ run-pass
+//@ args: example.bin
+import std.fstream;
+import std.filesystem;
+import std.memory;
+import std.string;
+import std.vector;
+
+expected<void, std::io_errc> open_checked(std::string_view input) {
+  mut auto file = ?std::ifstream::open(input);
+  ?file.close();
+  return;
+}
+
+int run(std::string_view path) {
+  std::filesystem::path stored_path{path};
+  mut std::ifstream absent{stored_path};
+  if (absent || absent.is_open() || absent.error() != std::io_errc::open_failed) { return 1; }
+  auto failed = open_checked(path);
+  if (failed || failed.error() != absent.error()) { return 2; }
+  {
+    mut std::ofstream writer{path};
+    if (!writer || !writer.is_open()) { return 3; }
+    writer.put('A');
+    if (!writer) { return 4; }
+    // Destruction drains the pending byte and closes once.
+  }
+  if (!absent.try_open(stored_path) || !absent || !absent.is_open()) { return 5; }
+  auto repeated = absent.try_open(path);
+  if (repeated || absent || !absent.is_open() || absent.error() != repeated.error()) { return 6; }
+  absent.clear();
+  if (absent.peek() != 65 || absent.get() != 65 || !absent.close()) { return 7; }
+  if (absent.close() || absent.error() != std::io_errc::invalid_stream) { return 8; }
+  if (!open_checked(path)) { return 9; }
+  mut auto append = std::ofstream::open(stored_path, std::ios::app);
+  if (!append) { return 10; }
+  mut std::ofstream moved = std::move(append).value();
+  moved.put('B');
+  if (!moved || !moved.close()) { return 11; }
+  mut auto bidir = std::fstream::open(path);
+  if (!bidir) { return 12; }
+  mut auto both = std::move(bidir).value();
+  if (both.get() != 65) { return 13; }
+  both.put('C');
+  if (!both || both.tellp() != 2) { return 13; }
+  if (both.rdbuf().pubseekpos(int64_t(0)).value() != 0 || both.rdbuf().snextc().value() != 67) { return 14; }
+  return both.close() ? 0 : 15;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) { return run(argv[1].view()); }
+  std::string_view path = "stream-open-test.bin";
+  int result = run(path);
+  if (result != 0) { return result; }
+  auto removed = std::filesystem::remove(path);
+  return removed && removed.value() ? 0 : 16;
+}

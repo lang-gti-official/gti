@@ -6889,6 +6889,12 @@ auto SemanticVisitor::Impl::resolveOperator(
           "GTI does not synthesize compound operators from related value "
           "operators; declare this operator as a void member with one "
           "exact parameter and a trailing 'mut' receiver qualifier.");
+    } else if (kind == OverloadedOperator::ShiftLeft ||
+               kind == OverloadedOperator::ShiftRight) {
+      diagnostic.hints.emplace_back(
+          "Declare a shift member taking one parameter. A read-only or "
+          "consuming shift returns an owned value. A mutable shift returns "
+          "a mutable reference to its receiver.");
     } else if (isArithmeticOrBitwiseValueOperator(kind)) {
       diagnostic.hints.emplace_back(
           "Declare this operator on the left operand type as a read-only "

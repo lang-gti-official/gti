@@ -6210,8 +6210,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   }
   const ExprPtr *physicalOrigin = &value;
   std::unordered_set<const Expr *> visitedOrigins;
+  const ExprPtr *argumentShell = nullptr;
   while (physicalOrigin != nullptr && *physicalOrigin &&
          !receiverStorageBorrow(*physicalOrigin)) {
+    argumentShell = storedArgumentShell(physicalOrigin->get());
+    if (argumentShell)
+      break;
     if (!visitedOrigins.insert(physicalOrigin->get()).second) {
       physicalOrigin = nullptr;
       break;
@@ -6226,10 +6230,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     }
   }
   if (physicalOrigin != nullptr && *physicalOrigin) {
-    const bool stable = hasStableBorrowStorage(*physicalOrigin);
-    const ExprPtr *receiver = storedBorrowSource(*physicalOrigin);
-    const SemanticLoanPlace shell = receiver != nullptr
-                                        ? loanPlace(*receiver)
+    const bool stable = hasStableBorrowStorage(argumentShell ? *argumentShell
+                                                             : *physicalOrigin);
+    const ExprPtr *storage =
+        argumentShell ? argumentShell : storedBorrowSource(*physicalOrigin);
+    const SemanticLoanPlace shell = storage != nullptr
+                                        ? loanPlace(*storage)
                                         : SemanticLoanPlace{.receiver = true};
     bool validShell = stable && shell.receiver &&
                       contract->origin == BorrowOriginKind::Receiver;
@@ -6248,23 +6254,27 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       // A named carrier is stable within this scope, but its long-lived
       // external dependency cannot authorize returning its own local shell.
       // Check physical storage before the ordinary external-owner relay.
+      const bool implicitStatic =
+          argumentShell && function &&
+          contract->origin == BorrowOriginKind::Global && !contract->place &&
+          function->returnType.kind != SemanticType::Reference;
       Diagnostic diagnostic = makeDiagnostic(
-          std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+          implicitStatic ? "GTI-S2127" : std::move(code),
+          DiagnosticPhase::Semantics, expressionToken(value),
           "Returned " + std::string(description) +
-              (stable
-                   ? " refers to local or by-value receiver storage that does "
-                     "not outlive this call."
-                   : " refers to temporary receiver storage that is destroyed "
-                     "at the end of this full expression."));
-      if (receiver != nullptr && *receiver)
+              (stable ? " refers to local or by-value storage that does "
+                        "not outlive this call."
+                      : " refers to temporary storage that is destroyed "
+                        "at the end of this full expression."));
+      if (storage != nullptr && *storage)
         diagnostic.related.push_back(
-            {tokenSpan(expressionToken(*receiver)),
-             "The result borrows this receiver storage."});
+            {tokenSpan(expressionToken(*storage)),
+             "The result borrows this object's storage."});
       diagnostic.hints.emplace_back(
-          "Return an owned value, or borrow from receiver storage that "
+          "Return an owned value, or borrow from storage that "
           "outlives "
           "the call. An external dependency does not extend the containing "
-          "receiver's lifetime.");
+          "object's lifetime.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
@@ -9088,7 +9098,12 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
                                   name.kind == OverloadedOperator::LessEqual ||
                                   name.kind == OverloadedOperator::Greater ||
                                   name.kind == OverloadedOperator::GreaterEqual;
-  const bool valueOperator = isArithmeticOrBitwiseValueOperator(name.kind);
+  const bool mutableShift =
+      (name.kind == OverloadedOperator::ShiftLeft ||
+       name.kind == OverloadedOperator::ShiftRight) &&
+      function.receiverMutability() == ReceiverMutability::Mutable;
+  const bool valueOperator =
+      isArithmeticOrBitwiseValueOperator(name.kind) && !mutableShift;
   const bool mutationOperator = isCompoundOperator(name.kind) ||
                                 name.kind == OverloadedOperator::PreDecrement;
   std::optional<std::size_t> expectedArity = 0;
@@ -9234,6 +9249,20 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   if (name.kind == OverloadedOperator::PreIncrement &&
       function.receiverMutability() != ReceiverMutability::Mutable) {
     fail("Prefix operator++ must use a mutable receiver.");
+  }
+  if (mutableShift && currentClass) {
+    if (returnType != SemanticType::referenceTo(openClassType(*currentClass),
+                                                AccessMode::Mutable)) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " with a mutable receiver must return a mutable reference to its "
+           "receiver type.");
+    } else {
+      const auto &region = function.returnType().referenceLifetime;
+      if (region && region->name.kind != TokenKind::THIS &&
+          region->name.lexeme != "_")
+        fail("A mutable shift result must borrow its receiver. Elide the "
+             "result region or use 'this'.");
+    }
   }
   if (valueOperator && (returnType == SemanticType::Void ||
                         returnType.kind == SemanticType::Reference ||

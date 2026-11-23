@@ -589,6 +589,20 @@
       }
     },
     {
+      "id": "closed-filebuf",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/closed_filebuf.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
@@ -923,6 +937,20 @@
       }
     },
     {
+      "id": "cstdio-exclusive-create",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/exclusive_create.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "cthread",
       "mode": "run",
       "source": "tests/fixtures/cthread_yield.gti",
@@ -1211,6 +1239,76 @@
       "id": "expression-text",
       "mode": "run",
       "source": "tests/fixtures/expression_text.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-bulk",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_bulk.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-format",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_format.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-open",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_open.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-swap",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_swap.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-views",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_views.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -1599,6 +1697,20 @@
       }
     },
     {
+      "id": "ios-state",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/ios_state.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
@@ -1868,6 +1980,62 @@
       "id": "memory-layout",
       "mode": "run",
       "source": "examples/119-runtime-object-layout.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-duplex",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_duplex_cursor.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-extraction",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_input_extraction.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-input-view",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/borrowed_memory_input.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-output-view",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_output_view.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4116,6 +4284,21 @@
       ]
     },
     {
+      "id": "cstdio.exclusive-create",
+      "source": "stdlib/std/cstdio.gti",
+      "status": "executable",
+      "operations": [
+        "std::file_mode::read_write_exclusive",
+        "std::file_mode::write_exclusive"
+      ],
+      "case_ids": [
+        "cstdio-exclusive-create"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/exclusive_create.gti"
+      ]
+    },
+    {
       "id": "cstdio.executable",
       "source": "stdlib/std/cstdio.gti",
       "status": "executable",
@@ -4884,6 +5067,20 @@
       ]
     },
     {
+      "id": "format.stream-insertion",
+      "source": "stdlib/std/detail/stream_format.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_render"
+      ],
+      "case_ids": [
+        "file-stream-format"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti"
+      ]
+    },
+    {
       "id": "forward-list.empty",
       "source": "stdlib/std/forward_list.gti",
       "status": "executable",
@@ -5023,6 +5220,40 @@
         "tests/fixtures/removal_algorithms.gti",
         "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
+      "id": "fstream.stream-state",
+      "source": "stdlib/std/fstream.gti",
+      "status": "executable",
+      "operations": [
+        "std::filebuf::available",
+        "std::filebuf::close",
+        "std::filebuf::is_open",
+        "std::fstream::close",
+        "std::fstream::open",
+        "std::fstream::swap",
+        "std::ifstream::close",
+        "std::ifstream::is_open",
+        "std::ifstream::open",
+        "std::ifstream::swap",
+        "std::ifstream::try_open",
+        "std::ofstream::close",
+        "std::ofstream::is_open",
+        "std::ofstream::open",
+        "std::ofstream::swap"
+      ],
+      "case_ids": [
+        "closed-filebuf",
+        "file-stream-format",
+        "file-stream-open",
+        "file-stream-swap"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/slow/stdlib/io/file_stream_swap.gti",
+        "tests/ui/stdlib/io/closed_filebuf.gti"
       ]
     },
     {
@@ -5407,6 +5638,83 @@
       "evidence": [
         "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
+      ]
+    },
+    {
+      "id": "ios.stream-state",
+      "source": "stdlib/std/ios.gti",
+      "status": "executable",
+      "operations": [
+        "std::ios_base::clear",
+        "std::ios_base::eof",
+        "std::ios_base::good",
+        "std::ios_base::operator bool",
+        "std::ios_base::setstate"
+      ],
+      "case_ids": [
+        "ios-state"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/ios_state.gti"
+      ]
+    },
+    {
+      "id": "iostream.bidirectional",
+      "source": "stdlib/std/iostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_iostream::operator<<",
+        "std::basic_iostream::put",
+        "std::basic_iostream::tellp"
+      ],
+      "case_ids": [
+        "file-stream-open",
+        "memory-stream-duplex"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_duplex_cursor.gti"
+      ]
+    },
+    {
+      "id": "istream.borrowed-input",
+      "source": "stdlib/std/detail/istream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::istream::operator>>"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti"
+      ]
+    },
+    {
+      "id": "istream.unformatted",
+      "source": "stdlib/std/istream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_istream::gcount",
+        "std::basic_istream::get",
+        "std::basic_istream::operator>>",
+        "std::basic_istream::peek",
+        "std::basic_istream::read",
+        "std::basic_istream::unget"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open",
+        "memory-stream-extraction"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_input_extraction.gti"
       ]
     },
     {
@@ -6811,6 +7119,42 @@
       ]
     },
     {
+      "id": "ostream.borrowed-output",
+      "source": "stdlib/std/detail/ostream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::ostream::operator<<"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
+      ]
+    },
+    {
+      "id": "ostream.insertion",
+      "source": "stdlib/std/ostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_ostream::operator<<",
+        "std::basic_ostream::put",
+        "std::basic_ostream::write"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti"
+      ]
+    },
+    {
       "id": "package.generated",
       "source": "stdlib/std/package.gti",
       "status": "executable",
@@ -7870,7 +8214,7 @@
       "source": "stdlib/std.gti",
       "status": "executable",
       "operations": [
-        "std module portable aggregate re-exports"
+        "std module portable aggregate re-exports, including std.fstream, std.ios, std.iostream, std.istream and std.ostream"
       ],
       "case_ids": [
         "std-aggregate"
@@ -7881,6 +8225,25 @@
       ],
       "required_instantiations": [
         "portable modules through one import, including std.charconv and std.regex"
+      ]
+    },
+    {
+      "id": "streams.borrowed-state",
+      "source": "stdlib/std/detail/stream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_view_state::apply",
+        "std::detail::stream_view_state::rdstate"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
       ]
     },
     {

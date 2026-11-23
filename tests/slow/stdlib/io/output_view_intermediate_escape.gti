@@ -1,0 +1,10 @@
+// A live file cannot extend the lifetime of a local writer used as another view's source.
+//@ slow
+import std.fstream;
+
+std::ostream writer(mut std::ofstream& file) {
+  mut auto local = file.as_ostream();
+  return std::ostream::from(local); //~ ERROR GTI-S2045
+}
+
+int main() { return 0; }

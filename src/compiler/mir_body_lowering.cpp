@@ -629,18 +629,24 @@ public:
             constructorRollback.push_back(rollback);
           }
           if (initializer.kind == ConstructorInitializerTargetKind::Base) {
-            // A base that stores references keeps the supplied referents in
-            // this object's base subobject: each reference argument its
-            // constructor summarizes escapes into `this`, exactly as a
-            // reference field initializer does.
-            for (const std::size_t index :
-                 storedBaseReferenceArguments(initializer))
-              markStoredBorrow(
-                  initializer.arguments[index], 0,
+            for (const std::size_t index : storedBaseArguments(initializer)) {
+              const auto &parameter =
                   program
                       .findConstructorInstance(*initializer.constructorTarget)
-                      ->parameterTypes[index]
-                      .referenceAccess);
+                      ->parameterTypes[index];
+              const auto argument = initializer.arguments[index];
+              if (parameter.kind == SemanticType::Reference) {
+                markStoredBorrow(argument, 0, parameter.referenceAccess);
+              } else {
+                // The base takes ownership of the carrier, including the
+                // caller-owned referents stored inside it.
+                const auto stored = storedReferenceEntries(parameter);
+                const auto transferred = markStoredCarrierBorrow(
+                    argument, 0, stored.front().reference.referenceAccess);
+                for (Scope &scope : incomingScopes)
+                  std::erase(scope.loans, transferred);
+              }
+            }
           }
           if (initializer.storesReference &&
               initializer.arguments.size() == 1) {
@@ -1233,14 +1239,10 @@ private:
             !resolvedTraits(referent).containsBorrowedState);
   }
 
-  // A reference-base family forwards one exact incoming reference. The
-  // semantic formal supplies access and referent type; the existing place
-  // engine supplies its evaluated address. No referent value is loaded merely
-  // to pass this borrow, and the base cannot retain it.
-  // The reference arguments a base initializer's selected constructor stores
-  // in the base subobject, by its own borrow summary.
-  std::vector<std::size_t> storedBaseReferenceArguments(
-      const HirConstructorInitializer &initializer) const {
+  // The formal arguments whose external references the selected constructor
+  // retains in the base subobject, either directly or inside a carrier.
+  std::vector<std::size_t>
+  storedBaseArguments(const HirConstructorInitializer &initializer) const {
     const auto *target =
         initializer.kind == ConstructorInitializerTargetKind::Base &&
                 initializer.constructorTarget
@@ -1254,9 +1256,39 @@ private:
     std::erase_if(result, [&](std::size_t index) {
       return index >= initializer.arguments.size() ||
              index >= target->parameterTypes.size() ||
-             target->parameterTypes[index].kind != SemanticType::Reference;
+             (target->parameterTypes[index].kind != SemanticType::Reference &&
+              storedReferenceEntries(target->parameterTypes[index]).empty());
     });
     return result;
+  }
+
+  bool forwardedBaseCarrier(const HirConstructorInitializer &initializer,
+                            std::size_t index) const {
+    const auto *target =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (!constructor ||
+        initializer.kind != ConstructorInitializerTargetKind::Base || !target ||
+        index >= initializer.arguments.size() ||
+        index >= target->parameterTypes.size())
+      return false;
+    const auto &parameter = target->parameterTypes[index];
+    const auto id = initializer.arguments[index];
+    const auto *value = findValue(id);
+    if (!value || value->info.type != parameter ||
+        storedReferenceEntries(parameter).empty())
+      return false;
+    const auto binding = movedBorrowCarrierBinding(id);
+    const auto formal =
+        std::find(constructor->parameterBindings.begin(),
+                  constructor->parameterBindings.end(), binding);
+    if (binding == 0 || formal == constructor->parameterBindings.end())
+      return false;
+    const auto ordinal = static_cast<std::size_t>(
+        formal - constructor->parameterBindings.begin());
+    return ordinal < constructor->parameterTypes.size() &&
+           constructor->parameterTypes[ordinal] == parameter;
   }
 
   bool forwardedBaseReference(const HirConstructorInitializer &initializer,
@@ -1317,16 +1349,23 @@ private:
       return false;
     const auto &parameter = target->parameterTypes[index];
     const auto *value = findValue(initializer.arguments[index]);
-    return (parameter.kind == SemanticType::Class ||
-            parameter.kind == SemanticType::Enum ||
-            parameter.kind == SemanticType::Lambda) &&
-           value != nullptr && value->dropObligation &&
-           value->info.type == parameter &&
-           value->info.category == ValueCategory::Value &&
-           value->info.traits.movable &&
-           value->info.traits.drop != DropKind::Trivial &&
-           !resolvedTraits(parameter).containsBorrowedState &&
-           preparedParameterDropType(parameter).has_value();
+    if (!value || value->info.type != parameter ||
+        value->info.category != ValueCategory::Value ||
+        !value->info.traits.movable ||
+        value->info.traits.drop == DropKind::Trivial)
+      return false;
+    if (resolvedTraits(parameter).containsBorrowedState) {
+      const auto stored = storedBaseArguments(initializer);
+      if (std::find(stored.begin(), stored.end(), index) == stored.end() ||
+          !forwardedBaseCarrier(initializer, index))
+        return false;
+    }
+    const auto cleanup = preparedParameterDropType(parameter);
+    // A move of a cleanup-free aggregate does not arm a temporary. Its
+    // by-value parameter still needs the normal InitializeBase handoff.
+    return cleanup &&
+           (value->dropObligation || (value->kind == HirValueKind::Move &&
+                                      !cleanup->requiresActiveCleanup));
   }
 
   const HirClassInstance *
@@ -1368,12 +1407,13 @@ private:
     // A base storing references stages like any other when each reference
     // its constructor stores is one forwarded incoming reference; that
     // argument's escape into the base subobject is published separately.
-    const auto stored = storedBaseReferenceArguments(initializer);
+    const auto stored = storedBaseArguments(initializer);
     if (base == program.classInstances().end() ||
         (base->traits.containsBorrowedState &&
          (stored.empty() ||
           !std::all_of(stored.begin(), stored.end(), [&](std::size_t index) {
-            return forwardedBaseReference(initializer, index);
+            return forwardedBaseReference(initializer, index) ||
+                   forwardedBaseCarrier(initializer, index);
           })))) {
       return nullptr;
     }
@@ -6629,7 +6669,13 @@ private:
       }
       break;
     case HirValueKind::Binary:
-      if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
+      if (value->functionTarget &&
+          value->info.category == ValueCategory::Place) {
+        // A reference-returning operator designates its checked call-result
+        // loan.
+        place = loanOrValuePlace(*value);
+      } else if (value->operation == TokenKind::COMMA &&
+                 !value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.back()), *value);
       }
       break;
@@ -9595,8 +9641,9 @@ private:
     return references(references, value.info.type) == 1 &&
            (receiverResult ||
             (reference &&
-             reference->arguments ==
-                 value.parameterTypes[value.borrowArgument].arguments));
+             (reference->arguments ==
+                  value.parameterTypes[value.borrowArgument].arguments ||
+              opaqueWitnessReference(*reference))));
   }
 
   // Whether a reference argument names exactly the referent an accessor call
@@ -11160,12 +11207,17 @@ private:
               }))
         sharedMovedCarriers.emplace(loan, moved);
     };
+    const bool constructsCarrier = value.constructorTarget && exactCarrierRelay;
     for (std::size_t index = 0;
-         !construction && !value.constructorTarget &&
+         ((!construction && !value.constructorTarget) || constructsCarrier) &&
          (!value.borrowFields.empty() || exactCarrierRelay ||
           completeSet(value.id).has_value()) &&
          index < arguments.size() && index < call.parameterTypes.size();
          ++index) {
+      // A nested carrier constructor transfers its selected by-value input
+      // into the result. Its old exclusive group ends on successful handoff.
+      if (constructsCarrier && index != value.borrowArgument)
+        continue;
       if (call.parameterTypes[index].kind == SemanticType::Reference)
         continue;
       const auto *argument = findValue(arguments[index]);
@@ -12418,10 +12470,14 @@ private:
       if (auto instantiated = instantiateCallSet(value, 0))
         output.values[*call.result - 1].borrowDependencies =
             std::move(*instantiated);
+    // Moving the binding consumes its shell. If the result reborrows the
+    // input's authority, that authority still has to outlive the result;
+    // its ordinary scope endpoint will retire it after its children.
+    if (call.loan && !movedArgumentLoans.empty())
+      std::erase_if(movedArgumentLoans, [&](MirLoanId input) {
+        return mirLoanRetainsDependency(output, *call.loan, input);
+      });
     (void)appendInstruction(std::move(call), true, true, !deferredUnreachable);
-    // A by-value move transfers the shell and every dependency to the callee.
-    // A returned carrier publishes its own checked dependency set; it is not
-    // a child reborrow of the now-consumed caller shell.
     for (const auto loan : movedArgumentLoans) {
       if (const auto shared = sharedMovedCarriers.find(loan);
           shared != sharedMovedCarriers.end()) {

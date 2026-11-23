@@ -2158,7 +2158,9 @@ Two general facilities support this ordinary source wrapper:
   read as a value, or used to acquire transfer/share capability.
   Generic erasure protects the object's physical storage even when its type
   hides nested borrowed fields. Erasing a local carrier does not make its
-  storage live as long as the carrier's external owners. The trusted operation
+  storage live as long as the carrier's external owners. A factory returning
+  that erased borrow retains the same storage requirement, including when it
+  returns a record containing the reference. The trusted operation
   uses the same input/result lifetime application as ordinary checked calls;
   it does not give ordinary unrelated types an opaque-view conversion.
   Read-only `std::erase_ref` also works during constant evaluation for

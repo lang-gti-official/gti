@@ -1,0 +1,26 @@
+// Propagating an owning derived result transfers its cleanup only on the success path.
+//@ run-pass
+mut int cleanups = 0;
+struct Base {
+  int value;
+  Base(int x) : value(x) {}
+};
+struct Result : public Base {
+  Result(int x) : Base(x) {}
+  Result(Result& source) = delete;
+  ~Result() { cleanups++; }
+};
+expected<Result, int> make_result(bool valid) {
+  if (!valid) { return unexpected(7); }
+  return Result(11);
+}
+expected<int, int> inspect(bool valid) {
+  auto result = ?make_result(valid);
+  return result.value;
+}
+int main() {
+  auto failed = inspect(false);
+  if (failed || failed.error() != 7 || cleanups != 0) { return 1; }
+  auto success = inspect(true);
+  return success && success.value() == 11 && cleanups == 1 ? 0 : 2;
+}

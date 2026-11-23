@@ -2153,7 +2153,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   for (const SymbolRecord &symbol : semantics.database().symbols()) {
     // Source unit 0 marks an identity reserved by late demand; it names no
     // declaration.
-    if (symbol.sourceUnit != 0)
+    if (symbol.sourceUnit != 0 &&
+        !(symbol.kind == SymbolKind::LocalVariable &&
+          symbol.type == SemanticType::Unknown &&
+          semantics.isUnreachedPreambleRecoveryLocal(symbol.id)))
       retainSymbol(symbol);
   }
   for (const SymbolRecord &symbol : hir.instanceSymbols()) {

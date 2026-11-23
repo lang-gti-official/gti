@@ -2272,6 +2272,11 @@ consistent renaming of the identities registered above the prefix.
 `gti-test --isolate` compares the runner's verdicts with fresh `gti`
 processes. Include-fix trials of such a compilation run without the cache.
 
+An inferred local whose initializer failed in a deferred body retains its
+symbol and the identity of its declaring function for editor queries. While
+that body is unreached, executable lowering omits the unresolved recovery
+symbol. Reaching the function replays its original diagnostic before lowering.
+
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
   the program's declaration list. For bounded editor analysis the prefix can
@@ -2479,9 +2484,9 @@ built-in operation. HIR accepts a generic-primary range plan only as a shape
 proof; every emitted concrete plan still contains exact protocol identities,
 loan shape, and checked fixed-array operations.
 
-A generic primary may contain an inferred local whose symbolic initializer is
-valid under the active requirements but has no one declaration-wide concrete
-type. The canonical example is `auto value = *first` under
+An inferred local in a generic function or a method of a generic class can
+have an initializer that is valid under the active requirements and acquires
+its concrete type at instantiation. The canonical example is `auto value = *first` under
 `std::input_iterator<Iterator>` when no `std::dereferences_to` requirement
 names the element type. The shared `SymbolRecord` remains `Unknown` and carries
 `instanceDependentType`; each concrete HIR instance owns the exact inferred

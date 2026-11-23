@@ -1,0 +1,25 @@
+// Formatted output, input lookahead and a subsequent write operate on the same memory cursor.
+//@ run-pass
+import std.iostream;
+import std.io;
+import std.cstdio;
+import std.vector;
+
+int main() {
+  mut std::byte_buffer bytes{std::size_t(12)};
+  {
+    mut auto memory = std::io::memory_stream(bytes.as_mutable_span());
+    mut std::basic_iostream<std::io::memory_stream> stream{std::move(memory)};
+    stream << std::hex << 66 << ':' << 7;
+    if (stream.fail() || stream.tellp() != 4) { return 1; }
+    stream.seekg(int64_t(0));
+    mut int first = 0;
+    stream >> std::dec >> first;
+    if (first != 42 || stream.peek() != 58 || stream.tellg() != 2) { return 2; }
+    stream.put('!');
+    if (stream.tellp() != 3) { return 3; }
+    if (stream.get() != 55 || stream.gcount() != 1) { return 4; }
+  }
+  if (bytes[std::size_t(2)] != 33) { return 5; }
+  return 0;
+}

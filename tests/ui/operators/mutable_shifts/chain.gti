@@ -1,0 +1,27 @@
+// Both shift chains use the original receiver, evaluate in order and retain a checked reference.
+//@ run-pass
+struct Stream<T> {
+  Stream() {}
+  mut int digits = 0;
+  mut Stream<T>&<this> operator<<(int digit) mut {
+    this.digits = this.digits * 10 + digit;
+    return this;
+  }
+  mut Stream<T>& operator>>(mut int& digit) mut {
+    digit = this.digits % 10;
+    this.digits /= 10;
+    return this;
+  }
+};
+
+mut Stream<int>& append(mut Stream<int>& stream) { return stream << 1 << 2; }
+
+int main() {
+  mut Stream<int> stream{};
+  mut Stream<int>& tail = append(stream);
+  tail << 3;
+  mut int a = 0;
+  mut int b = 0;
+  stream >> a >> b;
+  return stream.digits == 1 && a == 3 && b == 2 ? 0 : 1;
+}
