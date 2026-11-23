@@ -8214,7 +8214,7 @@
       "source": "stdlib/std.gti",
       "status": "executable",
       "operations": [
-        "std module portable aggregate re-exports"
+        "std module portable aggregate re-exports, including std.fstream, std.ios, std.iostream, std.istream and std.ostream"
       ],
       "case_ids": [
         "std-aggregate"
