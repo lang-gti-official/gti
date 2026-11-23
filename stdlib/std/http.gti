@@ -1738,6 +1738,19 @@ bool token(string_view text) {
   }
   return true;
 }
+// RFC 3986 pchar, slash and query delimiters. Percent escapes stay encoded.
+bool target_suffix(string_view text, size_t from) {
+  string_view punctuation = "!$&'()*+,;=:@/?";
+  for (mut size_t i = from; i < text.size(); i++) {
+    char c = text[i];
+    if (gti_internal::http_detail::url_unreserved(c) || until(punctuation, size_t(0), c) < punctuation.size()) { continue; }
+    if (c != '%' || text.size() - i < size_t(3) ||
+        gti_internal::http_detail::hex_digit_value(text[i + size_t(1)]) < 0 ||
+        gti_internal::http_detail::hex_digit_value(text[i + size_t(2)]) < 0) { return false; }
+    i += size_t(2);
+  }
+  return true;
+}
 bool ows(char c) { return c == ' ' || c == '\t'; }
 bool named(string_view a, string_view b) { return gti_internal::http_detail::equal_header_name(a, b); }
 
@@ -1876,12 +1889,12 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
     if (method != "OPTIONS") { return unexpected(peer(server_errc::malformed)); }
     form = http::target_form::asterisk;
   } else if (target[0] == '/') {
-    if (!gti_internal::http_detail::valid_encoded_text(target, size_t(0), target.size()) ||
-        until(target, size_t(0), '#') < target.size()) { return unexpected(peer(server_errc::malformed)); }
+    if (!target_suffix(target, size_t(0))) { return unexpected(peer(server_errc::malformed)); }
   } else {
     auto parsed = gti_internal::http_detail::analyze_url(target);
     if (!parsed) { return unexpected(peer(server_errc::malformed)); }
     auto& parts = parsed.value();
+    if (!target_suffix(target, parts.authority_end)) { return unexpected(peer(server_errc::malformed)); }
     authority = string(target.substr(parts.host_begin, parts.authority_end - parts.host_begin));
     form = http::target_form::absolute;
   }
@@ -1897,7 +1910,7 @@ namespace std {
 namespace http {
 export struct head_progress {
   size_t consumed;
-  optional<request_head> head;
+  mut optional<request_head> head;
   head_progress(size_t count) : consumed(count), head(optional<request_head>()) {}
   head_progress(size_t count, request_head message) : consumed(count), head(optional<request_head>(std::move(message))) {}
 };
@@ -2031,8 +2044,11 @@ public:
   server_codec(server_codec& other) = delete;
   server_codec(server_codec&& other) = default;
   static expected<server_codec, server_error> open(server_limits limits) {
+    // A closing error reply needs its status line, two fields and an empty line.
+    string_view minimal_error = "HTTP/1.1 400 \r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     if (limits.request_line < size_t(2) || limits.request_line > limits.request_head ||
-        limits.response_head < size_t(32) || limits.chunk_line < size_t(3) ||
+        limits.response_head < minimal_error.size() || limits.response_fields < size_t(2) ||
+        limits.chunk_line < size_t(3) ||
         limits.chunk_line > limits.chunk_framing || limits.trailer_bytes < size_t(2) ||
         limits.trailer_bytes > limits.chunk_framing) {
       return unexpected(server_error(server_errc::invalid_argument, server_phase::configuration));
@@ -2160,7 +2176,8 @@ public:
       this.close_after = true;
       return;
     }
-    if (this.exchange == server_detail::exchange_state::between || this.exchange == server_detail::exchange_state::active) {
+    if (this.exchange == server_detail::exchange_state::between || this.exchange == server_detail::exchange_state::active ||
+        (this.exchange == server_detail::exchange_state::output && this.after == disposition::continue_sent)) {
       auto phase = this.exchange == server_detail::exchange_state::between ? server_phase::head : server_phase::body;
       this.exchange = server_detail::exchange_state::ended;
       return unexpected(server_error(server_errc::truncated, phase));
@@ -2274,5 +2291,154 @@ public:
     return result;
   }
 };
+}
+}
+
+namespace std {
+namespace http {
+namespace server_detail {
+expected<size_t, server_error> write_prefix<S>(mut S& transport, span<uint8_t>& data, mut bool& terminal)
+    requires io::writer<S> {
+  size_t size = data.size();
+  auto result = transport.write_some(data);
+  if (!result) {
+    terminal = true;
+    return unexpected(server_error(result.error(), server_phase::output));
+  }
+  size_t count = result.value();
+  if (count == 0 || count > size) {
+    terminal = true;
+    return unexpected(server_error(io_errc::write_failed, server_phase::output));
+  }
+  return count;
+}
+}
+/// A blocking driver over the same wire codec. Owns a single duplex stream and
+/// keeps the unread suffix of every transport read until the codec consumes it.
+export class server_connection<S> {
+  mut S transport;
+  mut server_codec codec;
+  mut byte_buffer window;
+  mut size_t first = 0;
+  mut size_t last = 0;
+  mut bool terminal = false;
+
+  expected<bool, server_error> refill(server_phase phase) mut requires io::reader<S> {
+    size_t capacity = this.window.size();
+    mut auto dst = this.window.as_mutable_span();
+    auto result = this.transport.read_some(dst);
+    if (!result) {
+      this.terminal = true;
+      return unexpected(server_error(result.error(), phase));
+    }
+    size_t count = result.value();
+    if (count > capacity) {
+      this.terminal = true;
+      return unexpected(server_error(io_errc::read_failed, phase));
+    }
+    this.first = 0;
+    this.last = count;
+    if (count == 0) {
+      this.terminal = true;
+      ?this.codec.end_input();
+      return false;
+    }
+    return true;
+  }
+  expected<disposition, server_error> write_pending(span<uint8_t>& body) mut requires io::writer<S> {
+    mut size_t offset = 0;
+    while (true) {
+      mut size_t count = 0;
+      mut bool flush = false;
+      {
+        auto& step = ?this.codec.next_output();
+        if (step.kind() == output_kind::flush) {
+          flush = true;
+        } else {
+          bool payload = step.kind() == output_kind::body;
+          if (payload) {
+            auto data = body.subspan(offset, step.remaining);
+            count = ?server_detail::write_prefix(this.transport, data, this.terminal);
+          } else {
+            auto data = step.bytes();
+            count = ?server_detail::write_prefix(this.transport, data, this.terminal);
+          }
+          if (payload) { offset += count; }
+        }
+      }
+      if (flush) {
+        auto flushed = this.transport.flush();
+        if (!flushed) {
+          this.terminal = true;
+          return unexpected(server_error(flushed.error(), server_phase::output));
+        }
+        auto result = ?this.codec.finish_flush();
+        this.terminal = result == disposition::close;
+        return result;
+      }
+      ?this.codec.advance_output(count);
+    }
+  }
+public:
+  server_connection(S stream, server_codec codec)
+      : transport(std::move(stream)), codec(std::move(codec)), window(byte_buffer(size_t(4096))) {}
+  server_connection(server_connection<S>& other) = delete;
+  server_connection(server_connection<S>&& other) = default;
+  expected<optional<request_head>, server_error> read_head() mut requires io::reader<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::head)); }
+    while (true) {
+      {
+        auto all = this.window.as_span();
+        auto input = all.subspan(this.first, this.last - this.first);
+        mut auto step = ?this.codec.parse_head(input);
+        this.first += step.consumed;
+        if (step.head.has_value()) { return std::move(step.head); }
+      }
+      bool available = ?this.refill(server_phase::head);
+      if (!available) { return optional<request_head>(); }
+    }
+  }
+  expected<size_t, server_error> read_body(mut mutable_span<uint8_t>& dst) mut requires io::reader<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::body)); }
+    while (true) {
+      {
+        auto all = this.window.as_span();
+        auto input = all.subspan(this.first, this.last - this.first);
+        auto step = ?this.codec.parse_body(input, dst);
+        this.first += step.consumed;
+        if (step.written > 0 || step.state == body_state::body_end) { return step.written; }
+      }
+      bool available = ?this.refill(server_phase::body);
+      if (!available) { return unexpected(server_error(server_errc::truncated, server_phase::body)); }
+    }
+  }
+  expected<void, server_error> send_continue() mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_continue();
+    byte_buffer storage{};
+    auto empty = storage.as_span();
+    auto completed = ?this.write_pending(empty);
+    return;
+  }
+  expected<disposition, server_error> send(response_head& head, span<uint8_t>& body, connection_policy policy) mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_response(head, body.size(), policy);
+    return this.write_pending(body);
+  }
+  expected<void, server_error> send_error(uint16_t status) mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_error(status);
+    byte_buffer storage{};
+    auto empty = storage.as_span();
+    auto completed = ?this.write_pending(empty);
+    return;
+  }
+};
+
+export expected<server_connection<S>, server_error> open_server_connection<S>(S stream, server_limits limits)
+    requires io::reader<S> && io::writer<S> {
+  mut auto codec = ?server_codec::open(limits);
+  return server_connection<S>(std::move(stream), std::move(codec));
+}
 }
 }

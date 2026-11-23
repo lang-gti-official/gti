@@ -1,0 +1,10 @@
+// Pending framing bytes borrow the codec until the transport finishes using them.
+import std.http;
+
+int inspect(mut std::http::server_codec& codec) {
+  auto& step = codec.next_output().expect("pending");
+  auto bytes = step.bytes();
+  codec.advance_output(std::size_t(1)).expect("advance"); //~ ERROR GTI-S2017
+  return int(bytes[0]);
+}
+int main() { return 0; }

@@ -94,7 +94,10 @@ already-buffered status, duplicate/order-preserving headers, and body; HTTP
 error statuses remain response values. Redirects are disabled and TLS peer
 and hostname verification cannot be turned off. Portable URL, request, and
 error policy are GTI source over a private versioned runtime ABI that
-dynamically loads libcurl without exposing its types. See
+dynamically loads libcurl without exposing its types. On the server side,
+`server_codec` accepts incremental HTTP/1.1 input and produces resumable
+response output. `open_server_connection` drives the same codec over a
+blocking duplex stream. See
 [`docs/language/http.md`](../docs/language/http.md) for the exact contract.
 
 `std.json` is entirely source-defined over `std.meta`. It encodes and

@@ -403,7 +403,77 @@ selection to ordinary GTI source, enables strict TLS verification, bounds
 response accumulation and streaming staging, and cleans handles deterministically.
 It does not recognize public GTI class names.
 
-Asynchronous execution, cancellation of an in-flight blocking call, cookie jars,
+Asynchronous client execution, cancellation of an in-flight blocking client call, cookie jars,
 automatic authentication schemes, multipart builders, proxy configuration,
 and HTTP/2-specific controls are later layers. They must compose over this
 transport boundary rather than expose libcurl as the standard-library API.
+
+## Serving HTTP/1.1
+
+A server package accepts its own transport and keeps one move-only
+`std::http::server_codec` per connection. Construct it with
+`server_codec::open(server_limits{})`. The codec performs no I/O. A package
+can drive many codecs on one thread, or transfer a blocking duplex stream
+into `open_server_connection(std::move(stream), limits)`. The function infers
+the stream type and requires both `std::io::reader<S>` and `std::io::writer<S>`.
+
+### Driving a connection
+
+1. Feed available bytes to `parse_head(input)`. Remove exactly the reported
+   `consumed` prefix. An empty `head` requests more input. A present
+   `request_head` owns the method, raw target, effective authority and ordered
+   fields. Their text accessors borrow the head. Use `find_next(name, start)`
+   on its headers to locate repeated fields.
+2. If `expects_continue()` is true, choose between `begin_continue()` and a
+   final reply. Finish sending the interim response before reading the body.
+   Feed `parse_body(input, dst)` a nonempty decoded-byte destination. Consume
+   its input count and deliver its written byte count, including on `body_end`.
+   Keep any pipelined suffix for the next request.
+3. Build a `response_head` with `create(status)` and `add_header(name, value)`.
+   Start output with `begin_response(head, representation_length, policy)`.
+   `next_output()` borrows the current step. For `framing`, write from
+   `bytes()`. For `body`, write up to `remaining` bytes from the package's
+   payload. End the borrow and call `advance_output(n)` with the actual
+   positive write count. When the transport would block, keep the same step
+   and resume it on readiness. Completion-based transports must keep submitted
+   storage alive until the write or cancellation completes.
+4. At `flush`, flush the transport and call `finish_flush()` after success.
+   `continue_sent` resumes body input, `reusable` admits the next head, and
+   `close` requires dropping or closing the transport. Process buffered input
+   before waiting. Once it is exhausted, report peer EOF with `end_input()`.
+   A half-close after a complete request permits a final reply.
+
+The blocking adapter offers `read_head()`, `read_body(dst)`, `send_continue()`,
+`send(head, body, policy)` and `send_error(status)`. It keeps 4096 bytes of
+read-ahead. An empty optional from `read_head()` means orderly EOF between
+requests. A successful zero from `read_body()` means the body is complete.
+The adapter keeps unread bytes across reusable exchanges. The owner closes
+the stream on drop without draining or implicitly flushing it.
+
+### Wire rules and errors
+
+The decoder requires CRLF, one valid Host field and unambiguous body framing.
+Methods retain their spelling. Targets retain their encoding. Absolute-form
+uses the target authority. Fixed-length and chunked bodies stream into caller
+storage. Extensions and trailers count toward the framing limits. Permitted
+trailers are validated and discarded. A peer close request or an early final
+response to an unfinished body forces closure.
+
+The encoder owns Content-Length, Transfer-Encoding, Connection, Trailer and
+Upgrade. HEAD sends the supplied representation length and suppresses the
+body. Statuses 204 and 304 omit Content-Length, and 205 sends zero length.
+These three statuses require a zero-length representation. Successful CONNECT
+and protocol upgrades are outside the supported profile.
+
+Limits default to 8192 request-line bytes, 32768 bytes and 100 fields per
+request or response head, 1 MiB decoded request body, 1024 bytes per chunk
+line, 8192 bytes and 32 fields of trailers, and 65536 bytes of aggregate chunk
+framing. Output payloads remain in package-owned storage. A
+`server_error` carries its category and phase. The blocking adapter preserves
+the underlying I/O error via `transport_error()`. A local preflight error
+allows a corrected reply. When `can_send_error` is true the driver can send
+one minimal closing 4xx/5xx response with `begin_error` or `send_error`.
+Fatal transport errors and cancellation require dropping the connection.
+
+The [two-connection package example](../../tests/project/http_server_connections/web/src/session.gti)
+shows the nonblocking driver and routing for a monitoring dashboard.
