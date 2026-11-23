@@ -23,8 +23,11 @@ def verify(stage):
         stdlib = root / "stdlib"
         shutil.copytree(stage / "share/gti/stdlib", stdlib)
         roots = {p.relative_to(stdlib) for p in (stdlib / "std").rglob("*.gti")}
-        if set(entries) != roots - {Path("std/assert.gti")} or Path("std/assert.gti") not in roots:
-            raise RuntimeError("the installed catalog must cover all std modules except the source-based std.assert")
+        # Assertions depend on consumer flags; package metadata is materialized
+        # by the source loader for the consumer, never frozen into a stdlib bundle.
+        contextual = {Path("std/assert.gti"), Path("std/package.gti")}
+        if set(entries) != roots - contextual or not contextual <= roots:
+            raise RuntimeError("the installed catalog must cover every non-contextual std module")
         bundles = root / "precompiled-stdlib"
         shutil.copytree(stage / "share/gti/precompiled-stdlib", bundles)
         # The identity envelope begins with the SHA-256 of the exact compiler
@@ -107,10 +110,13 @@ def verify(stage):
                 raise RuntimeError(f"{profile}: vector recipe changed cleanup output or diagnostics")
 
         # The public imports reach the private module implementations through
-        # their normal dependencies. Only std.assert still has a source body.
+        # their normal dependencies. std.assert stays in source; std.package
+        # is generated from this consumer manifest, not the stdlib producer.
         imports = [f"import {'.'.join(entry.with_suffix('').parts)};"
                    for entry in sorted(roots) if entry.parts[1] != "detail"]
         source.write_text("\n".join(imports) + """
+static_assert(std::package::name == "standard-library-consumer");
+static_assert(std::package::version == "0.1.0");
 int main() {
   mut int evaluated = 0;
   std::debug_assert!(++evaluated == 1);

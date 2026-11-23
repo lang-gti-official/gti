@@ -1,0 +1,7 @@
+// A generic initializer cannot read a global declared after its use.
+// The unique name avoids exercising unrelated stdlib missing-import advice.
+int read<T>() { return value_declared_after_generic_use; }  //~ ERROR GTI-S2001
+int bridge() { return read<int>(); }
+int first = bridge();  //~ ERROR GTI-S2068
+int value_declared_after_generic_use = 8;
+int main() { return first; }

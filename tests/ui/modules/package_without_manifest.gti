@@ -1,0 +1,3 @@
+// Direct compilation never invents package metadata from ambient files.
+import std.package; //~ ERROR GTI-I0012 std.package requires resolved package metadata
+int main() { return 0; }

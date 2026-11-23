@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "metadata-provider"
+version = "7.8.9"
+[targets.provider]
+kind = "gti-library"
+root = "src/lib.gti"

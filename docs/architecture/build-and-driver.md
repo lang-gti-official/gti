@@ -2046,6 +2046,28 @@ same scoped dependency-discovery and exact-input cache contract as root native
 inputs; a group is not by itself a cache bypass. Unmodeled inputs retain the
 conservative bypass rules in [Whole-Program Project Cache](#whole-program-project-cache).
 
+### Package Metadata In Source
+
+`import std.package;` exposes `std::package::name` and `std::package::version`
+as immutable `constexpr std::string_view` constants. They contain the exact
+name and version from the resolved owning package's `gti.toml`, including
+prerelease and build suffixes. A dependency sees its own metadata, not the
+selected application's. These constants require no runtime environment lookup,
+file access, allocation, or build script. A manifest change invalidates the
+relevant compiler/build cache identities.
+
+The driver passes the resolved name and version in source-owner descriptors;
+the source loader materializes an owner-specific ordinary module. The frontend,
+MIR, LLVM backend, and editor then use ordinary constant declarations and module
+visibility. Generated metadata text cannot be replaced by an editor overlay or
+a file at its internal path. The installed `std.package` entry is a discovery
+marker; the public module is materialized only in a package compilation.
+
+Direct compilation without resolved package metadata rejects the import with
+`GTI-I0012`; it does not search for an ambient manifest or invent a version.
+`std.package` is an explicit import, not part of the portable `import std;`
+aggregate. This does not add `#if package.version` conditions or version ordering.
+
 ### Approved Package Build Scripts
 
 A package that must configure or compile an upstream native library may declare
@@ -2097,7 +2119,9 @@ Build programs run dependency-first, with the package root as their working
 directory, through exact argv execution rather than a shell. The driver exports
 `GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
 `GTI_BUILD_HOST`, `GTI_BUILD_TARGET`, `GTI_BUILD_PROFILE`, `GTI_BUILD_JOBS`,
-`CC`, and `CXX`. `GTI_BUILD_OUTPUT` must be written as TOML with `version = 1`
+`CC`, and `CXX`. The driver also supplies `GTI_BUILD_PACKAGE_NAME` and
+`GTI_BUILD_PACKAGE_VERSION` from the script-owning package, for both external
+and GTI build programs. `GTI_BUILD_OUTPUT` must be written as TOML with `version = 1`
 and may declare `include-dirs`, `c-sources`, `cpp-sources`, `library-dirs`,
 `link-files`, `libraries`, and `frameworks`. Paths are relative to
 `GTI_BUILD_OUT_DIR`, must remain inside it, and must name existing files or
@@ -2109,6 +2133,14 @@ point uses the normal owned argument form, checks `argc == 11`, and creates a
 `std::build::context` with `std::build::context_from_args(argv)`. The context
 exposes the output manifest, package/output directories, host/target facts,
 profile, parallelism budget, and selected target C/C++ compilers.
+`context.package_name()` and `context.package_version()` expose owned immutable
+strings copied from the driver-provided environment by `context_from_args`.
+The eleven-argument entry protocol is unchanged; direct context construction
+accepts optional name/version arguments, defaulting to empty strings for older
+callers. A GTI build program may also import `std.package`; both interfaces
+refer to the script-owning package. Environment lookup failure is reported by
+the existing `expect` failure path; absent metadata outside a driver invocation
+produces empty context fields.
 `std::build::command` constructs and executes one exact argument vector without
 shell parsing. `std::build::outputs` records include directories, C and C++
 sources, library directories/files/names, and frameworks, then `publish`
@@ -3461,7 +3493,10 @@ The catalog packages 78 standard-library modules per target and profile.
 Alongside the two native libraries, 76 bundles carry parsed declarations
 and bodies, including the private dependencies of public modules. `std.assert`
 is loaded from source so the application's `NDEBUG` setting controls its debug
-assertions. The prelude and top-level re-export interface also load from source.
+assertions. `std.package` is also excluded from the precompiled catalog: the
+source loader materializes its constants from the importing package manifest,
+so installed toolchains never substitute the standard-library producer’s name
+or version. The prelude and top-level re-export interface also load from source.
 The producer encodes the parsed statements and
 expressions before any application type or extent exists. At import the
 frontend restores the bodies onto the declaration skeleton. Its usual generic,

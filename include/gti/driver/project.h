@@ -146,6 +146,8 @@ struct BuildScriptPlan {
   std::filesystem::path outputDirectory;
   SourceSpan declaration;
   bool selectedPackage = false;
+  std::string packageName;
+  std::string packageVersion;
 };
 
 class ProjectBuildPlan final {

@@ -72,6 +72,8 @@ scriptIdentity(const ProjectBuildPlan &project, const BuildScriptPlan &plan,
   detail::IdentityBuilder identity;
   identity.add("schema", cacheSchema);
   identity.add("package", plan.packageIdentity);
+  identity.add("package-name", plan.packageName);
+  identity.add("package-version", plan.packageVersion);
   identity.add("host", targetTriple(TargetInfo::host()));
   identity.add("target", targetTriple(project.target()));
   identity.add("profile", project.profileName());
@@ -586,7 +588,12 @@ std::optional<std::vector<std::string>> buildScriptCommand(
       CompilationRequest(*script.source, options.hostToolchain->standardLibrary,
                          TargetInfo::host(), OptimizationLevel::O0,
                          CppStandard::Cpp20)
-          .withBackend(project.backend()),
+          .withBackend(project.backend())
+          .withPackageSources({{.identity = script.packageIdentity,
+                                .name = script.packageName,
+                                .packageRoot = script.packageRoot,
+                                .sourceRoot = script.packageRoot,
+                                .packageVersion = script.packageVersion}}),
       *options.hostToolchain, generated, executable, options.hostCppCompiler,
       {}, false, true, options.verbose,
       ManagedOutputPolicy{.trustedRoot = project.workspaceRoot(),
@@ -760,6 +767,8 @@ executeBuildScripts(const ProjectBuildPlan &plan,
         .description = "build script for " + script.packageIdentity,
         .workingDirectory = script.packageRoot,
         .environment = {{"GTI_BUILD_PACKAGE_DIR", script.packageRoot.string()},
+                        {"GTI_BUILD_PACKAGE_NAME", script.packageName},
+                        {"GTI_BUILD_PACKAGE_VERSION", script.packageVersion},
                         {"GTI_BUILD_OUT_DIR", script.outputDirectory.string()},
                         {"GTI_BUILD_OUTPUT", output.string()},
                         {"GTI_BUILD_HOST", targetTriple(TargetInfo::host())},

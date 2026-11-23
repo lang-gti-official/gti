@@ -30,8 +30,9 @@ def main():
         text = source.read_text(encoding="utf-8")
         assert f"export module {name};" in text, f"std.{name} lacks its module declaration"
         assert "#include" not in text, f"std.{name} uses a removed directive"
+    # Platform-specific helpers and package-context metadata require explicit imports.
     portable = sorted(name for name in modules
-                      if name not in {"std", "environment", "process", "tcp"}
+                      if name not in {"std", "environment", "process", "tcp", "testing.resources", "package"}
                       and not name.startswith("experimental."))
     aggregate = (stdlib / "std.gti").read_text(encoding="utf-8")
     assert [line for line in aggregate.splitlines() if line.startswith("export import ")] == [
@@ -51,7 +52,9 @@ def main():
                 capture_output=True, text=True, env=environment, timeout=300)
             assert result.returncode == 0, result.stdout + result.stderr
 
-        run_cases([(name, name) for name in sorted(modules)], check, configured_jobs())
+        # std.package needs a manifest and is exercised by the package_metadata
+        # project transcript, including dependency ownership and execution.
+        run_cases([(name, name) for name in sorted(modules) if name != "package"], check, configured_jobs())
         source = root / "aggregate.gti"
         source.write_text("import std;\n"
                           "int main() { mut std::vector<int> values{}; values.push_back(42); "
@@ -61,7 +64,7 @@ def main():
             [str(compiler), str(source), "--emit-mir", "-o", os.devnull],
             capture_output=True, text=True, env=environment, timeout=300)
         assert result.returncode == 0, result.stdout + result.stderr
-    print(f"standard-library modules: {len(modules)} interfaces import and lower")
+    print(f"standard-library modules: {len(modules) - 1} direct interfaces import and lower")
 
 
 if __name__ == "__main__":

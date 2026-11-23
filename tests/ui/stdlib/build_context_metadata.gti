@@ -1,0 +1,9 @@
+// Build contexts retain explicit metadata and preserve the old constructor defaults.
+//@ run-pass
+import std.build;
+int main() {
+  auto old = std::build::context("out", "root", "dir", "host", "target", "os", "dev", "1", "cc", "cxx");
+  if (!old.package_name().empty() || !old.package_version().empty()) { return 1; }
+  auto named = std::build::context("out", "root", "dir", "host", "target", "os", "dev", "1", "cc", "cxx", "example", "1.2.3-beta.1");
+  return named.package_name() == "example" && named.package_version() == "1.2.3-beta.1" ? 0 : 2;
+}
