@@ -1,0 +1,151 @@
+// Both package drivers use the same wire rules, application and counted transport.
+export module exchange;
+import std.http;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+
+export namespace probe {
+extern "C" {
+void abort();
+uint64_t probe_option(int index);
+void probe_start();
+void probe_sample();
+void probe_finish(uint64_t digest, uint64_t reads, uint64_t writes, uint64_t flushes);
+}
+mut uint64_t reads = 0;
+mut uint64_t writes = 0;
+mut uint64_t flushes = 0;
+mut uint64_t digest = 0;
+
+std::string make_head(int mode, std::size_t size) {
+  if (mode == 4) { return std::string("GET / HTTP/1.1\r\n\r\n"); }
+  if (mode == 1 || mode == 3) {
+    mut std::string head{"POST /monitors HTTP/1.1\r\nHost: a\r\nContent-Length: "};
+    auto count = std::to_string(mode == 1 ? std::size_t(2) : size);
+    head.append(count.view()); head.append("\r\n\r\n");
+    return std::move(head);
+  }
+  return std::string("GET /monitors HTTP/1.1\r\nHost: a\r\n\r\n");
+}
+
+class traffic {
+  std::string head;
+  std::size_t body_size;
+  bool fragmented;
+  mut std::size_t cursor = 0;
+public:
+  traffic(int mode, std::size_t size) : head(make_head(mode, size)),
+      body_size(mode == 1 ? std::size_t(2) : mode == 3 ? size : std::size_t(0)), fragmented(mode == 2) {}
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& dst) mut {
+    reads++;
+    std::size_t total = this.head.size() + this.body_size;
+    mut std::size_t n = total - this.cursor;
+    if (n > dst.size()) { n = dst.size(); }
+    if (this.fragmented && n > 1) { n = 1; }
+    for (mut std::size_t i = 0; i < n; i++) {
+      std::size_t pos = this.cursor + i;
+      if (pos < this.head.size()) { dst[i] = uint8_t(this.head[pos]); }
+      else if (this.body_size == 2) { dst[i] = pos == this.head.size() ? uint8_t('{') : uint8_t('}'); }
+      else { dst[i] = uint8_t(97); }
+    }
+    this.cursor += n;
+    return n;
+  }
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& bytes) mut {
+    writes++;
+    for (mut std::size_t i = 0; i < bytes.size(); i++) { digest += uint64_t(bytes[i]); }
+    return bytes.size();
+  }
+  expected<void, std::io_errc> flush() mut { flushes++; this.cursor = 0; return; }
+};
+
+void consume(std::mutable_span<uint8_t>& data, std::size_t count) {
+  mut uint64_t sum = 0;
+  for (mut std::size_t i = 0; i < count; i++) { sum += uint64_t(data[i]); }
+  digest += sum;
+}
+
+void direct_output<S>(mut std::http::server_codec& codec, mut S& stream) requires std::io::writer<S> {
+  while (true) {
+    mut std::size_t n = 0;
+    {
+      auto& step = codec.next_output().expect("output");
+      if (step.kind() == std::http::output_kind::framing) {
+        auto wire = step.bytes();
+        n = stream.write_some(wire).expect("write");
+      }
+    }
+    if (n == 0) { break; }
+    codec.advance_output(n).expect("advance");
+  }
+  stream.flush().expect("flush");
+  [[discard]] codec.finish_flush().expect("finish");
+}
+void direct<S>(S owner, std::size_t rounds, int mode) requires std::io::reader<S> && std::io::writer<S> {
+  mut auto stream = std::move(owner);
+  std::http::server_limits limits{};
+  mut auto codec = std::http::server_codec::open(limits).expect("codec");
+  mut std::byte_buffer window{std::size_t(4096)};
+  mut std::byte_buffer body{std::size_t(4096)};
+  mut auto output = body.as_mutable_span();
+  auto reply = std::http::response_head::create(uint16_t(200)).expect("response");
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    mut bool head_done = false;
+    mut bool finished = false;
+    while (!finished) {
+      mut std::size_t size = 0;
+      { mut auto dst = window.as_mutable_span(); size = stream.read_some(dst).expect("read"); }
+      if (size == 0) { abort(); }
+      auto all = window.as_span();
+      auto input = all.first(size);
+      mut std::size_t consumed = 0;
+      if (!head_done) {
+        auto step = codec.parse_head(input);
+        if (!step && mode == 4) { break; }
+        auto& progress = step.value();
+        if (!progress.head) { continue; }
+        digest += uint64_t(progress.head.value().raw_target().size());
+        consumed = progress.consumed;
+        head_done = true;
+      }
+      auto suffix = input.subspan(consumed, size - consumed);
+      auto parsed = codec.parse_body(suffix, output).expect("body");
+      consume(output, parsed.written);
+      finished = parsed.state == std::http::body_state::body_end;
+    }
+    if (mode == 4) { codec.begin_error(uint16_t(400)).expect("rejected"); }
+    else { codec.begin_response(reply, std::size_t(0), std::http::connection_policy::automatic).expect("respond"); }
+    direct_output(codec, stream);
+    probe_sample();
+  }
+}
+void blocking<S>(S stream, std::size_t rounds, int mode) requires std::io::reader<S> && std::io::writer<S> {
+  std::http::server_limits limits{};
+  mut auto connection = std::http::open_server_connection(std::move(stream), limits).expect("connection");
+  mut std::byte_buffer buffer{std::size_t(4096)};
+  mut auto output = buffer.as_mutable_span();
+  std::byte_buffer empty{};
+  auto bytes = empty.as_span();
+  auto reply = std::http::response_head::create(uint16_t(200)).expect("response");
+  for (mut std::size_t round = 0; round < rounds; round++) {
+    auto head = connection.read_head();
+    if (!head && mode == 4) { connection.send_error(uint16_t(400)).expect("rejected"); }
+    else {
+      digest += uint64_t(head.value().value().raw_target().size());
+      while (true) {
+        auto n = connection.read_body(output).expect("body");
+        if (n == 0) { break; }
+        consume(output, n);
+      }
+      [[discard]] connection.send(reply, bytes, std::http::connection_policy::automatic).expect("send");
+    }
+    probe_sample();
+  }
+}
+void run<S>(S stream, std::size_t per, int mode, bool adapter) requires std::io::reader<S> && std::io::writer<S> {
+  if (adapter) { blocking(std::move(stream), per, mode); }
+  else { direct(std::move(stream), per, mode); }
+}
+}

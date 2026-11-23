@@ -1,0 +1,33 @@
+// Fixed framing preserves binary octets, reports destination pressure and leaves a pipelined suffix.
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+int main() {
+  mut std::http::server_limits limits{};
+  limits.decoded_body = 3;
+  mut auto codec = std::http::server_codec::open(limits).expect("open");
+  std::string_view text = "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\n";
+  mut std::byte_buffer source{};
+  for (mut std::size_t i = 0; i < text.size(); i++) { source.push_back(uint8_t(text[i])); }
+  source.push_back(uint8_t(0)); source.push_back(uint8_t(255)); source.push_back(uint8_t(17)); source.push_back(uint8_t('G'));
+  auto all = source.as_span();
+  auto parsed = codec.parse_head(all).expect("head");
+  if (!parsed.head || parsed.consumed != text.size()) { return 1; }
+  auto body = all.subspan(parsed.consumed, std::size_t(4));
+  mut std::byte_buffer buffer{std::size_t(2)};
+  mut auto dst = buffer.as_mutable_span();
+  {
+    mut auto empty = dst.first(std::size_t(0));
+    auto result = codec.parse_body(body, empty);
+    if (result || result.error().code != std::http::server_errc::invalid_argument) { return 2; }
+  }
+  auto first = codec.parse_body(body, dst).expect("binary prefix");
+  if (first.written != 2 || first.consumed != 2 || first.state != std::http::body_state::need_space ||
+      dst[0] != uint8_t(0) || dst[1] != uint8_t(255)) { return 3; }
+  auto tail = body.subspan(first.consumed, std::size_t(2));
+  auto last = codec.parse_body(tail, dst).expect("binary suffix");
+  if (last.written != 1 || last.consumed != 1 || last.state != std::http::body_state::body_end ||
+      dst[0] != uint8_t(17) || tail[last.consumed] != uint8_t('G')) { return 4; }
+  return 0;
+}

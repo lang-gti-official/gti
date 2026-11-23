@@ -58,5 +58,15 @@ int main() {
   if (!form("CONNECT", "example.org:443", std::http::target_form::authority, "example.org:443")) { return 9; }
   if (!form("CUSTOM", "http://example.org:8000/a?q=%2F", std::http::target_form::absolute, "example.org:8000")) { return 10; }
   if (!form("GET", "/path?q=%2F", std::http::target_form::origin, "other")) { return 11; }
+  if (!rejected("GET /a{b HTTP/1.1\r\nHost: a\r\n\r\n", std::http::server_errc::malformed)) { return 12; }
+  if (!rejected("GET http://a/%zz HTTP/1.1\r\nHost: a\r\n\r\n", std::http::server_errc::malformed)) { return 13; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0, 0\r\n\r\n", std::http::server_errc::malformed)) { return 14; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n", std::http::server_errc::malformed)) { return 15; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", std::http::server_errc::unsupported_coding)) { return 16; }
+  if (!rejected("GET http://target/ HTTP/1.1\r\nHost: bad/authority\r\n\r\n", std::http::server_errc::malformed)) { return 17; }
+  if (!rejected("GET / HTTP/1.1\r\nHost : a\r\n\r\n", std::http::server_errc::malformed)) { return 18; }
+  if (!rejected("GET / HTTP/1.1\r\nHost: a\r\n continued\r\n\r\n", std::http::server_errc::malformed)) { return 19; }
+  if (!rejected("GET / HTTP/1.1\r\nHost: [::::]\r\n\r\n", std::http::server_errc::malformed)) { return 20; }
+  if (!form("CONNECT", "[::1]:443", std::http::target_form::authority, "[::1]:443")) { return 21; }
   return 0;
 }

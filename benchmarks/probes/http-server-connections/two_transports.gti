@@ -1,0 +1,36 @@
+import "exchange.gti";
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+import std.vector;
+
+// A second duplex with a small per-call window models partial transport writes.
+class segmented {
+  mut probe::traffic stream;
+public:
+  segmented(int mode, std::size_t size) : stream(probe::traffic(mode, size)) {}
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& bytes) mut {
+    mut auto part = bytes.first(bytes.size() < 128 ? bytes.size() : std::size_t(128));
+    return this.stream.read_some(part);
+  }
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& bytes) mut {
+    auto part = bytes.first(bytes.size() < 16 ? bytes.size() : std::size_t(16));
+    return this.stream.write_some(part);
+  }
+  expected<void, std::io_errc> flush() mut { return this.stream.flush(); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  auto mode = int(probe::probe_option(0));
+  auto rounds = std::size_t(probe::probe_option(1));
+  auto size = std::size_t(probe::probe_option(2));
+  auto blocking = probe::probe_option(3) != 0;
+  probe::probe_start();
+  std::size_t connections = mode == 4 ? rounds : std::size_t(1);
+  for (mut std::size_t i = 0; i < connections; i++) {
+    if (argc == 1) { probe::run(probe::traffic(mode, size), rounds / connections, mode, blocking); }
+    else { probe::run(segmented(mode, size), rounds / connections, mode, blocking); }
+  }
+  probe::probe_finish(probe::digest, probe::reads, probe::writes, probe::flushes);
+  return 0;
+}

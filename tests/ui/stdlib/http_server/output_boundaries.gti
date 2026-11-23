@@ -1,0 +1,60 @@
+// Final replies preflight body rules and acknowledge only the pending prefix or flush.
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+
+using Policy = std::http::connection_policy;
+using Kind = std::http::output_kind;
+using Disposition = std::http::disposition;
+expected<bool, std::http::server_error> check(std::string_view request, uint16_t status, std::size_t length,
+    std::string_view expected_wire, bool valid, bool half_close) {
+  std::http::server_limits limits{};
+  mut auto codec = ?std::http::server_codec::open(limits);
+  mut std::byte_buffer bytes{};
+  for (mut std::size_t i = 0; i < request.size(); i++) { bytes.push_back(uint8_t(request[i])); }
+  auto input = bytes.as_span();
+  // Each call sees just one octet, including the boundary between CR and LF.
+  for (mut std::size_t i = 0; i < input.size(); i++) {
+    auto part = input.subspan(i, std::size_t(1));
+    auto parsed = ?codec.parse_head(part);
+    if (parsed.consumed != std::size_t(1) || parsed.head.has_value() != (i + std::size_t(1) == input.size())) { return false; }
+  }
+  if (half_close) { ?codec.end_input(); }
+  auto head = ?std::http::response_head::create(status);
+  auto start = codec.begin_response(head, length, Policy::automatic);
+  if (!valid) {
+    if (start || codec.next_output()) { return false; }
+    auto fixed = ?std::http::response_head::create(uint16_t(403));
+    return bool(codec.begin_response(fixed, std::size_t(0), Policy::close));
+  }
+  if (!start || codec.finish_flush() || codec.begin_response(head, length, Policy::automatic)) { return false; }
+  mut std::string wire{};
+  while (true) {
+    mut std::size_t n = 0;
+    {
+      auto& step = codec.next_output().expect("pending output");
+      if (step.kind() == Kind::body) { return false; }
+      if (step.kind() == Kind::framing) {
+        auto block = step.bytes();
+        n = block.size();
+        wire.push_back(char(block[0]));
+      }
+    }
+    if (codec.advance_output(std::size_t(0)) || codec.advance_output(n + std::size_t(1))) { return false; }
+    if (n == 0) { break; }
+    ?codec.advance_output(std::size_t(1));
+  }
+  if (wire.view() != expected_wire || ?codec.finish_flush() != (half_close ? Disposition::close : Disposition::reusable)) { return false; }
+  return !codec.finish_flush() && !codec.next_output();
+}
+int main() {
+  std::string_view get = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+  if (!check("HEAD / HTTP/1.1\r\nHost: a\r\n\r\n", uint16_t(200), std::size_t(913), "HTTP/1.1 200 \r\nContent-Length: 913\r\n\r\n", true, false).expect("HEAD")) { return 1; }
+  if (!check(get, uint16_t(204), std::size_t(0), "HTTP/1.1 204 \r\n\r\n", true, false).expect("204")) { return 2; }
+  if (!check(get, uint16_t(304), std::size_t(0), "HTTP/1.1 304 \r\n\r\n", true, false).expect("304")) { return 3; }
+  if (!check(get, uint16_t(205), std::size_t(0), "HTTP/1.1 205 \r\nContent-Length: 0\r\nConnection: close\r\n\r\n", true, true).expect("205")) { return 4; }
+  if (!check(get, uint16_t(205), std::size_t(1), "", false, false).expect("reset content")) { return 5; }
+  if (!check("CONNECT a:443 HTTP/1.1\r\nHost: a\r\n\r\n", uint16_t(200), std::size_t(0), "", false, false).expect("CONNECT")) { return 6; }
+  return 0;
+}

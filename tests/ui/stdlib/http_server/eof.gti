@@ -1,0 +1,45 @@
+// Closing the input truncates incomplete protocol states and allows a pending final reply to flush.
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+
+using Phase = std::http::server_phase;
+using Error = std::http::server_errc;
+int main() {
+  std::http::server_limits limits{};
+  std::string_view post = "POST / HTTP/1.1\r\nHost: a\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n";
+  mut std::byte_buffer source{};
+  for (mut std::size_t i = 0; i < post.size(); i++) { source.push_back(uint8_t(post[i])); }
+  auto input = source.as_span();
+  for (mut std::size_t split = 0; split <= input.size(); split++) {
+    mut auto codec = std::http::server_codec::open(limits).expect("open");
+    auto prefix = input.first(split);
+    auto parsed = codec.parse_head(prefix).expect("prefix");
+    auto result = codec.end_input();
+    if (split == 0) { if (!result) { return 1; } }
+    else if (result || result.error().code != Error::truncated || result.error().can_send_error ||
+             result.error().phase != (split == input.size() ? Phase::body : Phase::head)) { return 2; }
+    if (codec.parse_head(input) || codec.begin_error(uint16_t(400))) { return 3; }
+  }
+  mut auto interim = std::http::server_codec::open(limits).expect("open");
+  auto parsed = interim.parse_head(input).expect("head");
+  interim.begin_continue().expect("begin");
+  interim.advance_output(std::size_t(1)).expect("write one");
+  auto interrupted = interim.end_input();
+  if (interrupted || interrupted.error().code != Error::truncated || interim.next_output()) { return 4; }
+  mut auto final = std::http::server_codec::open(limits).expect("open");
+  std::string_view get = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+  mut std::byte_buffer request{};
+  for (mut std::size_t i = 0; i < get.size(); i++) { request.push_back(uint8_t(get[i])); }
+  auto single = request.as_span();
+  auto next = final.parse_head(single).expect("head");
+  auto head = std::http::response_head::create(uint16_t(403)).expect("status");
+  final.begin_response(head, std::size_t(0), std::http::connection_policy::automatic).expect("decline");
+  final.advance_output(std::size_t(1)).expect("write one");
+  final.end_input().expect("half-close");
+  mut std::size_t remaining = 0;
+  { auto& step = final.next_output().expect("suffix"); remaining = step.bytes().size(); }
+  final.advance_output(remaining).expect("finish write");
+  return final.finish_flush().expect("flush") == std::http::disposition::close ? 0 : 5;
+}

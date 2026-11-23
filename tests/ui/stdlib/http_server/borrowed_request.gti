@@ -1,0 +1,9 @@
+// Moving a request head while its target text is still in use invalidates the borrow.
+import std.http;
+void receive(std::http::request_head owned) {}
+std::size_t inspect(std::http::request_head head) {
+  auto target = head.raw_target();
+  receive(std::move(head)); //~ ERROR GTI-S2017
+  return target.size();
+}
+int main() { return 0; }

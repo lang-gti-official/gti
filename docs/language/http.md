@@ -441,7 +441,8 @@ the stream type and requires both `std::io::reader<S>` and `std::io::writer<S>`.
    `continue_sent` resumes body input, `reusable` admits the next head, and
    `close` requires dropping or closing the transport. Process buffered input
    before waiting. Once it is exhausted, report peer EOF with `end_input()`.
-   A half-close after a complete request permits a final reply.
+   A half-close after a complete request permits a final reply. If it arrives
+   during output, finish the pending bytes and close after the flush.
 
 The blocking adapter offers `read_head()`, `read_body(dst)`, `send_continue()`,
 `send(head, body, policy)` and `send_error(status)`. It keeps 4096 bytes of
@@ -474,6 +475,9 @@ the underlying I/O error via `transport_error()`. A local preflight error
 allows a corrected reply. When `can_send_error` is true the driver can send
 one minimal closing 4xx/5xx response with `begin_error` or `send_error`.
 Fatal transport errors and cancellation require dropping the connection.
+Opening rejects configurations whose chunk or trailer sublimits exceed the
+aggregate framing budget, whose request line exceeds the head budget, or
+whose response limits cannot encode a minimal closing error response.
 
 The [two-connection package example](../../tests/project/http_server_connections/web/src/session.gti)
 shows the nonblocking driver and routing for a monitoring dashboard.

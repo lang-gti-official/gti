@@ -5,6 +5,7 @@ import std.http;
 import std.string;
 import std.vector;
 import std.format;
+import std.io;
 
 void marker(std::string_view text) { std::println(text); std::try_flush_stdout().expect("flush"); }
 void finish(mut dashboard::peer& session) {
@@ -40,7 +41,14 @@ int main(int argc, std::vector<std::string> argv) {
   marker("fast POST complete");
   finish(slow);
   finish(fast);
-  mut auto client = dashboard::accept_peer(listener);
-  finish(client);
+  mut auto socket = listener.accept().expect("client connection");
+  std::http::server_limits limits{};
+  mut auto blocking = std::http::open_server_connection(std::move(socket), limits).expect("blocking");
+  auto request = blocking.read_head().expect("client request");
+  if (!request || request.value().raw_target() != "/monitors") { return 4; }
+  auto reply = std::http::response_head::create(uint16_t(200)).expect("ok");
+  std::byte_buffer empty{};
+  auto body = empty.as_span();
+  if (blocking.send(reply, body, std::http::connection_policy::close).expect("send") != std::http::disposition::close) { return 5; }
   return 0;
 }

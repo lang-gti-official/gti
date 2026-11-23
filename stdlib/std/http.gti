@@ -3,6 +3,7 @@ export module http;
 import std.string;
 import std.vector;
 import std.io;
+import std.tcp;
 import std.span;
 import std.cstdio;
 import std.optional;
@@ -1626,7 +1627,9 @@ export struct server_error {
   server_errc code;
   server_phase phase;
   bool can_send_error;
+private:
   io_errc cause;
+public:
   server_error(server_errc code, server_phase phase, bool reply = false)
       : code(code), phase(phase), can_send_error(reply), cause(io_errc::invalid_stream) {}
   server_error(io_errc cause, server_phase phase)
@@ -1654,6 +1657,9 @@ export enum class connection_policy { automatic, close };
 export enum class disposition { continue_sent, reusable, close };
 
 namespace server_detail {
+// These construction tags stay private to the HTTP module.
+enum class field_insertion { validated };
+enum class connection_adoption { validated };
 bool wire_field(string_view name, string_view value) {
   if (!gti_internal::http_detail::valid_header(name, value)) { return false; }
   for (mut size_t i = 0; i < value.size(); i++) {
@@ -1689,12 +1695,8 @@ public:
     }
     return optional<size_t>();
   }
-  expected<void, server_error> append(string_view name, string_view value) mut {
-    if (!server_detail::wire_field(name, value)) {
-      return unexpected(server_error(server_errc::malformed, server_phase::head));
-    }
+  void append(server_detail::field_insertion token, string_view name, string_view value) mut {
     this.fields.push_back(header(name, value));
-    return;
   }
 };
 
@@ -1717,14 +1719,11 @@ public:
     if (server_detail::reserved_field(name) || !server_detail::wire_field(name, value)) {
       return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
     }
-    return this.fields.append(name, value);
+    this.fields.append(server_detail::field_insertion::validated, name, value);
+    return;
   }
 };
-}
-}
 
-namespace std {
-namespace http {
 namespace server_detail {
 size_t until(string_view text, size_t from, char delimiter) {
   mut size_t i = from;
@@ -1769,7 +1768,53 @@ expected<size_t, server_error> decimal_length(string_view text, size_t maximum) 
   }
   return value;
 }
-expected<bool, server_error> connection_close(string_view text) {
+// A compact trie indexes the peer's hop-by-hop names without retaining views
+// into the head. A level has at most the distinct ASCII token characters.
+struct option_node {
+  uint8_t character;
+  mut size_t child = 0;
+  mut size_t sibling = 0;
+  mut bool terminal = false;
+  option_node(uint8_t character) : character(character) {}
+};
+class connection_options {
+  mut vector<option_node> nodes{};
+  size_t child(size_t parent, uint8_t character) {
+    mut size_t index = this.nodes[parent].child;
+    while (index != 0 && this.nodes[index].character != character) { index = this.nodes[index].sibling; }
+    return index;
+  }
+public:
+  connection_options() {}
+  void clear() mut { this.nodes.clear(); }
+  void add(string_view name) mut {
+    if (this.nodes.empty()) { this.nodes.push_back(option_node(uint8_t(0))); }
+    mut size_t parent = 0;
+    for (mut size_t i = 0; i < name.size(); i++) {
+      uint8_t c = gti_internal::http_detail::normalized_header_character(name[i]);
+      mut size_t index = this.child(parent, c);
+      if (index == 0) {
+        index = this.nodes.size();
+        mut option_node node{c};
+        node.sibling = this.nodes[parent].child;
+        this.nodes.push_back(std::move(node));
+        this.nodes[parent].child = index;
+      }
+      parent = index;
+    }
+    this.nodes[parent].terminal = true;
+  }
+  bool contains(string_view name) {
+    if (this.nodes.empty()) { return false; }
+    mut size_t parent = 0;
+    for (mut size_t i = 0; i < name.size(); i++) {
+      parent = this.child(parent, gti_internal::http_detail::normalized_header_character(name[i]));
+      if (parent == 0) { return false; }
+    }
+    return this.nodes[parent].terminal;
+  }
+};
+expected<bool, server_error> connection_close(string_view text, mut connection_options& options) {
   mut bool close = false;
   mut size_t first = 0;
   while (first < text.size()) {
@@ -1781,6 +1826,7 @@ expected<bool, server_error> connection_close(string_view text) {
       auto option = text.substr(first, end - first);
       if (!token(option)) { return unexpected(peer(server_errc::malformed)); }
       if (named(option, "close")) { close = true; }
+      options.add(option);
     }
     if (comma == text.size()) { break; }
     first = comma + size_t(1);
@@ -1821,7 +1867,14 @@ public:
 };
 
 namespace server_detail {
-expected<request_head, server_error> decode_head(string_view wire, server_limits& limits) {
+// URL syntax identifies the bracketed host. Validate the complete numeric
+// address with the same source parser used by socket addresses.
+bool valid_literal(string_view authority) {
+  if (authority.empty() || authority[0] != '[') { return true; }
+  size_t close = until(authority, size_t(1), ']');
+  return close < authority.size() && bool(std::tcp::ipv6_address::parse_range(authority, size_t(1), close));
+}
+expected<request_head, server_error> decode_head(string_view wire, server_limits& limits, mut connection_options& options) {
   size_t line = until(wire, size_t(0), '\r');
   size_t space = until(wire, size_t(0), ' ');
   if (space >= line) { return unexpected(peer(server_errc::malformed)); }
@@ -1857,9 +1910,10 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
     while (last > begin && ows(pair[last - size_t(1)])) { last--; }
     auto value = pair.substr(begin, last - begin);
     if (fields.size() >= limits.request_fields) { return unexpected(peer(server_errc::field_limit)); }
-    if (!fields.append(name, value)) { return unexpected(peer(server_errc::malformed)); }
+    if (!wire_field(name, value)) { return unexpected(peer(server_errc::malformed)); }
+    fields.append(field_insertion::validated, name, value);
     if (named(name, "Host")) {
-      if (!authority.empty() || !url::https(value)) { return unexpected(peer(server_errc::malformed)); }
+      if (!authority.empty() || !url::https(value) || !valid_literal(value)) { return unexpected(peer(server_errc::malformed)); }
       authority.append(value);
     } else if (named(name, "Content-Length")) {
       if (length.has_value() || chunked) { return unexpected(peer(server_errc::malformed)); }
@@ -1873,7 +1927,7 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
       if (!named(value, "100-continue")) { return unexpected(peer(server_errc::unsupported_expectation)); }
       expects = true;
     } else if (named(name, "Connection")) {
-      bool value_closes = ?connection_close(value);
+      bool value_closes = ?connection_close(value, options);
       close = close || value_closes;
     }
     pos = end + size_t(2);
@@ -1882,7 +1936,7 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
   mut auto form = http::target_form::origin;
   if (method == "CONNECT") {
     auto endpoint = url::https(target);
-    if (!endpoint || !endpoint.value().has_explicit_port()) { return unexpected(peer(server_errc::malformed)); }
+    if (!endpoint || !endpoint.value().has_explicit_port() || !valid_literal(target)) { return unexpected(peer(server_errc::malformed)); }
     authority = string(target);
     form = http::target_form::authority;
   } else if (target == "*") {
@@ -1895,7 +1949,9 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
     if (!parsed) { return unexpected(peer(server_errc::malformed)); }
     auto& parts = parsed.value();
     if (!target_suffix(target, parts.authority_end)) { return unexpected(peer(server_errc::malformed)); }
-    authority = string(target.substr(parts.host_begin, parts.authority_end - parts.host_begin));
+    auto selected = target.substr(parts.host_begin, parts.authority_end - parts.host_begin);
+    if (!valid_literal(selected)) { return unexpected(peer(server_errc::malformed)); }
+    authority = string(selected);
     form = http::target_form::absolute;
   }
   bool has_body = chunked || (length.has_value() && length.value() > size_t(0));
@@ -1903,11 +1959,7 @@ expected<request_head, server_error> decode_head(string_view wire, server_limits
                       chunked, expects && has_body, close);
 }
 }
-}
-}
 
-namespace std {
-namespace http {
 export struct head_progress {
   size_t consumed;
   mut optional<request_head> head;
@@ -1997,24 +2049,30 @@ expected<size_t, server_error> chunk_size(string_view line, size_t budget) {
   }
   return count;
 }
-bool valid_trailer(string_view line) {
+bool valid_trailer(string_view line, connection_options& options) {
   size_t colon = until(line, size_t(0), ':');
   if (colon == line.size()) { return false; }
   auto name = line.substr(size_t(0), colon);
   if (!wire_field(name, line.substr(colon + size_t(1)))) { return false; }
+  if (options.contains(name)) { return false; }
+  if (name.size() > size_t(3) && named(name.substr(size_t(0), size_t(3)), "If-")) { return false; }
   return !reserved_field(name) && !named(name, "Host") && !named(name, "Content-Encoding") &&
          !named(name, "Content-Type") && !named(name, "Content-Range") &&
          !named(name, "Authorization") && !named(name, "Proxy-Authorization") &&
          !named(name, "Cookie") && !named(name, "Expect") && !named(name, "TE") &&
-         !named(name, "Cache-Control") && !named(name, "Max-Forwards");
+         !named(name, "Cache-Control") && !named(name, "Max-Forwards") && !named(name, "Range") &&
+         !named(name, "Keep-Alive") && !named(name, "Proxy-Connection") &&
+         !named(name, "Set-Cookie") && !named(name, "WWW-Authenticate") && !named(name, "Proxy-Authenticate");
 }
 }
 
+/// Incremental HTTP/1.1 framing for one connection. The package drives transport readiness.
 export class server_codec {
   server_limits limits;
   mut server_detail::exchange_state exchange = server_detail::exchange_state::between;
   mut server_detail::body_frame frame = server_detail::body_frame::done;
   mut string input{};
+  mut server_detail::connection_options options{};
   mut size_t line_size = 0;
   mut size_t lines = 0;
   mut bool cr = false;
@@ -2055,6 +2113,7 @@ public:
     }
     return server_codec(limits);
   }
+  /// Consume at most one head, leaving the suffix in caller-owned storage.
   expected<head_progress, server_error> parse_head(span<uint8_t>& bytes) mut {
     if (this.exchange != server_detail::exchange_state::between) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::head));
@@ -2063,6 +2122,9 @@ public:
       if (this.input.size() == this.limits.request_head) { return unexpected(this.reject(server_errc::head_limit, server_phase::head)); }
       if (this.lines == 0 && this.line_size == this.limits.request_line) { return unexpected(this.reject(server_errc::line_limit, server_phase::head)); }
       char c = char(bytes[i]);
+      if (this.lines > this.limits.request_fields && this.line_size == 0 && c != '\r') {
+        return unexpected(this.reject(server_errc::field_limit, server_phase::head));
+      }
       if (this.cr != (c == '\n')) { return unexpected(this.reject(server_errc::malformed, server_phase::head)); }
       this.input.push_back(c);
       this.line_size++;
@@ -2070,7 +2132,8 @@ public:
       if (c == '\n') {
         if (this.line_size == size_t(2)) {
           if (this.lines == 0) { return unexpected(this.reject(server_errc::malformed, server_phase::head)); }
-          mut auto parsed = server_detail::decode_head(this.input.view(), this.limits);
+          this.options.clear();
+          mut auto parsed = server_detail::decode_head(this.input.view(), this.limits, this.options);
           if (!parsed) { return unexpected(this.reject(parsed.error().code, server_phase::head)); }
           mut auto head = std::move(parsed).value();
           this.input.clear();
@@ -2091,13 +2154,13 @@ public:
           this.connect_method = head.method_text() == "CONNECT";
           return head_progress(i + size_t(1), std::move(head));
         }
-        if (this.lines > this.limits.request_fields) { return unexpected(this.reject(server_errc::field_limit, server_phase::head)); }
         this.lines++;
         this.line_size = 0;
       }
     }
     return head_progress(bytes.size());
   }
+  /// Decode into nonempty caller storage, including across split chunk or trailer lines.
   expected<body_progress, server_error> parse_body(span<uint8_t>& bytes, mut mutable_span<uint8_t>& dst) mut {
     if (this.exchange != server_detail::exchange_state::active || this.wants_continue) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::body));
@@ -2154,7 +2217,7 @@ public:
         this.frame = server_detail::body_frame::done;
       } else {
         if (this.trailers == this.limits.trailer_fields) { return unexpected(this.reject(server_errc::trailer_limit, server_phase::body)); }
-        if (!server_detail::valid_trailer(this.input.view())) { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
+        if (!server_detail::valid_trailer(this.input.view(), this.options)) { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
         this.trailers++;
       }
       this.input.clear();
@@ -2256,6 +2319,7 @@ public:
     }
     return;
   }
+  /// Borrow the outstanding framing bytes, body demand or flush until the next mutation.
   expected<output_step&, server_error> next_output() {
     if (this.exchange != server_detail::exchange_state::output) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::output));
@@ -2291,11 +2355,7 @@ public:
     return result;
   }
 };
-}
-}
 
-namespace std {
-namespace http {
 namespace server_detail {
 expected<size_t, server_error> write_prefix<S>(mut S& transport, span<uint8_t>& data, mut bool& terminal)
     requires io::writer<S> {
@@ -2380,7 +2440,7 @@ export class server_connection<S> {
     }
   }
 public:
-  server_connection(S stream, server_codec codec)
+  server_connection(server_detail::connection_adoption token, S stream, server_codec codec)
       : transport(std::move(stream)), codec(std::move(codec)), window(byte_buffer(size_t(4096))) {}
   server_connection(server_connection<S>& other) = delete;
   server_connection(server_connection<S>&& other) = default;
@@ -2390,9 +2450,13 @@ public:
       {
         auto all = this.window.as_span();
         auto input = all.subspan(this.first, this.last - this.first);
-        mut auto step = ?this.codec.parse_head(input);
-        this.first += step.consumed;
-        if (step.head.has_value()) { return std::move(step.head); }
+        mut auto parsed = this.codec.parse_head(input);
+        if (!parsed) { return unexpected(parsed.error()); }
+        this.first += parsed.value().consumed;
+        if (parsed.value().head.has_value()) {
+          mut auto step = std::move(parsed).value();
+          return std::move(step.head);
+        }
       }
       bool available = ?this.refill(server_phase::head);
       if (!available) { return optional<request_head>(); }
@@ -2435,10 +2499,11 @@ public:
   }
 };
 
+/// Validate limits and transfer the blocking duplex owner without performing I/O.
 export expected<server_connection<S>, server_error> open_server_connection<S>(S stream, server_limits limits)
     requires io::reader<S> && io::writer<S> {
   mut auto codec = ?server_codec::open(limits);
-  return server_connection<S>(std::move(stream), std::move(codec));
+  return server_connection<S>(server_detail::connection_adoption::validated, std::move(stream), std::move(codec));
 }
 }
 }

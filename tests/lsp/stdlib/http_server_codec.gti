@@ -1,0 +1,10 @@
+// Importing std.http exposes the server codec and its progress operations in the editor.
+//@ hover @codec: server_codec
+//@ completion @member: parse_head parse_body begin_response finish_flush
+import std.http;
+int main() {
+  std::http::server_limits limits{};
+  mut auto connection = std::http::/*@codec*/server_codec::open(limits).expect("codec");
+  connection./*^member*/end_input().expect("end");
+  return 0;
+}

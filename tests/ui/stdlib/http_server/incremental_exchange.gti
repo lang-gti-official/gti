@@ -10,6 +10,32 @@ std::byte_buffer octets(std::string_view text) {
   return std::move(bytes);
 }
 
+// A would-block write (including a flush) leaves the same operation pending.
+bool drain(mut std::http::server_codec& codec, std::string_view expected, std::size_t body_size) {
+  mut std::size_t wire = 0;
+  mut std::size_t body = 0;
+  while (true) {
+    mut bool flush = false;
+    for (mut int attempt = 0; attempt < 2; attempt++) {
+      auto pending = codec.next_output();
+      if (!pending) { return false; }
+      auto& step = pending.value();
+      if (wire < expected.size()) {
+        if (step.kind() != std::http::output_kind::framing ||
+            step.bytes().size() != expected.size() - wire || step.bytes()[0] != uint8_t(expected[wire])) { return false; }
+      } else if (body < body_size) {
+        if (step.kind() != std::http::output_kind::body || step.remaining != body_size - body) { return false; }
+      } else {
+        if (step.kind() != std::http::output_kind::flush) { return false; }
+        flush = true;
+      }
+    }
+    if (flush) { return true; }
+    if (!codec.advance_output(std::size_t(1))) { return false; }
+    if (wire < expected.size()) { wire++; } else { body++; }
+  }
+}
+
 expected<int, std::http::server_error> exercise() {
   std::http::server_limits limits{};
   mut auto codec = ?std::http::server_codec::open(limits);
@@ -23,26 +49,8 @@ expected<int, std::http::server_error> exercise() {
   if (!parsed.head || parsed.head.value().method_text() != "POST" ||
       parsed.head.value().effective_authority() != "localhost") { return 2; }
   ?codec.begin_continue();
-  mut std::string wire{};
-  while (true) {
-    mut std::size_t committed = 0;
-    {
-      auto pending = codec.next_output();
-      if (!pending) { return 10; }
-      auto& step = pending.value();
-      switch (step.kind()) {
-      case std::http::output_kind::framing:
-        wire.push_back(char(step.bytes()[0]));
-        committed = 1;
-        break;
-      case std::http::output_kind::body: return 3;
-      case std::http::output_kind::flush: break;
-      }
-    }
-    if (committed == 0) { break; }
-    ?codec.advance_output(committed);
-  }
-  if (wire.view() != "HTTP/1.1 100 Continue\r\n\r\n" || ?codec.finish_flush() != std::http::disposition::continue_sent) { return 4; }
+  if (!drain(codec, "HTTP/1.1 100 Continue\r\n\r\n", std::size_t(0)) ||
+      ?codec.finish_flush() != std::http::disposition::continue_sent) { return 4; }
   auto upload = octets("2;tag=yes\r\nab\r\n0\r\nX-End: yes\r\n\r\nGET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
   auto u = upload.as_span();
   mut auto backing = octets("?");
@@ -51,6 +59,9 @@ expected<int, std::http::server_error> exercise() {
   while (consumed < u.size()) {
     auto one = u.subspan(consumed, std::size_t(1));
     mut auto dst = backing.as_mutable_span();
+    auto empty = one.first(std::size_t(0));
+    auto wait = ?codec.parse_body(empty, dst);
+    if (wait.written != 0 || wait.consumed != 0 || wait.state != std::http::body_state::need_input) { return 10; }
     auto body = ?codec.parse_body(one, dst);
     if (body.consumed != std::size_t(1)) { return 5; }
     consumed += body.consumed;
@@ -60,24 +71,7 @@ expected<int, std::http::server_error> exercise() {
   if (decoded.view() != "ab") { return 6; }
   auto head = ?std::http::response_head::create(uint16_t(200));
   ?codec.begin_response(head, std::size_t(2), std::http::connection_policy::automatic);
-  wire.clear();
-  mut std::size_t body_count = 0;
-  while (true) {
-    mut bool flush = false;
-    {
-      auto pending = codec.next_output();
-      if (!pending) { return 10; }
-      auto& step = pending.value();
-      switch (step.kind()) {
-      case std::http::output_kind::framing: wire.push_back(char(step.bytes()[0])); break;
-      case std::http::output_kind::body: body_count++; break;
-      case std::http::output_kind::flush: flush = true; break;
-      }
-    }
-    if (flush) { break; }
-    ?codec.advance_output(std::size_t(1));
-  }
-  if (wire.view() != "HTTP/1.1 200 \r\nContent-Length: 2\r\n\r\n" || body_count != 2) { return 7; }
+  if (!drain(codec, "HTTP/1.1 200 \r\nContent-Length: 2\r\n\r\n", std::size_t(2))) { return 7; }
   if (?codec.finish_flush() != std::http::disposition::reusable) { return 8; }
   auto pipeline = u.subspan(consumed, u.size() - consumed);
   auto next = ?codec.parse_head(pipeline);
