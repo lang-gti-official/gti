@@ -1,0 +1,1 @@
+Repair full-validation consumers of contextual std.package metadata and honor configured timeout scaling in the macOS installed-runtime harness. Documentation generation uses an explicit synthetic package consumer without publishing its fixture constants.
