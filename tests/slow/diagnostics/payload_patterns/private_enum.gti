@@ -1,4 +1,6 @@
 // An inferred subject type does not expose a module-private enum: both case forms report the export boundary, without import guidance.
+//@ slow
+// CI exceeded the 4-second scaled check budget on both Linux and macOS.
 //@ snapshot: diagnostics
 // --- main.gti
 import "api.gti";

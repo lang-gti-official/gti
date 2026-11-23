@@ -1,4 +1,5 @@
 // Analyze: local or owned-parameter cleanup-bound child cannot escape.
+//@ diagnostic-note: The result borrows this object's storage.
 import std.utility;
 mut int observed = 0;
 struct Resource { int value = 7;  public: Resource() = default; };
@@ -22,5 +23,5 @@ public:
   GuardRef(Guard& guard) : guard(guard) {}
   ~GuardRef() { observed = 1; }
 };
-GuardRef escape(Resource& resource) { Guard inner{resource}; GuardRef outer{inner}; return std::move(outer); }  //~ ERROR GTI-S2017
+GuardRef escape(Resource& resource) { Guard inner{resource}; GuardRef outer{inner}; return std::move(outer); }  //~ ERROR GTI-S2045 Returned stored-reference value refers to local or by-value storage
 int main() { return 0; }

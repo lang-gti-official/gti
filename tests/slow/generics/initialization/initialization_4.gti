@@ -1,4 +1,6 @@
 // Initialization: rejected with GTI-S2001, GTI-S2068.
+//@ slow
+// CI exceeded the 4-second scaled check budget on both Linux and macOS.
 int read<T>() { return later; }  //~ ERROR GTI-S2001
 int bridge() { return read<int>(); }
 int first = bridge();  //~ ERROR GTI-S2068
