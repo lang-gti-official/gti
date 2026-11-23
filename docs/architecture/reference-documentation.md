@@ -58,7 +58,12 @@ examples instead belong to the exact page that teaches them.
 `include/gti/documentation.h`, projects a valid `FrontendResult` into schema
 `gti.documentation-index` version 1. The build-only `gti_docgen` executable
 loads every shipped `std/*.gti` unit through the ordinary source loader and
-semantic analyzer, then serializes that projection.
+semantic analyzer, then serializes that projection. Its synthetic importing
+consumer has an explicit package owner and fixture version, so `std.package`
+uses the same contextual loading as a project. The consumer's generated package
+constants are not toolchain declarations and do not enter the index; the
+project-specific metadata contract remains authored documentation. No package
+metadata is inferred from the ambient working directory.
 
 The compiler remains authoritative for:
 
