@@ -1,4 +1,5 @@
-// Diagnostic only. Measure live allocator block sizes inside the single-thread workload.
+// Diagnostic only. Measure live allocator block sizes inside the single-thread
+// workload.
 #include <inttypes.h>
 #include <malloc/malloc.h>
 #include <stdint.h>
@@ -11,11 +12,13 @@ static void record(void *p) {
   if (p && active) {
     ++allocations;
     live += malloc_size(p);
-    if (live > peak) peak = live;
+    if (live > peak)
+      peak = live;
   }
 }
 static void retire(size_t bytes) {
-  if (bytes > live) abort();
+  if (bytes > live)
+    abort();
   live -= bytes;
 }
 static void *observed_malloc(size_t bytes) {
@@ -30,7 +33,8 @@ static void *observed_calloc(size_t n, size_t bytes) {
 }
 static int observed_align(void **p, size_t align, size_t bytes) {
   int rc = posix_memalign(p, align, bytes);
-  if (!rc) record(*p);
+  if (!rc)
+    record(*p);
   return rc;
 }
 static void *observed_realloc(void *p, size_t bytes) {
@@ -43,12 +47,14 @@ static void *observed_realloc(void *p, size_t bytes) {
   return result;
 }
 static void observed_free(void *p) {
-  if (active && p) retire(malloc_size(p));
+  if (active && p)
+    retire(malloc_size(p));
   free(p);
 }
-#define INTERPOSE(fn, original) \
-  __attribute__((used, section("__DATA,__interpose"))) \
-  static const struct { const void *replacement, *symbol; } entry_##original = {fn, original}
+#define INTERPOSE(fn, original)                                                \
+  __attribute__((used, section("__DATA,__interpose"))) static const struct {   \
+    const void *replacement, *symbol;                                          \
+  } entry_##original = {fn, original}
 INTERPOSE(observed_malloc, malloc);
 INTERPOSE(observed_calloc, calloc);
 INTERPOSE(observed_realloc, realloc);
@@ -57,5 +63,7 @@ INTERPOSE(observed_free, free);
 void http_heap_start(void) { active = 1; }
 void http_heap_finish(void) {
   active = 0;
-  printf("allocations=%" PRIu64 " peak_live_bytes=%" PRIu64 " final_live_bytes=%" PRIu64 "\n", allocations, peak, live);
+  printf("allocations=%" PRIu64 " peak_live_bytes=%" PRIu64
+         " final_live_bytes=%" PRIu64 "\n",
+         allocations, peak, live);
 }
