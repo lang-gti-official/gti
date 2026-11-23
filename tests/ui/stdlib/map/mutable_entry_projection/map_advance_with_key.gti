@@ -1,0 +1,7 @@
+// A live mutable map projection blocks advancing its cursor while its key is borrowed.
+import std.map;
+
+int main() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  int& key = cursor->key(); ++cursor; return key;  //~ ERROR GTI-S2017
+}

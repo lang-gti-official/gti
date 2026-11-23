@@ -1,0 +1,8 @@
+// A live mutable map projection blocks moving its owner.
+import std.map;
+import std.utility;
+
+int main() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut auto& projected = *cursor; auto moved = std::move(values); return projected.mapped();  //~ ERROR GTI-S2017
+}
