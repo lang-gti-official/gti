@@ -47,6 +47,7 @@ int main() {
   if (!check("1\r\nx\r", limits, false, E::truncated).expect("truncated")) { return 4; }
   if (!check("1;tag=\"bad\r\n", limits, false, E::malformed).expect("bad extension")) { return 5; }
   if (!check("fffffffffffffffff\r\n", limits, false, E::body_limit).expect("overflow")) { return 6; }
+  if (!check("0\r\nRetry-After: 1\r\n\r\n", limits, false, E::malformed).expect("response control")) { return 14; }
   limits.decoded_body = 1;
   if (!check("1\r\nx\r\n1\r\n", limits, false, E::body_limit).expect("decoded budget")) { return 7; }
   limits.chunk_line = 3;
@@ -61,5 +62,6 @@ int main() {
   limits.trailer_bytes = 32;
   limits.trailer_fields = 0;
   if (!check("0\r\nX: y\r\n\r\n", limits, false, E::trailer_limit).expect("field count")) { return 12; }
+  if (!check("0\r\nX", limits, false, E::trailer_limit).expect("field count at first byte")) { return 13; }
   return 0;
 }

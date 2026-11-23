@@ -60,19 +60,23 @@ public:
         mut std::size_t count = 0;
         mut bool flush = false;
         {
-          auto& step = this.codec.next_output().expect("output");
-          if (step.kind() == std::http::output_kind::flush) { flush = true; }
-          else if (step.kind() == std::http::output_kind::framing) {
-            auto data = step.bytes();
+          auto pending = this.codec.next_output();
+          switch (pending.value()) {
+          case std::http::output_step<_>::flush: flush = true; break;
+          case std::http::output_step<_>::framing(auto& data): {
             auto sent = this.socket.send(data);
             if (!sent && sent.error() == std::tcp::errc::would_block) { return wait_for::writable; }
             count = std::move(sent).expect("send head");
-          } else {
+            break;
+          }
+          case std::http::output_step<_>::body(remaining): {
             auto block = this.zeros.as_span();
-            auto data = block.first(step.remaining < block.size() ? step.remaining : block.size());
+            auto data = block.first(remaining < block.size() ? remaining : block.size());
             auto sent = this.socket.send(data);
             if (!sent && sent.error() == std::tcp::errc::would_block) { return wait_for::writable; }
             count = std::move(sent).expect("send body");
+            break;
+          }
           }
         }
         if (flush) {

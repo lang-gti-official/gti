@@ -5,7 +5,6 @@ import std.io;
 import std.string;
 
 using Policy = std::http::connection_policy;
-using Kind = std::http::output_kind;
 using Disposition = std::http::disposition;
 expected<bool, std::http::server_error> check(std::string_view request, uint16_t status, std::size_t length,
     std::string_view expected_wire, bool valid, bool half_close) {
@@ -33,12 +32,15 @@ expected<bool, std::http::server_error> check(std::string_view request, uint16_t
   while (true) {
     mut std::size_t n = 0;
     {
-      auto& step = codec.next_output().expect("pending output");
-      if (step.kind() == Kind::body) { return false; }
-      if (step.kind() == Kind::framing) {
-        auto block = step.bytes();
-        n = block.size();
-        wire.push_back(char(block[0]));
+      auto pending = codec.next_output();
+      if (!pending) { return unexpected(pending.error()); }
+      switch (pending.value()) {
+      case std::http::output_step<_>::body(_): return false;
+      case std::http::output_step<_>::framing(auto& bytes):
+        n = bytes.size();
+        wire.push_back(char(bytes[0]));
+        break;
+      case std::http::output_step<_>::flush: break;
       }
     }
     if (codec.advance_output(std::size_t(0)) || codec.advance_output(n + std::size_t(1))) { return false; }

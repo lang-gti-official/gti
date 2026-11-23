@@ -386,7 +386,8 @@ MirVerificationResult analyzePersistentStorageEffects(
       if (!proof.valid()) {
         if (findings == nullptr)
           return proof;
-        record(*findings, *node.body, node.address, proof, "direct");
+        if (isPersistent(proof.errors.front().conflictingStorage))
+          record(*findings, *node.body, node.address, proof, "direct");
       }
       node.directSites = direct;
       for (const auto &access : direct)
@@ -682,6 +683,10 @@ MirVerificationResult analyzePersistentStorageEffects(
       if (proof.valid())
         break;
       const auto &error = proof.errors.front();
+      // Structural failures from the shared loan verifier remain internal
+      // errors. Only an actual access to a persistent symbol is a finding.
+      if (!isPersistent(error.conflictingStorage))
+        break;
       const auto rejected =
           std::find_if(hidden.begin(), hidden.end(), [&](const auto &access) {
             return access.block == error.block &&

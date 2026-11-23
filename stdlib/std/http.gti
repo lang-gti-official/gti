@@ -1974,20 +1974,10 @@ export struct body_progress {
   body_progress(size_t consumed, size_t written, body_state state)
       : consumed(consumed), written(written), state(state) {}
 };
-export enum class output_kind { framing, body, flush };
-export struct output_step {
-  mut byte_buffer storage{};
-  mut size_t offset = 0;
-  mut size_t remaining = 0;
-  output_step() {}
-  output_kind kind() {
-    if (this.offset < this.storage.size()) { return output_kind::framing; }
-    return this.remaining != 0 ? output_kind::body : output_kind::flush;
-  }
-  span<uint8_t, this> bytes() {
-    auto all = this.storage.as_span();
-    return all.subspan(this.offset, all.size() - this.offset);
-  }
+export enum class output_step<lifetime owner> {
+  framing(span<uint8_t, owner> bytes),
+  body(size_t remaining),
+  flush
 };
 
 namespace server_detail {
@@ -2062,7 +2052,9 @@ bool valid_trailer(string_view line, connection_options& options) {
          !named(name, "Cookie") && !named(name, "Expect") && !named(name, "TE") &&
          !named(name, "Cache-Control") && !named(name, "Max-Forwards") && !named(name, "Range") &&
          !named(name, "Keep-Alive") && !named(name, "Proxy-Connection") &&
-         !named(name, "Set-Cookie") && !named(name, "WWW-Authenticate") && !named(name, "Proxy-Authenticate");
+         !named(name, "Set-Cookie") && !named(name, "WWW-Authenticate") && !named(name, "Proxy-Authenticate") &&
+         !named(name, "Location") && !named(name, "Retry-After") && !named(name, "Vary") &&
+         !named(name, "Content-Language") && !named(name, "Content-Location");
 }
 }
 
@@ -2085,7 +2077,9 @@ export class server_codec {
   mut bool head_method = false;
   mut bool connect_method = false;
   mut bool close_after = false;
-  mut output_step pending{};
+  mut byte_buffer output{};
+  mut size_t sent = 0;
+  mut size_t payload_left = 0;
   mut disposition after = disposition::close;
 
   server_codec(server_limits limits) : limits(limits) {}
@@ -2094,9 +2088,13 @@ export class server_codec {
     return server_error(code, phase, true);
   }
   bool append_output(string_view text) mut {
-    if (text.size() > this.limits.response_head - this.pending.storage.size()) { return false; }
-    for (mut size_t i = 0; i < text.size(); i++) { this.pending.storage.push_back(uint8_t(text[i])); }
+    if (text.size() > this.limits.response_head - this.output.size()) { return false; }
+    for (mut size_t i = 0; i < text.size(); i++) { this.output.push_back(uint8_t(text[i])); }
     return true;
+  }
+  span<uint8_t, this> pending_framing() {
+    auto all = this.output.as_span();
+    return all.subspan(this.sent, all.size() - this.sent);
   }
 public:
   server_codec(server_codec& other) = delete;
@@ -2199,6 +2197,9 @@ public:
       if (this.frame == server_detail::body_frame::trailers) {
         if (this.trailer_bytes == this.limits.trailer_bytes) { return unexpected(this.reject(server_errc::trailer_limit, server_phase::body)); }
         this.trailer_bytes++;
+        if (this.trailers == this.limits.trailer_fields && this.line_size == 0 && c != '\r') {
+          return unexpected(this.reject(server_errc::trailer_limit, server_phase::body));
+        }
       } else if (this.line_size == this.limits.chunk_line) {
         return unexpected(this.reject(server_errc::chunk_line_limit, server_phase::body));
       }
@@ -2216,7 +2217,6 @@ public:
       } else if (this.input.empty()) {
         this.frame = server_detail::body_frame::done;
       } else {
-        if (this.trailers == this.limits.trailer_fields) { return unexpected(this.reject(server_errc::trailer_limit, server_phase::body)); }
         if (!server_detail::valid_trailer(this.input.view(), this.options)) { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
         this.trailers++;
       }
@@ -2251,12 +2251,12 @@ public:
     if (this.exchange != server_detail::exchange_state::active || !this.wants_continue) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::output));
     }
-    this.pending.storage.clear();
+    this.output.clear();
     if (!this.append_output("HTTP/1.1 100 Continue\r\n\r\n")) {
       return unexpected(server_error(server_errc::head_limit, server_phase::output));
     }
-    this.pending.offset = 0;
-    this.pending.remaining = 0;
+    this.sent = 0;
+    this.payload_left = 0;
     this.after = disposition::continue_sent;
     this.exchange = server_detail::exchange_state::output;
     return;
@@ -2277,7 +2277,7 @@ public:
     if (generated > this.limits.response_fields || fields.size() > this.limits.response_fields - generated) {
       return unexpected(server_error(server_errc::field_limit, server_phase::output));
     }
-    this.pending.storage.clear();
+    this.output.clear();
     auto status_text = std::to_string(status);
     if (!this.append_output("HTTP/1.1 ") || !this.append_output(status_text.view()) || !this.append_output(" \r\n")) {
       return unexpected(server_error(server_errc::head_limit, server_phase::output));
@@ -2297,8 +2297,8 @@ public:
     if ((close && !this.append_output("Connection: close\r\n")) || !this.append_output("\r\n")) {
       return unexpected(server_error(server_errc::head_limit, server_phase::output));
     }
-    this.pending.remaining = this.head_method ? size_t(0) : representation_length;
-    this.pending.offset = 0;
+    this.payload_left = this.head_method ? size_t(0) : representation_length;
+    this.sent = 0;
     this.after = close ? disposition::close : disposition::reusable;
     this.exchange = server_detail::exchange_state::output;
     return;
@@ -2319,31 +2319,33 @@ public:
     }
     return;
   }
-  /// Borrow the outstanding framing bytes, body demand or flush until the next mutation.
-  expected<output_step&, server_error> next_output() {
+  /// Only the framing alternative retains a read-only view of this codec.
+  expected<output_step<this>, server_error> next_output() {
     if (this.exchange != server_detail::exchange_state::output) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::output));
     }
-    return this.pending;
+    if (this.sent < this.output.size()) { return output_step<this>::framing(this.pending_framing()); }
+    if (this.payload_left > 0) { return output_step<this>::body(this.payload_left); }
+    return output_step<this>::flush;
   }
   expected<void, server_error> advance_output(size_t n) mut {
     if (this.exchange != server_detail::exchange_state::output) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::output));
     }
-    size_t framing = this.pending.storage.size() - this.pending.offset;
-    if (n == 0 || n > (framing > 0 ? framing : this.pending.remaining)) {
+    size_t framing = this.output.size() - this.sent;
+    if (n == 0 || n > (framing > 0 ? framing : this.payload_left)) {
       return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
     }
-    if (framing > 0) { this.pending.offset += n; } else { this.pending.remaining -= n; }
+    if (framing > 0) { this.sent += n; } else { this.payload_left -= n; }
     return;
   }
   expected<disposition, server_error> finish_flush() mut {
     if (this.exchange != server_detail::exchange_state::output ||
-        this.pending.offset != this.pending.storage.size() || this.pending.remaining != 0) {
+        this.sent != this.output.size() || this.payload_left != 0) {
       return unexpected(server_error(server_errc::wrong_state, server_phase::output));
     }
     auto result = this.after;
-    this.pending.storage.clear();
+    this.output.clear();
     if (result == disposition::continue_sent) {
       this.wants_continue = false;
       this.exchange = server_detail::exchange_state::active;
@@ -2411,19 +2413,18 @@ export class server_connection<S> {
       mut size_t count = 0;
       mut bool flush = false;
       {
-        auto& step = ?this.codec.next_output();
-        if (step.kind() == output_kind::flush) {
-          flush = true;
-        } else {
-          bool payload = step.kind() == output_kind::body;
-          if (payload) {
-            auto data = body.subspan(offset, step.remaining);
-            count = ?server_detail::write_prefix(this.transport, data, this.terminal);
-          } else {
-            auto data = step.bytes();
-            count = ?server_detail::write_prefix(this.transport, data, this.terminal);
-          }
-          if (payload) { offset += count; }
+        auto pending = this.codec.next_output();
+        if (!pending) { return unexpected(pending.error()); }
+        switch (pending.value()) {
+        case output_step<_>::framing(auto& bytes):
+          count = ?server_detail::write_prefix(this.transport, bytes, this.terminal);
+          break;
+        case output_step<_>::body(remaining):
+          auto data = body.subspan(offset, remaining);
+          count = ?server_detail::write_prefix(this.transport, data, this.terminal);
+          offset += count;
+          break;
+        case output_step<_>::flush: flush = true; break;
         }
       }
       if (flush) {

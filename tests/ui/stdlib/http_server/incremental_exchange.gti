@@ -20,14 +20,18 @@ bool drain(mut std::http::server_codec& codec, std::string_view expected, std::s
       auto pending = codec.next_output();
       if (!pending) { return false; }
       auto& step = pending.value();
-      if (wire < expected.size()) {
-        if (step.kind() != std::http::output_kind::framing ||
-            step.bytes().size() != expected.size() - wire || step.bytes()[0] != uint8_t(expected[wire])) { return false; }
-      } else if (body < body_size) {
-        if (step.kind() != std::http::output_kind::body || step.remaining != body_size - body) { return false; }
-      } else {
-        if (step.kind() != std::http::output_kind::flush) { return false; }
+      switch (step) {
+      case std::http::output_step<_>::framing(auto& bytes):
+        if (wire >= expected.size() || bytes.size() != expected.size() - wire ||
+            bytes[0] != uint8_t(expected[wire])) { return false; }
+        break;
+      case std::http::output_step<_>::body(remaining):
+        if (wire != expected.size() || body >= body_size || remaining != body_size - body) { return false; }
+        break;
+      case std::http::output_step<_>::flush:
+        if (wire != expected.size() || body != body_size) { return false; }
         flush = true;
+        break;
       }
     }
     if (flush) { return true; }

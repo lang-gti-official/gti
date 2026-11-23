@@ -551,6 +551,14 @@ Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
 
+When a read-only method returns a single-reference view tied to its receiver,
+a payload constructor can retain that view under the active variant. MIR
+checks the actual receiver stage, its stored loan and the concrete reference
+field in the result. A method borrowing through a payload pattern binding
+uses the guarded field path to select the external owner. The call still
+produces the runtime address. Copying an owned record of inline scalar data
+out of a fallible borrow carries its value independently of the access loan.
+
 A by-value conditional carrier formal, such as a payload enum with a reference
 alternative, names no single stored reference. When such a function's complete
 result contract is independently proved, the per-function return summary
@@ -4341,7 +4349,9 @@ keeps its captures' targets, and a call input keeps its place's targets.
 persistent-storage effect closure of `verifyMirPersistentStorageEffects`: each
 invocation's transitive same-thread global and thread-local accesses (an
 unknown GTI target accesses every persistent symbol mutably) are checked at
-the invocation's loan state by the body loan-flow engine. The verifier stops
+the invocation's loan state by the body loan-flow engine. A rejection records the
+conflicting storage symbol so structural verifier errors retain their internal
+diagnostic. The verifier stops
 at the first rejection; the audit retires each rejected invocation and checks
 the body again, so every rejected invocation is reported. A `Drop` whose
 obligations are not available on any path reaching it (moved out, transferred

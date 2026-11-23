@@ -39,7 +39,13 @@ int main() {
   final.advance_output(std::size_t(1)).expect("write one");
   final.end_input().expect("half-close");
   mut std::size_t remaining = 0;
-  { auto& step = final.next_output().expect("suffix"); remaining = step.bytes().size(); }
+  {
+    auto pending = final.next_output();
+    switch (pending.value()) {
+    case std::http::output_step<_>::framing(auto& bytes): remaining = bytes.size(); break;
+    default: return 5;
+    }
+  }
   final.advance_output(remaining).expect("finish write");
   return final.finish_flush().expect("flush") == std::http::disposition::close ? 0 : 5;
 }

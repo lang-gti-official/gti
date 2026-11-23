@@ -5501,8 +5501,6 @@
         "std::http::header::replace_value",
         "std::http::header::value",
         "std::http::open_server_connection",
-        "std::http::output_step::bytes",
-        "std::http::output_step::kind",
         "std::http::request::add_header",
         "std::http::request::body",
         "std::http::request::ca_bundle",
@@ -5613,7 +5611,7 @@
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
         "tests/http_url_operators_test.py",
-        "tests/project/http_server_connections/test.transcript",
+        "tests/slow/project/http_server_connections/test.transcript",
         "tests/ui/stdlib/http_server"
       ]
     },

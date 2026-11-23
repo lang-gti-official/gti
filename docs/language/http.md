@@ -431,8 +431,9 @@ the stream type and requires both `std::io::reader<S>` and `std::io::writer<S>`.
    Keep any pipelined suffix for the next request.
 3. Build a `response_head` with `create(status)` and `add_header(name, value)`.
    Start output with `begin_response(head, representation_length, policy)`.
-   `next_output()` borrows the current step. For `framing`, write from
-   `bytes()`. For `body`, write up to `remaining` bytes from the package's
+   `next_output()` returns a fallible `output_step` payload enum. Match
+   `framing(bytes)` to write its receiver-borrowed span, or match
+   `body(remaining)` to write up to that many bytes from the package's
    payload. End the borrow and call `advance_output(n)` with the actual
    positive write count. When the transport would block, keep the same step
    and resume it on readiness. Completion-based transports must keep submitted
@@ -469,7 +470,9 @@ and protocol upgrades are outside the supported profile.
 Limits default to 8192 request-line bytes, 32768 bytes and 100 fields per
 request or response head, 1 MiB decoded request body, 1024 bytes per chunk
 line, 8192 bytes and 32 fields of trailers, and 65536 bytes of aggregate chunk
-framing. Output payloads remain in package-owned storage. A
+framing. The first byte of an additional trailer field exhausts the configured
+field count when all slots are already used. The decoder rejects routing,
+authentication, response-control and framing trailers. Output payloads remain in package-owned storage. A
 `server_error` carries its category and phase. The blocking adapter preserves
 the underlying I/O error via `transport_error()`. A local preflight error
 allows a corrected reply. When `can_send_error` is true the driver can send
@@ -479,5 +482,5 @@ Opening rejects configurations whose chunk or trailer sublimits exceed the
 aggregate framing budget, whose request line exceeds the head budget, or
 whose response limits cannot encode a minimal closing error response.
 
-The [two-connection package example](../../tests/project/http_server_connections/web/src/session.gti)
+The [two-connection package example](../../tests/slow/project/http_server_connections/web/src/session.gti)
 shows the nonblocking driver and routing for a monitoring dashboard.
