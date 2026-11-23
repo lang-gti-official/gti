@@ -1,0 +1,12 @@
+// Response headers preserve repeated fields and reject framing overrides and controls.
+//@ run-pass
+import std.http;
+int main() {
+  mut auto head = std::http::response_head::create(uint16_t(200)).expect("status");
+  if (!head.add_header("Set-Cookie", "a=1") || !head.add_header("set-cookie", "b=2")) { return 1; }
+  if (head.add_header("Content-Length", "0") || head.add_header("X-Key", "bad\x01")) { return 2; }
+  auto& fields = head.headers();
+  auto found = fields.find_next("SET-cookie", std::size_t(1));
+  if (!found || fields.size() != std::size_t(2)) { return 3; }
+  return fields.value_at(found.value()) == "b=2" ? 0 : 4;
+}
