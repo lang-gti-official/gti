@@ -2309,8 +2309,11 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           !mirTypeMayHoldDependencies(instruction.info.type,
                                       instruction.info.traits))
         produced = empty();
-      if (program && produced && !produced->empty() && instruction.result &&
-          !instruction.loan &&
+      // Symbolic summaries track which input values flow into results and
+      // stores, including plain records. Only concrete loan flow discards
+      // the temporary access used to read an independent scalar layout.
+      if (!symbolicSummary && program && produced && !produced->empty() &&
+          instruction.result && !instruction.loan &&
           instruction.info.category == ValueCategory::Value &&
           (instruction.kind == MirInstructionKind::Load ||
            instruction.kind == MirInstructionKind::Move ||
