@@ -1021,8 +1021,12 @@ limited by that stack: like the compiler, a worker continues them on fresh
 stack segments of the same thread (see the frontend architecture), so editor
 analysis reaches exactly the configured compile-time limits.
 
-Completion adopts compatible trusted preambles instead of registering and
-checking the standard library again for each request. Like analysis, it never
+Completion adopts compatible trusted and imported-module preambles instead of
+registering and checking the same dependencies again for each request. It uses
+the diagnostic snapshot's entry-point and test-program policy and the same
+import-prefix eligibility rules; those settings participate in semantic cache
+identity. Current entry text still receives completion-marker analysis, and
+changed dependency contents invalidate reuse. Like analysis, it never
 builds a missing preamble itself. Its request-owned
 cancellation flag reaches the same compiler safe points as diagnostic analysis.
 An edit, close/reopen, newer completion on the same document, explicit

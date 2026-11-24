@@ -1,0 +1,9 @@
+// A partially typed member in an if condition offers the stream's real methods.
+//@ completion @member: is_open !is_ready
+import std.fstream;
+
+int main() {
+  std::ifstream stream{"hello.txt"};
+  if (stream.is/*^member*/_open()) {}
+  return 0;
+}

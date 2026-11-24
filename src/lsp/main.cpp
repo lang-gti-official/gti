@@ -4256,7 +4256,9 @@ private:
                  .cancellation = request.cancellation.get(),
                  .sourceGenerations = request.frontendSources.generations,
                  .sourceDigests = request.frontendSources.digests,
-                 .deferPreambleBuild = true});
+                 .deferPreambleBuild = true,
+                 .program = project.program,
+                 .requireEntryPoint = project.requireEntryPoint});
           }
         } catch (const std::exception &) {
           completion = {};
