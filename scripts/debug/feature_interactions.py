@@ -42,10 +42,12 @@ from debug.feature_interaction_model import (
 # loop transforms. That is the slow tier's O0+O3 pair; adding O2 would cost
 # half as many outcomes again for little distinct coverage.
 CAMPAIGN_LEVELS = ("O0", "O3")
+ALL_LEVELS = ("O0", "O1", "O2", "O3")
 MODES = {(optimization_level(flags), "llvm"): flags
-         for _, flags, _ in llvm_modes(levels=CAMPAIGN_LEVELS)}
-# (optimization, backend), as failure records spell it.
-CONFIGURATIONS = tuple(MODES)
+         for _, flags, _ in llvm_modes(levels=ALL_LEVELS)}
+# (optimization, backend), as failure records spell it. `run --levels` narrows
+# or widens the levels a run probes; replay accepts any of them.
+CONFIGURATIONS = tuple(key for key in MODES if key[0] in CAMPAIGN_LEVELS)
 VARIANTS = ("original", "renamed")
 # Failure records written before the LLVM port named a C++ standard. The case
 # and its oracle are backend-independent, so such a record replays at the same
@@ -271,6 +273,10 @@ def parser() -> argparse.ArgumentParser:
         if name == "run":
             tool_arguments(command)
             command.add_argument("--keep-going", action="store_true")
+            command.add_argument("--levels", default=",".join(CAMPAIGN_LEVELS),
+                                 help="comma-separated LLVM levels to probe "
+                                      f"(subset of {','.join(ALL_LEVELS)}; default "
+                                      f"{','.join(CAMPAIGN_LEVELS)})")
             command.add_argument("--repeat", type=int, default=2)
         else:
             command.add_argument("--out", required=True)
@@ -295,9 +301,9 @@ def read_failure(path: Path) -> tuple[InteractionCase, dict[str, Any]]:
             "to": list(LEGACY_CPP_CONFIGURATIONS[configuration]),
             "reason": "the C++ backend is frozen and untested; replayed on LLVM at the same level"}
         record["configuration"] = list(LEGACY_CPP_CONFIGURATIONS[configuration])
-    elif configuration not in CONFIGURATIONS:
+    elif configuration not in MODES:
         raise ValueError(f"unsupported interaction configuration {list(configuration)}; "
-                         f"this runner replays {[list(item) for item in CONFIGURATIONS]}")
+                         f"this runner replays {[list(item) for item in MODES]}")
     case = InteractionCase.from_record(record["case"])
     if record["expected"] != list(case.oracle()):
         raise ValueError("failure oracle disagrees with case")
@@ -459,6 +465,12 @@ def main(arguments: list[str] | None = None) -> int:
         cli.error("extra-cases must be nonnegative and repeat must be positive")
     if getattr(args, "timeout", 1) < 1 or getattr(args, "max_probes", 1) < 1:
         cli.error("timeout and max-probes must be positive")
+    if getattr(args, "levels", None) is not None:
+        levels = [level.strip() for level in args.levels.split(",") if level.strip()]
+        if not levels or any(level not in ALL_LEVELS for level in levels):
+            cli.error(f"--levels must be a comma-separated subset of {','.join(ALL_LEVELS)}")
+        global CONFIGURATIONS
+        CONFIGURATIONS = tuple(key for key in MODES if key[0] in levels)
     # Validate supplied evidence before creating outputs or executing tools.
     prior = read_failure(args.failure) if args.command in ("replay", "reduce", "triage") else None
     if args.command != "generate":

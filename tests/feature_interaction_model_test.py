@@ -16,7 +16,7 @@ from unittest.mock import patch
 REPOSITORY = Path(sys.argv.pop(1)).resolve()
 sys.path.insert(0, str(REPOSITORY / "scripts"))
 from debug.feature_interaction_model import (
-    FACTORS, V1_FACTORS, SELECTED_TRIPLES, InteractionCase, coverage, covering_array, make_case,
+    FACTORS, V1_FACTORS, V3_FACTORS, SELECTED_TRIPLES, InteractionCase, coverage, covering_array, make_case,
 )
 from debug import feature_interactions as runner
 from debug import capture_compiler_failure as capture
@@ -40,8 +40,10 @@ class ModelTests(unittest.TestCase):
                 seen = {tuple(row[name] for name in group) for row in named}
                 for values in itertools.product((False, True), repeat=len(group)):
                     required = dict(zip(group, values))
-                    impossible = (required.get("propagate") is True
-                                  and required.get("expected") is False)
+                    impossible = ((required.get("propagate") is True
+                                   and required.get("expected") is False)
+                                  or (required.get("range_for") is True
+                                      and required.get("vector") is False))
                     if not impossible:
                         self.assertIn(values, seen, (seed, group, values))
             measured = coverage(rows, strength)
@@ -99,7 +101,7 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn("#include", restored.emit())
         self.assertEqual(list(restored.oracle()), record["expected"])
         upgraded = restored.record()
-        self.assertEqual(upgraded["schema"], "gti-feature-interaction-case-v3")
+        self.assertEqual(upgraded["schema"], "gti-feature-interaction-case-v4")
         self.assertEqual(restored, InteractionCase.from_record(upgraded))
         record["source_sha256"]["original"] = "0" * 64
         with self.assertRaises(ValueError):
@@ -123,9 +125,11 @@ class ModelTests(unittest.TestCase):
             case.emit("unknown")
 
     def test_v2_cases_authenticate_old_hashes_and_migrate_to_modules(self):
-        case = InteractionCase(1, 0, tuple(True for _ in FACTORS), 3, 2, 3)
+        case = InteractionCase(1, 0, tuple(name in V3_FACTORS for name in FACTORS), 3, 2, 3)
         record = case.record()
         record["schema"] = "gti-feature-interaction-case-v2"
+        for name in FACTORS[len(V3_FACTORS):]:
+            del record["factors"][name]
         # Exact hashes from the pre-module eleven-factor generator.
         record["source_sha256"] = {
             "original": "c73b5b2413fbf7b142795a5856f7580bf429aff8a3522dc1876612589e821612",
@@ -133,7 +137,7 @@ class ModelTests(unittest.TestCase):
         }
         restored = InteractionCase.from_record(record)
         self.assertEqual(restored, case)
-        self.assertEqual(restored.record()["schema"], "gti-feature-interaction-case-v3")
+        self.assertEqual(restored.record()["schema"], "gti-feature-interaction-case-v4")
         self.assertNotEqual(restored.record()["source_sha256"], record["source_sha256"])
         self.assertNotIn("#include", restored.emit())
         record["source_sha256"]["renamed"] = "0" * 64

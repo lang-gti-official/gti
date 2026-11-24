@@ -23,6 +23,8 @@ Verdicts:
   WRONG(…)        the program printed something other than expected
   S2067 etc.      an ordinary GTI diagnostic (often a correct rejection)
   DIVERGE(…)      the selected levels disagree; lists each level's verdict
+  ACCEPTED(…)     a cell that must be rejected compiled
+  WRONG-REJECTION a cell that must be rejected failed with another diagnostic
 
 `hard()` is the set a matrix reports as a defect: everything except ok,
 UNSUPPORTED and ordinary diagnostics. Ordinary diagnostics still need
@@ -43,8 +45,9 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 LEVELS = ("O0", "O1", "O2", "O3")
 REFUSAL = re.compile(r"for ((?:Shape|Mir|Hir)\w*\.\w+) \((O-LLVM-\d+)\)")
 CODE = re.compile(r"error\[GTI-([A-Z][0-9]+)\]")
+RUNTIME_CODE = re.compile(r"GTI-R[0-9]+")
 HARD_PREFIXES = ("ICE", "LLVM-VERIFY", "LINK", "NATIVE", "CRASH", "SILENT",
-                 "TIMEOUT", "RUN", "WRONG", "DIVERGE")
+                 "TIMEOUT", "RUN", "WRONG", "DIVERGE", "ACCEPTED")
 
 
 def hard(verdict):
@@ -103,11 +106,18 @@ def build_verdict(returncode, text):
     return f"exit{returncode}"
 
 
-def run_verdict(returncode, out, expect_stdout):
+def run_verdict(returncode, out, expect_stdout, err="", expect_run_error=None):
     if returncode == "timeout":
         return "RUN(timeout)"
     if returncode < 0:
         return f"RUN({_signal(returncode)})"
+    if expect_run_error is not None:
+        # The cell must stop with this defined runtime failure.
+        if returncode != 0 and re.search(expect_run_error, err):
+            return "ok"
+        found = RUNTIME_CODE.search(err)
+        return (f"WRONG(expected failure {expect_run_error}, got "
+                f"{found[0] if found else f'rc={returncode}'})")
     if returncode != 0:
         return f"RUN(rc={returncode})"
     if expect_stdout is not None and out != expect_stdout:
@@ -149,6 +159,11 @@ def arguments(description, default_levels="O0", extra=None):
                              "temporary directory)")
     parser.add_argument("--json", type=Path,
                         help="write every cell's per-level verdicts here")
+    parser.add_argument("--compiler-flag", action="append", default=[],
+                        metavar="FLAG", dest="compiler_flags",
+                        help="extra compiler flag for every cell, repeatable "
+                             "(for example --compiler-flag=-g, so that a run "
+                             "compares with a --json report made without it)")
     parser.add_argument("--baseline", type=Path,
                         help="an earlier --json report; print every cell "
                              "whose verdict changed")
@@ -184,21 +199,36 @@ class Matrix:
         self.records = {}
 
     def level(self, source, level, *, execute=True, flags=(),
-              expect_stdout=None, compile_timeout=600, run_timeout=60):
-        """Verdict for one cell at one LLVM level."""
+              expect_stdout=None, expect_build_error=None,
+              expect_run_error=None, compile_timeout=600, run_timeout=60):
+        """Verdict for one cell at one LLVM level.
+
+        `expect_build_error` is a regular expression the compiler output must
+        match for a cell that must be rejected; `expect_run_error` one the
+        program's stderr must match for a cell that must stop with a defined
+        runtime failure."""
         executable = source.with_name(f"{source.stem}-{level}")
         try:
             returncode, out, err = run(
                 [str(self.gti), str(source), "--backend", "llvm", f"-{level}",
-                 *flags, "-o", str(executable)], self.env, compile_timeout)
+                 *flags, *self.args.compiler_flags, "-o", str(executable)],
+                self.env, compile_timeout)
+            if expect_build_error is not None:
+                if returncode == 0:
+                    return "ACCEPTED(expected rejection)"
+                verdict = build_verdict(returncode, out + err)
+                if hard(verdict) or not re.search(expect_build_error, out + err):
+                    return verdict if hard(verdict) else f"WRONG-REJECTION({verdict})"
+                return "ok"
             if returncode != 0 or not executable.exists():
                 if returncode == 0:
                     return "NATIVE"
                 return build_verdict(returncode, out + err)
             if not execute:
                 return "ok"
-            returncode, out, _ = run([str(executable)], self.env, run_timeout)
-            return run_verdict(returncode, out, expect_stdout)
+            returncode, out, err = run([str(executable)], self.env, run_timeout)
+            return run_verdict(returncode, out, expect_stdout, err,
+                               expect_run_error)
         finally:
             # Cell executables are large; keep only the sources.
             for artifact in source.parent.glob(f"{executable.name}*"):
@@ -223,6 +253,7 @@ class Matrix:
         if self.args.json:
             self.args.json.write_text(json.dumps({
                 "schema": 1, "matrix": self.name, "compiler": str(self.gti),
+                "compiler_flags": self.args.compiler_flags,
                 "levels": list(self.levels), "cells": self.records,
                 "hard": len(failures)}, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8")
