@@ -227,6 +227,21 @@ def tip_contract(artifacts, sha, repository):
         root = pathlib.Path(temporary)
         packages(root / "nightly")
         artifacts.tip_assets(root / "nightly", root / "tip", sha, 7, 2, repository)
+        reference = root / "reference"
+        reference.mkdir()
+        index = reference / "gti-tip-documentation-index.json"
+        index.write_text('{"symbols": []}\n')
+        artifacts.reference_assets(root / "nightly", reference, environment)
+        pair = json.loads((reference / "gti-tip-reference.json").read_text())
+        assert pair["sha"] == sha and pair["run_id"] == 7 and pair["attempt"] == 2
+        assert pair["index_sha256"] == artifacts.digest(index)
+        assert pair["archive_sha256"] == artifacts.digest(root / "tip/gti-tip-linux-x64.tar.gz")
+        try:
+            artifacts.reference_assets(root / "nightly", reference, dict(environment, GITHUB_RUN_ATTEMPT="3"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted reference index from another package attempt")
         expected = {"BUILD_ID"}
         for platform in artifacts.PLATFORMS:
             name = f"gti-tip-{platform}.tar.gz"
@@ -975,6 +990,13 @@ def gti_test_tiers_contract(root):
     assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
     assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    # Hosted runners need a 4x limit scale (GTI_TEST_TIMEOUT_SCALE=2 doubles
+    # the 2x default). The shard jobs re-configure the same tree and must
+    # agree, and the budget step keeps added and changed cases at 2x.
+    scale = "-DGTI_TEST_TIMEOUT_SCALE=2\n"
+    assert fast.count(scale) == 1 and jobs(ci)["fast-ui"].count(scale) == 1
+    assert 'GTI_TEST_TIME_SCALE: "2"' in fast.split(
+        "name: Hold new and modified gti-test cases to half their limit", 1)[1].split("- name:", 1)[0]
     ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
                    "name: Run the runner, project, editor, example and unit baselines",
                    "name: Hold new and modified gti-test cases to half their limit",
@@ -1239,7 +1261,7 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "codeql.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "retain-reference.yml", "rollback.yml", "rollup.yml",
         "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):

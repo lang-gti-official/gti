@@ -251,3 +251,18 @@ another class into detailed routes: bind the compiler-owned type/member
 groups, author one canonical route per presented member, identify
 declaration-only operations explicitly, and verify every displayed callable
 example with the real toolchain.
+
+### Published Linux reference inputs
+
+Full validation generates the API index twice on the Linux release packaging
+runner and compares the bytes. The tip release carries the JSON index and
+`gti-tip-reference.json` beside the Linux compiler. The manifest identifies
+the source commit, producer run and attempt, and both SHA-256 digests.
+The rolling BUILD_ID is uploaded last. Generation runs once per package build.
+
+When adopting a tip revision for the website, run
+`gh workflow run retain-reference.yml -f revision=<full-commit>` on the GTI
+repository while tip still names that commit. This retains the same verified
+assets under `reference-<full-commit>` for future cold website builds.
+Only selected documentation pins need an additional release. A retry checks
+the existing release without overwriting it.
