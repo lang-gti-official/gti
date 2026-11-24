@@ -362,7 +362,9 @@ derivation, and transactional edits. The implementation mirrors those
 contracts: body-local verification remains beside the model primitives in
 `mir.cpp`, while cross-body/program verification, defined-failure derivation,
 optimization-proof replay, and shared private verification queries are
-compiled independently. Deterministic printing remains in `mir_printer.cpp`.
+compiled independently. A scalar comma computation contributes no failure of
+its own. Each operand contributes its ordinary effects before the computation
+selects the right-hand value. Deterministic printing remains in `mir_printer.cpp`.
 
 Lowering has three lifetimes. `mir_body_lowering.cpp` owns body-local IDs,
 scopes, loans, drops, CFG, and ordered source lowering;
