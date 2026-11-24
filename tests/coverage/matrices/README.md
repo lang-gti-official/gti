@@ -136,13 +136,14 @@ scheduled.
 | Script | Oracle | Result at `9bae45998` |
 | --- | --- | --- |
 | `constexpr_equivalence_matrix.py` | an expression evaluated in a constant context and at run time (behind an opaque value) gives the same result, and fails in both or neither: `--family arith` random integer trees for 32/64-bit types, `small` for 8/16-bit types (with promotion to `int32_t`, [#694](https://github.com/lang-gti-official/gti/issues/694)), `shapes` for loops, recursion, arrays, records, enums, `expected`, references, text, floating point and generics | 600 + 105 seeded expressions and every shape: no disagreement |
-| `module_split_matrix.py` | each self-checking `llvm_wrongcode_matrix.py` cell, moved into one module, behind a facade, or split across a re-exporting chain, still prints `ok` | 2,586 programs at O0,O2: no hard failure; the 54 declined cells are exactly the single-file semantic rejections |
+| `module_split_matrix.py` | each self-checking `llvm_wrongcode_matrix.py` cell, moved into one module, behind a facade, or split across a re-exporting chain, still prints `ok` | 2,586 programs at O0,O2: no hard failure; the 54 declined cells are exactly the single-file semantic rejections. The 447 cells added by #688 split into 1,341 programs: the `chain` split of `owning_enum_transport/nested_thread_local_array` reaches an internal error that a class in the same unit hides ([#699](https://github.com/lang-gti-official/gti/issues/699)); `deferred/borrowing_capture` fails as it does in one file (#687); 23 `propagation` chains are correctly refused by the conformance orphan rule (GTI-S2123), because the split separates a `std::from` conformance from its types |
 | `invalid_sibling_matrix.py` | 15 ownership and borrow violations, each with a valid twin, in 7 contexts (main, branch, loop, switch, lambda, generic, method): the twin builds and runs, the sibling is rejected with a GTI-S diagnostic | 210/210 correct |
 | `ui_level_agreement.py` | every single-file passing `tests/ui` program builds, and runs alike, at O0–O3 | 3,063 tests: [#686](https://github.com/lang-gti-official/gti/issues/686) and [#691](https://github.com/lang-gti-official/gti/issues/691) (internal errors at O1 and above); the other 15 disagreements are `raw_context` fixtures that call an undefined native function only reachable at O0 |
 
 `llvm_wrongcode_matrix.py --compiler-flag=-g` (864 cells) found no wrong code;
 19 cells are refused only under `-g`
-([#690](https://github.com/lang-gti-official/gti/issues/690)).
+([#690](https://github.com/lang-gti-official/gti/issues/690)); the cells added
+by #688 add nine more, all `std::span`.
 
 While another session's verification holds the suite slot, run it at
 `--jobs 2` or less, one matrix at a time; run larger passes through

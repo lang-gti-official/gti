@@ -1400,6 +1400,7 @@ The tools are described in `matrices/README.md` and RFC 0013.
 | [#694](https://github.com/lang-gti-official/gti/issues/694) | `constexpr_equivalence_matrix.py --family small` | the language documents do not specify promotion of 8- and 16-bit integers |
 | [#696](https://github.com/lang-gti-official/gti/issues/696) | pipeline fuzzer | parser recovery spin on `typename` in a class or struct body |
 | [#697](https://github.com/lang-gti-official/gti/issues/697) | pipeline fuzzer | compile time doubles per link in a chain of constructors that construct the next class |
+| [#699](https://github.com/lang-gti-official/gti/issues/699) | `module_split_matrix.py` | internal error for a global array of an enum, hidden when the same unit declares a class |
 
 Clean results worth recording: the compile-time/run-time equivalence
 matrix (705 seeded expressions plus every shape family), module splitting
