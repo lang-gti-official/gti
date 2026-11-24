@@ -103,15 +103,21 @@ def build_verdict(returncode, text):
     return f"exit{returncode}"
 
 
-def run_verdict(returncode, out, expect_stdout):
+def run_verdict(returncode, out, expect_stdout, expect_returncode=0,
+                err="", expect_stderr=None):
+    """Verdict for one run. A cell that checks a defined failure expects a
+    nonzero status (70 for the hosted failure boundary) and a report
+    substring on standard error."""
     if returncode == "timeout":
         return "RUN(timeout)"
     if returncode < 0:
         return f"RUN({_signal(returncode)})"
-    if returncode != 0:
+    if returncode != expect_returncode:
         return f"RUN(rc={returncode})"
     if expect_stdout is not None and out != expect_stdout:
         return f"WRONG({out.strip()[:40]!r})"
+    if expect_stderr is not None and expect_stderr not in err:
+        return f"WRONG(stderr {err.strip()[:40]!r})"
     return "ok"
 
 
@@ -184,8 +190,12 @@ class Matrix:
         self.records = {}
 
     def level(self, source, level, *, execute=True, flags=(),
-              expect_stdout=None, compile_timeout=600, run_timeout=60):
-        """Verdict for one cell at one LLVM level."""
+              expect_stdout=None, expect_returncode=0, expect_stderr=None,
+              expect_diagnostic=None, compile_timeout=600, run_timeout=60):
+        """Verdict for one cell at one LLVM level. A cell with
+        `expect_diagnostic` (a code such as "S2127") is an invalid sibling:
+        that rejection is ok, another code is reported as that code, and
+        building it at all is wrong code (an accepted invalid program)."""
         executable = source.with_name(f"{source.stem}-{level}")
         try:
             returncode, out, err = run(
@@ -194,11 +204,17 @@ class Matrix:
             if returncode != 0 or not executable.exists():
                 if returncode == 0:
                     return "NATIVE"
-                return build_verdict(returncode, out + err)
+                verdict = build_verdict(returncode, out + err)
+                if expect_diagnostic is not None and verdict == expect_diagnostic:
+                    return "ok"
+                return verdict
+            if expect_diagnostic is not None:
+                return f"WRONG(accepted; expected {expect_diagnostic})"
             if not execute:
                 return "ok"
-            returncode, out, _ = run([str(executable)], self.env, run_timeout)
-            return run_verdict(returncode, out, expect_stdout)
+            returncode, out, err = run([str(executable)], self.env, run_timeout)
+            return run_verdict(returncode, out, expect_stdout, expect_returncode,
+                               err, expect_stderr)
         finally:
             # Cell executables are large; keep only the sources.
             for artifact in source.parent.glob(f"{executable.name}*"):
