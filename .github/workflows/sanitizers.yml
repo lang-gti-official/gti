@@ -167,7 +167,10 @@ jobs:
       - name: Check the gti-test runner and tidy the test roots
         # gti_test_ui's self-test and `--tidy` with the ASan/UBSan gti-test
         # (about 13 minutes on a hosted runner, run 45349335403); the cases
-        # themselves run in the gti-test-instrumented shards below.
+        # themselves run in the gti-test-instrumented shards below. The
+        # shards' scale of 50: at 10, an instrumented check fixture spent
+        # 22.8 s of its 20 s CPU limit at four jobs (run 45453554235). The
+        # self-test multiplies its tightened limits by this scale.
         # It still runs when a library test above failed: its findings are
         # independent of theirs, and the job fails either way.
         if: ${{ !cancelled() && matrix.kind == 'libraries' }}
@@ -176,7 +179,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           GTI_TEST_INSTRUMENTATION: address,undefined
-          GTI_TEST_TIME_SCALE: "10"
+          GTI_TEST_TIME_SCALE: "50"
         run: |
           llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
           export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
