@@ -5612,6 +5612,7 @@
         "tests/http_runtime_test.py",
         "tests/http_url_operators_test.py",
         "tests/slow/project/http_server_connections/test.transcript",
+        "tests/slow/stdlib/http_server",
         "tests/ui/stdlib/http_server"
       ]
     },

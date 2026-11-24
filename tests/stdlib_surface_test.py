@@ -375,7 +375,7 @@ def case_plan(
                 "check": False,
             },
             "run_command": [str(executable)],
-            "run_options": {"cwd": case_root, "input": case.get("stdin", ""),
+            "run_options": {"cwd": case_root / f"run-{optimization}", "input": case.get("stdin", ""),
                             "text": True, "capture_output": True, "timeout": 120, "check": False},
         })
     return {
@@ -465,8 +465,6 @@ def run_case(
         private_library(repository, plan["case_root"] / "stdlib", case["private_modules"])
         source = repository / case["source"]
         private_source(source, plan["case_root"] / source.name, case["private_modules"])
-    for name, contents in plan["files"].items():
-        (plan["case_root"] / name).write_bytes(contents)
     for step in plan["steps"]:
         optimization = step["optimization"]
         built = build_fixture(step["command"], step["executable"], **step["build_options"])
@@ -486,6 +484,10 @@ def run_case(
                 f"run case {case['id']} {optimization} did not build: "
                 f"exit={built.returncode}\nstdout:\n{built.stdout}\nstderr:\n{built.stderr}"
             )
+        run_root = step["run_options"]["cwd"]
+        run_root.mkdir()
+        for name, contents in plan["files"].items():
+            (run_root / name).write_bytes(contents)
         executed = subprocess.run(step["run_command"], **step["run_options"])
         actual = (executed.returncode, executed.stdout, executed.stderr)
         wanted = (

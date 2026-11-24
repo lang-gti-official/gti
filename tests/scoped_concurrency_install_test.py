@@ -8,10 +8,12 @@ import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import scaled_timeout
+
 
 def run(command, environment):
     result = subprocess.run([str(part) for part in command], env=environment,
-                            text=True, capture_output=True, timeout=180)
+                            text=True, capture_output=True, timeout=scaled_timeout(180))
     assert result.returncode == 0, (command, result.stdout, result.stderr)
     return result.stdout
 

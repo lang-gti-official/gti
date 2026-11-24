@@ -1,4 +1,5 @@
 // Decode split HTTP requests and resume each output prefix without duplicating wire bytes.
+//@ slow
 //@ run-pass
 import std.http;
 import std.io;
