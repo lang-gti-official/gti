@@ -336,10 +336,14 @@ build-fuzz/fuzz/gti_formatter_fuzzer -runs=1 tests/known_failures/formatter/<fil
 
 libFuzzer writes every coverage-increasing input into the **first** corpus
 directory on its command line. Passing `fuzz/corpus` directly therefore drops
-thousands of untracked files next to the 25 tracked seeds. Give it a scratch
+thousands of untracked files next to the tracked seeds. Give it a scratch
 directory first and the seed corpus second, so seeds are read and new inputs
 land somewhere disposable:
 
 ```sh
-build-fuzz/fuzz/gti_pipeline_fuzzer -max_total_time=300 /tmp/gti-corpus fuzz/corpus
+build-fuzz/fuzz/gti_pipeline_fuzzer -max_len=8192 -rss_limit_mb=4096 \
+  -malloc_limit_mb=4096 -max_total_time=300 /tmp/gti-corpus fuzz/corpus/pipeline
 ```
+
+Each harness has its own seed directory under `fuzz/corpus/`. Keep libFuzzer's
+memory limits on every run; macOS `ulimit -v` does not bound the process.

@@ -12480,41 +12480,71 @@ generation, classification, and validation logic run under
 `compiler_debug_tooling`.
 
 `fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, the whole
-analysis-to-backend pipeline, and a bounded two/three-unit source-loader
-composition. They exist only under
-`GTI_BUILD_FUZZERS=ON` (Clang required; tree-wide
-`fuzzer-no-link,address,undefined` instrumentation; never installed), and the
-`fuzzer_smoke` test runs each fixed seed corpus deterministically. Coverage
-exploration is an explicit local activity, never a merge gate:
+analysis-to-LLVM pipeline, and a bounded two/three-unit source-loader
+composition. They are LLVM-first: they build in the default configuration,
+never need `GTI_ENABLE_CPP_BACKEND`, and the pipeline harness ends at the LLVM
+backend. They exist only under `GTI_BUILD_FUZZERS=ON` (Clang with
+libFuzzer required; tree-wide `fuzzer-no-link,address,undefined`
+instrumentation; never installed), and the `fuzzer_smoke` test runs each fixed
+seed corpus deterministically. AppleClang has no libFuzzer runtime, so on
+macOS configure with the Homebrew LLVM of the pinned major
+(`python3 scripts/llvm_pin.py --cmake-dir`). Coverage exploration is an
+explicit local activity, never a merge gate. Always cap memory with
+libFuzzer's own limits (macOS `ulimit -v` does not work):
 
 ```sh
 cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
+    -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF \
+    -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+    -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+    -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"
 python3 scripts/build_window.py --kind build -- \
-    cmake --build build-fuzz --target gti_parser_fuzzer \
+    cmake --build build-fuzz -j 8 --target gti_parser_fuzzer \
     gti_formatter_fuzzer gti_pipeline_fuzzer gti_source_loader_fuzzer
+ctest --test-dir build-fuzz -R '^fuzzer_smoke$' --output-on-failure
 mkdir -p /tmp/gti-fuzz-work
 build-fuzz/fuzz/gti_parser_fuzzer -dict=fuzz/dictionary/gti.dict \
-    -max_len=65536 /tmp/gti-fuzz-work fuzz/corpus/parser
+    -max_len=65536 -rss_limit_mb=4096 -malloc_limit_mb=4096 \
+    -max_total_time=300 /tmp/gti-fuzz-work fuzz/corpus/parser
 ```
 
-libFuzzer writes every discovered input into the *first* corpus directory, so
-always put a scratch work directory first and the checked-in seeds second —
-the repository corpus stays curated, and `-merge=1` is how a genuinely
-coverage-increasing input is promoted into it deliberately.
+The pipeline and source-loader harnesses skip inputs over 8 KiB, so pass them
+`-max_len=8192`. libFuzzer writes every discovered input into the *first*
+corpus directory, so always put a scratch work directory first and the
+checked-in seeds second — the repository corpus stays curated, and `-merge=1`
+is how a genuinely coverage-increasing input is promoted into it deliberately.
+A crash or timeout artifact is reduced with `-minimize_crash=1` (add
+`-timeout=5` for a hang) and `-exact_artifact_path=`.
 
 The formatter property compares significant production-lexer token kinds and
 normalized spellings whenever the original input is lexer-clean, in addition
 to byte idempotence; comments remain trivia and recovered lexical input makes
-no token-equivalence claim. The pipeline takes two fresh snapshots and compares
-acceptance, complete diagnostics, source/phase facts, optimizer reports,
-classified lowering disposition, and nonempty MIR/C++ artifacts. Every
-diagnostic, related span, and fix-it is range-checked against its owning source.
-The source-loader target reuses `Frontend` source overrides for a fixed quoted
-include chain and compares complete fresh source-graph snapshots without
-writing files or parsing includes itself. `fuzzer_smoke` contains a gated
-negative perturbation for every strengthened property as well as the
+no token-equivalence claim. The pipeline harness mirrors the driver's LLVM path
+(`detail::generateArtifact`) at the `-O0`..`-O3` level the first input byte
+selects, with the driver's GTI-to-LLVM codegen-level mapping. It takes two
+fresh snapshots and compares acceptance, complete diagnostics, source/phase
+facts, pre- and post-optimization MIR, optimizer reports, classified LLVM
+limitations, and the `--emit-mir`, `--emit-llvm` textual-module, and native
+object artifacts, all of which must be nonempty for an emitted program. A
+lowered-program construction failure or any backend exception other than a
+classified `BackendUnsupportedError` is the driver's GTI-B0001 internal error
+and therefore a fuzz failure; a limitation must also be shared by textual IR
+and object emission. The textual module is re-parsed in a fresh `LLVMContext`
+and must pass the LLVM verifier, as an `--emit-llvm` consumer would see it.
+Every diagnostic, related span, and fix-it is range-checked against its owning
+source. The source-loader target reuses `Frontend` source overrides for a
+fixed quoted include chain and compares complete fresh source-graph snapshots
+without writing files or parsing includes itself. `fuzzer_smoke` contains a
+gated negative perturbation for every strengthened property as well as the
 replayable generic crash-artifact check.
+
+The pipeline harness alone sets `detect_container_overflow=0` as its ASan
+default. The LLVM libraries it links are never ASan-built, and libc++'s
+container annotations then report a false container-overflow on vectors shared
+with GTI's instrumented LLVM passes (the pass list
+`PassBuilder::buildModuleOptimizationPipeline` builds at `-O1` and above).
+The parser, formatter, and source-loader harnesses keep the check, and an
+explicit `ASAN_OPTIONS` overrides the default.
 
 A finding follows the standing rule: capture it as a bundle, reduce it, and
 land a minimal deterministic regression in the owning suite.
