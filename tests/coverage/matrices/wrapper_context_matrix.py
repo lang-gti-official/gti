@@ -5,10 +5,12 @@ S01 showed that a redundant pair of parentheses around a constructor call is
 fatal. This asks the general question: which syntactic wrappers, in which
 positions, break a class value?
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/wrapmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'wrapper-context')
+OUT = M.out
 
 PRELUDE = """import std.vector;
 
@@ -56,23 +58,7 @@ INNER = {
     "method-call": "named.twin()",
 }
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        return "ok"
-    if "GTI-B0001" in out:
-        return "ICE"
-    if "Undefined symbols" in out:
-        return "LINK"
-    if "error:" in out and "error[GTI-" not in out:
-        return "BAD-CPP"
-    if not out.strip():
-        return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:").replace("GTI-", "") if code else f"exit{r.returncode}"
-
+bad = []
 for iname, iexpr in INNER.items():
     print(f"\n=== inner expression: {iexpr} ===")
     results = {}
@@ -91,11 +77,14 @@ int main() {{
   return 0;
 }}
 """)
-            try:
-                results[(wname, cname)] = classify(src)
-            except subprocess.TimeoutExpired:
-                results[(wname, cname)] = "TIMEOUT"
+            results[(wname, cname)] = M.classify(src, execute=False)
     hdr = f"{'wrapper':<13}" + "".join(f"{c:<16}" for c in CONTEXTS)
     print(hdr); print("-" * len(hdr))
     for w in WRAPPERS:
         print(f"{w:<13}" + "".join(f"{results[(w,c)]:<16}" for c in CONTEXTS))
+    bad += [(iname, w, c, v) for (w, c), v in results.items() if matrix_support.hard(v)]
+
+print(f"\nhard failures: {len(bad)}")
+for i, w, c, v in bad:
+    print(f"  {v:<10} {i} / {w} / {c}")
+sys.exit(M.finish(bad))

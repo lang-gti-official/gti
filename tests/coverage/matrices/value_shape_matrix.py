@@ -5,10 +5,12 @@ Several confirmed ICEs (method on an operator result, a view borrowed from a
 returned owner, a span returned by plain copy) are all "temporary produced one
 way, consumed another". This generates that product directly.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "build/gti"
-OUT = pathlib.Path("/tmp/tempmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'value-shape')
+OUT = M.out
 
 PRELUDE = """import std.vector;
 import std.string;
@@ -53,23 +55,6 @@ CONSUMERS = {
     "discarded":        "[[discard]] {P}.get(); total = 1;",
 }
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        return "ok"
-    if "GTI-B0001" in out:
-        return "ICE"
-    if "Undefined symbols" in out:
-        return "LINK"
-    if "error:" in out and "error[GTI-" not in out:
-        return "INVALID-CPP"
-    if not out.strip():
-        return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:") if code else f"exit{r.returncode}"
-
 results = {}
 for pname, pexpr in PRODUCERS.items():
     for cname, ctempl in CONSUMERS.items():
@@ -86,10 +71,7 @@ int main() {{
   return 0;
 }}
 """)
-        try:
-            results[(pname, cname)] = classify(src)
-        except subprocess.TimeoutExpired:
-            results[(pname, cname)] = "TIMEOUT"
+        results[(pname, cname)] = M.classify(src)
 
 hdr = f"{'producer':<16}" + "".join(f"{c:<18}" for c in CONSUMERS)
 print(hdr); print("-" * len(hdr))
@@ -97,7 +79,8 @@ for p in PRODUCERS:
     print(f"{p:<16}" + "".join(f"{results[(p,c)]:<18}" for c in CONSUMERS))
 
 bad = [(p, c, v) for (p, c), v in results.items()
-       if v in ("ICE", "INVALID-CPP", "SILENT", "LINK", "TIMEOUT")]
+       if matrix_support.hard(v)]
 print(f"\nhard failures: {len(bad)} / {len(results)}")
 for p, c, v in bad:
     print(f"  {v:<12} {p} -> {c}")
+sys.exit(M.finish(bad))

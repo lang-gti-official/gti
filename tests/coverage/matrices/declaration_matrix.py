@@ -4,10 +4,12 @@
 The unnamed-parameter ICE family was found by hand-comparing two cells of this
 matrix; this generates the whole product so the remaining holes surface at once.
 """
-import itertools, pathlib, subprocess, sys
+import itertools, sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "build/gti"
-OUT = pathlib.Path("/tmp/matrix"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'declaration')
+OUT = M.out
 
 PARAMS = {
     "value-named":     "int32_t v",
@@ -43,23 +45,6 @@ FORMS = {
 
 ANCHOR = "class Anchor { public: int32_t id() { return 0; } };\n"
 
-def classify(src_path):
-    r = subprocess.run([GTI, str(src_path), "-o", str(src_path) + ".bin"],
-                       capture_output=True, text=True, timeout=120)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        return "ok"
-    if "GTI-B0001" in out:
-        return "ICE"
-    if "Undefined symbols" in out:
-        return "LINK"
-    if "error:" in out and "error[GTI-" not in out:
-        return "INVALID-CPP"
-    if not out.strip():
-        return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:") if code else f"exit{r.returncode}"
-
 rows = []
 for form_name, form in FORMS.items():
     for param_name, param in PARAMS.items():
@@ -68,10 +53,7 @@ for form_name, form in FORMS.items():
         body = form(p)
         src = OUT / f"{form_name}__{param_name}.gti".replace("==", "eq")
         src.write_text(ANCHOR + body + "\nint main() { return 0; }\n")
-        try:
-            verdict = classify(src)
-        except subprocess.TimeoutExpired:
-            verdict = "TIMEOUT"
+        verdict = M.classify(src, execute=False)
         rows.append((form_name, param_name, verdict))
 
 hdr = f"{'form':<20}" + "".join(f"{p:<17}" for p in PARAMS)
@@ -83,7 +65,8 @@ for form_name in FORMS:
         line += f"{v:<17}"
     print(line)
 
-bad = [(f, p, v) for f, p, v in rows if v in ("ICE", "INVALID-CPP", "SILENT", "LINK", "TIMEOUT")]
+bad = [(f, p, v) for f, p, v in rows if matrix_support.hard(v)]
 print(f"\nhard failures: {len(bad)} / {len(rows)}")
 for f, p, v in bad:
     print(f"  {v:<12} {f} / {p}")
+sys.exit(M.finish(bad))

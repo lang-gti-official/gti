@@ -5,10 +5,12 @@ S05 showed a defect that needed a payload type with a destructor. This crosses
 the kinds of class a program actually declares against the operations done to
 them, since cleanup obligations change which emitter path is taken.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/kindmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'class-kind')
+OUT = M.out
 
 HEAD = """import std.vector;
 import std.string;
@@ -45,20 +47,6 @@ int32_t peek(T& v) { return v.get(); }
 T produce() { return T(3); }
 """
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        run = subprocess.run([str(path) + ".bin"], capture_output=True, text=True, timeout=60)
-        return "ok" if run.returncode == 0 else f"RUN{run.returncode}"
-    if "GTI-B0001" in out: return "ICE"
-    if "Undefined symbols" in out: return "LINK"
-    if "error:" in out and "error[GTI-" not in out: return "BAD-CPP"
-    if not out.strip(): return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:").replace("GTI-", "") if code else f"exit{r.returncode}"
-
 results = {}
 for kname, kdecl in KINDS.items():
     for oname, op in OPS.items():
@@ -71,10 +59,7 @@ int main() {{
   return 0;
 }}
 """)
-        try:
-            results[(kname, oname)] = classify(src)
-        except subprocess.TimeoutExpired:
-            results[(kname, oname)] = "TIMEOUT"
+        results[(kname, oname)] = M.classify(src)
 
 hdr = f"{'kind':<13}" + "".join(f"{o:<16}" for o in OPS)
 print(hdr); print("-" * len(hdr))
@@ -82,7 +67,8 @@ for k in KINDS:
     print(f"{k:<13}" + "".join(f"{results[(k,o)]:<16}" for o in OPS))
 
 bad = [(k, o, v) for (k, o), v in results.items()
-       if v in ("ICE", "BAD-CPP", "SILENT", "LINK", "TIMEOUT") or v.startswith("RUN")]
+       if matrix_support.hard(v)]
 print(f"\nhard failures: {len(bad)} / {len(results)}")
 for k, o, v in bad:
     print(f"  {v:<10} {k} / {o}")
+sys.exit(M.finish(bad))

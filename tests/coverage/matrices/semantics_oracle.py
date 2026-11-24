@@ -6,10 +6,12 @@ independent evaluator. This covers the surface it does not reach: container
 and string operations, float formatting, integer conversions at boundaries,
 and control-flow results — each with an expected value computed here.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/sem"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'semantics-oracle')
+OUT = M.out
 
 # name -> (body producing prints, expected stdout)
 CASES = {
@@ -124,22 +126,11 @@ fails = []
 for name, (body, expected) in CASES.items():
     src = OUT / f"{name}.gti"
     src.write_text(HEAD + f"int main() {{{body}  return 0;\n}}\n")
-    build = subprocess.run([GTI, str(src), "-o", str(src) + ".bin"],
-                           capture_output=True, text=True, timeout=180)
-    if build.returncode != 0:
-        out = build.stdout + build.stderr
-        code = [t for t in out.split() if t.startswith("error[GTI-")]
-        verdict = code[0].strip("error[]:") if code else "build failed"
-        print(f"  {name:<20} BUILD: {verdict}")
-        fails.append((name, f"build: {verdict}"))
-        continue
-    run = subprocess.run([str(src) + ".bin"], capture_output=True, text=True, timeout=60)
-    if run.stdout != expected:
-        print(f"  {name:<20} WRONG OUTPUT")
+    verdict = M.classify(src, expect_stdout=expected)
+    print(f"  {name:<20} {verdict}")
+    if verdict != "ok":
         print(f"      expected {expected!r}")
-        print(f"      got      {run.stdout!r}")
-        fails.append((name, "wrong output"))
-    else:
-        print(f"  {name:<20} ok")
+        fails.append((name, verdict))
 
 print(f"\nwrong or unbuildable: {len(fails)} / {len(CASES)}")
+sys.exit(M.finish(fails))
