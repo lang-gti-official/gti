@@ -1382,3 +1382,28 @@ virtual conversion operator with `GTI-S2022` ("cannot be virtual yet"). The
 - Returning a parameter that a declared result region does not name is
   `GTI-S2017`, as `tests/ui/classes/out_of_class_methods/invalid_borrow_contract_2.gti`
   pins, not `GTI-S2127`.
+
+# RFC 0013 bug-finding campaign (0.494.x, `9bae45998`)
+
+Each finding is a GitHub issue with a minimal reproducer; none is fixed here.
+The tools are described in `matrices/README.md` and RFC 0013.
+
+| Issue | Found by | Defect |
+| --- | --- | --- |
+| [#686](https://github.com/lang-gti-official/gti/issues/686) | `ui_level_agreement.py`, pipeline fuzzer | internal error at O1 and above when a global is initialized by copying a mutable global |
+| [#687](https://github.com/lang-gti-official/gti/issues/687) | wrong-code module `deferred` | generic factory holding a by-reference closure |
+| [#689](https://github.com/lang-gti-official/gti/issues/689) | wrong-code module `conversions` | virtual conversion operators are rejected |
+| [#690](https://github.com/lang-gti-official/gti/issues/690) | `llvm_wrongcode_matrix.py --compiler-flag=-g` | 19 cells refused only under `-g` (`std::span` record representation, `std::function_ptr` debug type) |
+| [#691](https://github.com/lang-gti-official/gti/issues/691) | `ui_level_agreement.py` | internal error at O1 and above for a payload enum assigned under `if (true)` and then moved |
+| [#692](https://github.com/lang-gti-official/gti/issues/692) | pipeline fuzzer | parser recovery spin in a protocol-concept body (`concept e<T>{public`) |
+| [#693](https://github.com/lang-gti-official/gti/issues/693) | pipeline fuzzer | parser recovery spin on `for concept` in a statement block |
+| [#694](https://github.com/lang-gti-official/gti/issues/694) | `constexpr_equivalence_matrix.py --family small` | the language documents do not specify promotion of 8- and 16-bit integers |
+| [#696](https://github.com/lang-gti-official/gti/issues/696) | pipeline fuzzer | parser recovery spin on `typename` in a class or struct body |
+| [#697](https://github.com/lang-gti-official/gti/issues/697) | pipeline fuzzer | compile time doubles per link in a chain of constructors that construct the next class |
+| [#699](https://github.com/lang-gti-official/gti/issues/699) | `module_split_matrix.py` | internal error for a global array of an enum, hidden when the same unit declares a class |
+
+Clean results worth recording: the compile-time/run-time equivalence
+matrix (705 seeded expressions plus every shape family), module splitting
+(2,586 programs), invalid siblings (210/210) and the feature-interaction
+campaign at O0–O3 with the dispatch, text and range-for factors (51/51 cases,
+442/442 interactions) found no wrong code.

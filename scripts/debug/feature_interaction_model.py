@@ -6,8 +6,10 @@ or retired. Only supported, acyclic, single-threaded programs are generated.
 The oracle models integer results, call effects and observable resource drops;
 it deliberately does not infer GTI borrow admission or native representation.
 
-Case schema v3 records module-only sources. Loading v1/v2 authenticates their
-historical source hashes, then upgrades subsequent emission and records to v3.
+Case schema v4 adds the RFC 0013 tranche-A factors (dispatch, text,
+range_for); v3 records module-only sources. Loading v1/v2 authenticates their
+historical source hashes; every older record replays with the factors it
+predates switched off, and new records are written as v4.
 """
 
 from __future__ import annotations
@@ -27,7 +29,11 @@ V1_FACTORS = (
     "generic", "lambda", "expected", "move_only", "payload_enum", "vector",
     "borrow", "propagate", "cleanup", "nested_call",
 )
-FACTORS = V1_FACTORS + ("control_flow",)
+V3_FACTORS = V1_FACTORS + ("control_flow",)
+# RFC 0013 tranche A. `map` is not modelled: docs/language does not specify the
+# destruction order of map elements, which this oracle's trace would need.
+TRANCHE_A = ("dispatch", "text", "range_for")
+FACTORS = V3_FACTORS + TRANCHE_A
 SELECTED_TRIPLES = (
     ("generic", "lambda", "move_only"),
     ("expected", "move_only", "cleanup"),
@@ -36,6 +42,9 @@ SELECTED_TRIPLES = (
     ("borrow", "nested_call", "move_only"),
     ("control_flow", "borrow", "cleanup"),
     ("control_flow", "move_only", "vector"),
+    ("dispatch", "payload_enum", "borrow"),
+    ("text", "move_only", "vector"),
+    ("range_for", "control_flow", "cleanup"),
 )
 Selection = tuple[bool, ...]
 Interaction = tuple[tuple[str, bool], ...]
@@ -45,7 +54,9 @@ def admissible(selection: Selection) -> bool:
     return (len(selection) == len(FACTORS)
             and all(type(value) is bool for value in selection)
             and (not selection[FACTORS.index("propagate")]
-                 or selection[FACTORS.index("expected")]))
+                 or selection[FACTORS.index("expected")])
+            and (not selection[FACTORS.index("range_for")]
+                 or selection[FACTORS.index("vector")]))
 
 
 def interaction_groups(strength: int) -> tuple[tuple[str, ...], ...]:
@@ -59,7 +70,8 @@ def interaction_groups(strength: int) -> tuple[tuple[str, ...], ...]:
 
 def interactions(selection: Selection, strength: int = 2) -> set[Interaction]:
     if not admissible(selection):
-        raise ValueError("invalid feature selection: propagation requires expected")
+        raise ValueError("invalid feature selection: propagation requires "
+                         "expected and range_for requires vector")
     values = dict(zip(FACTORS, selection))
     return {tuple((name, values[name]) for name in group)
             for group in interaction_groups(strength)}
@@ -78,7 +90,7 @@ def coverage(selections: list[Selection], strength: int = 2) -> dict[str, Any]:
         "required": len(required),
         "covered": len(required & observed),
         "missing": [describe(row) for row in sorted(required - observed)],
-        "constraint": "propagate implies expected",
+        "constraint": "propagate implies expected; range_for implies vector",
     }
 
 
@@ -167,6 +179,8 @@ class InteractionCase:
         result_type = f"expected<int32_t, {error}>" if enabled("expected") else "int32_t"
         factory_type = f"expected<{payload}, {error}>" if enabled("expected") else payload
         parts = ["import std.utility;\n"]
+        if enabled("text"):
+            parts.append("import std.string;\nimport std.format;\n")
         if enabled("vector"):
             parts.append("import std.vector;\n")
         parts.append("\nmut int32_t effects = 0;\nmut int32_t producers = 0;\n"
@@ -174,14 +188,26 @@ class InteractionCase:
         if enabled("control_flow"):
             parts.append("mut int32_t audit_route_even = 0;\nmut int32_t audit_route_odd = 0;\n"
                          "mut int32_t audit_loop_continues = 0;\nmut int32_t audit_loop_breaks = 0;\n")
-        parts.append("\nclass Ticket {\npublic:\n  Ticket(int32_t input) : identity(input) {}\n")
+        if enabled("text"):
+            # An owned, formatted label travels with every ticket and is
+            # checked on each read; a damaged label poisons the read value.
+            parts.append("\nclass Ticket {\npublic:\n  Ticket(int32_t input) : identity(input), "
+                         "label(std::format(\"t{}\", input)) {}\n")
+        else:
+            parts.append("\nclass Ticket {\npublic:\n  Ticket(int32_t input) : identity(input) {}\n")
         if enabled("move_only"):
             parts.append("  Ticket(Ticket& other) = delete;\n")
         parts.append("  Ticket(Ticket&& other) = default;\n")
         if enabled("cleanup"):
             parts.append("  ~Ticket() { std::println(this.identity); }\n")
-        parts.append("  int32_t get() { return this.identity; }\nprivate:\n"
-                     "  int32_t identity;\n};\n\n")
+        if enabled("text"):
+            parts.append("  int32_t get() {\n"
+                         "    if (this.label != std::format(\"t{}\", this.identity)) { return -9999; }\n"
+                         "    return this.identity;\n  }\nprivate:\n"
+                         "  int32_t identity;\n  std::string label;\n};\n\n")
+        else:
+            parts.append("  int32_t get() { return this.identity; }\nprivate:\n"
+                         "  int32_t identity;\n};\n\n")
         if enabled("payload_enum"):
             # Direct owning enum transport through lambdas/expected remains a
             # documented exclusion. An ordinary class field has its own verified
@@ -195,14 +221,25 @@ class InteractionCase:
                          "  Envelope(Ticket audit_input) : packet(Packet::item(std::move(audit_input))) {}\n"
                          "  Envelope(Envelope&& other) = default;\n"
                          "  int32_t get() { return read_packet(this.packet); }\n"
-                         "private:\n  Packet packet;\n};\n\n"
-                         "int32_t read_payload(Envelope& audit_input) {\n"
-                         "  return audit_input.get();\n}\n\n")
+                         "private:\n  Packet packet;\n};\n\n")
             constructor = "Envelope(Ticket(audit_input))"
         else:
-            parts.append("int32_t read_payload(Ticket& audit_input) {\n"
-                         "  return audit_input.get();\n}\n\n")
             constructor = "Ticket(audit_input)"
+        if enabled("dispatch"):
+            # The read goes through a base reference; the base body returns a
+            # poison value, so a wrong dispatch target changes the output.
+            parts.append(f"class Reader {{\npublic:\n  Reader() {{}}\n"
+                         f"  virtual int32_t read({payload}& audit_input) {{ return -7777; }}\n}};\n\n"
+                         f"class PayloadReader : public Reader {{\npublic:\n"
+                         f"  PayloadReader() : Reader() {{}}\n"
+                         f"  int32_t read({payload}& audit_input) override {{ return audit_input.get(); }}\n}};\n\n"
+                         f"int32_t read_payload({payload}& audit_input) {{\n"
+                         f"  PayloadReader audit_reader = PayloadReader();\n"
+                         f"  Reader& audit_base = audit_reader;\n"
+                         f"  return audit_base.read(audit_input);\n}}\n\n")
+        else:
+            parts.append(f"int32_t read_payload({payload}& audit_input) {{\n"
+                         "  return audit_input.get();\n}\n\n")
         parts.append(f"{payload} make_payload(int32_t audit_input) {{\n"
                      f"  return {constructor};\n}}\n\n")
         if enabled("generic"):
@@ -277,15 +314,26 @@ class InteractionCase:
                 parts.append("  reads += 1;\n"
                              f"  int32_t audit_extra = read_payload(finish(make_payload({self.base + self.width})));\n")
                 initial = "audit_extra"
-            parts.append(f"  mut int32_t audit_total = {initial};\n"
-                         "  for (mut std::size_t audit_index = 0; audit_index < audit_items.size(); ++audit_index) {\n")
+            if enabled("range_for"):
+                # A range-for with a manual position; the position is taken
+                # before any continue or break so both paths see it.
+                parts.append(f"  mut int32_t audit_total = {initial};\n"
+                             "  mut std::size_t audit_position = 0;\n"
+                             "  for (auto& audit_entry : audit_items) {\n"
+                             "    std::size_t audit_index = audit_position;\n"
+                             "    audit_position += std::size_t(1);\n")
+                element = "audit_entry"
+            else:
+                parts.append(f"  mut int32_t audit_total = {initial};\n"
+                             "  for (mut std::size_t audit_index = 0; audit_index < audit_items.size(); ++audit_index) {\n")
+                element = "audit_items[audit_index]"
             if enabled("control_flow") and enabled("cleanup"):
                 parts.append("    Ticket audit_loop_guard = Ticket(100 + int32_t(audit_index));\n")
             if enabled("borrow"):
-                read = (f"    {payload}& audit_view = audit_items[audit_index];\n"
+                read = (f"    {payload}& audit_view = {element};\n"
                         "    reads += 1;\n    audit_total += read_payload(audit_view);\n")
             else:
-                read = "    audit_total += read_payload(audit_items[audit_index]);\n"
+                read = f"    audit_total += read_payload({element});\n"
             if enabled("control_flow"):
                 parts.append("    if (audit_index == std::size_t(0)) {\n" +
                              "".join("  " + line for line in read.splitlines(keepends=True)) +
@@ -341,7 +389,7 @@ class InteractionCase:
 
     def record(self) -> dict[str, Any]:
         return {
-            "schema": "gti-feature-interaction-case-v3",
+            "schema": "gti-feature-interaction-case-v4",
             "seed": self.seed, "index": self.index,
             "factors": dict(zip(FACTORS, self.selection)),
             "base": self.base, "delta": self.delta, "width": self.width,
@@ -353,23 +401,26 @@ class InteractionCase:
     def from_record(cls, record: dict[str, Any]) -> "InteractionCase":
         schema = record.get("schema")
         legacy = schema == "gti-feature-interaction-case-v1"
-        if schema not in ("gti-feature-interaction-case-v1",
-                          "gti-feature-interaction-case-v2",
-                          "gti-feature-interaction-case-v3"):
+        names = {"gti-feature-interaction-case-v1": V1_FACTORS,
+                 "gti-feature-interaction-case-v2": V3_FACTORS,
+                 "gti-feature-interaction-case-v3": V3_FACTORS,
+                 "gti-feature-interaction-case-v4": FACTORS}.get(schema)
+        if names is None:
             raise ValueError("unsupported interaction case schema")
-        names = V1_FACTORS if legacy else FACTORS
         if set(record["factors"]) != set(names):
             raise ValueError("case factors do not match this generator")
-        row = tuple(record["factors"][name] for name in names)
-        case = cls(record["seed"], record["index"],
-                   row + (False,) if legacy else row,
+        # Factors a record predates are absent from it, which means off.
+        row = tuple(record["factors"].get(name, False) for name in FACTORS)
+        case = cls(record["seed"], record["index"], row,
                    record["base"], record["delta"], record["width"])
         regenerated = case.record()
         regenerated["schema"] = schema
-        if schema != "gti-feature-interaction-case-v3":
+        if schema in ("gti-feature-interaction-case-v1",
+                      "gti-feature-interaction-case-v2"):
             regenerated["source_sha256"] = case._source_hashes(legacy_includes=True)
-        if legacy:
-            del regenerated["factors"]["control_flow"]
+        for name in FACTORS:
+            if name not in names:
+                del regenerated["factors"][name]
         if regenerated != record:
             raise ValueError("case oracle or source hashes disagree with this generator")
         return case
