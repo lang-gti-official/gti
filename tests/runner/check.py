@@ -54,6 +54,25 @@ def run(runner, *args, env=None, cwd=ROOT, fixtures=True):
     return result.returncode, result.stdout + result.stderr
 
 
+def scaled(factor):
+    """GTI_TEST_TIME_SCALE for a self-test run that tightens the limits.
+
+    A fixture's factor is relative to the runner it tests: the ambient scale
+    (an instrumented runner's workflow sets 10) says how much slower that
+    runner and the programs it builds are, so it multiplies the factor. A
+    replaced scale let a sanitized `gti --emit-mir` exceed a transcript's
+    0.1 x 20 s and report a timeout instead of its wrong exit code (sanitizer
+    run 45004167431). The cases meant to time out never finish, so a larger
+    limit only delays them. Work the runner does not instrument (a shell
+    loop) is not slower and keeps an absolute scale.
+    """
+    try:
+        ambient = float(os.environ.get("GTI_TEST_TIME_SCALE") or 1)
+    except ValueError:
+        ambient = 1
+    return repr(factor * (ambient if ambient > 0 else 1))
+
+
 def expect(condition, message, output=""):
     if not condition:
         sys.stderr.write(f"FAIL gti-test self-test: {message}\n{output}\n")
@@ -260,7 +279,7 @@ def self_test(runner):
     expect("[bad] stdout differs" in revision and "[good]" not in revision,
            "a failing revision is named and a passing one is not", out)
 
-    faults = {"GTI_TEST_TIME_SCALE": "0.1"}
+    faults = {"GTI_TEST_TIME_SCALE": scaled(0.1)}
     # A sanitized runner's handler reports the SIGSEGV itself. On Linux it
     # then exits with status 1 unless told to abort (macOS aborts by default),
     # and the runner would report an ordinary exit instead of a signal
@@ -472,7 +491,7 @@ def single_use_preamble_test(runner):
         report = work / "report.jsonl"
         for cases, expected in (((first,), [False]), ((first, second), [False, True])):
             code, out = run(runner, "--jobs", "1", "--json", report, *cases,
-                            env={"GTI_TEST_TIME_SCALE": "8"})
+                            env={"GTI_TEST_TIME_SCALE": scaled(8)})
             expect(code == 0, "standalone and shared-prefix checks pass", out)
             rows = [json.loads(line) for line in report.read_text().splitlines()]
             expect(sorted(row.get("cold", -1) for row in rows) == expected,
@@ -579,14 +598,15 @@ def ergonomics_self_test(runner):
         (tests / "budget.gti").write_text((tests / "budget.gti").read_text() +
                                           "// edited\n")
         code, out = run(runner, "--changed", base, cwd=repository,
-                        env={"GTI_TEST_TIME_SCALE": "0.5"})
+                        env={"GTI_TEST_TIME_SCALE": scaled(0.5)})
         budget = block(out, "FAIL", "budget.gti")
         expect(code == 1 and "over budget:" in budget and
                "fix: make it cheaper, or move it to tests/slow/" in budget and
                "bless:" not in budget and "RESULT fail: 1 passed, 1 failed"
                in out, "a changed test over half its limit fails, without a "
                "bless hint", out)
-        code, out = run(runner, cwd=repository, env={"GTI_TEST_TIME_SCALE": "0.5"},
+        code, out = run(runner, cwd=repository,
+                        env={"GTI_TEST_TIME_SCALE": scaled(0.5)},
                         *("--lsp", "/nonexistent/gti_lsp"))
         expect(code == 0 and "tests/lsp skipped" not in out and
                "RESULT ok: 3 passed" in out,
@@ -735,7 +755,7 @@ def project_self_test(runner):
            "project transcripts pass: env/unset lines, $HOME and $PATH, "
            "a pseudo-terminal", out)
     code, out = run(runner, FIXTURES / "project/fail", "--jobs", "3",
-                    env={"GTI_TEST_TIME_SCALE": "0.1"})
+                    env={"GTI_TEST_TIME_SCALE": scaled(0.1)})
     expect(code == 1 and "0 passed, 4 failed, 0 ice, 1 timeout" in out,
            "failing transcripts fail", out)
     late = block(out, "FAIL", "environment/test.transcript")
@@ -771,7 +791,8 @@ def project_self_test(runner):
                "bless records exit codes and diagnostics", out + text)
         code, out = run(runner, work)
         expect(code == 0, "a blessed transcript passes", out)
-    # The slow tier's limit: 2-3 s of CPU, over a transcript's 1 s here.
+    # The slow tier's limit: 2-3 s of CPU, over a transcript's 1 s here. The
+    # shell loop is not instrumented, so this scale stays absolute.
     code, out = run(runner, FIXTURES / "slow", env={"GTI_TEST_TIME_SCALE":
                                                     "0.05"})
     expect(code == 0 and "RESULT ok: 1 passed" in out,
