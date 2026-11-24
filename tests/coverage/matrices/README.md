@@ -93,6 +93,15 @@ GTI semantics. At `bcf538640`, 55 cells ran correctly on LLVM where C++ did
 not; in 45 of them C++ dispatched to the most-derived override during base
 destruction.
 
+At `ec726745e` (0.494.0, macOS arm64, LLVM 23.1.2) all 864 cells are clean
+at O0 and O2: 810 run correctly, 54 are rejected by semantics, none is
+declined by the LLVM backend (the 96 `GTI-B0003` refusals recorded at
+`bcf538640` are all admitted now), and no cell diverges between levels. The
+classification matrices at O0,O2 are clean too, apart from one level
+divergence: `elementary_forms_matrix.py`'s `comma-expr` builds at O0 and
+reaches an internal error at O1 and above
+([#677](https://github.com/lang-gti-official/gti/issues/677)).
+
 While another session's verification holds the suite slot, run it at
 `--jobs 2` or less, one matrix at a time; run larger passes through
 `python3 scripts/build_window.py --kind suite -- ...`.
