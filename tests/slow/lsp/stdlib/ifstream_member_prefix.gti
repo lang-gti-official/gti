@@ -1,4 +1,6 @@
 // A partially typed member in an if condition offers the stream's real methods.
+// Importing stream semantics exceeds the fast LSP CPU budget on hosted runners.
+//@ slow
 //@ completion @member: is_open !is_ready
 import std.fstream;
 
