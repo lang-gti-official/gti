@@ -1,0 +1,29 @@
+// Tagged payload errors preserve nested field paths and enforce exactly one named alternative.
+//@ run-pass
+//@ slow
+import std.json;
+import std.string;
+import std.vector;
+
+enum class Event { idle, sample(std::string source, uint8_t reading) };
+
+int main() {
+  auto range = std::json::decode<std::vector<Event>>("[{\"sample\":{\"source\":\"owned\",\"reading\":256}}]");
+  if (range || range.error().code != std::json::errc::number_out_of_range ||
+      range.error().path.view() != "/0/sample/reading" || range.error().offset != std::size_t(39)) { return 1; }
+  auto missing = std::json::decode<Event>("{\"sample\":{\"source\":\"x\"}}");
+  if (missing || missing.error().code != std::json::errc::missing_field || missing.error().path.view() != "/sample/reading") { return 2; }
+  auto unknown = std::json::decode<Event>("{\"other\":{}}");
+  if (unknown || unknown.error().code != std::json::errc::invalid_enumerator || unknown.error().path.view() != "/other") { return 3; }
+  auto repeated = std::json::decode<Event>("{\"sample\":{},\"sample\":{}}");
+  if (repeated || repeated.error().code != std::json::errc::duplicate_key) { return 4; }
+  if (std::json::decode<Event>("{\"sample\":{},\"idle\":{}}")) { return 5; }
+  if (std::json::decode<Event>("{}")) { return 6; }
+  if (std::json::decode<Event>("\"sample\"")) { return 7; }
+  if (std::json::decode<Event>("{\"idle\":{}}")) { return 8; }
+  if (std::json::decode<Event>("{\"sample\":42}")) { return 9; }
+  auto extra = std::json::decode<Event>("{\"sample\":{\"reading\":1,\"source\":\"x\",\"extra\":\"\\q\"}}");
+  if (extra || extra.error().code != std::json::errc::invalid_escape ||
+      extra.error().path.view() != "/sample/extra") { return 10; }
+  return 0;
+}

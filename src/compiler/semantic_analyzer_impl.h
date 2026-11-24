@@ -845,6 +845,8 @@ public:
                             bool sourceBody, bool lifecycle = false);
   // Trusted-body deferral; see TrustedBodyAnalysis and analyzeDeferredBodies.
   [[nodiscard]] bool deferTrustedBody(const FunctionDecl &stmt) const;
+  std::shared_ptr<BlockStmt> reflectedEnumBody(const FunctionDecl &method,
+                                               const FunctionInfo &function);
   void analyzeFunctionBody(const FunctionDecl &stmt,
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,

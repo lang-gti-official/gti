@@ -6706,6 +6706,7 @@
         "std::meta::constructors_of",
         "std::meta::enumerator::index",
         "std::meta::enumerator::line",
+        "std::meta::enumerator::make",
         "std::meta::enumerator::name",
         "std::meta::enumerator::payload_count",
         "std::meta::enumerator::payload_fields",
@@ -6759,6 +6760,7 @@
         "std::meta::is_unsigned_integral",
         "std::meta::lookup_methods_of",
         "std::meta::lookup_operators_of",
+        "std::meta::make_alternative",
         "std::meta::method::index",
         "std::meta::method::invoke",
         "std::meta::method::is_constexpr",
@@ -6843,7 +6845,11 @@
         "std::meta::type::name",
         "std::meta::type::operators",
         "std::meta::type::primary_name",
-        "std::meta::type_of"
+        "std::meta::type::visit",
+        "std::meta::type::visit_fields",
+        "std::meta::type_of",
+        "std::meta::visit",
+        "std::meta::visit_fields"
       ],
       "case_ids": [
         "meta",
@@ -6880,7 +6886,9 @@
         "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
-        "examples/185-reflected-method-dispatch.gti"
+        "examples/185-reflected-method-dispatch.gti",
+        "tests/ui/reflection/payload_visit.gti",
+        "tests/ui/reflection/payload_make.gti"
       ]
     },
     {
