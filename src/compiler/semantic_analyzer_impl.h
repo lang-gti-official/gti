@@ -781,7 +781,8 @@ public:
     InstanceReuseProbe reuse{key};
     std::unordered_set<FunctionId> consulted;
     journalNextInstance = true;
-    SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted, &reuse);
+    SemanticInstanceAnalysis result =
+        withLateDemand(analyze, &consulted, &reuse);
     journalNextInstance = false;
     preserveInvalidProgramEffectDiagnostics(key, result);
     if (reuse.hit) {
