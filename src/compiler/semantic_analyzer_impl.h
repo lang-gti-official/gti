@@ -7590,6 +7590,13 @@ private:
 
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticCatalog catalog;
+    // Trusted facts an unevaluated query retains for the type parameters in
+    // its arguments: the caller's proofs, not declarations. They extend the
+    // catalog's declared constraints in constraintOf() and live in the
+    // worker's session, so nested workers inherit them and the sealed
+    // catalog the worker returns to its creator's pool stays unchanged.
+    std::unordered_map<GenericParameterId, GenericConstraintSet>
+        queryArgumentConstraints;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     std::vector<const Expr *> textDependentValueOrder;

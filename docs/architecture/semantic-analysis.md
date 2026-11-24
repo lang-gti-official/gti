@@ -3089,7 +3089,12 @@ declaration catalog. Body analysis never edits a sealed catalog, so a worker's
 copy is still identical to its creator's when the query ends: it returns to a
 small idle pool on the creating analyzer, and the next query's worker takes it
 instead of copying the catalog again. The creator's catalog is only moved
-aside, never copied, while the rest of the session is copied. This changes no
+aside, never copied, while the rest of the session is copied. The trusted facts
+a query retains for the type parameters in its arguments are the caller's
+proofs, not declarations, so they go to the worker session's
+`queryArgumentConstraints`, which `constraintOf` reads beside the catalog's
+declared constraints and nested workers inherit; writing them into the catalog
+would carry one caller's proofs into the next query that took the copy. This changes no
 query input, and every query is still evaluated: requirement results are not
 cached, because distinct queries dominate (an unused `import std.json` forks
 about 40 workers, none of them repeated). `FrontendWorkMetrics` reports
