@@ -1,0 +1,20 @@
+// HTTP URLs round-trip as validated JSON strings, including in a container.
+//@ run-pass
+//@ slow
+import std.http;
+import std.json;
+import std.vector;
+
+int main() {
+  auto urls = std::json::decode<std::vector<std::http::url>>("[\"HTTPS:\\/\\/example.test/path?q=\\u0041\"]");
+  if (!urls || urls.value().size() != std::size_t(1)) { return 1; }
+  if (urls.value()[std::size_t(0)].view() != "https://example.test/path?q=A") { return 2; }
+  auto text = std::json::encode(urls.value());
+  if (!text || text.value().view() != "[\"https://example.test/path?q=A\"]") { return 3; }
+
+  auto invalid = std::json::decode<std::vector<std::http::url>>("[\n  \"https://example.test/%zz\"]");
+  if (invalid || invalid.error().code != std::json::errc::type_mismatch ||
+      invalid.error().offset != std::size_t(4) || invalid.error().path.view() != "/0") { return 4; }
+  if (std::json::decode<std::http::url>("42")) { return 5; }
+  return 0;
+}
