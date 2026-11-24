@@ -1,21 +1,22 @@
 // Payload enums round-trip through named fields, unit cases, and recursive container encoding.
 //@ run-pass
 //@ slow
+import std.http;
 import std.json;
 import std.string;
 import std.vector;
 
 enum class Event<T> { idle, sample(T reading, std::string source) };
 struct Log {
+  std::http::url url;
   std::vector<Event<int32_t>> entries;
-  Log(std::vector<Event<int32_t>> entries) : entries(std::move(entries)) {}
 };
 
 int main() {
-  auto log = std::json::decode<Log>("{\"entries\":[\"idle\",{\"sample\":{\"source\":\"a\\nb\",\"reading\":7,\"extra\":true}}]}");
+  auto log = std::json::decode<Log>("{\"url\":\"HTTPS://example.test/v1\",\"entries\":[\"idle\",{\"sample\":{\"source\":\"a\\nb\",\"reading\":7,\"extra\":true}}]}");
   if (!log) { return 1; }
   auto text = std::json::encode(log.value());
-  if (!text || text.value().view() != "{\"entries\":[\"idle\",{\"sample\":{\"reading\":7,\"source\":\"a\\nb\"}}]}") { return 2; }
+  if (!text || text.value().view() != "{\"url\":\"https://example.test/v1\",\"entries\":[\"idle\",{\"sample\":{\"reading\":7,\"source\":\"a\\nb\"}}]}") { return 2; }
   auto pretty = std::json::encode_pretty(log.value().entries[std::size_t(1)]);
   if (!pretty || pretty.value().view() != "{\n  \"sample\": {\n    \"reading\": 7,\n    \"source\": \"a\\nb\"\n  }\n}") { return 3; }
   return 0;

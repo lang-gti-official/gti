@@ -1628,7 +1628,10 @@ public:
   }
 
   expected<std::http::url, std::json::error> decode(std::string_view text) {
-    auto serialized = ?std::json::decode<std::string>(text);
+    // The enclosing decoder has already checked its configured document limit.
+    mut std::json::decode_options limits{};
+    limits.set_max_document_bytes(text.size());
+    auto serialized = ?std::json::decode<std::string>(text, limits);
     auto url = std::http::url::parse(serialized.view());
     if (!url) {
       return unexpected(std::json::error(std::json::errc::type_mismatch, std::size_t(0), std::size_t(1), std::size_t(1)));

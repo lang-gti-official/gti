@@ -1,0 +1,16 @@
+// A visitor cannot replace the enum through global storage while its active field is borrowed.
+import std.meta;
+enum E { v(int value), other };
+mut E global = E::v(19);
+struct V {
+ V() = default;
+ int visit(std::meta::enumerator<E,0> alt, int& value) mut {
+   global = E::other;
+   return value;
+ }
+ int visit(std::meta::enumerator<E,1> alt) mut { return 0; }
+};
+int main() {
+ mut V visitor{};
+ return std::meta::visit<int,E,V>(global,visitor);  //~ ERROR GTI-S2045
+}

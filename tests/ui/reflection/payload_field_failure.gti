@@ -1,0 +1,29 @@
+// A field visitor can stop the traversal before the following field or the end callback.
+//@ run-pass
+import std.meta;
+
+enum Sample { idle, pair(int left, int right) };
+enum Failure { stop };
+struct Visitor {
+  Visitor() = default;
+  mut int calls = 0;
+  expected<void, Failure> begin<Alt>(Alt alt) mut {
+    this.calls++;
+    return;
+  }
+  expected<void, Failure> field<Field>(Field descriptor, int& value) mut {
+    this.calls++;
+    return unexpected(Failure::stop);
+  }
+  expected<void, Failure> end<Alt>(Alt alt) mut {
+    this.calls++;
+    return;
+  }
+};
+int main() {
+  mut Visitor visitor{};
+  auto sample = Sample::pair(1, 2);
+  auto result = std::meta::visit_fields<Failure, Sample, Visitor>(sample, visitor);
+  if (result || result.error() != Failure::stop) { return 1; }
+  return visitor.calls - 2;
+}

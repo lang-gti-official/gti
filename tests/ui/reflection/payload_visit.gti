@@ -5,6 +5,7 @@ import std.meta;
 enum Reading<T> { idle, sample(T value, int scale) };
 
 struct Reader {
+  Reader() = default;
   int visit(std::meta::enumerator<Reading<int>, 0> tag) { return 1; }
   int visit(std::meta::enumerator<Reading<int>, 1> tag, int& value, int& scale) {
     return value * scale;

@@ -1797,9 +1797,9 @@ expected<E, error> decode_case_object<E, uint64_t I>(std::meta::enumerator<E, I>
 }
 
 expected<E, error> decode_payload_enum<E>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut scanner cursor{text, begin, end, options.max_depth};
+  mut std::string spelling{};
   if (text[begin] == '"') {
-    mut scanner cursor{text, begin, end, options.max_depth};
-    mut std::string spelling{};
     ?cursor.read_string(spelling);
     ?cursor.finish();
     constexpr for (auto alternative : std::meta::alternatives_of<E>()) {
@@ -1808,9 +1808,30 @@ expected<E, error> decode_payload_enum<E>(std::string_view text, std::size_t beg
     return unexpected(located(errc::invalid_enumerator, text, begin));
   }
   if (text[begin] != '{') { return unexpected(located(errc::type_mismatch, text, begin)); }
-  std::vector<member> tagged = ?parse_members(text, begin, end, options);
-  if (tagged.size() != std::size_t(1)) { return unexpected(located(errc::type_mismatch, text, begin)); }
-  auto& entry = tagged[std::size_t(0)];
+  // The outer object has exactly one member. Keep only its payload range
+  // and reject a second tag as soon as its key has been read.
+  ?cursor.expect('{');
+  cursor.skip_space();
+  if (?cursor.peek() == '}') { return unexpected(cursor.fail(errc::type_mismatch, begin)); }
+  std::size_t key_start = cursor.offset;
+  ?cursor.read_string(spelling);
+  cursor.skip_space();
+  ?cursor.expect(':');
+  member entry = ?cursor.skip_value(std::move(spelling), std::size_t(1), false);
+  cursor.skip_space();
+  if (?cursor.peek() == ',') {
+    cursor.offset++;
+    cursor.skip_space();
+    std::size_t second_key = cursor.offset;
+    mut std::string other{};
+    ?cursor.read_string(other);
+    if (other.view() == entry.key.view()) {
+      return unexpected(cursor.fail(errc::duplicate_key, second_key));
+    }
+    return unexpected(cursor.fail(errc::type_mismatch, begin));
+  }
+  ?cursor.expect('}');
+  ?cursor.finish();
   constexpr for (auto alternative : std::meta::alternatives_of<E>()) {
     if (entry.key.view() == alternative.name()) {
       mut auto result = decode_case_object(alternative, text, entry, options);
@@ -1822,8 +1843,6 @@ expected<E, error> decode_payload_enum<E>(std::string_view text, std::size_t beg
       return std::move(result);
     }
   }
-  mut std::size_t key_start = begin + std::size_t(1);
-  while (is_space(text[key_start])) { key_start++; }
   mut error unknown = located(errc::invalid_enumerator, text, key_start);
   unknown.prepend_key(entry.key.view());
   return unexpected(std::move(unknown));

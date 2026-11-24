@@ -120,7 +120,7 @@ runtime reflection exists.
 | Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, configurable per-request step and depth limits | reflected constant-query kernels implemented; broader executor profiles remain separate work |
 | Compile-time selection with discarded branches | `if constexpr`, `ConditionalStmt::activeBranch`, `constexpr for` expansion | finite type-pack iteration implemented; nested-budget hardening remains a phase-3 gate |
 | Projected field places, borrow lifetime, mutability, access checks | body analysis, loan flow, place authority (`place-and-ownership-state.md`) | reflected read/mutable projections implemented; owner identity and receiver-effects defects remain tracked below |
-| Scoped enums and payload enums | enum registration, alternative inventory, enum/payload metaobjects | phase-2 enumeration and payload-field metadata implemented |
+| Scoped enums and payload enums | enum registration, alternative inventory, enum/payload metaobjects | alternative inventory, typed visitation and producer-based construction implemented |
 | Designated construction | structs without constructors, public value fields, declaration-order evaluation, rollback | generalisation for structural construction |
 | JSON codecs | `std::json::codec<T>` explicit specializations | generic default path |
 

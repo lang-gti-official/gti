@@ -4259,24 +4259,36 @@ auto SemanticVisitor::Impl::reflectedEnumBody(const FunctionDecl &method,
   auto finish = [&] {
     return std::make_shared<BlockStmt>(std::move(statements));
   };
+  const auto reject = [&](std::string message, const char *code) {
+    report(method.name(), std::move(message), code);
+    // No specialized body exists after this error, so its empty source
+    // placeholder cannot establish a missing-return diagnostic.
+    bodyFlow.deferredGenericFlow = true;
+    return finish();
+  };
   if (descriptor.arguments.size() != 1 ||
       (make && descriptor.valueArguments.size() != 1) ||
       method.parameters().size() != (visit ? 2u : 1u)) {
-    report(method.name(), "Invalid reflected payload operation signature.",
-           "GTI-S2019");
-    return finish();
+    return reject("Invalid reflected payload operation signature.",
+                  "GTI-S2019");
   }
   const auto &subject = descriptor.arguments.front();
   const auto enumeration = enumTypeFor(subject);
   if (!enumeration || !enumeration->payload) {
-    report(method.name(), "This reflection operation requires a payload enum.",
-           "GTI-S2117");
-    return finish();
+    return reject("This reflection operation requires a payload enum.",
+                  "GTI-S2117");
+  }
+  if (!compilerTypeClass(CompilerTypeKind::MetaEnumerator) ||
+      !compilerTypeClass(CompilerTypeKind::MetaPayloadField)) {
+    return reject(
+        "Payload reflection needs the alternative and field descriptors.",
+        "GTI-S2019");
   }
   const auto &anchor = method.name();
   auto token = [&](TokenKind kind, std::string name) {
     Token generated(kind, std::move(name), std::monostate{}, anchor.position,
                     anchor.line, anchor.source, false, true);
+    generated.sourceLength = static_cast<std::uint32_t>(anchor.lexeme.size());
     generated.expansion = ++nextExpansion;
     return generated;
   };
@@ -4332,9 +4344,7 @@ auto SemanticVisitor::Impl::reflectedEnumBody(const FunctionDecl &method,
   std::vector<SwitchArm> arms;
   size_t first = make ? descriptor.valueArguments.front().value : 0;
   if (first >= enumeration->enumerators.size()) {
-    report(method.name(), "Reflected alternative index is out of range.",
-           "GTI-S2117");
-    return finish();
+    return reject("Reflected alternative index is out of range.", "GTI-S2111");
   }
   for (size_t i = first;
        i < (make ? first + 1 : enumeration->enumerators.size()); ++i) {
