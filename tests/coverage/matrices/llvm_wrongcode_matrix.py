@@ -57,7 +57,9 @@ from llvm_wrongcode import (algorithms, arrays, bases, callables,  # noqa: E402
                             callbacks, generics, nested_generics, operators,
                             order, poly_containers, ranges, static_state,
                             raii, sum_types, text_relays, threads,
-                            transfer, trees)
+                            transfer, trees, weak_owners, panics,
+                            thread_local_owners, deferred,
+                            propagation)
 
 MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "hierarchy": hierarchy, "bases": bases, "enums": enums,
@@ -69,7 +71,11 @@ MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "operators": operators, "ranges": ranges,
             "nested_generics": nested_generics, "formatting": formatting,
             "arrays": arrays, "trees": trees, "error_chains": error_chains,
-            "static_state": static_state}
+            "static_state": static_state, "weak_owners": weak_owners,
+            "panics": panics,
+            "thread_local_owners": thread_local_owners,
+            "deferred": deferred,
+            "propagation": propagation}
 
 
 def options(parser):
@@ -82,18 +88,26 @@ def main():
     matrix = matrix_support.Matrix(__doc__.split("\n\n")[0], "llvm-wrongcode",
                                    default_levels="O0,O2", extra=options)
     sources = []
+    expectations = {}
     for name in matrix.args.matrix:
         directory = matrix.out / name
         directory.mkdir(parents=True, exist_ok=True)
-        for cell, text in MATRICES[name].cells():
-            path = directory / f"{cell}.gti"
-            path.write_text(text, encoding="utf-8")
+        for cell in MATRICES[name].cells():
+            # A cell is (name, text), or (name, text, expectation) for one
+            # that checks a defined failure: its exact stdout, exit status
+            # and a standard-error report substring.
+            path = directory / f"{cell[0]}.gti"
+            path.write_text(cell[1], encoding="utf-8")
             sources.append(path)
+            expectations[path] = cell[2] if len(cell) > 2 else {}
 
     def classify(source):
+        expect = expectations[source]
         verdict = matrix.classify(
             source, flags=("--execution-profile", "concurrent"),
-            expect_stdout="ok\n")
+            expect_stdout=expect.get("stdout", "ok\n"),
+            expect_returncode=expect.get("returncode", 0),
+            expect_stderr=expect.get("stderr"))
         return source, verdict
 
     counts = {"wrong": 0, "diverge": 0, "other": 0, "unsupported": 0}
