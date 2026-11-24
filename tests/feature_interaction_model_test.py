@@ -208,10 +208,13 @@ class DecisionTests(unittest.TestCase):
         _, migrated = runner.read_failure(path)
         self.assertEqual(migrated["configuration"], ["O3", "llvm"])
         self.assertEqual(migrated["migrated_configuration"]["from"], ["O3", "c++20"])
-        for stale in (["O1", "c++23"], ["O2", "llvm"], ["O0", "cpp"]):
+        for stale in (["O1", "c++23"], ["O0", "cpp"], ["O4", "llvm"]):
             path.write_text(json.dumps(dict(record, configuration=stale)))
             with self.assertRaisesRegex(ValueError, "unsupported interaction configuration"):
                 runner.read_failure(path)
+        # Every LLVM level replays, including those outside the default campaign.
+        path.write_text(json.dumps(dict(record, configuration=["O2", "llvm"])))
+        self.assertEqual(runner.read_failure(path)[1]["configuration"], ["O2", "llvm"])
         # The replay announces and records the migration, and runs LLVM only.
         path.write_text(json.dumps(record))
         output = self.root / "legacy-replay"
