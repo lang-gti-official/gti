@@ -14439,6 +14439,10 @@ auto SemanticVisitor::Impl::constraintOf(const SemanticType &type) const
   const auto found = genericConstraints.find(type.genericParameterId);
   GenericConstraintSet declared =
       found == genericConstraints.end() ? 0 : found->second;
+  const auto retained =
+      requestSession.queryArgumentConstraints.find(type.genericParameterId);
+  if (retained != requestSession.queryArgumentConstraints.end())
+    declared |= retained->second;
   for (const AssumedParameterFact &assumed : assumedParameterFacts)
     if (assumed.parameter == type.genericParameterId)
       declared |= assumed.constraints;
