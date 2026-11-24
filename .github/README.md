@@ -365,10 +365,11 @@ using a privileged container.
 The previous GitHub-era workflows are archived under
 `docs/plans/archive/github-actions-20261024/` and do not run.
 
-Compiler sanitizer coverage is one library partition: its curated CTest subset
+Compiler sanitizer coverage is one library partition, its curated CTest subset
 (including `gti_unit_tests`, the compiler-API checks) and the instrumented
-`gti-test` run over `tests/ui` and `tests/project`, which analyses every
-former compiler-aggregate case with the sanitized compiler. The existing
+runner's self-test, plus eight `gti-test-instrumented` shards over `tests/ui`
+and `tests/project`, which analyse every former compiler-aggregate case with
+the sanitized compiler. The existing
 timeout and per-runner memory limits remain in force.
 
 The serial single-body compile-scaling check warms all three workloads, then

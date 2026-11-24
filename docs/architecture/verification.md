@@ -9969,7 +9969,7 @@ into the tiers of the redesign's §7:
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
-| Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in one run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
+| Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in eight shards | the library partition runs `tests/runner/check.py --without-cases` (the runner's self-test and tidy) with the ASan/UBSan `gti-test`; the `gti-test-instrumented` job runs `check.py --shard I/8` on eight standard hosted runners, four cases at a time with a 64 MiB stack, with `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, each under a 120-minute step bound, printing failures and progress as it goes and keeping its JUnit and JSON reports; the `Sanitizer verdict` requires every shard. One runner at one case at a time did not finish the 8,362 cases in 120 minutes (run 45349335403) |
 
 **Merge-queue macOS fast checks are a switch (2026-11-18).** The `fast`
 job's matrix comes from the plan (`validation_checks.py fast-matrix`,
@@ -10128,7 +10128,7 @@ every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
 default becomes an hour). Its three compiler partitions, which ran only
 `compiler_pipeline` (the instrumented ownership suite alone took more than
 three hours on 2026-11-04, run 41837802931), left with that aggregate: the
-instrumented `gti-test` run analyses its cases with the sanitized compiler,
+instrumented `gti-test` shards analyse its cases with the sanitized compiler,
 and the library subset runs `gti_unit_tests`, which holds the aggregate's
 API-only checks. The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
