@@ -9999,6 +9999,19 @@ nightly archives there. Every workflow runs on the standard hosted labels
 runners are billed per minute even for public repositories, and
 `ci_release` (`STANDARD_RUNNER_LABELS`) rejects any other label.
 
+**Hosted per-case limits scale 4x.** A case's limit is CPU seconds on the
+development machine; the `gti_test_ui` entries double it, and pull-request
+and merge-queue CI doubles it again (`-DGTI_TEST_TIMEOUT_SCALE=2` in both
+configure steps of `ci.yml`; full validation uses 3). The 2x default was too
+tight for hosted runners: on 2026-11-22 a `tests/ui` shard of about 1,000
+cases cost 0.82 CPU-seconds per case on hosted Linux and 0.63 on hosted macOS
+against 0.25 on the development machine (3.3x and 2.5x), and of the 57 failed
+`ci.yml` runs of 20 to 23 November, 29 failed only on CPU-limit timeouts, 36
+of the 54 timed-out cases within 15% of the limit and none beyond 58% over,
+mostly in cases the pull request had not touched. The limit exists to catch
+hangs and runaway cost, not to rank runners. Keeping cases cheap is the
+budget rule's job, and it stays at 2x for added and changed cases.
+
 **The budget rule is advisory pending calibration.** Its scale assumes a
 hosted Linux runner is about twice as slow as the development machine the
 limits were measured on, as the `gti_test_ui` entries do. The first hosted

@@ -990,6 +990,13 @@ def gti_test_tiers_contract(root):
     assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
     assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    # Hosted runners need a 4x limit scale (GTI_TEST_TIMEOUT_SCALE=2 doubles
+    # the 2x default). The shard jobs re-configure the same tree and must
+    # agree, and the budget step keeps added and changed cases at 2x.
+    scale = "-DGTI_TEST_TIMEOUT_SCALE=2\n"
+    assert fast.count(scale) == 1 and jobs(ci)["fast-ui"].count(scale) == 1
+    assert 'GTI_TEST_TIME_SCALE: "2"' in fast.split(
+        "name: Hold new and modified gti-test cases to half their limit", 1)[1].split("- name:", 1)[0]
     ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
                    "name: Run the runner, project, editor, example and unit baselines",
                    "name: Hold new and modified gti-test cases to half their limit",
