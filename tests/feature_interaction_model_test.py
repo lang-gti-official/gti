@@ -175,9 +175,52 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(parsed, self.case)
         self.assertEqual(retained, failure)
         self.assertEqual(len(failure["observations"]), 3)
-        self.assertNotIn("--keep-cpp", failure["observations"][0]["command"])
-        self.assertIn("--verbose", failure["observations"][0]["command"])
+        # The direct LLVM compile at the level's backend_modes flags; `--cxx`
+        # names only the native link driver.
+        self.assertEqual(failure["observations"][0]["command"],
+                         ["gti", str(self.root / "bad/original.gti"), "--backend", "llvm", "-O0",
+                          "--cxx", "c++", "--verbose", "-o", str(self.root / "bad/program")])
         self.assertTrue((self.root / "bad/002-run.stdout").is_file())
+
+    def test_llvm_matrix_covers_unoptimised_and_optimised_levels(self):
+        self.assertEqual(runner.CONFIGURATIONS, (("O0", "llvm"), ("O3", "llvm")))
+        self.assertEqual(runner.VARIANTS, ("original", "renamed"))
+        for (level, backend), flags in runner.MODES.items():
+            self.assertEqual(flags, ["--backend", backend, f"-{level}"])
+        # Without --cxx the compiler discovers its own native link driver.
+        command = runner.build_command("gti", None, Path("a.gti"), Path("a"), ("O3", "llvm"))
+        self.assertEqual(command, ["gti", "a.gti", "--backend", "llvm", "-O3", "--verbose", "-o", "a"])
+        emit = runner.build_command("gti", "c++", Path("a.gti"), Path("a.ll"), ("O3", "llvm"), "--emit-llvm")
+        # The driver rejects --backend beside an explicit emission mode.
+        self.assertEqual(emit, ["gti", "a.gti", "-O3", "--emit-llvm", "--verbose", "-o", "a.ll"])
+
+    def test_cpp_era_records_replay_on_llvm_or_are_rejected(self):
+        signature = {"kind": "oracle-mismatch", "stage": "run", "channels": ["stdout"]}
+        record = {"schema": "gti-feature-interaction-failure-v1", "signature": signature,
+                  "case": self.case.record(), "variant": "renamed", "configuration": ["O3", "c++20"],
+                  "expected": list(self.case.oracle()), "observations": []}
+        path = self.root / "legacy.json"
+        path.write_text(json.dumps(record))
+        _, migrated = runner.read_failure(path)
+        self.assertEqual(migrated["configuration"], ["O3", "llvm"])
+        self.assertEqual(migrated["migrated_configuration"]["from"], ["O3", "c++20"])
+        for stale in (["O1", "c++23"], ["O2", "llvm"], ["O0", "cpp"]):
+            path.write_text(json.dumps(dict(record, configuration=stale)))
+            with self.assertRaisesRegex(ValueError, "unsupported interaction configuration"):
+                runner.read_failure(path)
+        # The replay announces and records the migration, and runs LLVM only.
+        path.write_text(json.dumps(record))
+        output = self.root / "legacy-replay"
+        with patch.object(runner, "resolve_tool", side_effect=lambda requested, *_: requested), \
+                patch.object(runner, "run_process", self.fake_commands([(0, "wrong\n", "")] * 2)):
+            self.assertEqual(runner.main(["replay", "--gti", "gti", "--failure", str(path),
+                                          "--out", str(output)]), 0)
+        replayed = json.loads((output / "replay.json").read_text())
+        self.assertEqual(replayed["configuration"], ["O3", "llvm"])
+        self.assertEqual(replayed["migrated_configuration"]["from"], ["O3", "c++20"])
+        build = json.loads((output / "replay/failure.json").read_text())["observations"][0]["command"]
+        self.assertEqual(build, ["gti", str(output / "replay/renamed.gti"), "--backend", "llvm", "-O3",
+                                 "--verbose", "-o", str(output / "replay/program")])
 
     def test_nondeterminism_and_missing_artifact(self):
         with patch.object(runner, "run_process", self.fake_commands([self.case.oracle(), (7, "", "")])):
@@ -207,16 +250,16 @@ class DecisionTests(unittest.TestCase):
         heading = "error[GTI-B0001]: Internal compiler error: backend failed while generating a representation.\n"
         failures = []
         for reason in ("invalid call input 17", "invalid cleanup 23"):
-            text = heading + "Backend: cpp\nDetail: " + reason + "\n"
+            text = heading + "Backend: llvm\nDetail: " + reason + "\n"
             observed = runner.Observation("build", ["gti"], 65, "", text)
             failures.append(runner.compiler_failure(observed))
-            record = {"stage": "cpp-emission", "timed_out": False, "signal": None,
+            record = {"stage": "mir-emission", "timed_out": False, "signal": None,
                       "exit": 65, "_stdout": b"", "_stderr": text.encode()}
             self.assertEqual(capture.signature_from(record)["stem"], reason)
         self.assertNotEqual(failures[0]["reason"], failures[1]["reason"])
         self.assertEqual(failures[0]["reason"], "invalid call input #")
-        text = ("Emitting backend representation\n+ compiler /tmp/random-17.cpp\n"
-                "gti: backend diagnostics:\n/tmp/random-17.cpp:42: error: invalid native call 19\n"
+        text = ("Linking executable\n+ c++ /tmp/random-17/unit.o -o program\n"
+                "gti: backend diagnostics:\nld: error: invalid native call 19\n"
                 "gti: backend failed while compiling and linking the executable (exit code 1)\n")
         native = runner.Observation("build", ["gti"], 1, "", text)
         self.assertEqual(runner.compiler_failure(native)["reason"], "invalid native call #")
@@ -299,32 +342,44 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(groups[0]["evidence"], ["a.json", "b.json", "c.json"])
         self.assertEqual(groups[1]["evidence"], ["d.json"])
 
-    def test_triage_measures_each_admission_boundary(self):
-        build = {"kind": "internal", "stage": "build", "code": "GTI-B0001", "reason": "invariant"}
+    def test_triage_measures_each_llvm_stage_boundary(self):
+        internal = {"kind": "internal", "stage": "build", "code": "GTI-B0001", "reason": "invariant"}
+        rejected = {"kind": "rejected-valid", "stage": "build", "code": "GTI-S2017", "reason": "borrow"}
+        link = {"kind": "build-failed", "stage": "build", "code": None, "reason": "undefined symbol"}
         run = {"kind": "oracle-mismatch", "stage": "run", "channels": ["stdout"]}
-        for index, (mir_ok, signature, boundary) in enumerate((
-            (False, build, "before-verified-mir"),
-            (True, build, "native-build-or-driver"),
-            (True, run, "native-execution"),
+        for index, (mir_ok, ir_ok, signature, mir_error, boundary) in enumerate((
+            (False, False, internal, "error[GTI-B0001]: Internal compiler error: invariant",
+             "before-verified-mir"),
+            (False, False, rejected, "error[GTI-S2017]: borrow", "semantic-admission"),
+            (True, False, internal, "", "llvm-ir-emission"),
+            (True, True, link, "", "native-object-or-link"),
+            (True, True, run, "", "native-execution"),
         )):
-            prior = {"signature": signature, "variant": "original", "configuration": ["O0", "llvm"]}
+            prior = {"signature": signature, "variant": "original", "configuration": ["O3", "llvm"]}
             def admission(command, timeout):
                 if "--version" in command:
                     return subprocess.CompletedProcess(command, 0, "gti test\n", "")
-                accepted = mir_ok
+                self.assertEqual(command[2], "-O3")
+                self.assertNotIn("--backend", command)
+                accepted = mir_ok if "--emit-mir" in command else ir_ok
                 if accepted:
                     Path(command[command.index("-o") + 1]).touch()
                 return subprocess.CompletedProcess(command, 0 if accepted else 65, "",
-                    "" if accepted else "error[GTI-B0001]: Internal compiler error: invariant")
+                    "" if accepted else mir_error or "error[GTI-B0001]: Internal compiler error: ir")
             output = self.root / f"triage-{index}"
             output.mkdir()
             with patch.object(runner, "probe", return_value=prior), patch.object(runner, "run_process", admission):
                 self.assertTrue(runner.triage_failure(self.case, prior, output, "gti", "c++", 1))
             report = json.loads((output / "triage.json").read_text())
+            self.assertEqual(report["schema"], "gti-feature-interaction-triage-v2")
             self.assertEqual(report["observed_boundary"], boundary)
+            self.assertEqual(set(report["phases"]), {"mir", "llvm-ir", "native-link", "run"})
             self.assertEqual(report["phases"]["mir"]["accepted"], mir_ok)
-            self.assertNotIn("cpp", report["phases"])
+            self.assertEqual(report["phases"]["llvm-ir"]["accepted"], ir_ok)
+            self.assertEqual(report["phases"]["native-link"]["accepted"], signature is run)
+            self.assertFalse(report["phases"]["run"]["accepted"])
             self.assertTrue((output / "002-mir.stderr").exists())
+            self.assertTrue((output / "003-llvm-ir.stderr").exists())
 
     def test_triage_replacement_and_missing_artifact_are_not_admission(self):
         prior = {"signature": {"kind": "internal", "stage": "build"},
@@ -340,7 +395,7 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(report["status"], "replaced")
         self.assertEqual(report["observed_boundary"], "not-reproduced")
         self.assertFalse(report["phases"]["mir"]["accepted"])
-        self.assertNotIn("cpp", report["phases"])
+        self.assertFalse(report["phases"]["llvm-ir"]["accepted"])
 
 
 if __name__ == "__main__":
