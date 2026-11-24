@@ -56,6 +56,7 @@ SMALL = {
 FAILURE_CODE = {
     "overflow": "GTI-R0001", "div0": "GTI-R0002", "mod0": "GTI-R0003",
     "negshift": "GTI-R0004", "bigshift": "GTI-R0005",
+    "convert": "GTI-R0006",
 }
 
 PRELUDE = """import std.atomic;
@@ -144,7 +145,9 @@ def literal(type_name, value, bits, signed):
     suffix = f"{'i' if signed else 'u'}{bits}"
     low, _ = bounds(bits, signed)
     if signed and value == low:
-        return f"(-{-(value + 1)}{suffix} - 1{suffix})"
+        text = f"(-{-(value + 1)}{suffix} - 1{suffix})"
+        # Narrow operands promote, so the minimum is converted back.
+        return f"{type_name}{text}" if bits < 32 else text
     if value < 0:
         return f"(-{-value}{suffix})"
     return f"{value}{suffix}"
@@ -160,6 +163,12 @@ def render(node, type_name, bits, signed):
         return f"(-{render(node[1], type_name, bits, signed)})"
     return (f"({render(node[2], type_name, bits, signed)} {node[1]} "
             f"{render(node[3], type_name, bits, signed)})")
+
+
+def has_variable(node):
+    if node[0] == "var":
+        return True
+    return any(has_variable(child) for child in node[1:] if isinstance(child, tuple))
 
 
 def tree(rng, depth, bits, signed):
@@ -178,10 +187,10 @@ def tree(rng, depth, bits, signed):
                      "+", "-", "*"])
     left = tree(rng, depth - 1, bits, signed)
     right = tree(rng, depth - 1, bits, signed)
-    if op in ("/", "%", "<<", ">>") and right[0] == "lit":
-        # A literal zero divisor or out-of-range literal count is rejected by
-        # semantics, not evaluated; keep literal right operands in range.
-        right = ("lit", max(1, min(right[1] if right[1] > 0 else 1, bits - 1)))
+    if op in ("/", "%", "<<", ">>") and not has_variable(right):
+        # A constant divisor or shift count is checked by semantics, not
+        # evaluated (execution.md 4.3), so keep these operands dynamic.
+        right = ("var", rng.choice("abc"))
     return ("bin", op, left, right)
 
 
@@ -197,6 +206,10 @@ def inputs(rng, bits, signed):
 
 
 def function(name, type_name, expression):
+    # Arithmetic on 8- and 16-bit operands promotes; the explicit checked
+    # conversion back to the declared type is part of the expression.
+    if type_name in SMALL:
+        expression = f"{type_name}({expression})"
     return (f"constexpr {type_name} {name}({type_name} a, {type_name} b, "
             f"{type_name} c) {{\n  return {expression};\n}}\n")
 
@@ -218,7 +231,16 @@ def arith_cells(rng, count, types, modelled):
             env = inputs(rng, bits, signed)
             expression = render(node, type_name, bits, signed)
             try:
-                expected = evaluate(node, env, bits, signed)
+                if type_name in SMALL:
+                    # Promotion model: 8- and 16-bit operands promote to
+                    # int32_t, the operation is checked there, and the
+                    # explicit conversion back to the type is checked.
+                    expected = evaluate(node, env, 32, True)
+                    low, high = bounds(bits, signed)
+                    if not low <= expected <= high:
+                        raise Fail("convert")
+                else:
+                    expected = evaluate(node, env, bits, signed)
                 failure = None
             except Fail as error:
                 failure = error.kind
@@ -234,7 +256,7 @@ def arith_cells(rng, count, types, modelled):
                   f"  {type_name} value = "
                   f"{call(name, type_name, env, bits, signed, True)};\n"
                   "  std::println(\"unreachable {}\", value);\n  return 0;\n}\n")
-            key = f"arith/{type_name}/{index}"
+            key = f"{'small' if type_name in SMALL else 'arith'}/{type_name}/{index}"
             cells.append((key + "/ct", ct, {"expect_build_error": r"error\[GTI-",
                                            "execute": False}))
             cells.append((key + "/rt", rt, {"expect_run_error": FAILURE_CODE[failure]}))
@@ -256,7 +278,7 @@ def arith_cells(rng, count, types, modelled):
                                   f"{{ std::println(\"{name} model {expected} got {{}}\", {name}_rt); return 1; }}\n")
             source = (PRELUDE + body + "int main() {\n" + "".join(checks)
                       + "  std::println(\"ok\");\n  return 0;\n}\n")
-            family = "arith" if modelled else "small"
+            family = "small" if type_name in SMALL else "arith"
             cells.append((f"{family}/{type_name}/g{start // 8}", source,
                           {"expect_stdout": "ok\n"}))
     return cells
@@ -538,7 +560,7 @@ def main():
         if "arith" in args.family:
             cells += arith_cells(rng, args.count, TYPES, True)
         if "small" in args.family:
-            cells += arith_cells(rng, args.count // 2, SMALL, False)
+            cells += arith_cells(rng, args.count // 2, SMALL, True)
         if "shapes" in args.family:
             cells += shape_cells()
 

@@ -56,11 +56,12 @@ def hard(verdict):
     return verdict.startswith(HARD_PREFIXES)
 
 
-def run(command, env, timeout):
+def run(command, env, timeout, cwd=None):
     """Run a command in its own process group; kill the group on timeout."""
     process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True,
-                               errors="replace", start_new_session=True)
+                               errors="replace", start_new_session=True,
+                               cwd=cwd)
     try:
         out, err = process.communicate(timeout=timeout)
         return process.returncode, out, err
@@ -94,6 +95,13 @@ def build_verdict(returncode, text):
     if refusal or "GTI-B0003" in text:
         return (f"UNSUPPORTED[{refusal[1]} {refusal[2]}]" if refusal
                 else "UNSUPPORTED")
+    saved = re.search(r"backend diagnostics saved at (\S+)", text)
+    if saved:
+        # The native toolchain's output is saved, not printed.
+        try:
+            text += (Path(saved[1]) / "backend.log").read_text(errors="replace")
+        except OSError:
+            pass
     if "Undefined symbols" in text or "undefined reference" in text:
         return "LINK"
     codes = CODE.findall(text)
