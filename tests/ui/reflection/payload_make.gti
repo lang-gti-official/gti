@@ -1,0 +1,29 @@
+// Reflected construction requests each field in order, stopping at the first error.
+//@ run-pass
+import std.meta;
+enum Pair { none, pair(int left, int right) };
+struct Producer {
+  Producer() = default;
+  Producer(bool should_fail) : fail(should_fail) {}
+  mut int calls = 0;
+  bool fail = false;
+  expected<int, int> produce<uint64_t I, uint64_t P>(std::meta::payload_field<Pair, I, P> field) mut {
+    this.calls++;
+    if (this.fail) { return unexpected(9); }
+    return this.calls;
+  }
+};
+int main() {
+  mut Producer producer{};
+  auto value = std::meta::make_alternative<Pair, int, Producer, 1>(producer).expect("pair");
+  switch (value) {
+    case Pair::none: return 1;
+    case Pair::pair(auto& left, auto& right):
+      if (left != 1 || right != 2) { return 2; }
+      break;
+  }
+  mut Producer failing{true};
+  auto failed = std::meta::make_alternative<Pair, int, Producer, 1>(failing);
+  if (failed || failing.calls != 1) { return 3; }
+  return 0;
+}

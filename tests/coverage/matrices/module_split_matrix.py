@@ -2,7 +2,8 @@
 """A program split across exported modules behaves like the single file.
 
 The corpus is every self-checking cell of `llvm_wrongcode_matrix.py` (each
-prints `ok` only when its values and its destruction counts and order are
+prints `ok`, or the exact trace, exit status or diagnostic its module
+expects, only when its values and its destruction counts and order are
 right). Each cell's top-level declarations are moved, unchanged and marked
 `export`, into module files, and `main` stays in the importing file:
 
@@ -14,7 +15,7 @@ right). Each cell's top-level declarations are moved, unchanged and marked
 
 docs/language/programs-and-targets.md 6.1 makes an exported declaration
 visible to its importer with its meaning unchanged, so each variant must
-print `ok` exactly like the original. This is the RFC 0013 equivalent-source
+meet the original cell's expectation. This is the RFC 0013 equivalent-source
 oracle for module boundaries: generic instantiation, class layout, cleanup
 and dispatch across separately analyzed source units.
 
@@ -132,7 +133,7 @@ def main():
         cells = list(wrongcode.MATRICES[name].cells())
         if matrix.args.limit:
             cells = cells[:matrix.args.limit]
-        for cell, text in cells:
+        for cell, text, *expectation in cells:
             parts = split(text)
             if parts is None:
                 excluded += 1
@@ -140,13 +141,17 @@ def main():
             for variant in matrix.args.variant:
                 key = f"{name}/{cell}/{variant}"
                 work.append((key, write_variant(matrix.out / name / cell / variant,
-                                                variant, *parts)))
+                                                variant, *parts),
+                             expectation[0] if expectation else {}))
 
     def classify(item):
-        key, source = item
+        key, source, expect = item
         return key, matrix.classify(
             source, key=key, flags=("--execution-profile", "concurrent"),
-            expect_stdout="ok\n")
+            expect_stdout=expect.get("stdout", "ok\n"),
+            expect_returncode=expect.get("returncode", 0),
+            expect_stderr=expect.get("stderr"),
+            expect_diagnostic=expect.get("diagnostic"))
 
     failures, declined = [], {}
     with concurrent.futures.ThreadPoolExecutor(matrix.args.jobs) as pool:

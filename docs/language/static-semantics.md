@@ -2994,6 +2994,21 @@ them (`GTI-S2117`). `type<E>::enumerator_count()`, `is_payload_enum()` and
 `std::meta::is_payload_enum<E>()` report the shape; an out-of-range enumerator
 or payload index is rejected like a field index (`GTI-S2111`).
 
+For a payload enum, `std::meta::visit<R, E, Visitor>(subject, visitor)`
+selects the active alternative and calls `visitor.visit(alternative, fields...)`.
+The first argument is its enumerator descriptor. The remaining arguments borrow
+the active fields read-only, in declaration order. A unit case passes only its
+descriptor. A visitor can overload the method for different alternatives.
+
+`std::meta::visit_fields<Error, E, Visitor>(subject, visitor)` calls
+`begin(alternative)`, then `field(descriptor, value)` for each active field,
+then `end(alternative)`. Each callback returns `expected<void, Error>`.
+The first failure returns immediately, including a failure before `end`.
+`std::meta::make_alternative<E, Error, Producer, I>(producer)` constructs
+alternative `I` by calling `producer.produce(field)` in declaration order.
+Each call returns the field's value or an error. Earlier values are cleaned
+up on failure. A unit alternative requires no calls to the producer.
+
 `std::meta::bases_of<T>()` is a list of `std::meta::type<B>` over the direct
 bases of a class in declaration order (`type<T>::base_count()`, `bases()`);
 inherited fields are not part of `fields_of<T>()`.

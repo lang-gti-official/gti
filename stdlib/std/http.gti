@@ -9,6 +9,7 @@ import std.optional;
 import std.chrono;
 import "detail/panic.gti";
 import std.format;
+import std.json;
 
 namespace std {
   namespace http {
@@ -1611,5 +1612,30 @@ export for concept std::formatting<std::http::url> {
     std::string_view text = value.view();
     std::formatter<std::string_view> writer{};
     return writer.format(text, output, spec);
+  }
+};
+
+/// Encodes the checked URL as its serialized absolute HTTP(S) URL string.
+export class std::json::codec<std::http::url> {
+public:
+  codec() = default;
+
+  expected<void, std::json::error> encode(std::http::url& url, mut std::string& out) {
+    auto serialized = url.view();
+    auto encoded = ?std::json::encode(serialized);
+    out.append(encoded.view());
+    return;
+  }
+
+  expected<std::http::url, std::json::error> decode(std::string_view text) {
+    // The enclosing decoder has already checked its configured document limit.
+    mut std::json::decode_options limits{};
+    limits.set_max_document_bytes(text.size());
+    auto serialized = ?std::json::decode<std::string>(text, limits);
+    auto url = std::http::url::parse(serialized.view());
+    if (!url) {
+      return unexpected(std::json::error(std::json::errc::type_mismatch, std::size_t(0), std::size_t(1), std::size_t(1)));
+    }
+    return std::move(url).value();
   }
 };

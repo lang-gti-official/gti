@@ -1459,8 +1459,12 @@ deterministic serializer, limits, structured errors and explicit `codec<T>`
 customization are all GTI source over `std.meta`. Dynamic `json::value` uses
 an ordinary owning payload enum, vectors and sorted object members; parsing
 selects alternatives at runtime and does not need reflection. Compile-time
-reflection still maps typed structs, including fields containing dynamic
-subtrees. The source generic dispatch selects these library types without any
+reflection maps typed structs and payload enums, including fields containing
+dynamic subtrees. For each concrete enum instance, semantic analysis specializes
+the reflected visitor into an exhaustive borrowed switch and the reflected
+constructor into ordinary producer calls and variant construction. HIR retains
+the checked body and lowers it through the existing MIR operations. JSON selects
+the tag and field representation in library source. The source generic dispatch selects these library types without any
 compiler recognition. The dynamic scanner shares the existing grammar helpers,
 preserves numeric range checks and limits, and avoids copying or rescanning each
 complete subtree at every level. This is an intentional

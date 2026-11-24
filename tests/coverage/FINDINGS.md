@@ -1323,3 +1323,62 @@ single-file runner does not build.
 
 Two headers cannot be exercised at all until F7's underlying work lands:
 `<std/optional>` and `<std/list>` have no executable operations.
+
+# RFC 0013 wrong-code modules (W-series)
+
+Slices 2 and 3 of RFC 0013 added eleven `llvm_wrongcode_matrix.py` modules
+(`weak_owners`, `thread_local_owners`, `deferred`, `propagation`, `panics`,
+`payload_binding`, `owning_enum_transport`, `borrowed_elements`,
+`conversions`, `allocation`, `lifetimes`). Their expected traces, exit
+statuses and diagnostics come from `docs/language/`; each module carries a
+negative control that `--negative-controls` shows is flagged. The run at
+`9bae45998` (macOS arm64, O0, O1, O2 and O3) found two defects. Everything
+else in the 402 cells ran or was rejected as documented, at every level.
+
+## W01 — ICE: a generic factory returning a generic class that holds a by-reference closure
+
+Issue [#687](https://github.com/lang-gti-official/gti/issues/687). Wrapping a
+closure that captures a local by reference in a generic class and returning
+it from a generic factory (`Holder<F> hold<F>(F action) { return
+Holder<F>(action); }` called as `hold([&local]() -> void { ... })`) fails MIR
+construction (`GTI-B0001`, "fresh borrowing callable transfer requires its
+exact confined source parameter ..." or "derived loan must be produced
+through its declared parent loan"). A by-value capture builds and runs. This
+is the source-defined scope-guard idiom (`defer([&x] { ... })`), so the
+`deferred` cell `borrowing_capture` stays failing at every level.
+
+## W02 — A virtual conversion operator is rejected although the specification admits it
+
+Issue [#689](https://github.com/lang-gti-official/gti/issues/689).
+`static-semantics.md` 3.9.2 says a conversion operator "may be `constexpr` or
+virtual" and is overridden like any member; the compiler rejects every
+virtual conversion operator with `GTI-S2022` ("cannot be virtual yet"). The
+`conversions` cell `virtual_operator_declared` records the rejection.
+
+## Documentation disagreements noticed along the way (not filed)
+
+- `execution.md` 4.8 says the operand's and the enclosing `expected` error
+  types "are exact; no conversion is selected", while `expected.md` and the
+  passing `tests/ui/expected/from/` tests use `std::from` conversion on the
+  error path. The `propagation` module follows `expected.md`.
+- `execution.md` 4.5 (around its list of shapes "diagnosed before execution
+  lowering") still names direct lambda capture of an owning payload enum and
+  fixed arrays of owning enum elements, which `static-semantics.md` 3.8.2
+  admits and the `owning_enum_transport` cells run.
+
+## Behaviour recorded along the way
+
+- A class with a user destructor has no available defaulted copy
+  constructor (`GTI-S2020`), so by-value payload bindings from a named place
+  need a passive payload.
+- A switch over a scoped enum without `default` is not exhaustive for return
+  analysis (`GTI-S2031`); only payload switches are.
+- Matching a captured payload enum with `auto&` bindings inside the lambda is
+  rejected (`GTI-S2067`, "requires a stable enum place"); passing the capture
+  to a function taking `E&` works.
+- Moving a polymorphic class into a payload enum is the declared
+  `O-LLVM-10` (`PolymorphicTransfer`) limitation, so enum payload cells use
+  non-polymorphic classes.
+- Returning a parameter that a declared result region does not name is
+  `GTI-S2017`, as `tests/ui/classes/out_of_class_methods/invalid_borrow_contract_2.gti`
+  pins, not `GTI-S2127`.

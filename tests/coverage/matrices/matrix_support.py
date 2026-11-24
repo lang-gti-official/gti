@@ -114,7 +114,12 @@ def build_verdict(returncode, text):
     return f"exit{returncode}"
 
 
-def run_verdict(returncode, out, expect_stdout, err="", expect_run_error=None):
+def run_verdict(returncode, out, expect_stdout, expect_returncode=0,
+                err="", expect_stderr=None, expect_run_error=None):
+    """Verdict for one run. A cell that checks a defined failure expects a
+    nonzero status (70 for the hosted failure boundary) and a report
+    substring on standard error; `expect_run_error` is instead a regular
+    expression the standard error of a failing run must match."""
     if returncode == "timeout":
         return "RUN(timeout)"
     if returncode < 0:
@@ -126,10 +131,12 @@ def run_verdict(returncode, out, expect_stdout, err="", expect_run_error=None):
         found = RUNTIME_CODE.search(err)
         return (f"WRONG(expected failure {expect_run_error}, got "
                 f"{found[0] if found else f'rc={returncode}'})")
-    if returncode != 0:
+    if returncode != expect_returncode:
         return f"RUN(rc={returncode})"
     if expect_stdout is not None and out != expect_stdout:
         return f"WRONG({out.strip()[:40]!r})"
+    if expect_stderr is not None and expect_stderr not in err:
+        return f"WRONG(stderr {err.strip()[:40]!r})"
     return "ok"
 
 
@@ -207,14 +214,17 @@ class Matrix:
         self.records = {}
 
     def level(self, source, level, *, execute=True, flags=(),
-              expect_stdout=None, expect_build_error=None,
+              expect_stdout=None, expect_returncode=0, expect_stderr=None,
+              expect_diagnostic=None, expect_build_error=None,
               expect_run_error=None, compile_timeout=600, run_timeout=60):
-        """Verdict for one cell at one LLVM level.
-
-        `expect_build_error` is a regular expression the compiler output must
-        match for a cell that must be rejected; `expect_run_error` one the
-        program's stderr must match for a cell that must stop with a defined
-        runtime failure."""
+        """Verdict for one cell at one LLVM level. A cell with
+        `expect_diagnostic` (a code such as "S2127") is an invalid sibling:
+        that rejection is ok, another code is reported as that code, and
+        building it at all is wrong code (an accepted invalid program).
+        `expect_build_error` is the same check with a regular expression
+        over the compiler output; `expect_run_error` one the program's
+        stderr must match for a cell that must stop with a defined runtime
+        failure."""
         executable = source.with_name(f"{source.stem}-{level}")
         try:
             returncode, out, err = run(
@@ -231,12 +241,17 @@ class Matrix:
             if returncode != 0 or not executable.exists():
                 if returncode == 0:
                     return "NATIVE"
-                return build_verdict(returncode, out + err)
+                verdict = build_verdict(returncode, out + err)
+                if expect_diagnostic is not None and verdict == expect_diagnostic:
+                    return "ok"
+                return verdict
+            if expect_diagnostic is not None:
+                return f"WRONG(accepted; expected {expect_diagnostic})"
             if not execute:
                 return "ok"
             returncode, out, err = run([str(executable)], self.env, run_timeout)
-            return run_verdict(returncode, out, expect_stdout, err,
-                               expect_run_error)
+            return run_verdict(returncode, out, expect_stdout, expect_returncode,
+                               err, expect_stderr, expect_run_error)
         finally:
             # Cell executables are large; keep only the sources.
             for artifact in source.parent.glob(f"{executable.name}*"):
