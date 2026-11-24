@@ -64,7 +64,7 @@ def scaled(factor):
     """GTI_TEST_TIME_SCALE for a self-test run that tightens the limits.
 
     A fixture's factor is relative to the runner it tests: the ambient scale
-    (an instrumented runner's workflow sets 10) says how much slower that
+    (an instrumented runner's workflow sets 50) says how much slower that
     runner and the programs it builds are, so it multiplies the factor. A
     replaced scale let a sanitized `gti --emit-mir` exceed a transcript's
     0.1 x 20 s and report a timeout instead of its wrong exit code (sanitizer

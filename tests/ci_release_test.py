@@ -1065,7 +1065,7 @@ def gti_test_tiers_contract(root):
     step = compiler.split("name: Check the gti-test runner and tidy the test roots", 1)[1].split("- name:", 1)[0]
     # Runs after a failed library test too: its findings are independent.
     assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step
-    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "50"' in step
     assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
     assert 'python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" --without-cases' in step
     assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
