@@ -367,7 +367,7 @@ The previous GitHub-era workflows are archived under
 
 Compiler sanitizer coverage is one library partition, its curated CTest subset
 (including `gti_unit_tests`, the compiler-API checks) and the instrumented
-runner's self-test, plus eight `gti-test-instrumented` shards over `tests/ui`
+runner's self-test, plus sixteen `gti-test-instrumented` shards over `tests/ui`
 and `tests/project`, which analyse every former compiler-aggregate case with
 the sanitized compiler. The existing
 timeout and per-runner memory limits remain in force.

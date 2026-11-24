@@ -204,17 +204,17 @@ jobs:
     # under the driver's address,undefined instrumentation by the Clang of the
     # linked LLVM. One runner at one case at a time did not finish: run
     # 45349335403 spent its whole 120-minute step on the 8,362 cases (about
-    # 25 single-core hours). Eight standard runners each take one shard
-    # (gti-test's stable path hash) at four cases at a time.
+    # 25 single-core hours). Sixteen standard runners each take one shard
+    # (gti-test's stable path hash) at two cases at a time.
     name: Instrumented gti-test cases (${{ matrix.shard }}/${{ strategy.job-total }})
     if: needs.source.outputs.sanitize == 'true'
     needs: [source]
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     runs-on: ubuntu-24.04
-    timeout-minutes: 200
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -230,11 +230,11 @@ jobs:
           GTI_MEMORY_PER_JOB_MIB: 3072
           # One gti-test worker: a forked ASan/UBSan compiler holding its
           # analysis caches, plus the instrumented program it links and runs.
-          # Over two local 1/200 shards one worker peaked at 2.6 GiB and the
-          # four workers' process tree at 9.1 GiB (an overestimate: pages the
-          # forked workers share count in each), so 3.5 GiB each gives the
-          # 15.7 GiB hosted runner four workers with room to spare.
-          GTI_MEMORY_PER_TEST_MIB: 3584
+          # Four workers (3.5 GiB each, sized from two small local shards)
+          # starved the 15.7 GiB hosted runner: in run 45410520119 every one
+          # of eight shards lost its runner 75 to 105 minutes in, while the
+          # heaviest cases ran together. 7 GiB each gives two workers.
+          GTI_MEMORY_PER_TEST_MIB: 7168
         run: bash scripts/configure_ci_resources.sh
       - name: Install the reviewed compiler, Ninja and LLVM
         run: bash scripts/configure_ci_toolchain.sh
@@ -273,29 +273,37 @@ jobs:
           read -r -a target_list <<< "${targets}"
           cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
       - name: Run this shard of the gti-test cases with instrumented programs
-        # An instrumented runner scales its limits 5x by itself; hosted
-        # runners are about 2x slower again, so the limits scale 10x and only
-        # catch hangs. Run directly rather than through CTest, whose entry
-        # would pin the per-commit 2x scale times this tree's timeout scale.
-        # A shard is about 1,045 cases. Two local 1/200 shards (Apple
-        # M-series) averaged 2.3 CPU-seconds a case; at the hosted runners'
-        # 2-2.5x and four workers a shard takes about half an hour, and the
-        # 25 single-core hours run 45349335403 implied give 50 minutes, so
-        # the step bound leaves at least twice that. The runner prints each
-        # failure as it happens and a PROGRESS line every five minutes, and
-        # its JSON report survives a timeout as evidence of where it was.
+        # The limits only catch hangs here. At a 10x scale run 45410520119
+        # had more than a hundred healthy cases over their CPU limit: checks
+        # used up to 84 s against 20 s and programs up to 203 s against
+        # 50 s, so the scale is 50x. Run directly rather than through CTest,
+        # whose entry would pin the per-commit 2x scale times this tree's
+        # timeout scale. A shard is about 520 cases; in that run four
+        # workers took 25 to 35 minutes over the first 830 of about 1,040
+        # cases and the heavy remainder the rest of 75 to 105 minutes, so
+        # two workers on half as many cases should take about as long and
+        # the step bound leaves room for the longer limits. The runner
+        # prints each failure as it happens and a PROGRESS line every five
+        # minutes, the step logs available memory every five minutes, and
+        # the JSON report survives a timeout as evidence of where it was.
+        # allocator_may_return_null lets a program observe a refused
+        # allocation as the null result the runtime reports
+        # (stdlib/memory/allocator_storage/success asks for SIZE_MAX bytes).
         # ASan's larger frames overflow the 8 MiB default stack on deep
         # analyses (complete_summaries_35 passes at 64 MiB), so the step
         # raises it for the runner and its forked workers.
-        timeout-minutes: 120
+        timeout-minutes: 180
         env:
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:allocator_may_return_null=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           GTI_TEST_INSTRUMENTATION: address,undefined
-          GTI_TEST_TIME_SCALE: "10"
+          GTI_TEST_TIME_SCALE: "50"
           GTI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: |
           ulimit -s 65520
+          (while sleep 300; do echo "MEMORY $(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo) MiB available"; done) &
+          monitor=$!
+          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
           llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
           export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
           python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" \

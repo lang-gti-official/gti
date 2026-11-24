@@ -1073,14 +1073,15 @@ def gti_test_tiers_contract(root):
     # sanitized run in the library subset.
     assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
     shards = sanitizers["gti-test-instrumented"]
-    assert "shard: [1, 2, 3, 4, 5, 6, 7, 8]" in shards and "fail-fast: false" in shards
+    assert "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]" in shards and "fail-fast: false" in shards
     assert "runs-on: ubuntu-24.04\n" in shards, "the shards use the standard hosted runner"
     assert "--regex '^gti_test_ui$'" in shards, "a shard builds only what gti_test_ui runs"
-    assert "GTI_MEMORY_PER_TEST_MIB: 3584" in shards, "four workers on a 16 GiB runner"
+    assert "GTI_MEMORY_PER_TEST_MIB: 7168" in shards, "two workers on a 16 GiB runner"
     step = shards.split("name: Run this shard of the gti-test cases with instrumented programs", 1)[1]
     step = step.split("- name:", 1)[0]
-    assert "timeout-minutes: 120" in step and "ulimit -s 65520" in step
-    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert "timeout-minutes: 180" in step and "ulimit -s 65520" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "50"' in step
+    assert "allocator_may_return_null=1" in step and "MemAvailable" in step
     assert "GTI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}" in step
     assert '--shard "${GTI_TEST_SHARD}" --junit "${RUNNER_TEMP}/gti-test-cases.xml"' in step
     assert "if: always()" in shards.split("name: Preserve this shard's evidence", 1)[1].split("- name:", 1)[0]
