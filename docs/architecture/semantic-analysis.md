@@ -2442,9 +2442,9 @@ snapshot, and every request still flows through the same provider calls.
   function, constructor or generic-parameter identities is not stored.
 - **Consulted facts.** The functions whose facts the analysis read (the late
   demand probe) are stored with the entry and must denote the same
-  declarations; any still pending in the current snapshot are late-demanded
-  before reuse, exactly as the fresh analysis would have done before analysing
-  again. A stored delta never consulted a non-trusted function.
+  declarations. If any are pending, the compiler runs the ordinary analysis
+  attempt and its late demand before retrying reuse. This preserves the order
+  in which the attempt, deferred bodies and final delta allocate identities. A stored delta never consulted a non-trusted function.
 - **Results.** Only diagnostic-free analyses are stored, so a reuse reports
   nothing a fresh analysis would have reported. Entries are published to the
   cache only once HIR is final; an analysis that is repeated with required

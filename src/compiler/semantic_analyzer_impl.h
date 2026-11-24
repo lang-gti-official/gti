@@ -601,6 +601,12 @@ public:
   [[nodiscard]] bool finalizesFunction(const FunctionInfo &function) const;
   [[nodiscard]] bool finalizesCall(const Call *call) const;
 
+  struct InstanceReuseProbe {
+    const InstanceAnalysisKey &key;
+    bool lookup = true;
+    bool hit = false;
+  };
+
   // Runs one concrete instance analysis for an external (HIR) consumer. An
   // instance that consulted a pending deferred function is analysed again
   // after that function's late demand, so it never keeps a fact that a body
@@ -610,12 +616,19 @@ public:
   template <typename Analyze>
   [[nodiscard]] SemanticInstanceAnalysis
   withLateDemand(Analyze analyze,
-                 std::unordered_set<FunctionId> *finalConsulted = nullptr) {
+                 std::unordered_set<FunctionId> *finalConsulted = nullptr,
+                 InstanceReuseProbe *reuse = nullptr) {
     lateDemandResultClean = true;
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
       return analyze();
     const std::shared_ptr<BodyContext> context = requestSession.bodyContext;
     for (std::size_t round = 0;; ++round) {
+      if (reuse != nullptr && reuse->lookup) {
+        if (auto cached = reuseInstance(reuse->key, reuse->lookup)) {
+          reuse->hit = true;
+          return std::move(*cached);
+        }
+      }
       std::unordered_set<FunctionId> consulted;
       SemanticInstanceAnalysis result;
       // The instance analysis is an attempt (see withBodyDemands): the
@@ -742,7 +755,7 @@ public:
   [[nodiscard]] bool instanceRangeFree(const SemanticModel &delta) const;
   void reserveInstanceRange(const SemanticModel &delta);
   [[nodiscard]] std::optional<SemanticInstanceAnalysis>
-  reuseInstance(const InstanceAnalysisKey &key);
+  reuseInstance(const InstanceAnalysisKey &key, bool &retryAfterDemand);
   void retainInstance(InstanceAnalysisKey key,
                       SemanticInstanceAnalysis &analysis,
                       const std::unordered_set<FunctionId> &consulted);
@@ -765,19 +778,19 @@ public:
       reserveInstanceRange(result.model);
       return result;
     }
-    if (auto reused = reuseInstance(key)) {
+    InstanceReuseProbe reuse{key};
+    std::unordered_set<FunctionId> consulted;
+    journalNextInstance = true;
+    SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted, &reuse);
+    journalNextInstance = false;
+    preserveInvalidProgramEffectDiagnostics(key, result);
+    if (reuse.hit) {
       if (workMetrics != nullptr)
         ++workMetrics->semanticInstanceReuseHits;
-      preserveInvalidProgramEffectDiagnostics(key, *reused);
-      return std::move(*reused);
+      return result;
     }
     if (workMetrics != nullptr)
       ++workMetrics->semanticInstanceReuseMisses;
-    std::unordered_set<FunctionId> consulted;
-    journalNextInstance = true;
-    SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted);
-    journalNextInstance = false;
-    preserveInvalidProgramEffectDiagnostics(key, result);
     reserveInstanceRange(result.model);
     if (lateDemandResultClean)
       retainInstance(std::move(key), result, consulted);
