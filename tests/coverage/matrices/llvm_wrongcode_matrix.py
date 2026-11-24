@@ -44,6 +44,27 @@ Matrices (axes):
              parallel_invoke x class, text, owner and payload-enum payloads
   raii       cleanup order under early returns, loops, switch cases, branch
              locals, condition temporaries and returned locals
+
+RFC 0013 modules (expected traces, exit statuses and diagnostics derived
+from docs/language/; see each module's docstring for its contract):
+  weak_owners      shared and weak handles x holder x operation, cycles
+  thread_local_owners  TLS storage form x payload x thread, first-use order
+  deferred         scope guards x exit (return, loops, `?`, failure)
+  propagation      `?` carrier (expected, std::from, tryable, optional) x
+                   position (temporaries, loops, init statements, lambdas)
+  panics           failure source x cleanup context; status 70 and report
+  payload_binding  switch, if case, init statements, structured bindings
+  owning_enum_transport  enum shape x arrays, closures, callbacks, packs
+  borrowed_elements  container x element access through owner-tied cursors
+  conversions      implicit and explicit conversions, default construction,
+                   protocol concepts
+  allocation       storage, arena, pool and resource-vector slot lifetimes
+  lifetimes        region-annotated functions and classes, invalid siblings
+
+A module's cells may carry an expectation (exact stdout, exit status, a
+stderr substring, or the diagnostic an invalid sibling must get) instead of
+`ok`. `--negative-controls` builds each module's NEGATIVE_CONTROL, a
+deliberately broken cell, and fails unless the oracle flags every one.
 """
 import concurrent.futures
 import sys
@@ -59,7 +80,9 @@ from llvm_wrongcode import (algorithms, arrays, bases, callables,  # noqa: E402
                             raii, sum_types, text_relays, threads,
                             transfer, trees, weak_owners, panics,
                             thread_local_owners, deferred,
-                            propagation)
+                            propagation, payload_binding,
+                            owning_enum_transport, borrowed_elements,
+                            conversions, allocation, lifetimes)
 
 MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "hierarchy": hierarchy, "bases": bases, "enums": enums,
@@ -75,13 +98,24 @@ MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "panics": panics,
             "thread_local_owners": thread_local_owners,
             "deferred": deferred,
-            "propagation": propagation}
+            "propagation": propagation,
+            "payload_binding": payload_binding,
+            "owning_enum_transport": owning_enum_transport,
+            "borrowed_elements": borrowed_elements,
+            "conversions": conversions,
+            "allocation": allocation,
+            "lifetimes": lifetimes}
 
 
 def options(parser):
     parser.add_argument("--matrix", nargs="*", choices=sorted(MATRICES),
                         default=sorted(MATRICES))
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--negative-controls", action="store_true",
+                        help="instead of the cells, build each selected "
+                             "module's NEGATIVE_CONTROL (a deliberately "
+                             "broken cell) and fail unless every one is "
+                             "flagged with a hard verdict")
 
 
 def main():
@@ -92,10 +126,21 @@ def main():
     for name in matrix.args.matrix:
         directory = matrix.out / name
         directory.mkdir(parents=True, exist_ok=True)
-        for cell in MATRICES[name].cells():
-            # A cell is (name, text), or (name, text, expectation) for one
-            # that checks a defined failure: its exact stdout, exit status
-            # and a standard-error report substring.
+        module = MATRICES[name]
+        cells = list(module.cells())
+        if matrix.args.negative_controls:
+            if not hasattr(module, "NEGATIVE_CONTROL"):
+                continue
+            target, old, new = module.NEGATIVE_CONTROL
+            cells = [(f"{cell[0]}-control", cell[1].replace(old, new, 1), *cell[2:])
+                     for cell in cells if cell[0] == target and old in cell[1]]
+            if not cells:
+                raise SystemExit(f"{name}: negative control does not apply")
+        for cell in cells:
+            # A cell is (name, text), or (name, text, expectation): its exact
+            # stdout, exit status and a standard-error report substring for
+            # one that checks a defined failure, or the diagnostic code an
+            # invalid sibling must be rejected with.
             path = directory / f"{cell[0]}.gti"
             path.write_text(cell[1], encoding="utf-8")
             sources.append(path)
@@ -107,7 +152,8 @@ def main():
             source, flags=("--execution-profile", "concurrent"),
             expect_stdout=expect.get("stdout", "ok\n"),
             expect_returncode=expect.get("returncode", 0),
-            expect_stderr=expect.get("stderr"))
+            expect_stderr=expect.get("stderr"),
+            expect_diagnostic=expect.get("diagnostic"))
         return source, verdict
 
     counts = {"wrong": 0, "diverge": 0, "other": 0, "unsupported": 0}
@@ -130,6 +176,17 @@ def main():
                 counts["diverge"] += 1
             else:
                 counts["other"] += 1
+    if matrix.args.negative_controls:
+        # A control passes when the oracle flags it; report the ones it missed.
+        missed = [str(source.relative_to(matrix.out)) for source in sources
+                  if not any(cell == f"{source.parent.name}/{source.stem}"
+                             for cell, _ in failures)]
+        print(f"{len(sources)} negative controls: {len(sources) - len(missed)} "
+              f"flagged, {len(missed)} missed")
+        for cell in missed:
+            print(f"  MISSED  {cell}")
+        matrix.finish([])
+        return 1 if missed else 0
     print(f"{len(sources)} cells at {','.join(matrix.levels)}: "
           f"{counts['wrong']} with LLVM wrong code, {counts['diverge']} level "
           f"divergences, {counts['other']} other hard failures, "

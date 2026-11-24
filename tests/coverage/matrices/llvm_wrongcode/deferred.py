@@ -293,3 +293,10 @@ def cells():
                    expectation(expand(trace, owned), status))
     for name, (body, trace, status) in SCENARIOS.items():
         yield name, PRELUDE + body + MAIN, expectation(trace, status)
+
+
+# A deliberately broken variant the oracle must flag (an extra deferred action runs on the early return):
+# cell, original text, replacement. `--negative-controls` builds it.
+NEGATIVE_CONTROL = ('generic_early_return',
+                    '      return 7;',
+                    '      note(8);\n      return 7;')

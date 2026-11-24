@@ -294,3 +294,10 @@ def cells():
             yield name, PRELUDE + text, expect
         else:
             yield name, PRELUDE + text
+
+
+# A deliberately broken variant the oracle must flag (a worker's instance accumulates a wrong total):
+# cell, original text, replacement. `--negative-controls` builds it.
+NEGATIVE_CONTROL = ('namespace_owner_worker',
+                    '  value = Mark(value.value() + n);\n',
+                    '  value = Mark(value.value() + n + 1);\n')

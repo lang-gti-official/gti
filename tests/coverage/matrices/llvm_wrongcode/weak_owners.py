@@ -138,6 +138,49 @@ OPERATIONS = {
 }
 
 SCENARIOS = {
+    # Strong and weak handles as payloads of an owning enum array (a
+    # non-polymorphic payload: moving a polymorphic class into an enum is the
+    # declared O-LLVM-10 limitation).
+    "enum_payloads": ("""class Token {
+  int32_t id;
+public:
+  Token(int32_t id) : id(id) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  int32_t value() { return this.id; }
+  ~Token() {
+    [[discard]] drops.fetch_add(1);
+    trail.store(trail.load() * 10 + this.id);
+  }
+};
+enum Msg { none, owned(Token m), strong(std::shared_ptr<Token> s), observer(std::weak_ptr<Token> w) };
+int32_t code_of(Msg& msg) {
+  switch (msg) {
+  case Msg::owned(auto& m): return m.value();
+  case Msg::strong(auto& s): return s ? s->value() + 100 : -1;
+  case Msg::observer(auto& w): {
+    auto held = w.lock();
+    return held ? held->value() + 200 : -2;
+  }
+  case Msg::none: return 0;
+  }
+}
+int32_t run() {
+  {
+    mut auto owner = std::make_shared<Token>(5);
+    mut Msg items[3] = {Msg::strong(owner.clone()), Msg::observer(owner.downgrade()), Msg::owned(Token(7))};
+    if (code_of(items[0]) != 105 || code_of(items[1]) != 205 || code_of(items[2]) != 7) return 1;
+    owner.reset();
+    if (drops.load() != 0) return 2;
+    items[0] = Msg::none;
+    if (drops.load() != 1 || trail.load() != 5 || code_of(items[1]) != -2) return 3;
+    auto taken = std::move(items[2]);
+    if (drops.load() != 1 || code_of(taken) != 7) return 4;
+  }
+  if (drops.load() != 2 || trail.load() != 57) return 5;
+  return 0;
+}
+"""),
     "thread_release": """[[unsafe_transfer, unsafe_share]] class Plain {
   int32_t id;
 public:
@@ -293,4 +336,13 @@ def cells():
         for operation in OPERATIONS:
             yield f"{holder}_{operation}", program(holder, operation)
     for name, text in SCENARIOS.items():
+        if isinstance(text, tuple):
+            text = text[0]
         yield name, PRELUDE + text + MAIN
+
+
+# A deliberately broken variant the oracle must flag (expects a second drop at expiry):
+# cell, original text, replacement. `--negative-controls` builds it.
+NEGATIVE_CONTROL = ('local_expire',
+                    'if (drops.load() != 0 + 1 ||',
+                    'if (drops.load() != 0 + 2 ||')

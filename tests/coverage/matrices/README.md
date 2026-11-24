@@ -73,6 +73,7 @@ on the C++ backend that was then the default; the defect IDs are in
 | `payload_enum_matrix.py` | payload kind × operation | S15 — a class payload with no destructor |
 | `concurrency_matrix.py` | threading construct × execution profile | nothing — 10/10 under `concurrent`, correctly rejected under the default |
 | `llvm_wrongcode_matrix.py` | owned value kind × transfer × class shape, plus container, control-flow, hierarchy, concrete-base, payload-enum, erased-callable, destruction-order, lifecycle-dispatch and standard-library-container sweeps on LLVM | at `b69828811`: an owned base-initializer argument left the base unconstructed on LLVM — silent wrong code when moved in, `Derived(T v) : Base(std::move(v))` (35 cells, every owned kind, plain and generic bases, one defect), and an internal error when created in place, `Base(make())`. At `bcf538640` both are refused as `UnstagedBaseInitializer` (GTI-B0003) and all 534 cells are clean: 384 run correctly on LLVM, 96 are refused with GTI-B0003, 54 are rejected by semantics. Parity mode at `c0547e544` adds idiomatic sweeps (polymorphic-owner containers, erased callbacks, optional, expected and payload enums, relayed views and references, generics, algorithms, threads and cleanup order under control flow): 809 cells, 0 LLVM wrong code, 48 cells that C++ runs and LLVM refuses. 28 are the known `PolymorphicTransfer` (O-LLVM-10) closure and thread captures; 20 return a view, span or reference produced by a virtual or interface call out of another function (O-LLVM-05). A second round adds user operators, user iterators and ranges, nested generics, formatting with user types, fixed arrays and struct-of-arrays, owned recursive trees, expected and optional chains, and static and constexpr state: 55 cells, 0 LLVM wrong code, 0 parity gaps. Three cells reach an internal error on both backends (a range-for over a field reached through `unique_ptr`'s `->`, twice, and a range-for over a by-reference capture inside a lambda); two run on LLVM but not C++ (returning `std::array` of a class, moving fixed-array elements by constant index) |
+| `llvm_wrongcode_matrix.py` RFC 0013 modules | `weak_owners` (holder × operation plus cycles, 42 cells), `thread_local_owners` (storage × payload × thread, 33), `deferred` (guard kind × exit, 28), `propagation` (carrier × position, 49), `panics` (failure source × cleanup context, 59), `payload_binding` (22), `owning_enum_transport` (enum shape × transport, 60), `borrowed_elements` (container × access, 60), `conversions` (18), `allocation` (13), `lifetimes` (10 valid, 8 invalid siblings) | at `9bae45998`, O0–O3: [#687](https://github.com/lang-gti-official/gti/issues/687) — an ICE for a generic factory returning a generic class holding a by-reference closure (`deferred/borrowing_capture`); [#689](https://github.com/lang-gti-official/gti/issues/689) — virtual conversion operators rejected although `static-semantics.md` 3.9.2 admits them (`conversions/virtual_operator_declared`). Every other cell runs or is rejected as documented at every level, with no level divergence |
 
 `llvm_wrongcode_matrix.py` differs from the others: its programs check their
 own results against values derived from the literal inputs and count tracked
@@ -101,6 +102,25 @@ classification matrices at O0,O2 are clean too, apart from one level
 divergence: `elementary_forms_matrix.py`'s `comma-expr` builds at O0 and
 reaches an internal error at O1 and above
 ([#677](https://github.com/lang-gti-official/gti/issues/677)).
+
+The RFC 0013 modules (slices 2 and 3) extend the cell format: a cell may
+carry an expectation instead of plain `ok` — an exact stdout trace (each
+tracked object prints a code when destroyed), an exit status with a report
+substring on standard error (status 70 and `runtime error[GTI-Rnnnn]` for a
+defined failure), or the diagnostic code an invalid sibling must be rejected
+with (an accepted invalid sibling is `WRONG`). Every module states its
+contract and excluded shapes in its docstring and carries a
+`NEGATIVE_CONTROL`, a one-line mutation of one cell that the oracle must
+flag; `--negative-controls` builds them all:
+
+```sh
+tests/coverage/matrices/llvm_wrongcode_matrix.py build-release/gti \
+    --negative-controls --levels O0 --jobs 2 --matrix weak_owners panics ...
+```
+
+At `9bae45998` (macOS arm64) the 402 cells of the eleven modules were run at
+O0, O1, O2 and O3: two cells fail at every level, both filed (#687, #689),
+none diverges between levels, and all eleven negative controls are flagged.
 
 While another session's verification holds the suite slot, run it at
 `--jobs 2` or less, one matrix at a time; run larger passes through

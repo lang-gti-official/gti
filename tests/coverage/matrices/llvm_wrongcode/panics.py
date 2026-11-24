@@ -259,3 +259,10 @@ def cells():
             yield f"{failure}_{context}", text, expectation(trace, report)
     for name, (code, trace, report) in SCENARIOS.items():
         yield name, PRELUDE + code + MAIN, expectation(trace, report)
+
+
+# A deliberately broken variant the oracle must flag (the callee local is never created):
+# cell, original text, replacement. `--negative-controls` builds it.
+NEGATIVE_CONTROL = ('panic_callee_parameters',
+                    '  Mark local = Mark(5);\n  std::panic',
+                    '  std::panic')

@@ -327,9 +327,70 @@ def program(carrier, position):
     return PRELUDE + declarations + step + MAIN.replace("SUCCESS", str(value))
 
 
+# A tryable whose operand owns a Mark and whose success value is an owner:
+# the consumed operand is destroyed when take_value or take_residual returns
+# (its by-value parameter), the success owner at the end of its iteration.
+SCENARIOS = {
+    "owning_tryable_loop": ("""void note(int32_t code) { std::println("{}", code); }
+struct Rejected { int32_t code; Rejected(int32_t code) : code(code) {} };
+class Checked {
+public:
+  Mark tag;
+  int32_t value;
+  int32_t code;
+  Checked(int32_t id, int32_t value, int32_t code) : tag(Mark(id)), value(value), code(code) {}
+};
+for concept std::tryable<Checked> {
+  using value_type = Mark;
+  using residual_type = Rejected;
+  bool has_value(Checked& c) { return c.code == 0; }
+  Mark take_value(Checked c) { note(70); return Mark(c.value); }
+  Rejected take_residual(Checked c) { note(71); return Rejected(c.code); }
+};
+class Status {
+public:
+  int32_t code;
+  Status(int32_t code) : code(code) {}
+  implicit Status(Rejected r) : code(r.code) {}
+};
+Checked make(int32_t id, int32_t value, int32_t code) { return Checked(id, value, code); }
+Status run(int32_t limit) {
+  Mark guard = Mark(1);
+  mut int32_t total = 0;
+  for (mut int32_t i = 1; i <= 3; i += 1) {
+    Mark got = ?make(10 + i, 20 + i, i == limit ? 5 : 0);
+    total += got.value();
+  }
+  note(total);
+  return Status(0);
+}
+int main() {
+  Status a = run(9);
+  note(90);
+  Status b = run(2);
+  note(91);
+  if (a.code != 0 || b.code != 5) return 1;
+  std::println("ok");
+  return 0;
+}
+""", [70, 11, 21, 70, 12, 22, 70, 13, 23, 66, 1, 90,
+                             70, 11, 21, 71, 12, 1, 91]),
+}
+
+
 def cells():
     for carrier in CARRIERS:
         for position in POSITIONS:
             text = program(carrier, position)
             stdout = "".join(f"{code}\n" for code in trace(carrier, position))
             yield f"{carrier}_{position}", text, {"stdout": stdout + "ok\n"}
+    for name, (text, expected) in SCENARIOS.items():
+        stdout = "".join(f"{code}\n" for code in expected)
+        yield name, PRELUDE + text, {"stdout": stdout + "ok\n"}
+
+
+# A deliberately broken variant the oracle must flag (the temporary is created after the failing `?`):
+# cell, original text, replacement. `--negative-controls` builds it.
+NEGATIVE_CONTROL = ('expected_from_temporary',
+                    'Mark(3).value() + ?source(raw)',
+                    '?source(raw) + Mark(3).value()')

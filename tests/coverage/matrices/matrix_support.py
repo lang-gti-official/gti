@@ -191,8 +191,11 @@ class Matrix:
 
     def level(self, source, level, *, execute=True, flags=(),
               expect_stdout=None, expect_returncode=0, expect_stderr=None,
-              compile_timeout=600, run_timeout=60):
-        """Verdict for one cell at one LLVM level."""
+              expect_diagnostic=None, compile_timeout=600, run_timeout=60):
+        """Verdict for one cell at one LLVM level. A cell with
+        `expect_diagnostic` (a code such as "S2127") is an invalid sibling:
+        that rejection is ok, another code is reported as that code, and
+        building it at all is wrong code (an accepted invalid program)."""
         executable = source.with_name(f"{source.stem}-{level}")
         try:
             returncode, out, err = run(
@@ -201,7 +204,12 @@ class Matrix:
             if returncode != 0 or not executable.exists():
                 if returncode == 0:
                     return "NATIVE"
-                return build_verdict(returncode, out + err)
+                verdict = build_verdict(returncode, out + err)
+                if expect_diagnostic is not None and verdict == expect_diagnostic:
+                    return "ok"
+                return verdict
+            if expect_diagnostic is not None:
+                return f"WRONG(accepted; expected {expect_diagnostic})"
             if not execute:
                 return "ok"
             returncode, out, err = run([str(executable)], self.env, run_timeout)
