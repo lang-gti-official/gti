@@ -1,0 +1,9 @@
+// Removing a dead scalar comma result preserves the hosted entry's failure summary.
+//@ run-pass
+//@ opt: O3
+//@ reason: Dead computation elimination runs only in the optimized pipeline.
+int main() {
+  mut int32_t r = 1;
+  r = (r, 2);
+  return 0;
+}
