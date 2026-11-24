@@ -22,6 +22,12 @@
 
 namespace {
 
+// Units without post-directive tokens snapshot as an empty sequence.
+const std::vector<lang::Token> &tokensOf(const lang::SourceUnit &unit) {
+  static const std::vector<lang::Token> empty;
+  return unit.tokens ? *unit.tokens : empty;
+}
+
 void appendString(std::ostringstream &output, std::string_view value) {
   output << value.size() << ':' << value << ';';
 }
@@ -74,8 +80,8 @@ std::string snapshot(const lang::FrontendResult &frontend) {
            << ',' << unit.declarationStart << ',' << unit.declarationCount
            << ',' << unit.entry << ';';
     appendString(output, unit.path.generic_string());
-    output << unit.tokens.size() << ';';
-    for (const lang::Token &token : unit.tokens) {
+    output << tokensOf(unit).size() << ';';
+    for (const lang::Token &token : tokensOf(unit)) {
       output << static_cast<int>(token.kind) << ';';
       appendString(output, token.lexeme);
     }

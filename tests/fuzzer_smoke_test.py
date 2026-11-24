@@ -6,8 +6,9 @@
         <source-loader> <corpus>
 
 Proves the proposal's exit gate, not language coverage: every harness executes
-its fixed seed corpus under ASan/UBSan (-runs=0, deterministic), and an
-injected failure — the environment-gated magic input, never a real compiler
+its fixed seed corpus under ASan/UBSan (-runs=0, deterministic), the pipeline
+harness reaches the LLVM backend (textual IR re-verified, native object), and
+an injected failure — the environment-gated magic input, never a real compiler
 bug — produces a replayable libFuzzer crash artifact. A five-second corpus
 pass makes no exploration claim; coverage-guided runs are an explicit local
 activity.
@@ -112,8 +113,14 @@ def main() -> int:
             ("pipeline", "pipeline-phase-facts", "phase facts are not deterministic"),
             ("pipeline", "pipeline-diagnostic-range", "diagnostic range is outside"),
             ("pipeline", "pipeline-unclassified", "no classified outcome"),
+            ("pipeline", "pipeline-lowered-rejection",
+             "lowered-program construction failed"),
             ("pipeline", "pipeline-empty-artifact", "empty artifact"),
-            ("pipeline", "pipeline-artifact", "artifacts are not deterministic"),
+            ("pipeline", "pipeline-artifact",
+             "LLVM IR artifacts are not deterministic"),
+            ("pipeline", "pipeline-object",
+             "LLVM object artifacts are not deterministic"),
+            ("pipeline", "pipeline-llvm-verifier", "fails the LLVM verifier"),
             ("source_loader", "source-loader-snapshot", "not deterministic"),
         ]
         for harness, property_name, message in properties:
