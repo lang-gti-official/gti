@@ -20,6 +20,36 @@
 #include <utility>
 
 namespace lang {
+
+namespace {
+
+// Operand evaluation has its own instructions and failure edges. The comma
+// operation itself only selects its already evaluated right operand.
+[[nodiscard]] bool scalarOperation(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::Literal:
+  case MirOperation::Comma:
+  case MirOperation::Identity:
+  case MirOperation::BitwiseAnd:
+  case MirOperation::BitwiseOr:
+  case MirOperation::BitwiseXor:
+  case MirOperation::Equal:
+  case MirOperation::NotEqual:
+  case MirOperation::Less:
+  case MirOperation::LessEqual:
+  case MirOperation::Greater:
+  case MirOperation::GreaterEqual:
+  case MirOperation::Positive:
+  case MirOperation::LogicalNot:
+  case MirOperation::BitwiseNot:
+    return true;
+  default:
+    return false;
+  }
+}
+
+} // namespace
+
 static std::vector<bool>
 deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                                        std::vector<bool> *destructorEffects) {
@@ -159,27 +189,6 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                 event->before == OwnershipStateSet::Available &&
                 event->after == OwnershipStateSet::Moved && event->reachable);
       };
-  const auto scalarOperation = [](MirOperation operation) {
-    switch (operation) {
-    case MirOperation::Literal:
-    case MirOperation::Identity:
-    case MirOperation::BitwiseAnd:
-    case MirOperation::BitwiseOr:
-    case MirOperation::BitwiseXor:
-    case MirOperation::Equal:
-    case MirOperation::NotEqual:
-    case MirOperation::Less:
-    case MirOperation::LessEqual:
-    case MirOperation::Greater:
-    case MirOperation::GreaterEqual:
-    case MirOperation::Positive:
-    case MirOperation::LogicalNot:
-    case MirOperation::BitwiseNot:
-      return true;
-    default:
-      return false;
-    }
-  };
   const auto stableScalarProvenance = [&](const MirInstruction &instruction) {
     switch (instruction.literalProvenance.kind) {
     case MirLiteralProvenanceKind::None:
@@ -1464,28 +1473,6 @@ private:
                                                const SemanticType &type) {
     return (scalarType(type) || callbackType(type)) &&
            traits.drop == DropKind::Trivial && !traits.containsBorrowedState;
-  }
-
-  [[nodiscard]] static bool scalarOperation(MirOperation operation) {
-    switch (operation) {
-    case MirOperation::Literal:
-    case MirOperation::Identity:
-    case MirOperation::BitwiseAnd:
-    case MirOperation::BitwiseOr:
-    case MirOperation::BitwiseXor:
-    case MirOperation::Equal:
-    case MirOperation::NotEqual:
-    case MirOperation::Less:
-    case MirOperation::LessEqual:
-    case MirOperation::Greater:
-    case MirOperation::GreaterEqual:
-    case MirOperation::Positive:
-    case MirOperation::LogicalNot:
-    case MirOperation::BitwiseNot:
-      return true;
-    default:
-      return false;
-    }
   }
 
   [[nodiscard]] const MirClassInstance *
