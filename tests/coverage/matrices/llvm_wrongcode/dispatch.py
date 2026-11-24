@@ -1,7 +1,7 @@
 """Matrix 9: virtual calls during construction and destruction.
 
-The C++ backend gives no oracle here: during base destruction and constructor
-rollback it dispatches to the most-derived override, a known defect
+The frozen C++ backend was never an oracle here: during base destruction and
+constructor rollback it dispatches to the most-derived override, a known defect
 (docs/architecture/backend.md#lifecycle-dispatch). Each constructor and
 destructor reports which override a virtual call on `this` selected, made in
 its body or through one or two helpers that receive `this`. The program

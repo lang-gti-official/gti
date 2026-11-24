@@ -1,21 +1,62 @@
 # Combination matrices
 
-Each script sweeps the product of two language axes and classifies every cell
-as ok / ICE / invalid-C++ / link error / silent / diagnostic code. They exist
-because most of the defects in `../FINDINGS.md` were only visible when two
-ordinary constructs were combined — no single cell is exotic, and each axis
-alone is well covered by the feature-owned tests.
+Each script sweeps the product of two language axes and gives every cell one
+verdict. They exist because most of the defects in `../FINDINGS.md` were only
+visible when two ordinary constructs were combined — no single cell is
+exotic, and each axis alone is well covered by the feature-owned tests.
 
-All take the compiler path as their first argument:
+All of them build with the LLVM backend, GTI's only tested backend, through
+one shared runner, `matrix_support.py`. It owns the command line, the
+watchdog, the verdicts and the report, so the matrices differ only in the
+programs they generate:
 
 ```bash
-tests/coverage/matrices/declaration_matrix.py build/gti
-tests/coverage/matrices/lsp_survival.py build/gti_lsp file.gti [more.gti ...]
+tests/coverage/matrices/declaration_matrix.py build-release/gti
+tests/coverage/matrices/value_shape_matrix.py build-release/gti --levels O0,O2,O3
+tests/coverage/matrices/llvm_wrongcode_matrix.py build-release/gti --matrix order raii \
+    --json /tmp/wrongcode-new.json --baseline /tmp/wrongcode-old.json
+tests/coverage/matrices/lsp_survival.py build-release/gti_lsp file.gti [more.gti ...]
 ```
+
+- The compiler defaults to `build-release/gti`. `--levels` takes a
+  comma-separated subset of O0–O3: O0 for the classification matrices, O0,O2
+  for the wrong-code matrix. At more than one level, a cell whose levels
+  disagree is a `DIVERGE(...)` verdict listing each level's result. That
+  needs no oracle: a program one level runs and another refuses or runs
+  differently is a defect whichever level is right.
+- Cells are written to a fresh temporary directory, or `--out`, which must be
+  new or empty. Concurrent runs never share files; only the sources are kept.
+- `--json` writes each cell's per-level verdicts; `--baseline` takes an
+  earlier `--json` report and lists every cell whose verdict changed. Use the
+  pair to compare a compiler change against its parent.
+- A run exits nonzero when any cell has a hard verdict, so a matrix can be
+  scripted as a check.
+
+The verdicts (`matrix_support.py` has the exact rules):
+
+| Verdict | Meaning | Hard |
+| --- | --- | --- |
+| `ok` | built and, where the matrix runs it, exited 0 with the expected output | |
+| `ICE` | internal compiler error, `GTI-B0001` | yes |
+| `LLVM-VERIFY` | the backend produced a module the LLVM verifier rejects | yes |
+| `UNSUPPORTED[shape O-LLVM-nn]` | the LLVM backend declined a declared shape (`GTI-B0003`) | |
+| `LINK` | the native linker reported undefined symbols | yes |
+| `NATIVE` | another native toolchain error with no GTI diagnostic | yes |
+| `CRASH(SIG…)` | the compiler died on a signal | yes |
+| `SILENT` | nonzero compiler exit with no output | yes |
+| `TIMEOUT` | the compiler exceeded its time limit | yes |
+| `RUN(…)` | the program crashed, hung or exited nonzero | yes |
+| `WRONG(…)` | the program printed something other than expected | yes |
+| `S2067`, `P0001`, … | an ordinary GTI diagnostic | |
+| `DIVERGE(…)` | the selected levels disagree | yes |
 
 `lsp_survival.py` takes the server path and then the files to open. **Do not
 point it at `../stress/namespace-depth-63.gti` without an external memory cap** —
 the server consumes memory without bound on that input.
+
+The "Found" column records what each matrix found when it was written, mostly
+on the C++ backend that was then the default; the defect IDs are in
+`../FINDINGS.md`.
 
 | Script | Axes | Found |
 | --- | --- | --- |
@@ -35,26 +76,26 @@ the server consumes memory without bound on that input.
 
 `llvm_wrongcode_matrix.py` differs from the others: its programs check their
 own results against values derived from the literal inputs and count tracked
-destructions, so an LLVM cell needs no C++ oracle. That matters where the C++
-backend cannot compile a shape at all, which is where its silent miscompiles
-hid. It builds each cell on LLVM at O0 and O2 and on C++ at O0, runs them under
-a watchdog, and exits non-zero when an LLVM cell computes the wrong answer.
-The `order` and `dispatch` sweeps compare sequences, not counts: each
-destructor body and tracked field reports a code, and the program checks the
-order that `docs/language/execution.md` specifies. At `bcf538640`, 55 cells run
-correctly on LLVM where C++ does not. In 45 of them C++ builds and dispatches
-to the most-derived override during base destruction, the known C++ backend
-defect; the other 10 are refused by the C++ backend with GTI-B0001.
+destructions, so a cell needs no second backend as an oracle. The `order` and
+`dispatch` sweeps compare sequences, not counts: each destructor body and
+tracked field reports a code, and the program checks the order that
+`docs/language/execution.md` specifies. Each cell is built with
+`--execution-profile concurrent` at O0 and O2 (or `--levels`) and run under a
+watchdog; a cell that prints anything but `ok`, a level divergence, an
+internal error or another hard verdict fails the run. A refused cell prints
+its LLVM refusal shape, such as `UNSUPPORTED[Shape.PolymorphicTransfer
+O-LLVM-10]`; those are declared limitations, counted but not failures.
 
-`--parity` additionally reports every cell that C++ builds and runs
-correctly but LLVM refuses or runs differently. LLVM is the macOS arm64
-default, so each such cell is a regression from choosing it; C++ is the
-oracle there and is not extended. A refused cell prints its LLVM refusal
-shape, such as `[Shape.PolymorphicTransfer O-LLVM-10]`. The driver deletes
-each cell executable after running it and keeps failed-build temporaries
-under the run directory. While another session's verification holds the
-suite slot, run it at `--jobs 2` or less, one matrix at a time; run larger
-passes through `python3 scripts/build_window.py --kind suite -- ...`.
+Until the C++ backend was frozen, the matrix also built each cell on C++ at O0,
+and a `--parity` mode reported cells that C++ ran correctly but LLVM did not.
+Both are gone: the C++ backend is no longer tested and is not an oracle for
+GTI semantics. At `bcf538640`, 55 cells ran correctly on LLVM where C++ did
+not; in 45 of them C++ dispatched to the most-derived override during base
+destruction.
+
+While another session's verification holds the suite slot, run it at
+`--jobs 2` or less, one matrix at a time; run larger passes through
+`python3 scripts/build_window.py --kind suite -- ...`.
 
 ## Reading the output
 
