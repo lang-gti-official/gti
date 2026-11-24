@@ -72,8 +72,8 @@ jobs:
     if: needs.source.outputs.sanitize == 'true'
     needs: [source]
     # The compiler aggregate's three partitions left when its suites became
-    # tests/ui cases: the instrumented gti-test run below analyses each of
-    # them with the sanitized compiler (gti-test links gti_driver), and its
+    # tests/ui cases: the gti-test-instrumented shards analyse each of them
+    # with the sanitized compiler (gti-test links gti_driver), and its
     # API-only checks run as gti_unit_tests in the subset. Without the
     # removed C++ emitter suites the library partition fits one runner.
     strategy:
@@ -145,7 +145,7 @@ jobs:
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
         run: |
-          # The library partition also runs gti_test_ui (gti-test, gti).
+          # The library partition also checks gti_test_ui's runner (gti-test, gti).
           pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"
           targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${pattern}")"
           read -r -a target_list <<< "${targets}"
@@ -164,22 +164,14 @@ jobs:
             --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
             --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
             -I "${{ matrix.index }},,${{ matrix.count }}"
-      - name: Run the gti-test cases with instrumented programs
-        # gti_test_ui's run (the runner's self-test, tidy, tests/ui and
-        # tests/project; this tree builds no gti_lsp) through the ASan/UBSan
-        # gti-test, with every test program built under the driver's
-        # address,undefined instrumentation by the Clang of the linked LLVM.
-        # An instrumented runner scales its limits 5x by itself; hosted
-        # runners are about 2x slower again, so the limits scale 10x and
-        # only catch hangs. Run directly rather than through CTest, whose
-        # entry would pin the per-commit 2x scale times this tree's timeout
-        # scale. Locally gti_test_ui costs about 370 CPU-seconds; instrumented
-        # on a hosted runner, expect 30 to 60 minutes. The step bound keeps
-        # it from consuming the partition.
+      - name: Check the gti-test runner and tidy the test roots
+        # gti_test_ui's self-test and `--tidy` with the ASan/UBSan gti-test
+        # (about 13 minutes on a hosted runner, run 45349335403); the cases
+        # themselves run in the gti-test-instrumented shards below.
         # It still runs when a library test above failed: its findings are
         # independent of theirs, and the job fails either way.
         if: ${{ !cancelled() && matrix.kind == 'libraries' }}
-        timeout-minutes: 120
+        timeout-minutes: 60
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -188,8 +180,7 @@ jobs:
         run: |
           llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
           export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
-          python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" \
-            --junit "${RUNNER_TEMP}/sanitizers-gti-test.xml"
+          python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" --without-cases
       - name: Preserve sanitizer test evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -197,13 +188,129 @@ jobs:
           name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
           path: |
             ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
-            ${{ runner.temp }}/sanitizers-gti-test.xml
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
           retention-days: 30
       # cache.yml owns the sanitizer cache under its content key; a validation
       # run only restores it.
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+
+  gti-test-instrumented:
+    # gti_test_ui's cases (tests/ui and tests/project; this tree builds no
+    # gti_lsp) through the ASan/UBSan gti-test, with every test program built
+    # under the driver's address,undefined instrumentation by the Clang of the
+    # linked LLVM. One runner at one case at a time did not finish: run
+    # 45349335403 spent its whole 120-minute step on the 8,362 cases (about
+    # 25 single-core hours). Eight standard runners each take one shard
+    # (gti-test's stable path hash) at four cases at a time.
+    name: Instrumented gti-test cases (${{ matrix.shard }}/${{ strategy.job-total }})
+    if: needs.source.outputs.sanitize == 'true'
+    needs: [source]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Free hosted runner disk for the sanitized tree
+        run: bash scripts/free_ci_disk.sh
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          # One gti-test worker: a forked ASan/UBSan compiler holding its
+          # analysis caches, plus the instrumented program it links and runs.
+          # Over two local 1/200 shards one worker peaked at 2.6 GiB and the
+          # four workers' process tree at 9.1 GiB (an overestimate: pages the
+          # forked workers share count in each), so 3.5 GiB each gives the
+          # 15.7 GiB hosted runner four workers with room to spare.
+          GTI_MEMORY_PER_TEST_MIB: 3584
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/sanitizers
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler object cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-
+      - name: Check compiler sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure
+        # The libraries job's configure exactly, so both share cache.yml's
+        # sanitizer cache.
+        run: >-
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DGTI_BUILD_LSP=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=6
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
+      - name: Build the gti-test runner, the compiler and the runtime
+        # Only what gti_test_ui runs (gti-test, gti, gti_runtime), not the
+        # library subset.
+        run: |
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex '^gti_test_ui$')"
+          read -r -a target_list <<< "${targets}"
+          cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
+      - name: Run this shard of the gti-test cases with instrumented programs
+        # An instrumented runner scales its limits 5x by itself; hosted
+        # runners are about 2x slower again, so the limits scale 10x and only
+        # catch hangs. Run directly rather than through CTest, whose entry
+        # would pin the per-commit 2x scale times this tree's timeout scale.
+        # A shard is about 1,045 cases. Two local 1/200 shards (Apple
+        # M-series) averaged 2.3 CPU-seconds a case; at the hosted runners'
+        # 2-2.5x and four workers a shard takes about half an hour, and the
+        # 25 single-core hours run 45349335403 implied give 50 minutes, so
+        # the step bound leaves at least twice that. The runner prints each
+        # failure as it happens and a PROGRESS line every five minutes, and
+        # its JSON report survives a timeout as evidence of where it was.
+        # ASan's larger frames overflow the 8 MiB default stack on deep
+        # analyses (complete_summaries_35 passes at 64 MiB), so the step
+        # raises it for the runner and its forked workers.
+        timeout-minutes: 120
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          GTI_TEST_INSTRUMENTATION: address,undefined
+          GTI_TEST_TIME_SCALE: "10"
+          GTI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: |
+          ulimit -s 65520
+          llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
+          export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
+          python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" \
+            --shard "${GTI_TEST_SHARD}" --junit "${RUNNER_TEMP}/gti-test-cases.xml" \
+            --json "${RUNNER_TEMP}/gti-test-cases.jsonl"
+      - name: Preserve this shard's evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-gti-test-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/gti-test-cases.xml
+            ${{ runner.temp }}/gti-test-cases.jsonl
+          if-no-files-found: warn
+          retention-days: 30
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true
@@ -461,7 +568,7 @@ jobs:
     # out, so the release train identifies the evidence by this job's name.
     name: Sanitizer verdict (${{ needs.source.outputs.sha }})
     if: always() && needs.source.outputs.sanitize == 'true'
-    needs: [source, sanitizers, llvm-sanitizers, tsan, runtime-identity]
+    needs: [source, sanitizers, gti-test-instrumented, llvm-sanitizers, tsan, runtime-identity]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

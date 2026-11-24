@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """The gti_test_ui gate: gti-test's own behaviour, then tidy and the cases.
 
-usage: check.py <gti-test> [--jobs N] [--junit FILE]
-                [--self-test-only | --without-ui]
+usage: check.py <gti-test> [--jobs N] [--junit FILE] [--json FILE]
+                [--without-cases | --without-ui | --shard I/N]
 
 Without options it runs the self-test, tidies every root and runs the cases
 of tests/ui, tests/project and tests/lsp. `--without-ui` leaves tests/ui's
 cases to the sharded `gti_test_ui_<i>` entries (tests/gti_test.cmake), which
 run `gti-test tests/ui --shard I/N` directly; tidy still covers tests/ui.
+`--without-cases` stops after the self-test and tidy. `--shard I/N` runs only
+shard I of every root's cases (gti-test's stable path hash) and leaves the
+self-test and tidy to one `--without-cases` run: the sanitizer workflow splits
+the instrumented corpus this way. `--json FILE` keeps the runner's per-case
+report, which the case run also reads to print its progress.
 
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
@@ -26,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -939,38 +945,84 @@ def lsp_self_test(runner):
                "bless annotates published diagnostics", out)
 
 
+def run_cases(runner, cases, options, report, progress_seconds):
+    """Run the cases, streaming the runner's output as it reports.
+
+    A long run (an instrumented shard takes most of an hour) must say where
+    it is: failures print as they happen, and every `progress_seconds` a
+    PROGRESS line counts the rows the runner has written to its JSON report.
+    The runner buffers that file, so the count trails by up to a buffer's
+    worth of rows; the final RESULT line is exact.
+    """
+    environment = dict(os.environ)
+    environment.pop("CI", None)
+    environment.pop("GTI_TEST_SELF_TEST", None)
+    code, listing = run(runner, *cases, "--list", fixtures=False)
+    if code != 0:
+        sys.stdout.write(listing)
+        return code
+    total = len(listing.splitlines())
+    with tempfile.TemporaryDirectory(prefix="gti-test-progress-") as scratch:
+        rows = Path(report) if report else Path(scratch) / "report.jsonl"
+        print(f"gti-test: {total} cases", flush=True)
+        process = subprocess.Popen([str(runner), *map(str, cases),
+                                    *map(str, options), "--json", str(rows)],
+                                   cwd=ROOT, env=environment)
+        start = time.monotonic()
+        while True:
+            try:
+                return process.wait(timeout=progress_seconds)
+            except subprocess.TimeoutExpired:
+                try:
+                    done = rows.read_bytes().count(b"\n")
+                except OSError:
+                    done = 0
+                minutes = (time.monotonic() - start) / 60
+                print(f"PROGRESS at least {done} of {total} cases after "
+                      f"{minutes:.1f} min", flush=True)
+
+
+def option(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+
+
 def main():
     runner = Path(sys.argv[1]).resolve()
-    jobs = "4"
-    if "--jobs" in sys.argv:
-        jobs = sys.argv[sys.argv.index("--jobs") + 1]
-    self_test(runner)
-    retained_assertion_test(runner)
-    print("gti-test self-test: ok", flush=True)
-    if "--self-test-only" in sys.argv:
-        return 0
+    jobs = option("--jobs") or "4"
+    shard = option("--shard")
+    if shard is not None and not re.fullmatch(r"[1-9]\d*/[1-9]\d*", shard):
+        sys.exit("check.py: --shard takes I/N")
     # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
     roots = ["tests/ui", "tests/project"]
     if (runner.parent / "gti_lsp").exists():
         roots.append("tests/lsp")
     else:
-        print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
-    for root in roots:
-        code, out = run(runner, "--tidy", "--root", ROOT / root,
-                        fixtures=False)
-        sys.stdout.write(out)
-        if code != 0:
-            return code
+        print("gti-test: no gti_lsp beside the runner; tests/lsp skipped",
+              flush=True)
+    # A shard runs cases only: the self-test and tidy check the runner and
+    # the tree once, in the unsharded run beside the shards.
+    if shard is None:
+        self_test(runner)
+        retained_assertion_test(runner)
+        print("gti-test self-test: ok", flush=True)
+        for root in roots:
+            code, out = run(runner, "--tidy", "--root", ROOT / root,
+                            fixtures=False)
+            sys.stdout.write(out)
+            if code != 0:
+                return code
+        if "--without-cases" in sys.argv:
+            return 0
+    cases = [ROOT / root for root in roots
+             if not (root == "tests/ui" and "--without-ui" in sys.argv)]
+    if shard is not None:
+        cases += ["--shard", shard]
     # --junit FILE goes to the run of the tests: CI's per-case report.
-    report = []
-    if "--junit" in sys.argv:
-        report = ["--junit", sys.argv[sys.argv.index("--junit") + 1]]
-    if "--without-ui" in sys.argv:
-        roots.remove("tests/ui")
-    code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
-                    jobs, *report, fixtures=False)
-    sys.stdout.write(out)
-    return code
+    options = ["--jobs", jobs]
+    if option("--junit") is not None:
+        options += ["--junit", option("--junit")]
+    return run_cases(runner, cases, options, option("--json"),
+                     float(os.environ.get("GTI_TEST_PROGRESS_SECONDS") or 300))
 
 
 if __name__ == "__main__":
