@@ -4233,6 +4233,188 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 // deferred by the lexical pass re-enters here later with its declaration's
 // namespace, class and generic scopes re-established, so the analysis it
 // performs is the one it would have performed in place.
+// Specialize the trusted descriptor methods to ordinary switch patterns,
+// visitor calls, propagation and variant construction. These statements go
+// through the same ownership checks and MIR lowering as handwritten source.
+auto SemanticVisitor::Impl::reflectedEnumBody(const FunctionDecl &method,
+                                              const FunctionInfo &function)
+    -> std::shared_ptr<BlockStmt> {
+  const auto &owner = classInfo(function.ownerClass);
+  const bool fields = method.name().lexeme == "visit_fields";
+  const bool visit = owner.compilerType == CompilerTypeKind::MetaType &&
+                     (method.name().lexeme == "visit" || fields);
+  const bool make = owner.compilerType == CompilerTypeKind::MetaEnumerator &&
+                    method.name().lexeme == "make";
+  if (!visit && !make)
+    return nullptr;
+
+  const SemanticType descriptor = substituteType(
+      openClassType(owner.id),
+      {.types = instanceTypeSubstitution, .values = instanceValueSubstitution});
+  if (containsOpenTypeParameter(descriptor) || !concreteReanalysis()) {
+    bodyFlow.deferredGenericFlow = true;
+    return nullptr;
+  }
+  StmtList statements;
+  auto finish = [&] {
+    return std::make_shared<BlockStmt>(std::move(statements));
+  };
+  const auto reject = [&](std::string message, const char *code) {
+    report(method.name(), std::move(message), code);
+    // No specialized body exists after this error, so its empty source
+    // placeholder cannot establish a missing-return diagnostic.
+    bodyFlow.deferredGenericFlow = true;
+    return finish();
+  };
+  if (descriptor.arguments.size() != 1 ||
+      (make && descriptor.valueArguments.size() != 1) ||
+      method.parameters().size() != (visit ? 2u : 1u)) {
+    return reject("Invalid reflected payload operation signature.",
+                  "GTI-S2019");
+  }
+  const auto &subject = descriptor.arguments.front();
+  const auto enumeration = enumTypeFor(subject);
+  if (!enumeration || !enumeration->payload) {
+    return reject("This reflection operation requires a payload enum.",
+                  "GTI-S2117");
+  }
+  if (!compilerTypeClass(CompilerTypeKind::MetaEnumerator) ||
+      !compilerTypeClass(CompilerTypeKind::MetaPayloadField)) {
+    return reject(
+        "Payload reflection needs the alternative and field descriptors.",
+        "GTI-S2019");
+  }
+  const auto &anchor = method.name();
+  auto token = [&](TokenKind kind, std::string name) {
+    Token generated(kind, std::move(name), std::monostate{}, anchor.position,
+                    anchor.line, anchor.source, false, true);
+    generated.sourceLength = static_cast<std::uint32_t>(anchor.lexeme.size());
+    generated.expansion = ++nextExpansion;
+    return generated;
+  };
+  auto id = [&](std::string name) {
+    return token(TokenKind::IDENTIFIER, std::move(name));
+  };
+  auto var = [&](const Token &name) {
+    return std::make_unique<Variable>(name);
+  };
+  auto call = [&](ExprPtr target, ExprList args,
+                  std::vector<TypeRef> types = {}) -> ExprPtr {
+    return std::make_unique<Call>(std::move(target), std::move(types),
+                                  token(TokenKind::RIGHT_PAREN, ")"),
+                                  std::move(args));
+  };
+  auto indexType = [&](size_t index) {
+    auto literal = token(TokenKind::INT_LITERAL, std::to_string(index));
+    literal.literal = static_cast<uint64_t>(index);
+    TypeRef argument(literal);
+    argument.genericArgumentSyntax = GenericArgumentSyntax::Value;
+    argument.genericValueExpression =
+        std::make_shared<ArrayExtentExpr>(literal);
+    return argument;
+  };
+  TypeRef subjectType(owner.declaration->genericParameters().front().name);
+  auto metaobject = [&](CompilerTypeKind kind, size_t index,
+                        std::optional<size_t> field = {}) {
+    const auto &cls = classInfo(compilerTypeClass(kind));
+    std::vector<Token> names;
+    for (auto &name : cls.namespaceScope)
+      names.push_back(id(name));
+    names.push_back(id(cls.name.lexeme));
+    std::vector<TypeRef> args{subjectType, indexType(index)};
+    if (field)
+      args.push_back(indexType(*field));
+    return call(std::make_unique<QualifiedName>(NamePath(std::move(names))), {},
+                std::move(args));
+  };
+  auto callback = [&](std::string name, ExprList args) {
+    return call(std::make_unique<Get>(var(method.parameters().back().name),
+                                      token(TokenKind::DOT, "."),
+                                      id(std::move(name))),
+                std::move(args));
+  };
+  auto propagate = [&](ExprPtr value) -> ExprPtr {
+    return std::make_unique<Unary>(token(TokenKind::QUESTION, "?"),
+                                   std::move(value));
+  };
+  auto returned = [&](ExprPtr value) {
+    return std::make_shared<ReturnStmt>(token(TokenKind::RETURN, "return"),
+                                        std::move(value));
+  };
+  std::vector<SwitchArm> arms;
+  size_t first = make ? descriptor.valueArguments.front().value : 0;
+  if (first >= enumeration->enumerators.size()) {
+    return reject("Reflected alternative index is out of range.", "GTI-S2111");
+  }
+  for (size_t i = first;
+       i < (make ? first + 1 : enumeration->enumerators.size()); ++i) {
+    const auto &variant = enumeration->enumerators[i];
+    ExprPtr name = std::make_unique<QualifiedName>(
+        NamePath(std::vector<Token>{subjectType.name.last(),
+                                    id(variant.declaration->name.lexeme)}),
+        subjectType);
+    ExprList pattern, values;
+    SwitchArm arm;
+    auto callWithTag = [&](std::string operation) {
+      ExprList args;
+      args.push_back(metaobject(CompilerTypeKind::MetaEnumerator, i));
+      return callback(std::move(operation), std::move(args));
+    };
+    if (visit && !fields)
+      values.push_back(metaobject(CompilerTypeKind::MetaEnumerator, i));
+    if (fields)
+      arm.statements.push_back(std::make_shared<ExpressionStmt>(
+          anchor, propagate(callWithTag("begin"))));
+    for (size_t p = 0; p < variant.payloadTypes.size(); ++p) {
+      const auto local = id("payload_" + std::to_string(p));
+      if (visit) {
+        pattern.push_back(std::make_unique<Variable>(
+            local, token(TokenKind::AUTO, "auto"),
+            token(TokenKind::AMPERSAND, "&"), std::nullopt));
+        if (fields) {
+          ExprList args;
+          args.push_back(metaobject(CompilerTypeKind::MetaPayloadField, i, p));
+          args.push_back(var(local));
+          arm.statements.push_back(std::make_shared<ExpressionStmt>(
+              anchor, propagate(callback("field", std::move(args)))));
+        } else {
+          values.push_back(var(local));
+        }
+      } else {
+        ExprList args;
+        args.push_back(metaobject(CompilerTypeKind::MetaPayloadField, i, p));
+        auto produced = propagate(callback("produce", std::move(args)));
+        statements.push_back(std::make_shared<VariableDecl>(
+            Mutability::Immutable, TypeRef(token(TokenKind::AUTO, "auto")),
+            local, std::move(produced)));
+        ExprList moveArgs;
+        moveArgs.push_back(var(local));
+        values.push_back(call(std::make_unique<QualifiedName>(NamePath(
+                                  std::vector<Token>{id("std"), id("move")})),
+                              std::move(moveArgs)));
+      }
+    }
+    if (make) {
+      if (!values.empty())
+        name = call(std::move(name), std::move(values));
+      statements.push_back(returned(std::move(name)));
+    } else {
+      if (!pattern.empty())
+        name = call(std::move(name), std::move(pattern));
+      arm.labels.push_back({token(TokenKind::CASE, "case"), std::move(name),
+                            token(TokenKind::COLON, ":")});
+      arm.statements.push_back(returned(
+          fields ? callWithTag("end") : callback("visit", std::move(values))));
+      arms.push_back(std::move(arm));
+    }
+  }
+  if (visit)
+    statements.push_back(std::make_shared<SwitchStmt>(
+        token(TokenKind::SWITCH, "switch"),
+        var(method.parameters().front().name), std::move(arms)));
+  return finish();
+}
+
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid,
@@ -4354,6 +4536,12 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
 
+  if (functionInfo && functionInfo->ownerClass && !editedBody) {
+    if (auto generated = reflectedEnumBody(stmt, *functionInfo)) {
+      editedBody = generated.get();
+      semanticModel.recordReflectedBody(stmt, std::move(generated));
+    }
+  }
   // A function body owns the parameter scope, so do not add another scope.
   const auto &statements =
       (editedBody ? editedBody : stmt.body().get())->statements();

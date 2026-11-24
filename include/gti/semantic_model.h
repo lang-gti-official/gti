@@ -2782,6 +2782,15 @@ public:
 
   // Primary body facts are required before concrete HIR discovery may use a
   // function definition. Invalid primary analysis never reaches HIR.
+  void recordReflectedBody(const FunctionDecl &function,
+                           std::shared_ptr<BlockStmt> body) {
+    reflectedBodies.insert_or_assign(&function, std::move(body));
+  }
+  [[nodiscard]] std::shared_ptr<BlockStmt>
+  reflectedBody(const FunctionDecl &function) const {
+    const auto found = reflectedBodies.find(&function);
+    return found == reflectedBodies.end() ? nullptr : found->second;
+  }
   void recordAnalyzedFunctionBody(const FunctionDecl &body) {
     analyzedFunctionBodies.insert(&body);
   }
@@ -3407,6 +3416,9 @@ private:
   std::unordered_map<const ConstexprForStmt *,
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
+  // Each concrete function instance owns its checked, specialized body.
+  std::unordered_map<const FunctionDecl *, std::shared_ptr<BlockStmt>>
+      reflectedBodies;
   std::unordered_map<const ExpressionStmt *, StmtPtr> macroExpansions;
   std::unordered_map<const Call *, StmtPtr> macroValueExpansions;
   std::unordered_map<const Call *, const FunctionDecl *> macroValueDeclarations;

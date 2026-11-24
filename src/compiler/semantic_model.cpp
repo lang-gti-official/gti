@@ -2211,6 +2211,7 @@ void SemanticModel::clear() {
   captureBorrowDependencies.clear();
   constexprBranches.clear();
   constexprForExpansions.clear();
+  reflectedBodies.clear();
   macroExpansions.clear();
   macroValueExpansions.clear();
   macroValueDeclarations.clear();

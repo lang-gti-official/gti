@@ -2682,6 +2682,10 @@ private:
     const BlockStmt *block = editedDeclaration == bodyDeclaration
                                  ? replacementBody
                                  : bodyDeclaration->body().get();
+    if (auto reflected = model->reflectedBody(*bodyDeclaration)) {
+      block = reflected.get();
+      output.program.sourceStatementOwners_.push_back(std::move(reflected));
+    }
     if (constantExpression &&
         snapshot.declaration == constantExpressionFunction) {
       // The compiler-owned staged entry has one return. The expression has

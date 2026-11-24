@@ -5566,7 +5566,8 @@
         "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
         "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
         "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
-        "infallible request builders whose refused headers or CA paths surface from send before any connection"
+        "infallible request builders whose refused headers or CA paths surface from send before any connection",
+        "checked URL JSON string serialization and nested validation with a payload enum in the same monitoring configuration"
       ],
       "evidence": [
         "docs/language/http.md",
@@ -5574,7 +5575,9 @@
         "tests/fixtures/http_url_components.gti",
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
-        "tests/http_url_operators_test.py"
+        "tests/http_url_operators_test.py",
+        "tests/slow/stdlib/json/http_url_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
       ]
     },
     {
@@ -5883,7 +5886,8 @@
         "every errc through decode failures with offsets, JSON Pointer paths and line/column",
         "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
         "pretty printing and decode limits",
-        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs"
+        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs",
+        "payload enums with unit and named-field cases, nested checked URLs, custom codec precedence and absolute error paths"
       ],
       "evidence": [
         "docs/language/json.md",
@@ -5896,7 +5900,11 @@
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
         "tests/slow/stdlib/json/dynamic",
-        "tests/ui/reflection/runtime"
+        "tests/ui/reflection/runtime",
+        "tests/slow/stdlib/json/http_url_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_errors.gti",
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
       ]
     },
     {
@@ -6706,6 +6714,7 @@
         "std::meta::constructors_of",
         "std::meta::enumerator::index",
         "std::meta::enumerator::line",
+        "std::meta::enumerator::make",
         "std::meta::enumerator::name",
         "std::meta::enumerator::payload_count",
         "std::meta::enumerator::payload_fields",
@@ -6759,6 +6768,7 @@
         "std::meta::is_unsigned_integral",
         "std::meta::lookup_methods_of",
         "std::meta::lookup_operators_of",
+        "std::meta::make_alternative",
         "std::meta::method::index",
         "std::meta::method::invoke",
         "std::meta::method::is_constexpr",
@@ -6843,7 +6853,11 @@
         "std::meta::type::name",
         "std::meta::type::operators",
         "std::meta::type::primary_name",
-        "std::meta::type_of"
+        "std::meta::type::visit",
+        "std::meta::type::visit_fields",
+        "std::meta::type_of",
+        "std::meta::visit",
+        "std::meta::visit_fields"
       ],
       "case_ids": [
         "meta",
@@ -6880,7 +6894,9 @@
         "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
-        "examples/185-reflected-method-dispatch.gti"
+        "examples/185-reflected-method-dispatch.gti",
+        "tests/ui/reflection/payload_visit.gti",
+        "tests/ui/reflection/payload_make.gti"
       ]
     },
     {
