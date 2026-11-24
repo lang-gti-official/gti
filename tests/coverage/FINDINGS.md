@@ -1306,7 +1306,8 @@ worth capturing for whoever writes the language reference.
 ## Coverage gaps still open
 
 After the A-series audit, the largest remaining gaps are:
-- the combination matrices are not gated (they print tables and always exit 0);
+- the combination matrices are not gated (they now exit nonzero on a hard
+  verdict, but no CTest or workflow runs them);
 - Linux and Windows execution of the corpus is not exercised by this gate;
 - LSP behaviour is not covered by the corpus;
 - the stress inputs (F18–F20) still run outside CTest.
