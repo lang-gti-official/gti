@@ -338,7 +338,9 @@ and rollback, with `GITHUB_TOKEN`; and the rollup bot, the release cut and the
 automatic revert's `act` job, with the rollup App's token. No other workflow
 uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
-the CPU/memory-based budgets. Compiler-object caches are separate for native, sanitizer and bundled-release
+the CPU/memory-based budgets. Full validation's Linux shard and installed-toolchain
+steps log `scripts/runner_monitor.sh` samples, so a runner GitHub reports as
+lost or shut down still shows its memory, disk and largest processes. Compiler-object caches are separate for native, sanitizer and bundled-release
 profiles; cache errors never skip builds or validation.
 GitHub shares a cache across branches only when `main` saved it, so
 `workflows/cache.yml` warms the system-LLVM native and sanitizer configurations

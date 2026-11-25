@@ -541,6 +541,9 @@ def nightly_contract(root):
         assert rows and sorted(index for _, index in rows) == list(range(rows[0][0])), platform
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
+    # A runner that runs out of memory loses its files; the step logs say what it held.
+    assert 'bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/' in suite
+    assert package.index("bash scripts/runner_monitor.sh 30 &") < package.index("lsp_smoke_test.py")
     gate = jobs(ci)["gate"]
     assert "fast, fast-ui, source-stdlib, lsp]" in gate and "package" not in gate
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
