@@ -30,6 +30,7 @@ def frozen_plan(case, compiler, cxx, runtime, repository, scratch):
     steps = []
     for optimization in optimizations:
         output = case_root / f'program-{optimization}'
+        run_root = case_root / f'run-{optimization}'
         command = [str(compiler), str(source), '--cxx', str(cxx), f'-{optimization}']
         if case.get('backend') is not None:
             command += ['--backend', case['backend']]
@@ -44,7 +45,8 @@ def frozen_plan(case, compiler, cxx, runtime, repository, scratch):
                 'timeout': case.get('build_timeout_seconds', 300), 'check': False,
             },
             'run_command': [str(output)],
-            'run_options': {'cwd': case_root, 'input': case.get('stdin', ''),
+            'run_root': run_root,
+            'run_options': {'cwd': run_root, 'input': case.get('stdin', ''),
                             'text': True, 'capture_output': True, 'timeout': 120, 'check': False},
         })
     return {'case_root': case_root, 'mode': case['mode'], 'expected': case['expected'],
@@ -114,8 +116,6 @@ def exercise(case, root, *, mutation=None):
             assert command == step['command'] and output == step['executable']
             assert options == step['build_options']
             assert options['cwd'].is_dir()
-            for name, contents in expected['files'].items():
-                assert (options['cwd'] / name).read_bytes() == contents
             builds.append(command)
             if case['mode'] == 'diagnostic':
                 return subprocess.CompletedProcess(command,
@@ -129,6 +129,13 @@ def exercise(case, root, *, mutation=None):
             step = expected['steps'][len(runs)]
             assert command == step['run_command'] and options == step['run_options']
             assert 'env' not in options, 'compiler overrides leaked into runtime environment'
+            # Every level starts from the seeded files alone: what an earlier
+            # level's program created must not be visible to a later one.
+            cwd = options['cwd']
+            assert sorted(path.name for path in cwd.iterdir()) == sorted(expected['files'])
+            for name, contents in expected['files'].items():
+                assert (cwd / name).read_bytes() == contents
+            (cwd / 'created-by-program').write_bytes(b'left behind')
             runs.append(command)
             wanted = case['expected']
             return subprocess.CompletedProcess(command,
