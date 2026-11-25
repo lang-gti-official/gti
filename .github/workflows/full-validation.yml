@@ -165,7 +165,7 @@ jobs:
         run: |
           bash scripts/runner_monitor.sh 30 &
           monitor=$!
-          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
+          trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT
           export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
           source="${GITHUB_WORKSPACE}"
           cd "${RUNNER_TEMP}"
@@ -423,7 +423,7 @@ jobs:
         run: |
           bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log" &
           monitor=$!
-          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
+          trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT
           python3 scripts/validation_checks.py shard --build build \
             --test-set "${GTI_SHARD_TEST_SET}" \
             --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}" \

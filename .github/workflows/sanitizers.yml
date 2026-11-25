@@ -306,7 +306,7 @@ jobs:
           ulimit -s 65520
           (while sleep 300; do echo "MEMORY $(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo) MiB available"; done) &
           monitor=$!
-          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
+          trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT
           llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
           export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
           python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" \

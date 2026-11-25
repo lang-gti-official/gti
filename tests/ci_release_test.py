@@ -544,6 +544,12 @@ def nightly_contract(root):
     # A runner that runs out of memory loses its files; the step logs say what it held.
     assert 'bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/' in suite
     assert package.index("bash scripts/runner_monitor.sh 30 &") < package.index("lsp_smoke_test.py")
+    # Under `bash -e` a failing command in the EXIT trap fails a passing step.
+    # On macOS the monitor has already exited, so `pkill -P` finds no child
+    # (every macOS job of run 45585067850 failed this way).
+    cleanup = """trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT"""
+    assert suite.count(cleanup) == 1 and package.count(cleanup) == 1
+    assert "pkill -P" not in suite.replace(cleanup, "") + package.replace(cleanup, "")
     gate = jobs(ci)["gate"]
     assert "fast, fast-ui, source-stdlib, lsp]" in gate and "package" not in gate
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
