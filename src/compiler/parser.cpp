@@ -742,8 +742,7 @@ private:
         stampExtent(operation, start);
         body.operations.push_back(std::move(operation));
       } catch (const ParseError &) {
-        synchronize(true, false, false, true);
-        ensureRecoveryProgress(itemStart);
+        synchronizeItem(itemStart, true, false, false, true);
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
@@ -1560,8 +1559,7 @@ private:
         try {
           members.emplace_back(item(ItemContext::ClassMember));
         } catch (const ParseError &) {
-          synchronize(true, false, false, true);
-          ensureRecoveryProgress(itemStart);
+          synchronizeItem(itemStart, true, false, false, true);
         }
       }
 
@@ -2793,8 +2791,7 @@ private:
       try {
         members.emplace_back(item(ItemContext::MutableFieldGroup));
       } catch (const ParseError &) {
-        synchronize(true, false, false, false, false, false);
-        ensureRecoveryProgress(itemStart);
+        synchronizeItem(itemStart, true, false, false, false, false, false);
       }
     }
     Token rightBrace = consume(TokenKind::RIGHT_BRACE,
@@ -3354,8 +3351,7 @@ private:
       try {
         statements.emplace_back(item(ItemContext::Block));
       } catch (const ParseError &) {
-        synchronize(true, true, false);
-        ensureRecoveryProgress(itemStart);
+        synchronizeItem(itemStart, true, true, false);
       }
     }
 
@@ -3622,11 +3618,10 @@ private:
         try {
           statements.emplace_back(item(context));
         } catch (const ParseError &) {
-          synchronize(context != ItemContext::Declaration,
-                      context == ItemContext::Block,
-                      context == ItemContext::Declaration,
-                      context == ItemContext::ClassMember);
-          ensureRecoveryProgress(itemStart);
+          synchronizeItem(itemStart, context != ItemContext::Declaration,
+                          context == ItemContext::Block,
+                          context == ItemContext::Declaration,
+                          context == ItemContext::ClassMember);
         }
       }
     } catch (const ConditionalBoundary &) {
@@ -4138,8 +4133,7 @@ private:
           try {
             statements.emplace_back(item(ItemContext::Block));
           } catch (const ParseError &) {
-            synchronize(true, true, false, false, true);
-            ensureRecoveryProgress(itemStart);
+            synchronizeItem(itemStart, true, true, false, false, true);
           }
         }
         arms.push_back({std::move(labels), std::move(statements)});
@@ -5807,11 +5801,24 @@ private:
     }
   }
 
-  // Synchronization may stop at a token that starts an item elsewhere.
-  // Consume it only if neither the failed parse nor recovery made progress.
-  void ensureRecoveryProgress(std::size_t itemStart) {
-    if (current == itemStart && !isAtEnd())
+  // A token that starts an item elsewhere can be invalid in this context.
+  // Preserve normal recovery when it advances; otherwise skip the rejected
+  // token and synchronize the rest of that item up to the next valid starter.
+  void synchronizeItem(std::size_t itemStart, bool stopAtRightBrace,
+                       bool allowStatements, bool allowClasses,
+                       bool allowAccessSpecifiers = false,
+                       bool stopAtSwitchLabel = false,
+                       bool stopAtTypedDeclaration = true) {
+    const auto recover = [&] {
+      synchronize(stopAtRightBrace, allowStatements, allowClasses,
+                  allowAccessSpecifiers, stopAtSwitchLabel,
+                  stopAtTypedDeclaration);
+    };
+    recover();
+    if (current == itemStart && !isAtEnd()) {
       advance();
+      recover();
+    }
   }
 
   void synchronize(bool stopAtRightBrace, bool allowStatements,
