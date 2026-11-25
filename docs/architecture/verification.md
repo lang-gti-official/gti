@@ -236,6 +236,17 @@ commit before a beta cut or stable promotion. The frozen C++ backend is not
 part of validation; its tests and `cpp-backend.yml` were removed on
 2026-11-16 ([test-suite redesign](../plans/test-suite-redesign.md)).
 
+Hosted Linux runners have 16 GiB and four vCPUs, and one that runs out of
+memory dies with its files: GitHub reports only a lost runner or a shutdown
+signal. Full validation's shard and installed-toolchain steps therefore log
+`scripts/runner_monitor.sh` samples (available memory, swap, free disk, the
+largest processes and the CTest entries still running). Whole-program
+analysis memory currently grows quadratically with the number of initialized
+globals, so a test that needs a slow analysis bounds its generated document:
+`lsp_smoke_test.py` uses 4000 globals (`SLOW_DOCUMENT_GLOBALS`, near 3 GiB
+in one `gti_lsp`), after 8000 peaked above 9 GiB and took down runners from
+2026-11-22.
+
 Runtime harnesses take their modes from `tests/backend_modes.py`
 (`native_modes()`: LLVM at the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by
 default and per commit, `O0,O3` or `O3` in the slow tier)

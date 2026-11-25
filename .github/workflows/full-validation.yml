@@ -160,7 +160,12 @@ jobs:
           printf 'GTI_STAGE_DIRECTORY=%s\n' "${stage}" >> "${GITHUB_ENV}"
           cmake --install build --config Release --prefix "${stage}" --component gti_toolchain
       - name: Test installed toolchain
+        # The LSP smoke's whole-program analyses peak at several GiB; the
+        # monitor (see the integration shards) records what a dying runner held.
         run: |
+          bash scripts/runner_monitor.sh 30 &
+          monitor=$!
+          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
           export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
           source="${GITHUB_WORKSPACE}"
           cd "${RUNNER_TEMP}"
@@ -411,13 +416,20 @@ jobs:
           GTI_SHARD_INDEX: ${{ matrix.index }}
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
           GTI_SHARD_TEST_SET: ${{ matrix.platform == 'darwin' && 'darwin' || 'full' }}
-        run: >-
-          python3 scripts/validation_checks.py shard --build build
-          --test-set "${GTI_SHARD_TEST_SET}"
-          --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
-          --jobs "${GTI_TEST_JOBS}"
-          --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.json"
-          --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log"
+        # A hosted runner that runs out of memory dies without its shard log
+        # (GitHub reports a lost runner or a shutdown signal). The monitor
+        # prints memory, disk, the largest processes and the running tests to
+        # the step log every minute, which survives a shutdown signal.
+        run: |
+          bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log" &
+          monitor=$!
+          trap 'pkill -P "${monitor}" 2>/dev/null; kill "${monitor}" 2>/dev/null || true' EXIT
+          python3 scripts/validation_checks.py shard --build build \
+            --test-set "${GTI_SHARD_TEST_SET}" \
+            --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}" \
+            --jobs "${GTI_TEST_JOBS}" \
+            --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.json" \
+            --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log"
       - name: Show the shard log on failure
         if: failure()
         env:
