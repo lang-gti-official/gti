@@ -743,8 +743,7 @@ private:
         body.operations.push_back(std::move(operation));
       } catch (const ParseError &) {
         synchronize(true, false, false, true);
-        if (current == itemStart)
-          advance();
+        ensureRecoveryProgress(itemStart);
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
@@ -1557,10 +1556,12 @@ private:
     currentClassKind = kind;
     try {
       while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+        const auto itemStart = current;
         try {
           members.emplace_back(item(ItemContext::ClassMember));
         } catch (const ParseError &) {
           synchronize(true, false, false, true);
+          ensureRecoveryProgress(itemStart);
         }
       }
 
@@ -2788,10 +2789,12 @@ private:
 
     StmtList members;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         members.emplace_back(item(ItemContext::MutableFieldGroup));
       } catch (const ParseError &) {
         synchronize(true, false, false, false, false, false);
+        ensureRecoveryProgress(itemStart);
       }
     }
     Token rightBrace = consume(TokenKind::RIGHT_BRACE,
@@ -3347,10 +3350,12 @@ private:
     StmtList statements;
 
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         statements.emplace_back(item(ItemContext::Block));
       } catch (const ParseError &) {
         synchronize(true, true, false);
+        ensureRecoveryProgress(itemStart);
       }
     }
 
@@ -3367,20 +3372,9 @@ private:
                                   : SyntaxCompletionKind::Statement);
     }
     const Token start = peek();
-    const std::size_t itemStart = current;
-    try {
-      StmtPtr result = itemWithoutExtent(context);
-      stampExtent(result, start);
-      return result;
-    } catch (const ParseError &) {
-      // A recovery starter may be invalid in this particular item context.
-      // Retrying that same token cannot make progress. Conditional branch
-      // boundaries belong to the enclosing conditional collector.
-      if (current == itemStart && !isAtEnd() &&
-          !(conditionalDepth > 0 && isConditionalBoundary()))
-        advance();
-      throw;
-    }
+    StmtPtr result = itemWithoutExtent(context);
+    stampExtent(result, start);
+    return result;
   }
 
   void stampExtent(const StmtPtr &statement, const Token &start) const {
@@ -3624,6 +3618,7 @@ private:
     try {
       while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
              !isConditionalBoundary()) {
+        const auto itemStart = current;
         try {
           statements.emplace_back(item(context));
         } catch (const ParseError &) {
@@ -3631,6 +3626,7 @@ private:
                       context == ItemContext::Block,
                       context == ItemContext::Declaration,
                       context == ItemContext::ClassMember);
+          ensureRecoveryProgress(itemStart);
         }
       }
     } catch (const ConditionalBoundary &) {
@@ -4138,10 +4134,12 @@ private:
         StmtList statements;
         while (!check(TokenKind::CASE) && !check(TokenKind::DEFAULT) &&
                !check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          const auto itemStart = current;
           try {
             statements.emplace_back(item(ItemContext::Block));
           } catch (const ParseError &) {
             synchronize(true, true, false, false, true);
+            ensureRecoveryProgress(itemStart);
           }
         }
         arms.push_back({std::move(labels), std::move(statements)});
@@ -5807,6 +5805,13 @@ private:
     default:
       return std::nullopt;
     }
+  }
+
+  // Synchronization may stop at a token that starts an item elsewhere.
+  // Consume it only if neither the failed parse nor recovery made progress.
+  void ensureRecoveryProgress(std::size_t itemStart) {
+    if (current == itemStart && !isAtEnd())
+      advance();
   }
 
   void synchronize(bool stopAtRightBrace, bool allowStatements,

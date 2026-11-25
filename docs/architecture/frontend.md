@@ -511,8 +511,8 @@ phases; `FrontendOptions::analyzeRecoveredProgram` lets the LSP semantically
 analyze the safe recovered subset while keeping code generation disabled.
 A recovered program stops after HIR: semantics reports nothing about recovered
 nodes, so their bodies can be incomplete, and MIR runs only on a program that
-parsed. An item parser that rejects its initial token consumes that token
-before resynchronizing, preserving subsequent valid items.
+parsed. If both the item parse and synchronization stop at the same initial
+token, the collector consumes it before retrying.
 Recovery nested inside a compile-time branch propagates an unconsumed
 `#elif`, `#else`, or `#endif` boundary to the nearest conditional parser. A
 continuation directive with no open conditional is instead advanced as invalid
