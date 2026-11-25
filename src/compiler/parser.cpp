@@ -706,6 +706,7 @@ private:
     body.leftBrace =
         consume(TokenKind::LEFT_BRACE, "Expect '{' before concept body.");
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       const Token start = peek();
       try {
         if (match({TokenKind::TYPENAME})) {
@@ -742,6 +743,8 @@ private:
         body.operations.push_back(std::move(operation));
       } catch (const ParseError &) {
         synchronize(true, false, false, true);
+        if (current == itemStart)
+          advance();
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
@@ -3364,9 +3367,20 @@ private:
                                   : SyntaxCompletionKind::Statement);
     }
     const Token start = peek();
-    StmtPtr result = itemWithoutExtent(context);
-    stampExtent(result, start);
-    return result;
+    const std::size_t itemStart = current;
+    try {
+      StmtPtr result = itemWithoutExtent(context);
+      stampExtent(result, start);
+      return result;
+    } catch (const ParseError &) {
+      // A recovery starter may be invalid in this particular item context.
+      // Retrying that same token cannot make progress. Conditional branch
+      // boundaries belong to the enclosing conditional collector.
+      if (current == itemStart && !isAtEnd() &&
+          !(conditionalDepth > 0 && isConditionalBoundary()))
+        advance();
+      throw;
+    }
   }
 
   void stampExtent(const StmtPtr &statement, const Token &start) const {

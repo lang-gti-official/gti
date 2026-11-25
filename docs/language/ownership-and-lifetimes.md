@@ -1944,6 +1944,11 @@ the environment noncopyable. Moving the environment transfers its dependencies
 without moving their referents. Borrowed environments cannot be assigned or
 relocated as independent objects.
 
+A generic function that takes ownership of a closure with borrowed captures
+can return the exact closure with its result borrow tied to that parameter.
+Returning it inside a different class through that owned callable parameter
+is currently rejected at the call site (GTI-S2046).
+
 Within an instance method, `[&this]` borrows the receiver read-only and
 `[mut &this]` borrows it exclusively. The latter requires a mutable receiver
 and a mutable closure binding. Access captured members explicitly through

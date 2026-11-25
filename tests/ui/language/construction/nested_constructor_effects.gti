@@ -1,0 +1,24 @@
+// Nested constructor effects are reusable across repeated calls down a chain.
+struct Leaf { Leaf(int value) {} };
+struct Node1 { Node1(int value) { Leaf child = Leaf(value); } };
+struct Node2 { Node2(int value) { Node1 child = Node1(value); } };
+struct Node3 { Node3(int value) { Node2 child = Node2(value); } };
+struct Node4 { Node4(int value) { Node3 child = Node3(value); } };
+struct Node5 { Node5(int value) { Node4 child = Node4(value); } };
+struct Node6 { Node6(int value) { Node5 child = Node5(value); } };
+struct Node7 { Node7(int value) { Node6 child = Node6(value); } };
+struct Node8 { Node8(int value) { Node7 child = Node7(value); } };
+struct Node9 { Node9(int value) { Node8 child = Node8(value); } };
+struct Node10 { Node10(int value) { Node9 child = Node9(value); } };
+struct Node11 { Node11(int value) { Node10 child = Node10(value); } };
+struct Node12 { Node12(int value) { Node11 child = Node11(value); } };
+struct Node13 { Node13(int value) { Node12 child = Node12(value); } };
+struct Node14 { Node14(int value) { Node13 child = Node13(value); } };
+struct Node15 { Node15(int value) { Node14 child = Node14(value); } };
+struct Node16 { Node16(int value) { Node15 child = Node15(value); } };
+struct Node17 { Node17(int value) { Node16 child = Node16(value); } };
+struct Node18 { Node18(int value) { Node17 child = Node17(value); } };
+int main() {
+  Node18 root = Node18(7);
+  return 0;
+}

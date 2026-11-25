@@ -1,0 +1,6 @@
+// Recovery skips an invalid access keyword and reaches the next protocol member.
+//@ parse-fail
+concept Sample<T> {
+  public  //~ ERROR GTI-P0001
+  typename Item;
+};

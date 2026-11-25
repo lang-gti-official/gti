@@ -173,6 +173,7 @@ auto SemanticVisitor::Impl::registerGlobalBorrowStorage(
     }
 
     const SourceUnitId sourceUnit = sourceUnitFor(variable->name());
+    currentSourceUnit = sourceUnit;
     const SemanticType type = typeOf(
         variable->type(),
         variable->isMutable() ? Mutability::Mutable : Mutability::Immutable,
