@@ -1946,8 +1946,10 @@ relocated as independent objects.
 
 A generic function that takes ownership of a closure with borrowed captures
 can return the exact closure with its result borrow tied to that parameter.
-Returning it inside a different class through that owned callable parameter
-is currently rejected at the call site (GTI-S2046).
+Passing a fresh borrowing lambda to a factory that returns it inside a
+different class is currently rejected (GTI-S2046). A named closure can be
+transferred with `std::move` when the factory has a checked contract that
+moves the closure into an exact result field.
 
 Within an instance method, `[&this]` borrows the receiver read-only and
 `[mut &this]` borrows it exclusively. The latter requires a mutable receiver
