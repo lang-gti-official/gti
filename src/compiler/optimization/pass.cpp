@@ -206,6 +206,17 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
         const bool receiver =
             instruction.receiver && instruction.receiver->place == place.id;
         if (destination) {
+          // Program storage lives beyond the module initializer. A load in
+          // the same body does not make its published store a local SSA write.
+          const auto *step = address.kind == MirBodyKind::Module
+                                 ? program.programInitializationPlan().findStep(
+                                       block.programInitializationStep)
+                                 : nullptr;
+          if (step && step->storagePlace == place.id) {
+            miss = MirScalarPromotionMissReason::UnsupportedAccess;
+            eligible = false;
+            break;
+          }
           const bool simpleWrite =
               (instruction.kind == MirInstructionKind::Initialize ||
                (instruction.kind == MirInstructionKind::Assign &&

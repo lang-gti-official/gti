@@ -851,9 +851,30 @@ the exact code-unit bits and cannot fail, including in constant contexts. They
 are not numeric promotions, Unicode conversion, or arithmetic operations;
 implicit conversion and other integer widths remain rejected.
 
-Built-in integer arithmetic first applies GTI's integer promotions and exact
-common-type rules. The operation then executes in that fixed-width result
-domain. Signed and unsigned `+`, `-`, and `*` produce a defined runtime failure
+Built-in arithmetic promotes `int8_t`, `uint8_t`, `int16_t` and `uint16_t`
+to `int32_t`. The 32- and 64-bit fixed-width types retain their width and
+signedness. A binary arithmetic operation on integers chooses its common
+type by the following rules.
+
+- If both promoted operands have the same signedness, the wider type is the
+  common type. Thus `uint16_t + uint16_t` computes an `int32_t`.
+- For mixed signedness, a signed type that can represent the unsigned
+  operand's entire range is the common type. For example, `int64_t + uint32_t`
+  computes an `int64_t`.
+- Otherwise the unsigned type is usable if the other operand was originally
+  unsigned and fits its width, or is an unsuffixed integer literal whose
+  value fits the unsigned type. Thus `uint16_t + uint32_t` and
+  `uint32_t + 1` both compute a `uint32_t`. An `int32_t` variable and a
+  `uint32_t` variable require an explicit conversion to a suitable common
+  type. A signed suffix such as `1i32` preserves the literal's signed type.
+
+The operation is checked in the common result type. For example,
+`-32767i16 - 1i16` computes `-32768` in `int32_t`. An explicit checked
+conversion such as `int16_t(a + b)` narrows a dynamic result. An
+out-of-range conversion raises `GTI-R0006`. Arithmetic overflow in the
+result type raises `GTI-R0001`.
+
+Signed and unsigned `+`, `-`, and `*` produce a defined runtime failure
 when the mathematical result is outside that domain; unsigned arithmetic does
 not wrap implicitly. Integer `/` truncates toward zero and fails for a zero
 divisor or a signed minimum divided by `-1`. Integer `%` fails for a zero

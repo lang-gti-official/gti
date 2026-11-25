@@ -1,0 +1,14 @@
+// Global fixed arrays resolve their enum elements in the declaring unit.
+//@ run-pass
+enum class Kind { first, second };
+enum Event { empty, number(int value) };
+Kind values[2] = {Kind::first, Kind::second};
+thread_local Event events[2] = {Event::number(7), Event::empty};
+constexpr Kind constants[2] = {Kind::second, Kind::first};
+int main() {
+  if (values[1] != Kind::second || constants[1] != Kind::first) return 1;
+  switch (events[0]) {
+    case Event::number(auto& value): return value - 7;
+    default: return 2;
+  }
+}

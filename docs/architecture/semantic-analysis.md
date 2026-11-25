@@ -3563,7 +3563,9 @@ same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
 the ordinary loan-conflict analysis and lower to exact HIR/MIR symbol places.
 Function borrow-summary resolution uses a separate declaration registry for
-namespace storage because summaries precede lexical body analysis. It reuses
+namespace storage because summaries precede lexical body analysis. It resolves
+each storage type using the names visible from the declaring source unit,
+including the element type of a namespace-scope array. It reuses
 the eventual tooling `SymbolId` without publishing the variable into ordinary
 lookup, so this support does not make namespace variables forward-declarable.
 When every return in a free/static function resolves to one identical global

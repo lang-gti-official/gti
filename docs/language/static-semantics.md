@@ -2151,15 +2151,16 @@ int64_t bits = raw;         // implicit: a declaration may use it
 
 The target is the operator's result type. A conversion operator is a
 non-static member with no parameters and a read-only, `mut`, or consuming
-(`&&`) receiver, and it may be `constexpr` or virtual. Its target is an owned
+(`&&`) receiver, and it may be `constexpr`. Its target is an owned
 value type: not `void`, a reference, a text view (`std::string_view`,
 `c_string`), a type carrying a borrow, or its own class. The boolean
 conversion is spelled `operator bool()`; another spelling of `bool`, such as an
 alias, is rejected. A class declares at most one conversion operator per target
 and receiver. Aliases denote their resolved target, and `implicit` does not
 distinguish declarations, so `operator Count()` and `operator int()` collide
-when `Count` aliases `int`. A conversion operator is inherited and overridden
-like any member; an override has the same target and receiver.
+when `Count` aliases `int`. Derived classes inherit conversion operators. Virtual conversion operators and
+conversion-operator overrides are currently rejected (GTI-S2022). For dynamic
+dispatch, have the conversion operator call a named virtual method.
 
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and

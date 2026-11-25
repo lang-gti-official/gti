@@ -240,6 +240,8 @@ public:
           "parameter_pack<" + std::to_string(value.arguments.size()) + ">",
           nullptr, 0, offsets.back(), 8, llvm::DINode::FlagArtificial, nullptr,
           builder.getOrCreateArray(elements));
+    } else if (value.kind == SemanticType::FunctionItem) {
+      result = builder.createUnspecifiedType("function item");
     } else if (value.kind == SemanticType::NullPtr) {
       result = builder.createUnspecifiedType("nullptr_t");
     } else if (value.kind == SemanticType::UniqueOwner) {
@@ -274,7 +276,8 @@ public:
       if (!declaration || !instance)
         throw std::logic_error(
             "LLVM debug class lost its concrete declaration");
-      if (owner.cOpaqueHandle) {
+      if (owner.cOpaqueHandle || owner.compilerCapability ==
+                                     CompilerCapabilityTypeKind::ErasedObject) {
         result = builder.createUnspecifiedType(declaration->qualifiedName);
       } else {
         const auto layout = session.layouts().get(value);

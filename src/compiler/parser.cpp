@@ -706,6 +706,7 @@ private:
     body.leftBrace =
         consume(TokenKind::LEFT_BRACE, "Expect '{' before concept body.");
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       const Token start = peek();
       try {
         if (match({TokenKind::TYPENAME})) {
@@ -741,7 +742,7 @@ private:
         stampExtent(operation, start);
         body.operations.push_back(std::move(operation));
       } catch (const ParseError &) {
-        synchronize(true, false, false, true);
+        synchronizeItem(itemStart, true, false, false, true);
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
@@ -1554,10 +1555,11 @@ private:
     currentClassKind = kind;
     try {
       while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+        const auto itemStart = current;
         try {
           members.emplace_back(item(ItemContext::ClassMember));
         } catch (const ParseError &) {
-          synchronize(true, false, false, true);
+          synchronizeItem(itemStart, true, false, false, true);
         }
       }
 
@@ -2785,10 +2787,11 @@ private:
 
     StmtList members;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         members.emplace_back(item(ItemContext::MutableFieldGroup));
       } catch (const ParseError &) {
-        synchronize(true, false, false, false, false, false);
+        synchronizeItem(itemStart, true, false, false, false, false, false);
       }
     }
     Token rightBrace = consume(TokenKind::RIGHT_BRACE,
@@ -3344,10 +3347,11 @@ private:
     StmtList statements;
 
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         statements.emplace_back(item(ItemContext::Block));
       } catch (const ParseError &) {
-        synchronize(true, true, false);
+        synchronizeItem(itemStart, true, true, false);
       }
     }
 
@@ -3610,13 +3614,14 @@ private:
     try {
       while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
              !isConditionalBoundary()) {
+        const auto itemStart = current;
         try {
           statements.emplace_back(item(context));
         } catch (const ParseError &) {
-          synchronize(context != ItemContext::Declaration,
-                      context == ItemContext::Block,
-                      context == ItemContext::Declaration,
-                      context == ItemContext::ClassMember);
+          synchronizeItem(itemStart, context != ItemContext::Declaration,
+                          context == ItemContext::Block,
+                          context == ItemContext::Declaration,
+                          context == ItemContext::ClassMember);
         }
       }
     } catch (const ConditionalBoundary &) {
@@ -4124,10 +4129,11 @@ private:
         StmtList statements;
         while (!check(TokenKind::CASE) && !check(TokenKind::DEFAULT) &&
                !check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          const auto itemStart = current;
           try {
             statements.emplace_back(item(ItemContext::Block));
           } catch (const ParseError &) {
-            synchronize(true, true, false, false, true);
+            synchronizeItem(itemStart, true, true, false, false, true);
           }
         }
         arms.push_back({std::move(labels), std::move(statements)});
@@ -5792,6 +5798,26 @@ private:
       return "->";
     default:
       return std::nullopt;
+    }
+  }
+
+  // A token that starts an item elsewhere can be invalid in this context.
+  // Preserve normal recovery when it advances; otherwise skip the rejected
+  // token and synchronize the rest of that item up to the next valid starter.
+  void synchronizeItem(std::size_t itemStart, bool stopAtRightBrace,
+                       bool allowStatements, bool allowClasses,
+                       bool allowAccessSpecifiers = false,
+                       bool stopAtSwitchLabel = false,
+                       bool stopAtTypedDeclaration = true) {
+    const auto recover = [&] {
+      synchronize(stopAtRightBrace, allowStatements, allowClasses,
+                  allowAccessSpecifiers, stopAtSwitchLabel,
+                  stopAtTypedDeclaration);
+    };
+    recover();
+    if (current == itemStart && !isAtEnd()) {
+      advance();
+      recover();
     }
   }
 

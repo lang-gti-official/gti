@@ -4372,6 +4372,17 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                  (!threadTask && containsDisallowedCallableCaptureState(
                                      concreteArgumentType, checkedCarrier))) {
         failure = "contains borrowed or raw-pointer capture state";
+      } else if (concreteArgumentType.kind == SemanticType::Lambda &&
+                 traits.containsBorrowedState &&
+                 ((contract.ownedTransport->kind ==
+                       CallableOwnedTransportKind::ExactField &&
+                   !input.forwardedPackElement &&
+                   !explicitMoveSource(argument)) ||
+                  (contract.ownedTransport->kind ==
+                       CallableOwnedTransportKind::Value &&
+                   resolved.returnType != concreteArgumentType))) {
+        failure =
+            "requires an exact callable return to transfer its capture borrows";
       } else if (!ownedTransportMatchesConcrete(*target, contract, resolved)) {
         failure = "does not preserve the callable's exact concrete type in "
                   "its declared owner";
