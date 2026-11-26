@@ -569,9 +569,13 @@ source's digest made any two library changes conflict on that one object even
 when their code did not overlap.
 
 Every executable entry names at least one minimal concrete fixture and any
-required generic instantiation. The `stdlib_surface` CTest compiles those
-fixtures through the production compiler/native-driver path at O0 and O3 and
-checks exact exit status, stdout, and stderr. Unsupported entries may name one
+required generic instantiation. New coverage uses `test_paths` referencing
+canonical `tests/ui/` or `tests/slow/` GTI files with `run-pass` or `run-fail`
+directives; the census validates these references, and the ordinary discovered
+test runner executes them in their tier. Existing `case_ids` retain the legacy
+`stdlib_surface` CTest's production compiler/native-driver execution and exact
+exit-status/stdout/stderr checks. Referencing discovered tests does not schedule
+a duplicate legacy run. Unsupported entries may name one
 bounded expected-diagnostic case; scaffolds never masquerade as executable
 coverage. `stdlib_surface_manifest` additionally injects unclassified-source,
 unknown-source, retired-fingerprint, missing executable evidence, and wrong
@@ -1042,12 +1046,22 @@ runtime retains no input bytes and owns no public command, string, or status
 representation. The older `gti_rt_run_process_v1` entry delegates to this
 transport and keeps the build-program normalized-integer behavior.
 
-The bounded public slice waits synchronously and inherits environment, working
-directory, and standard streams. Capture, redirection, environment and
-directory overrides, asynchronous process ownership, cancellation, timeouts,
-and pipelines remain later process-policy work rather than implicit shell
-behavior. Windows is rejected by the source unit until its UTF-16 command-line
-and handle-inheritance boundary is implemented.
+Inherited `run()` and bounded captured `output()` share exact argv validation.
+The latter uses `gti_rt_process_output_v1`: POSIX pipe/poll/fork/wait mechanisms,
+monotonic deadlines, combined byte limits, optional child-only cwd, and uniquely
+owned native byte snapshots. Source owns output/options/status types and copies
+bounded bytes through read/info/destroy operations. The host closes all pipes,
+kills process-group descendants on normal leader exit and on limit outcomes,
+and reaps the reserved leader. `waitid(WNOWAIT)` avoids PID reuse while signalling;
+ECHILD relinquishes ownership without signalling. Public helpers in `std.testing.resources`
+compose this general facility, file streams and filesystem operations; they have
+no compiler-specific names. Temporary-directory creation uses a separate atomic
+`gti_rt_fs_temp_directory_v1` host operation, with source-defined RAII cleanup.
+
+Environment overrides, arbitrary redirection, asynchronous ownership and pipelines
+remain future work. Windows is rejected by `std.process` until its UTF-16 and
+handle-inheritance boundary is implemented; `std.testing`'s portable assertions
+remain available there without importing its POSIX resource helpers.
 
 `std.environment` supplies the separate read-only observation family. Its
 `get` function and error enum are ordinary GTI, with no public-name recognition.
@@ -1445,8 +1459,12 @@ deterministic serializer, limits, structured errors and explicit `codec<T>`
 customization are all GTI source over `std.meta`. Dynamic `json::value` uses
 an ordinary owning payload enum, vectors and sorted object members; parsing
 selects alternatives at runtime and does not need reflection. Compile-time
-reflection still maps typed structs, including fields containing dynamic
-subtrees. The source generic dispatch selects these library types without any
+reflection maps typed structs and payload enums, including fields containing
+dynamic subtrees. For each concrete enum instance, semantic analysis specializes
+the reflected visitor into an exhaustive borrowed switch and the reflected
+constructor into ordinary producer calls and variant construction. HIR retains
+the checked body and lowers it through the existing MIR operations. JSON selects
+the tag and field representation in library source. The source generic dispatch selects these library types without any
 compiler recognition. The dynamic scanner shares the existing grammar helpers,
 preserves numeric range checks and limits, and avoids copying or rescanning each
 complete subtree at every level. This is an intentional

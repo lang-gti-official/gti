@@ -1,0 +1,11 @@
+// Querying a view always uses the owner selected when the view was built.
+import std.istream;
+import std.memory;
+
+int main() {
+  mut std::ios_base first{};
+  std::ios_base second{};
+  std::detail::stream_view_state state{first};
+  [[discard]] state.rdstate(std::erase_ref(second)); //~ ERROR GTI-S2005
+  return 0;
+}

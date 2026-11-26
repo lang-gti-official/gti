@@ -1,0 +1,22 @@
+// Bounded subprocess results distinguish ordinary failure from time and output limits.
+//@ run-pass
+//@ slow
+import std.testing;
+import std.testing.resources;
+int main() {
+  mut auto command = std::testing::subprocess("/bin/sh");
+  command.arg("-c");
+  command.arg("while :; do printf abcdefghijklmnopqrstuvwxyz; done");
+  command.output_limit(uint64_t(17));
+  auto output = command.run().expect("bounded child");
+  std::testing::check(output.output_limited());
+  std::testing::check(!output.success());
+  std::testing::check(output.stdout_text().size() <= std::size_t(17));
+  mut auto waiting = std::testing::subprocess("/bin/sleep");
+  waiting.arg("30");
+  waiting.timeout_ms(uint64_t(20));
+  auto timeout = waiting.run().expect("timed child");
+  std::testing::check(timeout.timed_out());
+  std::testing::check(!timeout.success());
+  return 0;
+}

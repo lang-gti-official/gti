@@ -1,3 +1,4 @@
+#include "frontend.h"
 #include "gti/documentation.h"
 #include "gti/standard_library.h"
 
@@ -94,15 +95,6 @@ standardLibraryModules(const std::filesystem::path &root,
   return names;
 }
 
-std::string entrySource(const std::vector<std::string> &modules) {
-  std::string source;
-  for (const std::string &module : modules) {
-    source += "import " + module + ";\n";
-  }
-  source += "\nint main() { return 0; }\n";
-  return source;
-}
-
 void printDiagnostics(const lang::FrontendResult &frontend) {
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << diagnostic.primary.source << ':' << diagnostic.primary.line
@@ -175,13 +167,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  lang::FrontendOptions frontendOptions;
-  frontendOptions.stopAfter = lang::FrontendPhase::Semantics;
-  frontendOptions.toolingOccurrences = true;
   const lang::FrontendResult frontend =
-      lang::Frontend(frontendOptions)
-          .analyze(layout.root / "__gti_reference_index__.gti",
-                   entrySource(modules), {layout.prelude}, {}, {layout.root});
+      lang::docgen::analyzeModules(layout, modules);
   if (!frontend.sourceValid || !frontend.syntaxValid ||
       !frontend.semanticValid || !frontend.diagnostics.empty()) {
     printDiagnostics(frontend);

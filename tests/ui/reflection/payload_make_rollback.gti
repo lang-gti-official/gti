@@ -1,0 +1,28 @@
+// A producer failure drops the previously produced owner exactly once.
+//@ run-pass
+import std.meta;
+
+mut int drops = 0;
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  ~Owner() { drops++; }
+};
+enum Packet { empty, item(Owner first, int second) };
+enum Failure { stopped };
+struct Producer {
+  Producer() = default;
+  expected<Owner, Failure> produce(std::meta::payload_field<Packet, 1, 0> field) mut {
+    return Owner();
+  }
+  expected<int, Failure> produce(std::meta::payload_field<Packet, 1, 1> field) mut {
+    return unexpected(Failure::stopped);
+  }
+};
+int main() {
+  mut Producer producer{};
+  auto result = std::meta::make_alternative<Packet, Failure, Producer, 1>(producer);
+  if (result || result.error() != Failure::stopped) { return 1; }
+  return drops - 1;
+}

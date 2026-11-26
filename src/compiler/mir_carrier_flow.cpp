@@ -111,6 +111,15 @@ struct AnalysisContext {
   // Constructor recursion cannot certify itself as having no outward stores.
   std::set<HirConstructorInstanceId> activeConstructors;
   std::set<HirDestructorInstanceId> activeDestructors;
+  std::size_t recursionCutoffs = 0;
+
+  // A summary that observes a cutoff may depend on its enclosing call stack.
+  bool enter(std::set<std::size_t> &active, std::size_t id) {
+    if (active.insert(id).second)
+      return true;
+    ++recursionCutoffs;
+    return false;
+  }
   // Public queries solve the reachable call graph before consuming these
   // summaries. Provisional iteration facts never escape that solver.
   std::map<HirFunctionInstanceId, MirRetainingStoreEffects> callEffects;
@@ -164,9 +173,11 @@ struct AnalysisContext {
 struct SummaryReads {
   AnalysisContext &context;
   std::size_t generation;
+  std::size_t initialCutoffs;
   std::set<HirFunctionInstanceId> reads;
   explicit SummaryReads(AnalysisContext &context)
-      : context(context), generation(context.generation) {
+      : context(context), generation(context.generation),
+        initialCutoffs(context.recursionCutoffs) {
     context.reading.push_back(&reads);
   }
   ~SummaryReads() { context.reading.pop_back(); }
@@ -175,7 +186,8 @@ struct SummaryReads {
   template <class Value>
   void remember(std::map<std::size_t, AnalysisContext::Cached<Value>> &cache,
                 std::size_t id, const Value &value) {
-    if (context.unchangedSince(generation, reads))
+    if (initialCutoffs == context.recursionCutoffs &&
+        context.unchangedSince(generation, reads))
       cache[id] = {generation, reads, value};
   }
 };
@@ -828,18 +840,13 @@ bool privateCleanupEffects(const MirDropType &recipe,
     if (!destructor ||
         destructor->definitionKind != MirDefinitionKind::Source ||
         destructor->body.kind != MirBodyKind::Destructor ||
-        !context.activeDestructors.insert(target).second)
+        !context.enter(context.activeDestructors, target))
       return false;
-    // A summary computed inside another construction or cleanup may be cut
-    // short by a recursion guard; remember only top-level summaries.
-    const bool topLevel = context.activeDestructors.size() == 1 &&
-                          context.activeConstructors.empty();
     SummaryReads reads(context);
     const auto cleanup = deriveFlow(destructor->body, context);
     context.activeDestructors.erase(target);
     const auto remember = [&](bool admitted) {
-      if (topLevel)
-        reads.remember(context.privateCleanups, target, admitted);
+      reads.remember(context.privateCleanups, target, admitted);
       return admitted;
     };
     if (!cleanup.effectsComplete)
@@ -1722,18 +1729,13 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return *cached;
         if (constructor->definitionKind != MirDefinitionKind::Source ||
             constructor->body.kind != MirBodyKind::Constructor ||
-            !context.activeConstructors.insert(constructor->id).second)
+            !context.enter(context.activeConstructors, constructor->id))
           return false;
-        // Only a top-level summary is free of recursion-guard cutoffs.
-        const bool topLevel = context.activeConstructors.size() == 1 &&
-                              context.activeDestructors.empty();
         SummaryReads reads(context);
         const auto construction = deriveFlow(constructor->body, context);
         context.activeConstructors.erase(constructor->id);
         const auto remember = [&](bool admitted) {
-          if (topLevel)
-            reads.remember(context.localConstructions, constructor->id,
-                           admitted);
+          reads.remember(context.localConstructions, constructor->id, admitted);
           return admitted;
         };
         if (!construction.effectsComplete)
@@ -1958,6 +1960,68 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                                         part.access == AccessMode::ReadOnly;
                                });
           };
+          // Moving a guard by value transfers its cleanup to the callee.
+          // On success its returned guard protects the very same owner. A
+          // borrowed input or a result with different provenance cannot
+          // retire that input's exclusive capability.
+          if (cleanupBoundResult &&
+              represented->access == AccessMode::Mutable && retained &&
+              expiredCallReturned &&
+              (instruction.successResultDrop ||
+               std::any_of(instruction.lifecycle.begin(),
+                           instruction.lifecycle.end(), [&](const auto &event) {
+                             const auto *drop =
+                                 body.findDropObligation(event.target);
+                             return event.kind ==
+                                        MirLifecycleEventKind::Initialize &&
+                                    drop && drop->value == instruction.hirValue;
+                           }))) {
+            for (const auto &input : instruction.operands) {
+              const auto *stage =
+                  input.kind == MirOperandKind::Value
+                      ? mir_detail::definitionFor(body, input.value)
+                      : nullptr;
+              if (!stage || stage->kind != MirInstructionKind::CallInput ||
+                  stage->callSite != instruction.hirValue ||
+                  stage->callInputKind != HirCallInputKind::MoveValue ||
+                  !stage->preparedParameterDrop ||
+                  !std::any_of(
+                      instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(), [&](const auto &event) {
+                        return event.kind ==
+                                   MirLifecycleEventKind::TransferOut &&
+                               event.source == *stage->preparedParameterDrop;
+                      }))
+                continue;
+              const auto moved = operandFact(body, state, input);
+              if (!moved)
+                continue;
+              for (const auto id : *moved) {
+                const auto *old = body.findLoan(id);
+                if (old && old->kind == MirLoanKind::Stored &&
+                    represented->kind == MirLoanKind::Stored &&
+                    old->id != represented->id && old->lifecycleBound &&
+                    !old->twoPhase && !represented->twoPhase && !old->escapes &&
+                    !represented->escapes &&
+                    old->access == represented->access &&
+                    old->source == represented->source &&
+                    old->parent == represented->parent &&
+                    old->storedDependency == represented->storedDependency &&
+                    old->storedField == represented->storedField &&
+                    old->referenceSelection ==
+                        represented->referenceSelection &&
+                    old->designatedFields == represented->designatedFields &&
+                    old->conditions == represented->conditions &&
+                    old->additionalDependencies ==
+                        represented->additionalDependencies &&
+                    !state.unavailable.contains(id) &&
+                    std::find(expiredCallReturned->begin(),
+                              expiredCallReturned->end(),
+                              id) == expiredCallReturned->end())
+                  std::erase(*retained, id);
+              }
+            }
+          }
           if (retained && independentShared(represented)) {
             // A fresh, independently checked result can replace an input's
             // capability for the same external owners. Field provenance may
@@ -2705,13 +2769,9 @@ deriveConstructorEffects(const MirConstructorInstance &constructor,
   if (const auto *cached =
           context.lookup(context.constructorEffects, constructor.id))
     return *cached;
-  // Only a top-level summary is free of recursion-guard cutoffs.
-  const bool topLevel =
-      context.activeConstructors.empty() && context.activeDestructors.empty();
   SummaryReads reads(context);
   auto result = deriveConstructorEffectsUncached(constructor, context);
-  if (topLevel)
-    reads.remember(context.constructorEffects, constructor.id, result);
+  reads.remember(context.constructorEffects, constructor.id, result);
   return result;
 }
 MirRetainingStoreEffects
@@ -2719,7 +2779,7 @@ deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
                                  AnalysisContext &context) {
   if (constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.body.kind != MirBodyKind::Constructor ||
-      !context.activeConstructors.insert(constructor.id).second)
+      !context.enter(context.activeConstructors, constructor.id))
     return {};
   auto result = deriveSourceEffects(
       constructor.body, constructor.parameterTypes,

@@ -1,0 +1,10 @@
+// Conditional test rows retain source conditions and fresh argument ownership.
+#if defined(NEVER_DEFINED) //~ WARN GTI-S2075
+[[test("off", not_declared())]] void excluded(int value) {}
+#else
+namespace nested {
+  int input() { return 7; }
+  [[test("on", input())]] void included(int value) {}
+}
+#endif
+int main() { return 0; }

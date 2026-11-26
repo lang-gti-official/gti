@@ -51,6 +51,9 @@ uint32_t gti_rt_fs_mutate_v1(uint32_t operation, gti_c_string_view first,
 // 3 weakly_canonical, 4 temp_directory_path (ignores input), 5 read_symlink.
 uint32_t gti_rt_fs_path_v1(uint32_t operation, gti_c_string_view input,
                            int64_t *result);
+// Atomically creates a private (0700) uniquely named directory under parent.
+// Returns an owned text result with its absolute path; parent must exist.
+uint32_t gti_rt_fs_temp_directory_v1(gti_c_string_view parent, int64_t *result);
 uint32_t gti_rt_fs_directory_open_v1(gti_c_string_view path, int64_t *result);
 // Begins before the first entry. Each successful next publishes 1 plus a
 // current entry, or 0 at EOF. An increment error ends traversal. No recursion.

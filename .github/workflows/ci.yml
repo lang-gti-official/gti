@@ -249,9 +249,17 @@ jobs:
             gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure
         # The gti-test entries also write per-case JUnit reports there.
+        # Hosted runners spend about 3.3x (Linux) and 2.5x (macOS) the CPU of
+        # the development machine the per-case limits were set on, so the
+        # limits scale 4x here (GTI_TEST_TIMEOUT_SCALE doubles the 2x
+        # default). At 2x, half of the failed runs of 20 to 23 November 2026
+        # were cases a pull request had not touched running 10 to 60 per cent
+        # over. The budget step below still holds added and changed cases to
+        # half of the 2x limit.
         run: >-
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=2
           -DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"
       - name: Build
         # Keep going after a failure so one run reports every compile error.
@@ -365,9 +373,11 @@ jobs:
       - name: Install native tool dependencies
         run: bash scripts/configure_ci_toolchain.sh
       - name: Configure the unchanged CTest inventory
+        # The same options as the build job's Configure, limit scale included.
         run: >-
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=2
           -DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:

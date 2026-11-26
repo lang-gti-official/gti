@@ -121,6 +121,8 @@ enum class file_mode {
   read_write,
   read_write_truncate,
   read_append,
+  write_exclusive,
+  read_write_exclusive,
 };
 
 /// Reference point used by a file seek operation.
@@ -148,8 +150,12 @@ uint32_t runtime_file_mode(std::file_mode mode) {
     return uint32_t(4);
   case std::file_mode::read_append:
     return uint32_t(5);
-  default:
+  case std::file_mode::write_exclusive:
     return uint32_t(6);
+  case std::file_mode::read_write_exclusive:
+    return uint32_t(7);
+  default:
+    return uint32_t(8);
   }
 }
 

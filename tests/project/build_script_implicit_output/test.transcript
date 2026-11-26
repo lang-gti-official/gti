@@ -1,0 +1,9 @@
+// Implicit empty output replaces old native output, caches, and reruns when deleted.
+$ gti build
+$ python3 inspect.py 1 native
+$ gti build
+$ python3 inspect.py 2 empty
+$ gti build
+$ python3 inspect.py 2 remove
+$ gti build
+$ python3 inspect.py 3 empty

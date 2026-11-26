@@ -134,10 +134,12 @@ function-contract-attributes = function-contract-attribute
                               { function-contract-attribute } ;
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
-function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
+function-contract-name = "test" [ "(" string-literal { "," call-argument } ")" ]
+                       | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
                        | "inline" | "noinline" | "cold" ;
 (* test: defined, safe, non-generic namespace-scope void functions with no
-   parameters or attribute arguments. Explicit test targets discover these
+   parameters in its bare form; named test("label", arguments...) rows pass
+   ordinary typed inputs. Explicit test targets discover these
    functions and execute them separately; ordinary compilation does not run them.
    noreturn/track_caller: defined, non-polymorphic GTI functions only, except trusted compiler
    intrinsic declarations; operator annotations are rejected semantically.
@@ -926,7 +928,9 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `operator%`, `operator&`, `operator|`, `operator^`, `operator<<`, and
    `operator>>` take one exact-match parameter. These value-producing
    operators use a read-only or trailing-`&&` consuming receiver and return an
-   owned non-void value, not a reference or receiver-tied borrowed state.
+   owned non-void value. A shift may also take a trailing-`mut` receiver.
+   That overload returns a mutable reference to the receiver type, borrowed
+   from the receiver.
 
    `operator=`, `operator[]`, the compound operators `+=`, `-=`, `*=`, `/=`,
    `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>=`, and comparisons `==`, `!=`, `<`,
@@ -974,8 +978,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    move-state rules. Calls require one unique exact
    parameter match after generic substitution, apart from the bounded raw-
    pointer `nullptr` and added-pointee-`const` compatibility. GTI performs no
-   other implicit argument conversions and has no general conversion-ranking
-   or best-match rules. A declaration with trailing defaults is viable when the
+   conversion chains or general conversion-ranking rules. After existing exact
+   and temporary/literal tiers fail, ordinary function arguments may use one
+   unique implicit constructor, including read-only reference parameters whose
+   constructed temporary passes the existing borrow and escape checks. A declaration with trailing defaults is viable when the
    supplied argument count is between its required and total parameter counts;
    only supplied arguments participate in exact matching. Defaults do not
    distinguish overload identities or rank otherwise-exact candidates, so two
@@ -1014,8 +1020,10 @@ static-variable-declaration
 (* At namespace scope, `static` gives a variable or function source-unit
    internal linkage: it is visible only inside the file that declares it and
    may reuse a name used by another source unit. `main` cannot be static.
-   Ordinary block-scope static declarations are not supported. Block-local
-   thread_local declarations may optionally include static. A thread_local
+   A function-local static has a block-scoped name and one program-lifetime
+   storage slot. Its explicit initializer must be constant-evaluable.
+   Block-local thread_local declarations may optionally include static.
+   A thread_local
    field must be static; thread_local constexpr is ill-formed. Initializers
    cannot depend on automatic bindings, parameters or an instance receiver.
    Generic-function, generic-class and lambda-local TLS declarations are

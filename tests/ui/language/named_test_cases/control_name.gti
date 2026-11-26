@@ -1,0 +1,4 @@
+// Case identities cannot contain a line break.
+[[test("bad\nname")]] //~ ERROR GTI-S2099 case name
+void values() {}
+int main() { return 0; }

@@ -1,0 +1,17 @@
+// Package constants and build contexts preserve owner identity and manifest cache changes.
+env GTI_BUILD_PACKAGE_NAME=ambient-spoof
+env GTI_BUILD_PACKAGE_VERSION=99.99.99
+$ cd app
+$ gti check
+$ gti run
+stdout: metadata-app 1.2.3-beta.4+build.7
+stdout: metadata-dep 4.5.6
+$ gti run
+stdout: metadata-app 1.2.3-beta.4+build.7
+stdout: metadata-dep 4.5.6
+$ cd ..
+$ python3 update.py
+$ cd app
+$ gti run
+stdout: metadata-app 2.0.0
+stdout: metadata-dep 4.5.7

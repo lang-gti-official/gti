@@ -89,10 +89,37 @@ be run more than once. The current slice inherits the caller's:
 - working directory; and
 - stdin, stdout, and stderr handles.
 
-The current slice has no asynchronous child owner, pipeline, stream capture or
-redirection, environment mutation, working-directory override, timeout,
-cancellation, or process-group policy. Those require explicit ownership and
-deadlock contracts rather than additions to this synchronous result.
+`run()` retains this inherited-stream behavior. `output()` is the separate
+bounded capture operation below. Asynchronous child ownership, pipelines,
+arbitrary redirection and environment overrides remain future capabilities.
+
+## Bounded Captured Execution
+
+`command::output(options)` returns `expected<std::process::output, errc>`;
+`output()` uses default options. `output_options` owns an optional
+`working_directory` string (empty inherits the parent cwd), `timeout_ms`
+(default 5000, valid 1–86400000) and a combined stdout/stderr `output_limit`
+(default 1048576, valid 1–67108864 bytes). Invalid options fail before spawning.
+The environment is inherited, stdin is `/dev/null`, and only the child's cwd
+changes. Argument vectors remain exact; there is no implicit shell.
+
+The output owner provides borrowed `stdout_text()` and `stderr_text()` views
+preserving embedded NUL bytes, `status()` for the actual exit/signal state,
+and separate `timed_out()` / `output_limited()` flags. `success()` requires
+ordinary zero exit and neither limit flag. Spawn/exec/capture failures use the
+Expected error channel; a limit outcome is a completed, unsuccessful result.
+On output overflow only a prefix up to the combined limit is retained; timeout
+retains bytes captured so far. When both streams write, allocation of that
+combined prefix between streams is intentionally not deterministic.
+
+The POSIX runtime polls both pipes fairly while checking a monotonic deadline,
+kills and reaps the child group on timeout/overflow, and kills remaining group
+descendants on normal leader termination. The leader is observed with
+`waitid(WNOWAIT)` until cleanup reserves its PID; lost child ownership fails
+without signalling a potentially reused PID. The caller must not independently
+reap these children or configure SIGCHLD auto-reaping. A descendant that
+explicitly detaches into another session/group lies outside this boundary.
+This is bounded execution, not an operating-system sandbox.
 
 ## Replacing The Current Process
 
@@ -174,7 +201,10 @@ contained defined-failure contract.
 ## Runtime Boundary
 
 The source-defined wrapper serializes argv as counted NUL-delimited bytes and
-calls `gti_rt_process_run_v1`. The runtime retains no caller storage. On POSIX
+calls `gti_rt_process_run_v1` for inherited execution. Captured execution uses
+`gti_rt_process_output_v1` and private size/read/destroy result operations;
+ordinary GTI ownership releases the native capture after copying its bounded
+bytes into source strings. The runtime retains no caller storage. On POSIX
 it uses an exec-error pipe with close-on-exec so the parent can distinguish
 failure to execute from an ordinary child exit status. The older
 `gti_rt_run_process_v1` build-program entry remains as a compatibility wrapper

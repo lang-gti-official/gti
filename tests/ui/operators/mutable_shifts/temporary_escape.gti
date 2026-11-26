@@ -1,0 +1,10 @@
+// The result of a mutable shift on temporary storage cannot escape its full expression.
+struct Output {
+  Output() {}
+  mut int n = 0;
+  mut Output& operator<<(int v) mut { this.n = v; return this; }
+};
+int main() {
+  mut Output& held = Output() << 1; //~ ERROR GTI-S2017 temporary storage
+  return held.n;
+}

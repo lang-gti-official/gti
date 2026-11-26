@@ -1,9 +1,17 @@
-// Complete borrow summaries: the program is accepted.
-//@ check-pass
-import std.memory;
-import std.panic;
+// Moving a payload through a constant branch preserves its active alternative.
+//@ run-pass
+//@ opt: O3
+//@ reason: Constant branch folding must respect path-sensitive dependency facts.
+import std.utility;
 enum State { empty, number(int64_t value) };
-void consume(State value) {}
-int choose(bool condition) {
+int consume(State value) {
+  switch (value) {
+  case State::number(auto& n): return n == 200 ? 0 : 1;
+  default: return 2;
+  }
+}
+int main() {
   mut State value = State::empty;
-if (true) { value = State::number(200); } consume(std::move(value)); return 0; } int main() { return choose(true); }
+  if (true) { value = State::number(200); }
+  return consume(std::move(value));
+}

@@ -1,0 +1,129 @@
+export module detail_stream_format_impl;
+import std.ios;
+import std.cstdio;
+import std.format;
+import std.meta;
+import std.string;
+
+namespace std::detail {
+expected<void, io_errc> stream_append<T>(mut string& text, T& value, format_spec& spec) {
+  if constexpr (formatting<T>) {
+    if (formatting<T>::format(value, text, spec)) { return; }
+  }
+  return unexpected(io_errc::write_failed);
+}
+
+expected<void, io_errc> stream_integer<std::integral T>(
+    mut string& text, T value, ios::fmtflags flags) {
+  mut format_spec spec{};
+  auto base = flags & ios::basefield;
+  if (base == ios::hex || base == ios::oct) {
+    spec.type = base == ios::oct ? 'o' : ((flags & ios::uppercase) != 0 ? 'X' : 'x');
+    spec.alternate = (flags & ios::showbase) != 0 && value != T(0);
+    if constexpr (std::meta::is_signed_integral<T>()) {
+      if (value < T(0)) {
+        // The unsigned representation has the original integer's width.
+        // Adding one before negating also handles the minimum signed value.
+        uint64_t mask = ~uint64_t(0) >> ((uint64_t(8) - sizeof(T)) * uint64_t(8));
+        uint64_t digits = mask - uint64_t(-(int64_t(value) + int64_t(1)));
+        return stream_append(text, digits, spec);
+      }
+    }
+  } else if constexpr (std::meta::is_signed_integral<T>()) {
+    if ((flags & ios::showpos) != 0) { spec.sign = '+'; }
+  }
+  return stream_append(text, value, spec);
+}
+
+// Hexadecimal stream insertion uses the exact value and ignores precision.
+expected<void, io_errc> stream_hex_float(mut string& text, double value, ios::fmtflags flags) {
+  mut uint8_t buffer[64] = {};
+  mut uint64_t count = 0;
+  bool uppercase = (flags & ios::uppercase) != 0;
+  uint32_t options = (uppercase ? uint32_t(1) : uint32_t(0)) |
+                     ((flags & ios::showpoint) != 0 ? uint32_t(2) : uint32_t(0));
+  char sign = (flags & ios::showpos) != 0 ? '+' : '-';
+  unsafe {
+    if (gti_internal::runtime::gti_rt_format_f64_v1(
+          value, uint32_t(3), int32_t(-1), options, uint32_t(32), uint32_t(0),
+          uint32_t(uint8_t(sign)), uint32_t(0), uint64_t(0),
+          &buffer[0], uint64_t(64), &count) != uint32_t(0)) {
+      return unexpected(io_errc::write_failed);
+    }
+  }
+  if (count == 0 || count > 64) { return unexpected(io_errc::write_failed); }
+  mut uint64_t i = 0;
+  char first = char(buffer[0]);
+  if (first == '+' || first == '-') { text.push_back(first); i++; }
+  char digit = char(buffer[i]);
+  if (digit != 'i' && digit != 'I' && digit != 'n' && digit != 'N') {
+    text.append(uppercase ? "0X" : "0x");
+  }
+  while (i < count) { text.push_back(char(buffer[i])); i++; }
+  return;
+}
+
+void stream_pad(mut string& text, size_t width, char fill, ios::fmtflags flags,
+                bool numeric) {
+  size_t length = text.size();
+  if (width <= length) { return; }
+  size_t padding = width - length;
+  auto adjust = flags & ios::adjustfield;
+  mut size_t prefix = 0;
+  if (adjust == ios::left) {
+    prefix = length;
+  } else if (adjust == ios::internal && numeric && length != 0) {
+    if (text[0] == '+' || text[0] == '-') { prefix = 1; }
+    if (length - prefix >= 2 && text[prefix] == '0' &&
+        (text[prefix + 1] == 'x' || text[prefix + 1] == 'X')) { prefix += 2; }
+  }
+  text.resize(width);
+  for (mut size_t i = length; i > prefix; i--) {
+    char ch = text[i - 1];
+    text[i - 1 + padding] = ch;
+  }
+  for (mut size_t i = prefix; i < prefix + padding; i++) { text[i] = fill; }
+}
+
+export expected<void, io_errc> stream_render<T>(mut ios_base& state, T& value, mut string& text) {
+  auto width = state.width(size_t(0));
+  auto flags = state.flags();
+  text.clear();
+  mut bool numeric = true;
+  if constexpr (std::meta::is_same<T, bool>()) {
+    if ((flags & ios::boolalpha) != 0) {
+      text.append(value ? "true" : "false");
+      numeric = false;
+    } else {
+      ?stream_integer(text, value ? int32_t(1) : int32_t(0), flags);
+    }
+  } else if constexpr (std::meta::is_same<T, char>()) {
+    text.push_back(value);
+    numeric = false;
+  } else if constexpr (std::meta::is_integral<T>()) {
+    ?stream_integer(text, value, flags);
+  } else if constexpr (std::meta::is_floating_point<T>()) {
+    auto style = flags & ios::floatfield;
+    if (style == ios::floatfield) {
+      ?stream_hex_float(text, double(value), flags);
+    } else {
+      mut format_spec spec{};
+      bool uppercase = (flags & ios::uppercase) != 0;
+      spec.type = style == ios::fixed ? (uppercase ? 'F' : 'f') :
+                  (style == ios::scientific ? (uppercase ? 'E' : 'e') :
+                                              (uppercase ? 'G' : 'g'));
+      spec.has_precision = true;
+      spec.precision = state.precision();
+      spec.alternate = (flags & ios::showpoint) != 0;
+      if ((flags & ios::showpos) != 0) { spec.sign = '+'; }
+      ?stream_append(text, value, spec);
+    }
+  } else {
+    mut format_spec spec{};
+    ?stream_append(text, value, spec);
+    numeric = false;
+  }
+  stream_pad(text, width, state.fill(), flags, numeric);
+  return;
+}
+}

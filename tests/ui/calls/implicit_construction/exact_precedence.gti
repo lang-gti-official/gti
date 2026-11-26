@@ -1,0 +1,6 @@
+// An exact overload wins over one requiring implicit construction.
+//@ run-pass
+struct Box { implicit Box(int n) {} };
+int take(int n) { return 0; }
+int take(Box b) { return 1; }
+int main() { return take(42); }

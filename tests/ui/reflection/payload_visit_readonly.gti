@@ -1,0 +1,15 @@
+// An active field borrowed through reflection cannot satisfy a mutable visitor parameter.
+import std.meta;
+enum Sample { reading(int value) };
+struct Writer {
+  Writer() = default;
+  int visit(std::meta::enumerator<Sample, 0> tag, mut int& value) mut {
+    value = 0;
+    return 0;
+  }
+};
+int main() {
+  auto sample = Sample::reading(4);
+  mut Writer writer{};
+  return std::meta::visit<int, Sample, Writer>(sample, writer);  //~ ERROR GTI-S2017
+}

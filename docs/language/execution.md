@@ -644,8 +644,9 @@ Program source units are initialized by this deterministic walk:
    on its first visit; and
 4. within a unit, initialize selected namespace globals and non-generic class
    static fields by increasing source position. A static field occupies the
-   position of its field declaration. Inactive compile-time declarations
-   contribute no step.
+   position of its field declaration. A constant-initialized function-local
+   static contributes a data-only step at its declaration. Inactive
+   compile-time declarations contribute no step.
 
 Implicit prelude edges injected into ordinary units do not repeat step 1.
 An interface and its registered implementation files form one logical module
@@ -671,6 +672,20 @@ code remains responsible for its separately stated lifetime obligations. Using
 a frontend-computed `constexpr` value without forming a place, address,
 reference, or runtime load does not access its storage and is independent of
 the runtime step.
+
+A function-local declaration such as `static mut int count = 0;` has one
+storage slot for the program and can be named within its lexical scope.
+The explicit initializer is evaluated at compile time and emitted as data.
+All calls share the slot, including when the declaration appears in a nested
+block or loop. The declaration performs no work when execution reaches it.
+
+The initializer must produce a supported constant value of the declared
+type. Types requiring runtime cleanup are outside this constant-data slice.
+The ownership and access rules for program storage also apply here. The
+concurrent profile requires an immutable binding with a share-capable type.
+The `constexpr` specifier additionally permits constant-expression reads.
+Static declarations in generic bodies, lambdas and expanded constexpr loops
+require per-instance storage identities. First-use initialization is deferred.
 
 Hosted programs admit namespace objects and non-generic class static fields
 with source-defined destruction, including nested fields, bases and fixed
@@ -836,9 +851,30 @@ the exact code-unit bits and cannot fail, including in constant contexts. They
 are not numeric promotions, Unicode conversion, or arithmetic operations;
 implicit conversion and other integer widths remain rejected.
 
-Built-in integer arithmetic first applies GTI's integer promotions and exact
-common-type rules. The operation then executes in that fixed-width result
-domain. Signed and unsigned `+`, `-`, and `*` produce a defined runtime failure
+Built-in arithmetic promotes `int8_t`, `uint8_t`, `int16_t` and `uint16_t`
+to `int32_t`. The 32- and 64-bit fixed-width types retain their width and
+signedness. A binary arithmetic operation on integers chooses its common
+type by the following rules.
+
+- If both promoted operands have the same signedness, the wider type is the
+  common type. Thus `uint16_t + uint16_t` computes an `int32_t`.
+- For mixed signedness, a signed type that can represent the unsigned
+  operand's entire range is the common type. For example, `int64_t + uint32_t`
+  computes an `int64_t`.
+- Otherwise the unsigned type is usable if the other operand was originally
+  unsigned and fits its width, or is an unsuffixed integer literal whose
+  value fits the unsigned type. Thus `uint16_t + uint32_t` and
+  `uint32_t + 1` both compute a `uint32_t`. An `int32_t` variable and a
+  `uint32_t` variable require an explicit conversion to a suitable common
+  type. A signed suffix such as `1i32` preserves the literal's signed type.
+
+The operation is checked in the common result type. For example,
+`-32767i16 - 1i16` computes `-32768` in `int32_t`. An explicit checked
+conversion such as `int16_t(a + b)` narrows a dynamic result. An
+out-of-range conversion raises `GTI-R0006`. Arithmetic overflow in the
+result type raises `GTI-R0001`.
+
+Signed and unsigned `+`, `-`, and `*` produce a defined runtime failure
 when the mathematical result is outside that domain; unsigned arithmetic does
 not wrap implicitly. Integer `/` truncates toward zero and fails for a zero
 divisor or a signed minimum divided by `-1`. Integer `%` fails for a zero

@@ -1,0 +1,11 @@
+// A global initializer can call a function with an earlier, data-initialized static slot.
+//@ run-pass
+int next() {
+  static mut int count = 8;
+  return ++count;
+}
+int first = next();
+int main() {
+  if (first != 9) { return 1; }
+  return next() - 10;
+}

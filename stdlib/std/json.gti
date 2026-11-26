@@ -20,7 +20,7 @@ export module json;
 // Supported types, at the top level and as fields: bool, the fixed-width
 // integers (range-checked), float and double (shortest round-trip text, exact
 // decimal lexemes accepted), std::string (owned text), std::string_view
-// (encoding only), integral enums (by enumerator name), std::optional<T>
+// (encoding only), integral enums (by enumerator name), tagged payload enums, std::optional<T>
 // (`null` or an absent member), std::vector<E>, std::map and
 // std::unordered_map with std::string keys (objects with dynamic keys),
 // std::json::value and std::json::object, nested reflectable structs, and any type with a
@@ -732,6 +732,54 @@ expected<void, error> encode_dynamic(mut std::string& out, value& item, layout& 
   std::panic("Invalid JSON value kind");
 }
 
+/// Writes the active alternative in-place, borrowing each field in source order.
+struct payload_encoder {
+  mut std::string& out;
+  layout& style;
+  std::size_t depth;
+  payload_encoder(mut std::string& out, layout& style, std::size_t depth)
+      : out(out), style(style), depth(depth) {}
+  payload_encoder(payload_encoder& other) = delete;
+
+  expected<void, error> begin<E, uint64_t I>(std::meta::enumerator<E, I> alternative) mut {
+    if constexpr (std::meta::enumerator<E, I>().payload_count() == uint64_t(0)) {
+      return append_escaped(this.out, alternative.name());
+    } else {
+      this.out.push_back('{');
+      if (this.style.pretty) {
+        append_indentation(this.out, this.style, this.depth + std::size_t(1));
+      }
+      ?append_escaped(this.out, alternative.name());
+      this.out.append(this.style.pretty ? ": {" : ":{");
+      return;
+    }
+  }
+
+  expected<void, error> field<E, F, uint64_t I, uint64_t P>(std::meta::payload_field<E, I, P> field, F& value) mut {
+    if constexpr (P != uint64_t(0)) { this.out.push_back(','); }
+    if (this.style.pretty) {
+      append_indentation(this.out, this.style, this.depth + std::size_t(2));
+    }
+    ?append_escaped(this.out, field.name());
+    this.out.append(this.style.pretty ? ": " : ":");
+    return encode_value(this.out, value, this.style, this.depth + std::size_t(2));
+  }
+
+  expected<void, error> end<E, uint64_t I>(std::meta::enumerator<E, I> alternative) mut {
+    if constexpr (std::meta::enumerator<E, I>().payload_count() != uint64_t(0)) {
+      if (this.style.pretty) {
+        append_indentation(this.out, this.style, this.depth + std::size_t(1));
+      }
+      this.out.push_back('}');
+      if (this.style.pretty) {
+        append_indentation(this.out, this.style, this.depth);
+      }
+      this.out.push_back('}');
+    }
+    return;
+  }
+};
+
 expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& style, std::size_t depth) {
   if constexpr (std::meta::is_same<F, value>()) {
     return encode_dynamic(out, item, style, depth);
@@ -759,6 +807,9 @@ expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& sty
     return append_escaped(out, item);
   } else if constexpr (is_owned_string<F>()) {
     return append_escaped(out, item.view());
+  } else if constexpr (std::meta::is_payload_enum<F>()) {
+    mut payload_encoder visitor{out, style, depth};
+    return std::meta::visit_fields<error, F, payload_encoder>(item, visitor);
   } else if constexpr (std::meta::is_enum<F>()) {
     return encode_enum(out, item);
   } else if constexpr (is_optional<F>()) {
@@ -1572,6 +1623,8 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     ?cursor.read_string(out);
     ?cursor.finish();
     return std::move(out);
+  } else if constexpr (std::meta::is_payload_enum<F>()) {
+    return decode_payload_enum<F>(text, start, stop, options);
   } else if constexpr (std::meta::is_enum<F>()) {
     return decode_enum<F>(text, start, stop, options);
   } else if constexpr (is_optional<F>()) {
@@ -1683,6 +1736,116 @@ expected<void, error> validate_member(std::string_view text, member& entry, deco
     return unexpected(std::move(failure));
   }
   return;
+}
+
+/// Produces an alternative's declared fields from their named JSON members.
+struct payload_producer<E, uint64_t I> {
+  std::string_view& text;
+  std::size_t begin;
+  std::vector<member>& members;
+  decode_options& options;
+  payload_producer(std::string_view& text, std::size_t begin, std::vector<member>& members, decode_options& options)
+      : text(text), begin(begin), members(members), options(options) {}
+  payload_producer(payload_producer<E, I>& other) = delete;
+
+  expected<std::meta::payload_type<E, I, P>, error> produce<uint64_t P>(std::meta::payload_field<E, I, P> field) mut {
+    for (auto& candidate : this.members) {
+      if (candidate.key.view() == field.name()) {
+        return decode_member(field.type(), this.text, candidate.begin, candidate.end, this.options, field.name());
+      }
+    }
+    if constexpr (is_optional<std::meta::payload_type<E, I, P>>()) {
+      return default_value<std::meta::payload_type<E, I, P>>();
+    } else {
+      mut error missing = located(errc::missing_field, this.text, this.begin);
+      missing.prepend_key(field.name());
+      return unexpected(std::move(missing));
+    }
+  }
+};
+
+// A unit case has no fields to produce.
+struct unit_producer { unit_producer() = default; };
+
+expected<E, error> decode_unit<E, uint64_t I>(std::meta::enumerator<E, I> tag, std::string_view text, std::size_t begin) {
+  if constexpr (std::meta::enumerator<E, I>().payload_count() == uint64_t(0)) {
+    mut unit_producer producer{};
+    return std::meta::make_alternative<E, error, unit_producer, I>(producer);
+  } else {
+    return unexpected(located(errc::type_mismatch, text, begin));
+  }
+}
+
+expected<E, error> decode_case_object<E, uint64_t I>(std::meta::enumerator<E, I> tag, std::string_view text, member& entry, decode_options& options) {
+  if constexpr (std::meta::enumerator<E, I>().payload_count() != uint64_t(0)) {
+    if (text[entry.begin] != '{') {
+      return unexpected(located(errc::type_mismatch, text, entry.begin));
+    }
+    std::vector<member> members = ?parse_members(text, entry.begin, entry.end, options);
+    for (auto& candidate : members) {
+      mut bool known = false;
+      constexpr for (auto field : std::meta::enumerator<E, I>().payload_fields()) {
+        if (candidate.key.view() == field.name()) { known = true; }
+      }
+      if (!known) { ?validate_member(text, candidate, options); }
+    }
+    mut payload_producer<E, I> producer{text, entry.begin, members, options};
+    return std::meta::make_alternative<E, error, payload_producer<E, I>, I>(producer);
+  } else {
+    return unexpected(located(errc::type_mismatch, text, entry.begin));
+  }
+}
+
+expected<E, error> decode_payload_enum<E>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut scanner cursor{text, begin, end, options.max_depth};
+  mut std::string spelling{};
+  if (text[begin] == '"') {
+    ?cursor.read_string(spelling);
+    ?cursor.finish();
+    constexpr for (auto alternative : std::meta::alternatives_of<E>()) {
+      if (spelling.view() == alternative.name()) { return decode_unit(alternative, text, begin); }
+    }
+    return unexpected(located(errc::invalid_enumerator, text, begin));
+  }
+  if (text[begin] != '{') { return unexpected(located(errc::type_mismatch, text, begin)); }
+  // The outer object has exactly one member. Keep only its payload range
+  // and reject a second tag as soon as its key has been read.
+  ?cursor.expect('{');
+  cursor.skip_space();
+  if (?cursor.peek() == '}') { return unexpected(cursor.fail(errc::type_mismatch, begin)); }
+  std::size_t key_start = cursor.offset;
+  ?cursor.read_string(spelling);
+  cursor.skip_space();
+  ?cursor.expect(':');
+  member entry = ?cursor.skip_value(std::move(spelling), std::size_t(1), false);
+  cursor.skip_space();
+  if (?cursor.peek() == ',') {
+    cursor.offset++;
+    cursor.skip_space();
+    std::size_t second_key = cursor.offset;
+    mut std::string other{};
+    ?cursor.read_string(other);
+    if (other.view() == entry.key.view()) {
+      return unexpected(cursor.fail(errc::duplicate_key, second_key));
+    }
+    return unexpected(cursor.fail(errc::type_mismatch, begin));
+  }
+  ?cursor.expect('}');
+  ?cursor.finish();
+  constexpr for (auto alternative : std::meta::alternatives_of<E>()) {
+    if (entry.key.view() == alternative.name()) {
+      mut auto result = decode_case_object(alternative, text, entry, options);
+      if (!result) {
+        mut error failure = std::move(result).error();
+        failure.prepend_key(alternative.name());
+        return unexpected(std::move(failure));
+      }
+      return std::move(result);
+    }
+  }
+  mut error unknown = located(errc::invalid_enumerator, text, key_start);
+  unknown.prepend_key(entry.key.view());
+  return unexpected(std::move(unknown));
 }
 
 expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {

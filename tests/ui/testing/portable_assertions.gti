@@ -1,0 +1,7 @@
+// Portable assertions do not import POSIX-only subprocess helpers on Windows.
+//@ target: x86_64-pc-windows-msvc
+import std.testing;
+int main() {
+  std::testing::check_eq!(2 + 2, 4);
+  return 0;
+}

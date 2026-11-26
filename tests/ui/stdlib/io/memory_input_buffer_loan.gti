@@ -1,0 +1,12 @@
+// A live reference to the input buffer prevents a simultaneous stream read.
+import std.istream;
+import std.io;
+import std.span;
+int main() {
+  uint8_t data[1] = {uint8_t(88)};
+  mut auto source = std::io::memory_reader(data.as_span());
+  mut std::basic_istream<std::io::memory_reader> input{std::move(source)};
+  mut std::io::memory_reader& buffer = input.rdbuf();
+  int c = input.get();  //~ ERROR GTI-S2017
+  return c + int(buffer.tell());
+}

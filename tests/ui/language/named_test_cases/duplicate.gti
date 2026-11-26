@@ -1,0 +1,5 @@
+// Duplicate labels within one test are rejected at the second label.
+[[test("same", 1)]]
+[[test("same", 2)]] //~ ERROR GTI-S2099 Duplicate test case name
+void values(int value) {}
+int main() { return 0; }

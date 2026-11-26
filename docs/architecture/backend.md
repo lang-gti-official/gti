@@ -4995,7 +4995,15 @@ Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
 execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
-backtrace evidence exists. The exact hosted startup factory registers an
+backtrace evidence exists. Unoptimized storage-backed locals use indirect
+debug values at verified readability boundaries. A function-wide stack
+location can expose an incoming parameter's slot before the spill or a
+local's slot before its initializer. The indirect record describes existing
+storage and generates no load. The source subprogram exposes a return type
+to the native debugger when the ABI returns that value directly. Result
+destinations and internal success statuses have no native source return
+value for the debugger to read on step-out. The artificial entry and
+callback carriers have descriptive frame names. The exact hosted startup factory registers an
 artificial line-zero carrier, without a user source scope, to preserve inlined
 source locations in the executing native entry. Forged startup/body/location
 identities reject. The native macOS O3 scalar gate reaches the executing inline
@@ -5300,6 +5308,9 @@ a checked selected source, or whole-binding Move, and exactly one Initialize
 into a fresh whole local. The producer, publication, ownership event and source,
 value and destination drop identities must agree. Explicit staged Move Construct,
 source-defined special members, borrowed fields and active-copy lifetimes reject.
+An owning call result can also move from its whole value place when the call
+published that exact drop obligation and the generated move transfers it to the
+next owner. Propagating a checked factory result with `?` uses this path.
 Scalar and ordinary record fields compose recursively; a function-pointer
 handle field, one code address, copies as bytes. Each field retains its
 own generated-member contract; an outer generated move does not bypass a
@@ -5360,7 +5371,9 @@ generated logical-field copy of a checked view, then publishes the new object
 with its own dispatch state. A polymorphic destination must be a complete
 object: a whole binding, value or hidden temporary, a field or array element,
 or an object of a class nothing derives from. An accessor result reserved by a
-two-phase borrow store qualifies on the same terms. Replacing a base view
+two-phase borrow store qualifies on the same terms. A mutable place returned
+by the accessor supplies the reserved address through its call-result loan.
+The backend uses that address when the store activates the loan. Replacing a base view
 inside a larger object could change that object's dynamic type and stays
 `PolymorphicTransfer`.
 
@@ -6712,6 +6725,14 @@ Checked erased-reference transport is admitted from the verifier's exact
 referent type, access, origin and loan facts. The LLVM backend accepts any
 already-represented complete object, plus concrete closure and invocation-
 pointer storage, and carries only the selected address through erase/restore.
+For a class with base subobjects, the native layout and dispatch proofs
+establish the referent's representation. Erasure and restoration carry the
+address under the original access and lifetime checks. A constructor or
+static factory returning a view of a hierarchy receiver may forward the
+borrow carried by its argument, including a nested view moved by value. MIR
+identifies the argument, its original owner and access, and the returned
+value produced by that constructor or factory. The receiver's existing
+borrow dependencies remain live through the view.
 It does not recognize `std::function_ref` or any other public wrapper name;
 wrapper construction and invocation compose from their ordinary source bodies.
 An unrelated source helper can relay that address only when the central MIR

@@ -1,0 +1,261 @@
+export module ios;
+import std.cstdio;
+import std.panic;
+import std.io;
+import std.span;
+
+export namespace std::ios {
+using iostate = uint32_t;
+constexpr iostate goodbit = 0;
+constexpr iostate eofbit = 1;
+constexpr iostate failbit = 2;
+constexpr iostate badbit = 4;
+
+using seekdir = std::seek_origin;
+constexpr seekdir beg = std::seek_origin::begin;
+constexpr seekdir cur = std::seek_origin::current;
+constexpr seekdir end = std::seek_origin::end;
+
+using fmtflags = uint32_t;
+constexpr fmtflags boolalpha = 1;
+constexpr fmtflags dec = 2;
+constexpr fmtflags oct = 4;
+constexpr fmtflags hex = 8;
+constexpr fmtflags basefield = 14;
+constexpr fmtflags skipws = 16;
+constexpr fmtflags showbase = 32;
+constexpr fmtflags showpos = 64;
+constexpr fmtflags uppercase = 128;
+constexpr fmtflags left = 256;
+constexpr fmtflags right = 512;
+constexpr fmtflags internal = 1024;
+constexpr fmtflags adjustfield = 1792;
+constexpr fmtflags fixed = 2048;
+constexpr fmtflags scientific = 4096;
+constexpr fmtflags floatfield = 6144;
+constexpr fmtflags showpoint = 8192;
+constexpr fmtflags unitbuf = 16384;
+}
+
+export namespace std {
+enum stream_setting_kind { flags, width, precision, fill };
+struct stream_setting {
+  stream_setting_kind kind;
+  size_t value;
+  ios::fmtflags mask;
+  constexpr stream_setting(ios::fmtflags bits, ios::fmtflags mask)
+      : kind(stream_setting_kind::flags), value(size_t(bits)), mask(mask) {}
+  constexpr stream_setting(stream_setting_kind kind, size_t value)
+      : kind(kind), value(value), mask(0) {}
+};
+
+constexpr stream_setting dec = stream_setting(ios::dec, ios::basefield);
+constexpr stream_setting hex = stream_setting(ios::hex, ios::basefield);
+constexpr stream_setting oct = stream_setting(ios::oct, ios::basefield);
+constexpr stream_setting left = stream_setting(ios::left, ios::adjustfield);
+constexpr stream_setting right = stream_setting(ios::right, ios::adjustfield);
+constexpr stream_setting internal = stream_setting(ios::internal, ios::adjustfield);
+constexpr stream_setting fixed = stream_setting(ios::fixed, ios::floatfield);
+constexpr stream_setting scientific = stream_setting(ios::scientific, ios::floatfield);
+constexpr stream_setting hexfloat = stream_setting(ios::floatfield, ios::floatfield);
+constexpr stream_setting defaultfloat = stream_setting(0, ios::floatfield);
+constexpr stream_setting skipws = stream_setting(ios::skipws, ios::skipws);
+constexpr stream_setting noskipws = stream_setting(0, ios::skipws);
+constexpr stream_setting boolalpha = stream_setting(ios::boolalpha, ios::boolalpha);
+constexpr stream_setting noboolalpha = stream_setting(0, ios::boolalpha);
+constexpr stream_setting showbase = stream_setting(ios::showbase, ios::showbase);
+constexpr stream_setting noshowbase = stream_setting(0, ios::showbase);
+constexpr stream_setting showpos = stream_setting(ios::showpos, ios::showpos);
+constexpr stream_setting noshowpos = stream_setting(0, ios::showpos);
+constexpr stream_setting uppercase = stream_setting(ios::uppercase, ios::uppercase);
+constexpr stream_setting nouppercase = stream_setting(0, ios::uppercase);
+constexpr stream_setting showpoint = stream_setting(ios::showpoint, ios::showpoint);
+constexpr stream_setting noshowpoint = stream_setting(0, ios::showpoint);
+constexpr stream_setting unitbuf = stream_setting(ios::unitbuf, ios::unitbuf);
+constexpr stream_setting nounitbuf = stream_setting(0, ios::unitbuf);
+
+constexpr stream_setting setw(size_t width) { return stream_setting(stream_setting_kind::width, width); }
+constexpr stream_setting setprecision(size_t precision) { return stream_setting(stream_setting_kind::precision, precision); }
+constexpr stream_setting setfill(char fill) { return stream_setting(stream_setting_kind::fill, size_t(uint8_t(fill))); }
+constexpr stream_setting setbase(int base) {
+  return stream_setting(base == 16 ? ios::hex : base == 8 ? ios::oct : base == 10 ? ios::dec : uint32_t(0), ios::basefield);
+}
+constexpr stream_setting setiosflags(ios::fmtflags flags) { return stream_setting(flags, flags); }
+constexpr stream_setting resetiosflags(ios::fmtflags flags) { return stream_setting(0, flags); }
+
+/// Shared state for a byte stream. EOF alone is observable and still permits a
+/// successful extraction; failure and transport errors make the stream false.
+class ios_base {
+  mut ios::iostate state = ios::goodbit;
+  mut io_errc reason = io_errc::invalid_stream;
+  mut ios::fmtflags format_flags = ios::dec | ios::skipws;
+  mut size_t field_width = 0;
+  mut size_t floating_precision = 6;
+  mut char padding = ' ';
+protected:
+  void record_error(ios::iostate bits, io_errc error) mut {
+    this.state |= bits;
+    this.reason = error;
+  }
+  void set_error(io_errc error) mut { this.record_error(ios::failbit, error); }
+public:
+  ios_base() {}
+  ios::iostate rdstate() { return this.state; }
+  bool good() { return this.state == ios::goodbit; }
+  bool eof() { return (this.state & ios::eofbit) != 0; }
+  bool bad() { return (this.state & ios::badbit) != 0; }
+  bool fail() { return (this.state & (ios::failbit | ios::badbit)) != 0; }
+  operator bool() { return !this.fail(); }
+  io_errc error() {
+    if (this.good()) { std::panic("error() on a stream in good state"); }
+    return this.reason;
+  }
+  void clear(ios::iostate state = ios::goodbit) mut {
+    this.state = state;
+    if (state == ios::goodbit) { this.reason = io_errc::invalid_stream; }
+  }
+  void setstate(ios::iostate bits) mut { this.state |= bits; }
+  ios::fmtflags flags() { return this.format_flags; }
+  [[discardable]] ios::fmtflags flags(ios::fmtflags value) mut {
+    auto old = this.format_flags;
+    this.format_flags = value;
+    return old;
+  }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits) mut {
+    return this.flags(this.format_flags | bits);
+  }
+  [[discardable]] ios::fmtflags setf(ios::fmtflags bits, ios::fmtflags mask) mut {
+    return this.flags((this.format_flags & ~mask) | (bits & mask));
+  }
+  void unsetf(ios::fmtflags bits) mut { this.format_flags &= ~bits; }
+  size_t precision() { return this.floating_precision; }
+  [[discardable]] size_t precision(size_t value) mut {
+    auto old = this.floating_precision;
+    this.floating_precision = value;
+    return old;
+  }
+  size_t width() { return this.field_width; }
+  [[discardable]] size_t width(size_t value) mut {
+    auto old = this.field_width;
+    this.field_width = value;
+    return old;
+  }
+  void apply(stream_setting setting) mut {
+    switch (setting.kind) {
+    case stream_setting_kind::flags: this.setf(ios::fmtflags(setting.value), setting.mask); break;
+    case stream_setting_kind::width: this.width(setting.value); break;
+    case stream_setting_kind::precision: this.precision(setting.value); break;
+    case stream_setting_kind::fill: this.fill(char(uint8_t(setting.value))); break;
+    }
+  }
+  char fill() { return this.padding; }
+  [[discardable]] char fill(char value) mut {
+    auto old = this.padding;
+    this.padding = value;
+    return old;
+  }
+};
+}
+
+namespace std::detail {
+export expected<int64_t, io_errc> stream_tell<B>(mut B& buffer) {
+  if constexpr (requires(mut B& b) { { b.tell() } -> expected<int64_t, io_errc>; }) {
+    return buffer.tell();
+  } else if constexpr (requires(B& b) { { b.tell() } -> size_t; }) {
+    auto position = buffer.tell();
+    if (position > size_t(9223372036854775807)) { return unexpected(io_errc::seek_failed); }
+    return int64_t(position);
+  } else { return unexpected(io_errc::seek_failed); }
+}
+export expected<void, io_errc> stream_seek<B>(mut B& buffer, int64_t offset, seek_origin origin) {
+  if constexpr (requires(mut B& b, int64_t n, seek_origin dir) { { b.seek(n, dir) } -> expected<void, io_errc>; }) {
+    return buffer.seek(offset, origin);
+  } else if constexpr (requires(mut B& b, size_t n) { { b.seek(n) } -> expected<void, io_errc>; }) {
+    mut int64_t base = 0;
+    if (origin == seek_origin::current) { base = ?stream_tell(buffer); }
+    else if (origin == seek_origin::end) { return unexpected(io_errc::seek_failed); }
+    if (offset < -base || offset > int64_t(9223372036854775807) - base) { return unexpected(io_errc::seek_failed); }
+    return buffer.seek(size_t(base + offset));
+  } else { return unexpected(io_errc::seek_failed); }
+}
+}
+
+export namespace std {
+/// Owns the transport by value. The file types own one filebuf, so moving the
+/// stream never leaves a reference pointing into its old address.
+class basic_ios<B> : public ios_base {
+protected:
+  mut B buffer;
+  // A plain reader has no get area of its own. These bytes also determine
+  // the logical write position when a seekable bidirectional stream changes direction.
+  mut int32_t pending = -1;
+  mut int32_t previous = -1;
+
+  bool begin_output() mut {
+    if (!this.good()) { this.setstate(ios::failbit); return false; }
+    if (this.pending >= 0) {
+      if constexpr (requires(mut B& b) { { b.seek(size_t(0)) } -> expected<void, io_errc>; } ||
+                    requires(mut B& b) { { b.seek(int64_t(0), seek_origin::current) } -> expected<void, io_errc>; }) {
+        auto moved = detail::stream_seek(this.buffer, -int64_t(1), seek_origin::current);
+        if (!moved) { this.record_error(ios::badbit, moved.error()); return false; }
+        this.pending = -1;
+      }
+    }
+    this.previous = -1;
+    return true;
+  }
+  void flush_buffer() mut requires io::writer<B> {
+    auto result = this.buffer.flush();
+    if (!result) { this.record_error(ios::badbit, result.error()); }
+  }
+  void end_output() mut requires io::writer<B> {
+    if (this.good() && (this.flags() & ios::unitbuf) != 0) { this.flush_buffer(); }
+  }
+  void output_bytes(span<uint8_t>& data) mut requires io::writer<B> {
+    if (!this.begin_output()) { return; }
+    auto result = io::write_all(this.buffer, data);
+    if (!result) { this.record_error(ios::badbit, result.error().code); return; }
+    this.end_output();
+  }
+  void output_text(string_view text) mut requires io::writer<B> {
+    if (!this.begin_output()) { return; }
+    // Copy code units in bounded blocks. Each transport receives a checked
+    // byte span without requiring a pointer cast or an allocation per write.
+    mut uint8_t block[256] = {};
+    mut size_t position = 0;
+    while (position < text.size()) {
+      mut size_t count = text.size() - position;
+      if (count > 256) { count = 256; }
+      for (mut size_t i = 0; i < count; i++) { block[i] = uint8_t(text[position + i]); }
+      auto bytes = block.as_span();
+      auto part = bytes.first(count);
+      auto result = io::write_all(this.buffer, part);
+      if (!result) { this.record_error(ios::badbit, result.error().code); return; }
+      position += count;
+    }
+    this.end_output();
+  }
+  int64_t output_position() mut {
+    if (this.fail()) { return -1; }
+    auto result = detail::stream_tell(this.buffer);
+    if (!result) { this.set_error(result.error()); return -1; }
+    return this.pending >= 0 ? result.value() - int64_t(1) : result.value();
+  }
+  void position_output(int64_t offset, seek_origin origin) mut {
+    if (this.fail()) { return; }
+    mut int64_t delta = offset;
+    if (this.pending >= 0 && origin == seek_origin::current) {
+      if (offset == (-int64_t(9223372036854775807) - int64_t(1))) { this.set_error(io_errc::seek_failed); return; }
+      delta -= int64_t(1);
+    }
+    auto result = detail::stream_seek(this.buffer, delta, origin);
+    if (!result) { this.set_error(result.error()); return; }
+    this.pending = -1;
+    this.previous = -1;
+  }
+public:
+  basic_ios(B value) : buffer(std::move(value)) {}
+  B& rdbuf() { return this.buffer; }
+  mut B& rdbuf() mut { return this.buffer; }
+};
+}

@@ -1,0 +1,122 @@
+export module ostream;
+export import std.ios;
+export import "detail/ostream_view.gti";
+import std.cstdio;
+import std.io;
+import std.span;
+import std.string;
+import "detail/stream_format.gti";
+
+export namespace std {
+class basic_ostream<B> : public basic_ios<B> {
+  mut string output_scratch{};
+  void insert_value<T>(T& value) mut requires io::writer<B> {
+    if (!this.good()) { this.setstate(ios::failbit); return; }
+    mut string text{};
+    this.output_scratch.swap(text);
+    auto rendered = detail::stream_render(this, value, text);
+    if (rendered) { this.output_text(text.view()); }
+    else { this.record_error(ios::badbit, rendered.error()); }
+    this.output_scratch.swap(text);
+  }
+public:
+  basic_ostream(B value) : basic_ios<B>(std::move(value)) {}
+  ostream as_ostream() mut requires detail::output_view_source<basic_ostream<B>> { return ostream::from(this); }
+  [[discardable]] mut basic_ostream<B>& put(char value) mut requires io::writer<B> {
+    uint8_t data[1] = {uint8_t(value)};
+    auto bytes = data.as_span();
+    this.output_bytes(bytes);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& write(span<uint8_t>& data) mut requires io::writer<B> {
+    this.output_bytes(data);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& write(string_view text) mut requires io::writer<B> {
+    this.output_text(text);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& write(string_view text, size_t count) mut requires io::writer<B> {
+    if (count > text.size()) { this.set_error(io_errc::write_failed); return this; }
+    this.output_text(text.substr(size_t(0), count));
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& flush() mut requires io::writer<B> {
+    if (this.good()) { this.flush_buffer(); }
+    return this;
+  }
+  int64_t tellp() mut requires io::writer<B> { return this.output_position(); }
+  [[discardable]] mut basic_ostream<B>& seekp(int64_t offset, seek_origin origin = seek_origin::begin) mut requires io::writer<B> {
+    this.position_output(offset, origin);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(stream_setting setting) mut {
+    this.apply(setting);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(output_manipulator action) mut requires io::writer<B> {
+    switch (action) {
+    case output_manipulator::newline_and_flush: this.put('\n'); this.flush(); break;
+    case output_manipulator::null_character: this.put(char(0)); break;
+    case output_manipulator::flush_buffer: this.flush(); break;
+    }
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(bool value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(char value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(int8_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(uint8_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(int16_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(uint16_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(int32_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(uint32_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(int64_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(uint64_t value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(float value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(double value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(string_view value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+  [[discardable]] mut basic_ostream<B>& operator<<(string& value) mut requires io::writer<B> {
+    this.insert_value(value);
+    return this;
+  }
+};
+}

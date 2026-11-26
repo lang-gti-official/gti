@@ -1,0 +1,5 @@
+// Bare test registration cannot also register named rows.
+[[test]]
+[[test("named")]] //~ ERROR GTI-S2099 cannot be combined
+void values() {}
+int main() { return 0; }

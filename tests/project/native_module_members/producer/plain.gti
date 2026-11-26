@@ -1,0 +1,10 @@
+export module scalar;
+export struct State {
+  mut int value = 0;
+  State() = default;
+};
+export State seed(int input) {
+  mut State state{};
+  state.value = input;
+  return state;
+}

@@ -927,6 +927,14 @@ def test_dependency_chain_reanalysis_count(executable, root):
             session.close()
 
 
+# Generated documents that keep one whole-program analysis busy for longer
+# than an edit burst (well over a second on a development machine). Analysis
+# memory grows quadratically with the number of initialized globals: 8000
+# peaked above 9 GiB in one gti_lsp, which exhausted 16 GiB hosted runners
+# (GitHub reported them lost) in full validation; 4000 peak near 3 GiB.
+SLOW_DOCUMENT_GLOBALS = 4000
+
+
 def test_analysis_pool_runs_one_analysis_per_document(executable, root):
     # With several pool workers, a burst of edits to one document must not
     # start a second analysis of it while the first is still running. The
@@ -934,7 +942,10 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
     path = root / "pool-burst.gti"
     # Large enough that each analysis is still running while the later edits
     # arrive, so free workers would otherwise pick them up.
-    source = "".join(f"int pool_{index} = {index};\n" for index in range(8000))
+    source = "".join(
+        f"int pool_{index} = {index};\n"
+        for index in range(SLOW_DOCUMENT_GLOBALS)
+    )
     path.write_text(source, encoding="utf-8")
     uri = path.resolve().as_uri()
     trace_path = root / "pool-trace.jsonl"
@@ -1011,7 +1022,10 @@ def test_newer_edit_cancels_running_analysis(executable, root):
     # analysis at a safe point: only the newer text is published, and the
     # stopped run is traced as cancelled rather than completed.
     path = root / "cancel-burst.gti"
-    source = "".join(f"int cancel_{index} = {index};\n" for index in range(8000))
+    source = "".join(
+        f"int cancel_{index} = {index};\n"
+        for index in range(SLOW_DOCUMENT_GLOBALS)
+    )
     # The intermediate erroneous snapshot skips later lowering and can finish
     # much faster than the valid snapshots. Give its frontend enough work for
     # the next edit to reach cancellation, rather than timing valid lowering.
@@ -9543,8 +9557,12 @@ def test_watched_dependency_reanalysis(executable, root):
 
 
 def test_pending_semantic_request_cancellation(executable, root):
-    source = "".join(f"int queued_{index} = {index};\n" for index in range(8000))
-    source += "int main() { return queued_7999; }\n"
+    source = "".join(
+        f"int queued_{index} = {index};\n"
+        for index in range(SLOW_DOCUMENT_GLOBALS)
+    )
+    last = f"queued_{SLOW_DOCUMENT_GLOBALS - 1}"
+    source += f"int main() {{ return {last}; }}\n"
     path = root / "cancel-semantic-request.gti"
     path.write_text(source, encoding="utf-8")
     uri = path.resolve().as_uri()
@@ -9575,7 +9593,7 @@ def test_pending_semantic_request_cancellation(executable, root):
                 },
             }
         )
-        use = source.rindex("queued_7999")
+        use = source.rindex(last)
         session.send(
             {
                 "jsonrpc": "2.0",

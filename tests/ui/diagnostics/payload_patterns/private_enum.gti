@@ -1,11 +1,12 @@
 // An inferred subject type does not expose a module-private enum: both case forms report the export boundary, without import guidance.
+// A unique binding name isolates access diagnostics from stdlib import advice.
 //@ snapshot: diagnostics
 // --- main.gti
 import "api.gti";
 int main() {
   auto value = get();
   switch (value) {
-  case sample::Value::item(auto& number): return number;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
+  case sample::Value::item(auto& inaccessible_payload_binding): return inaccessible_payload_binding;  //~ ERROR GTI-S2024 //~ ERROR GTI-S2001
   case sample::Value::none: return 0;  //~ ERROR GTI-S2024
   }
 }

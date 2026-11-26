@@ -1,0 +1,24 @@
+// A view can borrow a live record that holds two independent mutable references.
+import std.memory;
+
+struct Pair {
+  mut int& first;
+  mut int& second;
+  Pair(mut int& a, mut int& b) : first(a), second(b) {}
+};
+
+class View {
+  mut std::erased_object& owner;
+public:
+  View<T>(mut T& source) : owner(std::erase_mut(source)) {}
+};
+
+View borrow<T>(mut T& source) { return View(source); }
+
+int main() {
+  mut int a = 1;
+  mut int b = 2;
+  mut Pair pair{a, b};
+  auto view = borrow(pair);
+  return 0;
+}

@@ -1261,6 +1261,10 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
                                     candidate.parameterTypes) == argument;
                        });
   }
+  if (semanticModel.findContextualConstruction(*expression)) {
+    const auto assessment = freshTemporaryBorrowValue(expression, true);
+    return assessment.eligible && assessment.type == argument;
+  }
   // An explicit move transfers a whole local into a temporary owned by the
   // enclosing full expression, exactly as a moved receiver is; the call
   // borrows that temporary.
@@ -1696,8 +1700,9 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
               ? "Pass 'value.view()' to obtain the exact parameter type; keep "
                 "the "
                 "source value alive while the view is used."
-              : "Calls require exact argument types; pass the required type "
-                "or use a supported explicit conversion when intentional.");
+              : "Pass the required type or provide one eligible implicit "
+                "constructor; argument construction does not chain "
+                "conversions.");
     }
   }
   diagnostics.emplace_back(std::move(diagnostic));
@@ -2155,8 +2160,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
     if (checkedArgument &&
-        (!constructor.implicitConstruction || !constructor.declaration ||
-         !constructor.declaration->isConsteval()))
+        (!constructor.implicitConstruction || !constructor.declaration))
       continue;
     // A declaration constructs only through a constructor declared implicit.
     if (contextualConstruction && !constructor.implicitConstruction) {
@@ -2324,7 +2328,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       const AnalyzedCallArgument &argument = arguments[index];
       bool matches =
-          checkedArgument && parameterType.kind == SemanticType::Reference &&
+          checkedArgument && constructor.declaration &&
+                  constructor.declaration->isConsteval() &&
+                  parameterType.kind == SemanticType::Reference &&
                   parameterType.referenceAccess == AccessMode::ReadOnly &&
                   parameterType.arguments.size() == 1 &&
                   parameterType.arguments.front() == argument.type
@@ -3198,6 +3204,50 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "An empty return cannot retain dependencies from constructor "
                "default arguments.",
                "GTI-S2045");
+    }
+  }
+  if (contextualConstruction && !conditionalFields && !storedPaths.empty() &&
+      !containsOpenTypeParameter(constructedType) && selected.constructor) {
+    FunctionBorrowDependencySummary summary;
+    for (const auto &binding : storedCarrierConstructorBindings(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes))
+      summary.dependencies.push_back(
+          {.resultFields =
+               storedFieldSymbols(constructedType, binding.destination.fields),
+           .origin = BorrowOriginKind::Argument,
+           .parameter = binding.parameter,
+           .sourceFields =
+               storedFieldSymbols(selected.parameterTypes[binding.parameter],
+                                  binding.sourceFields),
+           .access = binding.destination.reference.referenceAccess});
+    const bool complete = std::all_of(
+        storedPaths.begin(), storedPaths.end(), [&](const auto &path) {
+          const auto fields = storedFieldSymbols(constructedType, path.fields);
+          return fields.size() == path.fields.size() &&
+                 std::any_of(summary.dependencies.begin(),
+                             summary.dependencies.end(),
+                             [&](const auto &dependency) {
+                               return dependency.resultFields == fields;
+                             });
+        });
+    ResolvedCallInfo publication;
+    publication.returnType = constructedType;
+    publication.parameterTypes = selected.parameterTypes;
+    std::vector<const ExprPtr *> inputs;
+    for (const auto &argument : arguments)
+      inputs.push_back(argument.expression);
+    const auto dependencies =
+        complete
+            ? instantiateCompleteBorrowArguments(publication, summary, inputs)
+            : std::nullopt;
+    if (!dependencies) {
+      report(paren,
+             "Implicit construction requires a complete checked dependency "
+             "contract for every borrowed field.",
+             "GTI-S2045");
+    } else {
+      resolved.contextualBorrowDependencies = *dependencies;
     }
   }
   // RFC 0004: a carrier's constructor signature names the suppliers of its
@@ -6160,8 +6210,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   }
   const ExprPtr *physicalOrigin = &value;
   std::unordered_set<const Expr *> visitedOrigins;
+  const ExprPtr *argumentShell = nullptr;
   while (physicalOrigin != nullptr && *physicalOrigin &&
          !receiverStorageBorrow(*physicalOrigin)) {
+    argumentShell = storedArgumentShell(physicalOrigin->get());
+    if (argumentShell)
+      break;
     if (!visitedOrigins.insert(physicalOrigin->get()).second) {
       physicalOrigin = nullptr;
       break;
@@ -6176,10 +6230,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     }
   }
   if (physicalOrigin != nullptr && *physicalOrigin) {
-    const bool stable = hasStableBorrowStorage(*physicalOrigin);
-    const ExprPtr *receiver = storedBorrowSource(*physicalOrigin);
-    const SemanticLoanPlace shell = receiver != nullptr
-                                        ? loanPlace(*receiver)
+    const bool stable = hasStableBorrowStorage(argumentShell ? *argumentShell
+                                                             : *physicalOrigin);
+    const ExprPtr *storage =
+        argumentShell ? argumentShell : storedBorrowSource(*physicalOrigin);
+    const SemanticLoanPlace shell = storage != nullptr
+                                        ? loanPlace(*storage)
                                         : SemanticLoanPlace{.receiver = true};
     bool validShell = stable && shell.receiver &&
                       contract->origin == BorrowOriginKind::Receiver;
@@ -6198,23 +6254,27 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       // A named carrier is stable within this scope, but its long-lived
       // external dependency cannot authorize returning its own local shell.
       // Check physical storage before the ordinary external-owner relay.
+      const bool implicitStatic =
+          argumentShell && function &&
+          contract->origin == BorrowOriginKind::Global && !contract->place &&
+          function->returnType.kind != SemanticType::Reference;
       Diagnostic diagnostic = makeDiagnostic(
-          std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+          implicitStatic ? "GTI-S2127" : std::move(code),
+          DiagnosticPhase::Semantics, expressionToken(value),
           "Returned " + std::string(description) +
-              (stable
-                   ? " refers to local or by-value receiver storage that does "
-                     "not outlive this call."
-                   : " refers to temporary receiver storage that is destroyed "
-                     "at the end of this full expression."));
-      if (receiver != nullptr && *receiver)
+              (stable ? " refers to local or by-value storage that does "
+                        "not outlive this call."
+                      : " refers to temporary storage that is destroyed "
+                        "at the end of this full expression."));
+      if (storage != nullptr && *storage)
         diagnostic.related.push_back(
-            {tokenSpan(expressionToken(*receiver)),
-             "The result borrows this receiver storage."});
+            {tokenSpan(expressionToken(*storage)),
+             "The result borrows this object's storage."});
       diagnostic.hints.emplace_back(
-          "Return an owned value, or borrow from receiver storage that "
+          "Return an owned value, or borrow from storage that "
           "outlives "
           "the call. An external dependency does not extend the containing "
-          "receiver's lifetime.");
+          "object's lifetime.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
@@ -9038,7 +9098,12 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
                                   name.kind == OverloadedOperator::LessEqual ||
                                   name.kind == OverloadedOperator::Greater ||
                                   name.kind == OverloadedOperator::GreaterEqual;
-  const bool valueOperator = isArithmeticOrBitwiseValueOperator(name.kind);
+  const bool mutableShift =
+      (name.kind == OverloadedOperator::ShiftLeft ||
+       name.kind == OverloadedOperator::ShiftRight) &&
+      function.receiverMutability() == ReceiverMutability::Mutable;
+  const bool valueOperator =
+      isArithmeticOrBitwiseValueOperator(name.kind) && !mutableShift;
   const bool mutationOperator = isCompoundOperator(name.kind) ||
                                 name.kind == OverloadedOperator::PreDecrement;
   std::optional<std::size_t> expectedArity = 0;
@@ -9184,6 +9249,20 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   if (name.kind == OverloadedOperator::PreIncrement &&
       function.receiverMutability() != ReceiverMutability::Mutable) {
     fail("Prefix operator++ must use a mutable receiver.");
+  }
+  if (mutableShift && currentClass) {
+    if (returnType != SemanticType::referenceTo(openClassType(*currentClass),
+                                                AccessMode::Mutable)) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " with a mutable receiver must return a mutable reference to its "
+           "receiver type.");
+    } else {
+      const auto &region = function.returnType().referenceLifetime;
+      if (region && region->name.kind != TokenKind::THIS &&
+          region->name.lexeme != "_")
+        fail("A mutable shift result must borrow its receiver. Elide the "
+             "result region or use 'this'.");
+    }
   }
   if (valueOperator && (returnType == SemanticType::Void ||
                         returnType.kind == SemanticType::Reference ||

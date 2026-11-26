@@ -1,0 +1,4 @@
+// Empty named rows are rejected before executable generation.
+[[test("")]] //~ ERROR GTI-S2099 case name
+void values() {}
+int main() { return 0; }

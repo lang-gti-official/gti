@@ -1,0 +1,12 @@
+// Extraction rejects an output argument that overlaps its mutable receiver.
+struct Input {
+  Input() {}
+  mut int data = 0;
+  mut Input& operator>>(mut int& dst) mut { dst = this.data; return this; }
+};
+
+int main() {
+  mut Input input{};
+  input >> input.data; //~ ERROR GTI-S2017 overlapping
+  return 0;
+}

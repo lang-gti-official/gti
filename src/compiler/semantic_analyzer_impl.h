@@ -19,6 +19,7 @@
 #include "semantic_overload_set.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
+#include "source_text.h"
 
 #include <cassert>
 #include <chrono>
@@ -601,6 +602,12 @@ public:
   [[nodiscard]] bool finalizesFunction(const FunctionInfo &function) const;
   [[nodiscard]] bool finalizesCall(const Call *call) const;
 
+  struct InstanceReuseProbe {
+    const InstanceAnalysisKey &key;
+    bool lookup = true;
+    bool hit = false;
+  };
+
   // Runs one concrete instance analysis for an external (HIR) consumer. An
   // instance that consulted a pending deferred function is analysed again
   // after that function's late demand, so it never keeps a fact that a body
@@ -610,12 +617,19 @@ public:
   template <typename Analyze>
   [[nodiscard]] SemanticInstanceAnalysis
   withLateDemand(Analyze analyze,
-                 std::unordered_set<FunctionId> *finalConsulted = nullptr) {
+                 std::unordered_set<FunctionId> *finalConsulted = nullptr,
+                 InstanceReuseProbe *reuse = nullptr) {
     lateDemandResultClean = true;
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
       return analyze();
     const std::shared_ptr<BodyContext> context = requestSession.bodyContext;
     for (std::size_t round = 0;; ++round) {
+      if (reuse != nullptr && reuse->lookup) {
+        if (auto cached = reuseInstance(reuse->key, reuse->lookup)) {
+          reuse->hit = true;
+          return std::move(*cached);
+        }
+      }
       std::unordered_set<FunctionId> consulted;
       SemanticInstanceAnalysis result;
       // The instance analysis is an attempt (see withBodyDemands): the
@@ -742,7 +756,7 @@ public:
   [[nodiscard]] bool instanceRangeFree(const SemanticModel &delta) const;
   void reserveInstanceRange(const SemanticModel &delta);
   [[nodiscard]] std::optional<SemanticInstanceAnalysis>
-  reuseInstance(const InstanceAnalysisKey &key);
+  reuseInstance(const InstanceAnalysisKey &key, bool &retryAfterDemand);
   void retainInstance(InstanceAnalysisKey key,
                       SemanticInstanceAnalysis &analysis,
                       const std::unordered_set<FunctionId> &consulted);
@@ -765,19 +779,20 @@ public:
       reserveInstanceRange(result.model);
       return result;
     }
-    if (auto reused = reuseInstance(key)) {
+    InstanceReuseProbe reuse{key};
+    std::unordered_set<FunctionId> consulted;
+    journalNextInstance = true;
+    SemanticInstanceAnalysis result =
+        withLateDemand(analyze, &consulted, &reuse);
+    journalNextInstance = false;
+    preserveInvalidProgramEffectDiagnostics(key, result);
+    if (reuse.hit) {
       if (workMetrics != nullptr)
         ++workMetrics->semanticInstanceReuseHits;
-      preserveInvalidProgramEffectDiagnostics(key, *reused);
-      return std::move(*reused);
+      return result;
     }
     if (workMetrics != nullptr)
       ++workMetrics->semanticInstanceReuseMisses;
-    std::unordered_set<FunctionId> consulted;
-    journalNextInstance = true;
-    SemanticInstanceAnalysis result = withLateDemand(analyze, &consulted);
-    journalNextInstance = false;
-    preserveInvalidProgramEffectDiagnostics(key, result);
     reserveInstanceRange(result.model);
     if (lateDemandResultClean)
       retainInstance(std::move(key), result, consulted);
@@ -845,6 +860,8 @@ public:
                             bool sourceBody, bool lifecycle = false);
   // Trusted-body deferral; see TrustedBodyAnalysis and analyzeDeferredBodies.
   [[nodiscard]] bool deferTrustedBody(const FunctionDecl &stmt) const;
+  std::shared_ptr<BlockStmt> reflectedEnumBody(const FunctionDecl &method,
+                                               const FunctionInfo &function);
   void analyzeFunctionBody(const FunctionDecl &stmt,
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
@@ -3406,6 +3423,8 @@ private:
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const Expr *expression);
+  [[nodiscard]] const ExprPtr *
+  storedArgumentShell(const Expr *expression) const;
   [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
   [[nodiscard]] bool receiverStorageBorrow(const Expr *expression) const;
 
@@ -3973,13 +3992,18 @@ private:
   void warnCheckedOverloadOverlap(const CallableCandidate &left,
                                   const CallableCandidate &right);
   [[nodiscard]] bool
-  checkedArgumentNonDeduced(const SemanticType &parameter,
-                            const SemanticType &argument) const;
-  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
-                                              const SemanticType &source,
-                                              const SemanticType &target);
-  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
-                            const SemanticType &target, const Token &parameter);
+  implicitArgumentNonDeduced(const SemanticType &parameter,
+                             const SemanticType &argument) const;
+  [[nodiscard]] bool implicitArgumentPotential(const ExprPtr &argument,
+                                               const SemanticType &source,
+                                               const SemanticType &target);
+  void
+  finishContextualConstruction(const ExprPtr &expr,
+                               const ResolvedConstructionInfo &construction);
+  bool applyImplicitArgument(const ExprPtr &argument,
+                             const SemanticType &source,
+                             const SemanticType &target,
+                             const Token &parameter);
 
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
@@ -6802,8 +6826,9 @@ private:
   [[nodiscard]] const MemberInfo *findMember(const SemanticType &objectType,
                                              const Token &name) const;
 
-  [[nodiscard]] const MemberInfo *resolveMember(const SemanticType &objectType,
-                                                const Token &name);
+  [[nodiscard]] const MemberInfo *
+  resolveMember(const SemanticType &objectType, const Token &name,
+                std::optional<AccessMode> fieldAccess);
 
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const;
 
@@ -7582,6 +7607,13 @@ private:
 
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticCatalog catalog;
+    // Trusted facts an unevaluated query retains for the type parameters in
+    // its arguments: the caller's proofs, not declarations. They extend the
+    // catalog's declared constraints in constraintOf() and live in the
+    // worker's session, so nested workers inherit them and the sealed
+    // catalog the worker returns to its creator's pool stays unchanged.
+    std::unordered_map<GenericParameterId, GenericConstraintSet>
+        queryArgumentConstraints;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     std::vector<const Expr *> textDependentValueOrder;
@@ -7794,6 +7826,7 @@ private:
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
+    std::map<SymbolId, ProgramInitializationStep> localStaticSteps;
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     ProgramExpressionCache programExpressionCache;

@@ -1,0 +1,6 @@
+// Named rows run only their own data factory in independently reported child processes.
+$ gti test rows --jobs 2 --format json --progress never
+stdout: "name":"row/zero","status":"passed"
+stdout: "name":"row/positive","status":"passed"
+stdout: "discovered":2,"selected":2,"started":2,"completed":2,"passed":2
+stdout: "complete":true

@@ -23,8 +23,11 @@ def verify(stage):
         stdlib = root / "stdlib"
         shutil.copytree(stage / "share/gti/stdlib", stdlib)
         roots = {p.relative_to(stdlib) for p in (stdlib / "std").rglob("*.gti")}
-        if set(entries) != roots - {Path("std/assert.gti")} or Path("std/assert.gti") not in roots:
-            raise RuntimeError("the installed catalog must cover all std modules except the source-based std.assert")
+        # Assertions depend on consumer flags; package metadata is materialized
+        # by the source loader for the consumer, never frozen into a stdlib bundle.
+        contextual = {Path("std/assert.gti"), Path("std/package.gti")}
+        if set(entries) != roots - contextual or not contextual <= roots:
+            raise RuntimeError("the installed catalog must cover every non-contextual std module")
         bundles = root / "precompiled-stdlib"
         shutil.copytree(stage / "share/gti/precompiled-stdlib", bundles)
         # The identity envelope begins with the SHA-256 of the exact compiler
@@ -68,6 +71,20 @@ def verify(stage):
         # exercise an input-dependent destructor in the generic vector body.
         shutil.copyfile(fixture.parents[1] / "ui/stdlib/vector/construction_only/element_failure.gti", source)
 
+        # Installed paths can have aliases (on macOS /var itself is one).
+        # Producers and source-absent callers must agree on dependency identities.
+        alias = root / "stdlib-link"
+        alias.symlink_to(stage / "share/gti/stdlib", target_is_directory=True)
+        modules = root / "native-members"
+        shutil.copytree(fixture.parent / "native_module_members", modules)
+        linked_env = dict(env, GTI_STDLIB_PATH=str(alias))
+        producer, consumer = modules / "producer", modules / "consumer"
+        run("build", "readings", "--release", cwd=producer, environment=linked_env)
+        artifact, = (producer / "build/gti/release").glob("*/readings.gtilib")
+        shutil.copyfile(artifact, consumer / "readings.gtilib")
+        shutil.rmtree(producer)
+        run("run", "--release", cwd=consumer, environment=linked_env)
+
         def cleanup_program(profile):
             shutil.rmtree(project / "build", ignore_errors=True)
             run("build", *(["--release"] if profile == "release" else []))
@@ -93,10 +110,13 @@ def verify(stage):
                 raise RuntimeError(f"{profile}: vector recipe changed cleanup output or diagnostics")
 
         # The public imports reach the private module implementations through
-        # their normal dependencies. Only std.assert still has a source body.
+        # their normal dependencies. std.assert stays in source; std.package
+        # is generated from this consumer manifest, not the stdlib producer.
         imports = [f"import {'.'.join(entry.with_suffix('').parts)};"
                    for entry in sorted(roots) if entry.parts[1] != "detail"]
         source.write_text("\n".join(imports) + """
+static_assert(std::package::name == "standard-library-consumer");
+static_assert(std::package::version == "0.1.0");
 int main() {
   mut int evaluated = 0;
   std::debug_assert!(++evaluated == 1);
@@ -110,6 +130,11 @@ int main() {
         for profile in ([], ["--release"]):
             run("run", *profile)
 
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         for profile in ([], ["--release"]):
             run("check", *profile)
@@ -120,6 +145,7 @@ int main() {
             run("check", *profile)
             run("run", *profile)
         for case in ("slow/stdlib/vector/constexpr_range_for_views.gti",
+                     "slow/stdlib/io/file_stream_views.gti",
                      "ui/callables/borrowing_captures/borrowing_captures_23.gti"):
             shutil.copyfile(fixture.parents[1] / case, source)
             for profile in ([], ["--release"]):
@@ -249,6 +275,11 @@ int main() {
         # receipt must still fail before any cache hit can publish that output.
         # The random-only consumer is independent of a corrupt math module.
         random_source = source.read_text()
+        # Exercise the packaged resource helper after its source was removed.
+        shutil.copyfile(fixture / "resources_consumer.gti", source)
+        for profile in ([], ["--release"]):
+            run("run", *profile)
+
         shutil.copyfile(fixture.parents[1] / "fixtures/stdlib_surface_cmath.gti", source)
         run("run", "--release")
         bundle, = bundles.glob("*/release/cmath.gtilib")

@@ -1,0 +1,65 @@
+// nanoseconds to nanoseconds preserves range and truncates toward zero at constexpr and runtime.
+//@ run-pass
+import std.chrono;
+namespace c = std::chrono;
+constexpr bool check() {
+  {
+    c::nanoseconds input{(-9223372036854775807i64 - 1i64)};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != (-9223372036854775807i64 - 1i64)) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != (-9223372036854775807i64 - 1i64)) return false;
+    if (input.count() != (-9223372036854775807i64 - 1i64)) return false;
+  }
+  {
+    c::nanoseconds input{-1500i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != -1500i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != -1500i64) return false;
+    if (input.count() != -1500i64) return false;
+  }
+  {
+    c::nanoseconds input{-1i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != -1i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != -1i64) return false;
+    if (input.count() != -1i64) return false;
+  }
+  {
+    c::nanoseconds input{0i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != 0i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != 0i64) return false;
+    if (input.count() != 0i64) return false;
+  }
+  {
+    c::nanoseconds input{1i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != 1i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != 1i64) return false;
+    if (input.count() != 1i64) return false;
+  }
+  {
+    c::nanoseconds input{1500i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != 1500i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != 1500i64) return false;
+    if (input.count() != 1500i64) return false;
+  }
+  {
+    c::nanoseconds input{9223372036854775807i64};
+    auto result = input.try_cast<c::nanoseconds>();
+    if (!result || result.value().count() != 9223372036854775807i64) return false;
+    auto direct = input.cast<c::nanoseconds>();
+    if (direct.count() != 9223372036854775807i64) return false;
+    if (input.count() != 9223372036854775807i64) return false;
+  }
+  return true;
+}
+static_assert(check());
+int main() { return check() ? 0 : 1; }

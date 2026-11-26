@@ -206,7 +206,10 @@ unless `GTI_TEST_TIME_SCALE` is set. `GTI_TEST_INSTRUMENTATION=address,undefined
 (or `address`, `undefined`, `thread`) also builds every program with the
 driver's LLVM sanitizer instrumentation, which needs an upstream Clang
 (`GTI_CXX`, `GTI_CC`); tests with `native-args` and `--isolate` builds stay
-uninstrumented.
+uninstrumented. The runner's self-test in `tests/runner/check.py` multiplies the
+scales its limit fixtures set by the ambient `GTI_TEST_TIME_SCALE`, so a case
+that must finish keeps its margin under an instrumented runner; only work the
+runner does not instrument (a shell loop) keeps an absolute scale.
 
 `--bless` seeds a check-fail, parse-fail or analyze-fail test that has no
 `//~ ERROR` yet (otherwise an invalid test). It refuses under `CI`, never
@@ -216,6 +219,13 @@ line unless `--bless-directives` is also given: without it, new run output
 goes to a sibling `name.stdout` and differing inline `//@ stdout:` lines are
 reported, not rewritten. One `--bless` writes annotations and the rendered
 snapshots that quote them. Review its diff.
+
+The runner groups cases with the same imports and compilation options so a
+worker can reuse checked standard-library declarations. A standalone check-pass
+case with no snapshots can use the ordinary frontend directly. If it passes but
+exceeds the applicable budget, the runner measures it through the usual cached
+path before applying the same limit. The JSON report's `cold` flag identifies
+measurements that include cache preparation.
 
 Tiers and reports: `--opt O3` (or `GTI_TEST_OPT=O3`) builds every run test
 that does not pin `//@ opt:` optimized; `--filter REGEX` selects tests whose

@@ -1,0 +1,12 @@
+// Navigation keeps independently scoped local statics distinct.
+//@ definition @use: @decl
+//@ definition @other_use: @other_decl
+int first() {
+  static mut int /*@decl*/count = 0;
+  /*@use*/count += 1;
+  return count;
+}
+int second() {
+  static int /*@other_decl*/count = 12;
+  return /*@other_use*/count;
+}

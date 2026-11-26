@@ -1,5 +1,5 @@
 // Undoing a body edit restores the verified warning at its original location before the next full pass.
-{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {"workspace": {"workspaceEdit": {"documentChanges": true}}, "textDocument": {"publishDiagnostics": {"dataSupport": true}, "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}}}}, "initializationOptions": {"openFileDiagnostics": true}}, "id": 1}}
 {"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
 {"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
 {"file": {"name": "main.gti", "text": "int warn() {  mut int code = 3; return code; }\nint main() { return warn(); }"}}
@@ -10,8 +10,10 @@
 {"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int warn() {  mut int code = 3; return code; }\nint main() { return wrn(); }"}]}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001"}]}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "int warn() {  mut int code = 3; return code; }\nint main() { return warn(); }"}]}}}
-{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}}], "gtiDiagnosticStage": "verifiedRestoration"}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}, "data": {"repairSnapshot": "$URI:3", "fixes": [{"replacement": ""}]}}], "gtiDiagnosticStage": "verifiedRestoration"}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": [{"code": "GTI-S2096", "severity": 2, "range": {"start": {"line": 0, "character": 14}}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/codeAction", "params": {"textDocument": {"uri": "$URI"}, "range": {"start": {"line": 0, "character": 14}, "end": {"line": 0, "character": 14}}, "context": {"diagnostics": [], "only": ["quickfix"], "triggerKind": 2}}, "id": 70}}
+{"expect": {"id": 70, "result": [{"title": "Remove unnecessary 'mut'", "kind": "quickfix", "edit": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 3}, "edits": [{"newText": ""}]}]}}]}}
 {"send": {"jsonrpc": "2.0", "id": 8, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
 {"expect": {"id": 8, "result": {}}}
 {"analysisTrace": {"generation": 3, "mirVerified": true}}

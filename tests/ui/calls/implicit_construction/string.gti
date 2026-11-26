@@ -1,0 +1,6 @@
+// String literals initialize owning and read-only string parameters with the same constructor.
+//@ run-pass
+import std.string;
+int take(std::string s) { return int(s.size()); }
+int read(std::string& s) { return int(s.size()); }
+int main() { return take("hello") + read("hello") - 10; }

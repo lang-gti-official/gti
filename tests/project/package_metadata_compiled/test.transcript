@@ -1,0 +1,8 @@
+// A compiled library keeps its producer metadata after the producer sources are removed.
+$ cd producer
+$ gti build
+$ sh -c "cp build/gti/dev/*/provider.gtilib ../consumer/"
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti run

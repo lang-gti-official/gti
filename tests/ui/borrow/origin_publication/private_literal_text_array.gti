@@ -1,0 +1,12 @@
+// Borrowing a literal array element stays ownerless across an unrelated opaque call.
+import std.string_view;
+
+std::string_view cell(std::string_view grid[1][1]) { return grid[0][0]; }
+
+int main() {
+  std::string_view grid[1][1] = {{"x"}};
+  std::string_view copy[1][1] = grid;
+  std::println(cell(copy));
+  std::string_view& word = grid[0][0];
+  return word == "x" ? 0 : 1;
+}

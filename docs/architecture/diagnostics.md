@@ -703,6 +703,10 @@ replaces the prefix through `export` with `export` followed by the prefix's
 original text, so comments within the prefix survive. The edit is withheld
 when a comment separates the prefix from `export`, or when the parser has no
 source text for the unit. Recovery parses the declaration as exported.
+Repeated `export`, `unsafe`, `static` and `thread_local` specifiers,
+redundant `mut` inside mutable field groups, and the trailing comma after a
+single `static_assert` condition offer a preferred deletion of the redundant
+source token. The parser preserves adjacent whitespace and comments.
 
 `GTI-B1401` owns a selected Objective-C++ `.mm` native source for a non-macOS
 target. Point at the exact `cpp-sources` manifest array element and name the
@@ -774,9 +778,18 @@ shadowing and capture rules. The bounded edit-distance search accepts adjacent
 transpositions; it considers names of 3–64 bytes, allows one edit below six
 bytes and two otherwise, and abandons searches exceeding 512 scope bindings.
 Equal best candidates, generated identifiers and macro contexts receive no
-suggestion. Namespace, member and type spellings are not searched. Suggestions
-include a declaration note and a `RequiresReview` replacement for CLI/LSP;
-they never resolve the original expression or make compilation succeed.
+suggestion. A failed instance-field lookup
+uses the same search on the resolved class's accessible instance fields.
+Assignments require a writable receiver and a mutable field. Method calls,
+union members, compiler-private fields and instance-specific generic analysis
+do not produce field spelling edits. Each suggestion points to the matching
+declaration and carries a nonpreferred `RequiresReview` replacement. The
+original lookup still fails until the author edits the program.
+
+Writing `object.method` in a value expression can offer an edit that appends
+`()`. It requires a single accessible, safe, read-only instance method with
+no parameters, generics or constraints and a value result. The call may have
+observable effects, so the author chooses the nonpreferred review action.
 
 For invalid payload-pattern bindings, known variant names still inform
 recovery-only return-flow coverage. These facts never become a valid exhaustive

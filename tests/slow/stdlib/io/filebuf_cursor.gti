@@ -1,0 +1,37 @@
+// Buffered file I/O keeps one visible position across read-ahead, overwrite, seeking and ownership transfer.
+//@ slow
+//@ run-pass
+//@ args: cursor.bin
+import std.fstream;
+import std.vector;
+import std.span;
+import std.memory;
+import std.string;
+
+int run(std::string_view path) {
+  mut std::filebuf buffer{};
+  if (!buffer.open(path, std::ios::in | std::ios::out | std::ios::trunc)) { return 1; }
+  std::vector<uint8_t> initial = {uint8_t(65), uint8_t(66), uint8_t(67), uint8_t(68)};
+  auto bytes = initial.as_span();
+  if (buffer.sputn(bytes).value() != 4) { return 2; }
+  if (buffer.tell().value() != 4 || !buffer.seek(int64_t(0), std::seek_origin::begin)) { return 3; }
+  if (buffer.take_byte().value() != 65 || buffer.available() != 3 || buffer.tell().value() != 1) { return 4; }
+  auto one = bytes.first(std::size_t(1));
+  if (buffer.write_some(one).value() != 1) { return 5; }
+  if (buffer.peek_byte().value() != 67 || buffer.tell().value() != 2) { return 6; }
+  if (!buffer.seek(int64_t(-1), std::seek_origin::current) || buffer.take_byte().value() != 65) { return 7; }
+  if (!buffer.putback_byte('x') || buffer.take_byte().value() != 120 || buffer.take_byte().value() != 67) { return 8; }
+  mut std::filebuf moved = std::move(buffer);
+  if (!moved.unget_byte() || moved.take_byte().value() != 67 || moved.take_byte().value() != 68) { return 9; }
+  if (moved.peek_byte().error() != std::io_errc::end_of_file || !moved.unget_byte()) { return 10; }
+  if (moved.sbumpc().value() != 68 || moved.pubseekoff(int64_t(-2), std::seek_origin::current).value() != 2) { return 11; }
+  mut std::filebuf other{};
+  moved.swap(other);
+  if (moved.is_open() || !other.is_open()) { return 12; }
+  mut std::vector<uint8_t> output{std::size_t(3)};
+  mut auto window = output.as_mutable_span();
+  if (other.sgetn(window).value() != 2 || window[0] != uint8_t(67) || window[1] != uint8_t(68)) { return 13; }
+  return other.close() ? 0 : 14;
+}
+
+int main(int argc, std::vector<std::string> argv) { return run(argv[1].view()); }

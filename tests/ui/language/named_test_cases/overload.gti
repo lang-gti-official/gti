@@ -1,0 +1,5 @@
+// A row may not silently select a different overload of its test function.
+void values(bool value) {}
+[[test("wrong", true)]] //~ ERROR GTI-S2099 another overload
+void values(int value) {}
+int main() { return 0; }

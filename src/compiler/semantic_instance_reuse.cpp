@@ -373,7 +373,9 @@ void SemanticVisitor::Impl::reserveInstanceRange(const SemanticModel &delta) {
 }
 
 std::optional<SemanticInstanceAnalysis>
-SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
+SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key,
+                                     bool &retryAfterDemand) {
+  retryAfterDemand = false;
   const auto start = std::chrono::steady_clock::now();
   const std::size_t lateDemandBefore =
       workMetrics == nullptr ? 0 : workMetrics->semanticLateDemandMicroseconds;
@@ -410,13 +412,19 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
   if (entry->declaration == nullptr ||
       entry->declaration != instanceDeclarationSyntax(key))
     return reject();
-  std::vector<const FunctionDecl *> pending;
+  bool pending = false;
   for (const auto &[id, declaration] : entry->consulted) {
     const FunctionInfo *function = semanticModel.findFunction(id);
     if (function == nullptr || function->declaration != declaration)
       return reject();
     if (pendingDeferredBody(function->declaration))
-      pending.push_back(function->declaration);
+      pending = true;
+  }
+  // Only the final attempt is cached. A pending body must see identities
+  // allocated by the preceding attempt, before the final delta is reserved.
+  if (pending) {
+    retryAfterDemand = true;
+    return std::nullopt;
   }
   if (!entry->model.instanceReuseJournalMatches(semanticModel) ||
       !instanceRangeFree(entry->model))
@@ -427,13 +435,6 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
   result.model.rebaseReusedInstance(semanticModel);
   if (!result.model.verifySourceDebug().empty())
     return reject();
-  // The delta's own identities stay reserved even if the late demand below
-  // fails, so no later identity can collide with them.
-  reserveInstanceRange(entry->model);
-  // A fresh analysis would late-demand the pending functions it consulted
-  // and analyse again; the stored delta is that second analysis.
-  if (!pending.empty() && !analyzeLateDemand(pending))
-    return reject();
   // A reused delta consulted the same preamble bodies the fresh analysis did;
   // reaching them reports what they held back, exactly as then.
   if (adoptedPreamble != nullptr) {
@@ -443,6 +444,7 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
     if (reachConsultedPreambleBodies(consulted))
       return reject();
   }
+  reserveInstanceRange(entry->model);
   return result;
 }
 

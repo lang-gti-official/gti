@@ -775,11 +775,16 @@ module.exports = grammar({
         field("body", $.block),
       ),
 
+    _test_attribute: ($) => seq("test", optional(seq(
+      "(", field("case_name", $.string_literal),
+      repeat(seq(",", $.initializer_expression)), ")",
+    ))),
+
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"))),
+        choice($._test_attribute, "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"),
+        repeat(seq(",", choice($._test_attribute, "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"))),
         "]]",
       ),
 
@@ -885,16 +890,6 @@ module.exports = grammar({
       seq(
         choice(
           seq(field("storage", "static"), optional(field("thread_storage", "thread_local"))),
-          seq(field("thread_storage", "thread_local"), field("storage", "static")),
-        ),
-        optional(field("constant", "constexpr")),
-        $._variable_declaration_body,
-      ),
-
-    _block_thread_local_declaration: ($) =>
-      seq(
-        choice(
-          seq(field("storage", "static"), field("thread_storage", "thread_local")),
           seq(field("thread_storage", "thread_local"), field("storage", "static")),
         ),
         optional(field("constant", "constexpr")),
@@ -1077,7 +1072,7 @@ module.exports = grammar({
         $.static_assert_declaration,
         $.structured_binding_declaration,
         $.variable_declaration,
-        alias($._block_thread_local_declaration, $.static_variable_declaration),
+        $.static_variable_declaration,
         $.statement,
       ),
 
@@ -1175,6 +1170,7 @@ module.exports = grammar({
     _init_statement: ($) =>
       choice(
         $.variable_declaration,
+        $.static_variable_declaration,
         $.structured_binding_declaration,
         $.expression_statement,
       ),

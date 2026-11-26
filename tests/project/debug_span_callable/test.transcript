@@ -1,0 +1,3 @@
+// Debug information describes span witnesses and stateless function items.
+$ gti main.gti -g -O0 --progress=never -o debug
+$ ./debug

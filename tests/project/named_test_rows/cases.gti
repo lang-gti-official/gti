@@ -1,0 +1,8 @@
+import std.panic;
+mut int calls = 0;
+int input(int value) { calls++; return value; }
+[[test("zero", input(0), 0)]]
+[[test("positive", input(7), 7)]]
+void row(int actual, int expected) {
+  if (actual != expected || calls != 1) { std::panic("wrong row or shared data"); }
+}

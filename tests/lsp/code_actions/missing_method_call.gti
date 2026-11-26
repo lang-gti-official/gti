@@ -1,0 +1,27 @@
+// A resolved method used as a field offers a reviewable zero-argument call.
+//@ code-action @name: "Call 'width()'" => step 2
+struct Rect { int width() { return 4; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+// --- step 2
+struct Rect { int width() { return 4; } };
+int read(Rect& r) { return r.width(); }
+// --- step 3
+//@ no-code-action @name
+struct Rect { int width(int scale) { return scale; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+// --- step 4
+//@ no-code-action @name
+class Rect { int width() { return 4; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+// --- step 5
+//@ no-code-action @name
+struct Rect { unsafe int width() { return 4; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+// --- step 6
+//@ no-code-action @name
+struct Rect { int width() { return 4; } int width(int scale) { return scale; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+// --- step 7
+//@ no-code-action @name
+struct Rect { int width() mut { return 4; } };
+int read(Rect& r) { return r./*^name*/width; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003

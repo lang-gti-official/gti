@@ -1,0 +1,19 @@
+// Moving a guard through a call keeps its owner protected until the result drops.
+import std.utility;
+
+class Guard {
+  mut int& drops;
+public:
+  Guard(mut int& drops) : drops(drops) {}
+  ~Guard() { this.drops += 1; }
+};
+
+Guard relay(Guard guard) { return std::move(guard); }
+
+int main() {
+  mut int drops = 0;
+  auto guard = Guard(drops);
+  auto returned = relay(std::move(guard));
+  drops = 5;  //~ ERROR GTI-S2017
+  return 0;
+}

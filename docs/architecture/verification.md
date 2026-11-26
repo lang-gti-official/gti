@@ -236,6 +236,17 @@ commit before a beta cut or stable promotion. The frozen C++ backend is not
 part of validation; its tests and `cpp-backend.yml` were removed on
 2026-11-16 ([test-suite redesign](../plans/test-suite-redesign.md)).
 
+Hosted Linux runners have 16 GiB and four vCPUs, and one that runs out of
+memory dies with its files: GitHub reports only a lost runner or a shutdown
+signal. Full validation's shard and installed-toolchain steps therefore log
+`scripts/runner_monitor.sh` samples (available memory, swap, free disk, the
+largest processes and the CTest entries still running). Whole-program
+analysis memory currently grows quadratically with the number of initialized
+globals, so a test that needs a slow analysis bounds its generated document:
+`lsp_smoke_test.py` uses 4000 globals (`SLOW_DOCUMENT_GLOBALS`, near 3 GiB
+in one `gti_lsp`), after 8000 peaked above 9 GiB and took down runners from
+2026-11-22.
+
 Runtime harnesses take their modes from `tests/backend_modes.py`
 (`native_modes()`: LLVM at the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by
 default and per commit, `O0,O3` or `O3` in the slow tier)
@@ -2772,6 +2783,10 @@ catalog rules, bounded overlapping children, timeout progress, exact signal vers
 ordinary status (including 127 and 143), failed exec, moved process ownership and
 background descendant termination on both completion and timeout. It uses native
 host children, so its outcome does not depend on GTI-generated checks.
+Descendant checks synchronize startup and require EOF on a lifetime pipe after
+owner completion or timeout; delayed scheduling cannot turn an earlier marker
+write into a false cleanup failure. A separate release pipe cleans up descendants
+even when the group-termination assertion fails.
 Streaming observers must receive complete payloads before the driver releases
 their allocated storage; retained result facts preserve stable failure selection.
 `test_report` parses serialized events with Python's JSON implementation,
@@ -9658,7 +9673,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `issues_122_124_field_initializers_runtime` | grouped, unchecked and checked-conversion, and empty/non-empty payload-enum class-field initializers at O0/O2 under C++20/C++23, plus exact verified-MIR initializer spellings |
 | `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
-| `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
+| `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage over the v3 factors plus virtual dispatch, owned text and range-for (schema v4; range-for requires the vector factor), seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_package_runtime` | copy the real `stdlib/tests` package into isolated directories and run its module graph plus declared native C++ source with LLVM/C++ in dev/release profiles; require the complete numeric/foundation success output |
 | `tests/ui/stdlib/contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
@@ -9965,7 +9980,7 @@ into the tiers of the redesign's §7:
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
-| Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in one run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
+| Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in sixteen shards | the library partition runs `tests/runner/check.py --without-cases` (the runner's self-test and tidy) with the ASan/UBSan `gti-test` and the shards' `GTI_TEST_TIME_SCALE=50`, since at 10 an instrumented check fixture exceeded its CPU limit at four jobs (run 45453554235); the `gti-test-instrumented` job runs `check.py --shard I/16` on sixteen standard hosted runners, two cases at a time with a 64 MiB stack, with `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=50`, each under a 180-minute step bound, printing failures and progress as it goes and keeping its JUnit and JSON reports; the `Sanitizer verdict` requires every shard. One runner at one case at a time did not finish the 8,362 cases in 120 minutes (run 45349335403), and eight runners at four cases at a time each ran out of memory, with over a hundred healthy cases past a 10x CPU limit (run 45410520119) |
 
 **Merge-queue macOS fast checks are a switch (2026-11-18).** The `fast`
 job's matrix comes from the plan (`validation_checks.py fast-matrix`,
@@ -9994,6 +10009,19 @@ nightly archives there. Every workflow runs on the standard hosted labels
 `ubuntu-24.04` and `macos-26` only, free for this public repository; larger
 runners are billed per minute even for public repositories, and
 `ci_release` (`STANDARD_RUNNER_LABELS`) rejects any other label.
+
+**Hosted per-case limits scale 4x.** A case's limit is CPU seconds on the
+development machine; the `gti_test_ui` entries double it, and pull-request
+and merge-queue CI doubles it again (`-DGTI_TEST_TIMEOUT_SCALE=2` in both
+configure steps of `ci.yml`; full validation uses 3). The 2x default was too
+tight for hosted runners: on 2026-11-22 a `tests/ui` shard of about 1,000
+cases cost 0.82 CPU-seconds per case on hosted Linux and 0.63 on hosted macOS
+against 0.25 on the development machine (3.3x and 2.5x), and of the 57 failed
+`ci.yml` runs of 20 to 23 November, 29 failed only on CPU-limit timeouts, 36
+of the 54 timed-out cases within 15% of the limit and none beyond 58% over,
+mostly in cases the pull request had not touched. The limit exists to catch
+hangs and runaway cost, not to rank runners. Keeping cases cheap is the
+budget rule's job, and it stays at 2x for added and changed cases.
 
 **The budget rule is advisory pending calibration.** Its scale assumes a
 hosted Linux runner is about twice as slow as the development machine the
@@ -10095,10 +10123,12 @@ compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 failed/invalid detection falls back to one. Repository variables `GTI_JOBS`
 and `GTI_TEST_JOBS` independently override those defaults and must be positive
 integers. A workflow step that states `GTI_MEMORY_PER_JOB_MIB` additionally
-caps the detected compile default by the memory `/proc/meminfo` reports
-(`GTI_MEMINFO` names another file for tests), never below one job and never
+caps the detected compile default by the memory reported by Linux procfs
+(`GTI_MEMINFO` selects a test file) or macOS `sysctl -n hw.memsize`, never below one job and never
 touching an explicit override; `GTI_MEMORY_PER_TEST_MIB` bounds the detected
-CTest worker default the same way. The release build states 3072 MiB per
+CTest worker default the same way. Nested test pools and their CTest processor
+reservations use at most four workers and respect a smaller configured CI
+budget. The release build states 3072 MiB per
 compile job because its bundled LLVM/Clang units compile beside GTI's largest
 units, the native CI build 2048 MiB per compile job and 3072 MiB per test worker,
 and the ASan/UBSan build 3072 MiB per
@@ -10109,7 +10139,7 @@ every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
 default becomes an hour). Its three compiler partitions, which ran only
 `compiler_pipeline` (the instrumented ownership suite alone took more than
 three hours on 2026-11-04, run 41837802931), left with that aggregate: the
-instrumented `gti-test` run analyses its cases with the sanitized compiler,
+instrumented `gti-test` shards analyse its cases with the sanitized compiler,
 and the library subset runs `gti_unit_tests`, which holds the aggregate's
 API-only checks. The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
@@ -12293,43 +12323,64 @@ rules; newly found compiler defects must not become exclusions.
 
 The oracle independently computes integer values, observable call effects,
 full-expression and reverse resource cleanup, and active error destruction.
-The runner compares exact status/stdout/stderr at all four C++20/C++23 O0/O3
-configurations for original and renamed/parenthesized source. It repeats each
-execution to expose unstable observations. The existing scalar typed audit
-continues to supply an independent C++ comparison; the ownership oracle here
-does not claim C++ moved-from destructor behavior as GTI semantics.
+The tool is LLVM-first: every case is compiled by the LLVM backend, the only
+tested backend, and its native executable is compared with exact
+status/stdout/stderr at LLVM `O0` and `O3` for original and
+renamed/parenthesized source, so each case has four native outcomes. The
+levels come from `tests/backend_modes.py` (`llvm_modes`), named explicitly
+rather than through `GTI_TEST_LLVM_LEVELS` because optimisation is part of the
+subject. `O3` runs every GTI-registered LLVM pass `O2` does (checked offsets
+and ranges, private atomics, SLP vectorisation) plus LLVM's most aggressive
+inlining and loop transforms; it matches the slow tier's `O0`/`O3` pair, and
+adding `O2` would cost half as many outcomes again for little distinct
+coverage. Each execution repeats to expose unstable observations. No C++ is
+generated, compiled, or used as an oracle; `--cxx` only names the native link
+driver forwarded to `gti --cxx` and defaults to the compiler's own discovery.
 
 ```sh
 python3 scripts/debug/feature_interactions.py generate \
     --seed 20261003 --out /tmp/gti-interaction-sources
 python3 scripts/debug/feature_interactions.py run \
-    --gti build/gti --seed 20261003 --out /tmp/gti-interaction-run
+    --gti build-release/gti --seed 20261003 --out /tmp/gti-interaction-run
 python3 scripts/debug/feature_interactions.py run \
-    --gti build/gti --strength 3 --extra-cases 20 --keep-going
+    --gti build-release/gti --strength 3 --extra-cases 20 --keep-going
 python3 scripts/debug/feature_interactions.py replay \
-    --gti build/gti --failure /tmp/gti-interaction-run/case-000/original-O0-c++20/failure.json
+    --gti build-release/gti --failure /tmp/gti-interaction-run/case-000/original-O0-llvm/failure.json
 python3 scripts/debug/feature_interactions.py triage \
-    --gti build/gti --failure /tmp/gti-interaction-run/case-000/original-O0-c++20/failure.json \
+    --gti build-release/gti --failure /tmp/gti-interaction-run/case-000/original-O0-llvm/failure.json \
     --out /tmp/gti-interaction-triage
 python3 scripts/debug/feature_interactions.py reduce \
-    --gti build/gti --failure /tmp/gti-interaction-run/case-000/original-O0-c++20/failure.json \
+    --gti build-release/gti --failure /tmp/gti-interaction-run/case-000/original-O0-llvm/failure.json \
     --max-probes 40 --out /tmp/gti-interaction-reduced
 ```
 
 Output directories must be new. Every run retains the cases, source hashes,
-oracle, exact command arguments, raw logs, compiler version, generated C++
-when available, and a machine-readable report. `planned_coverage` and
-`verified_coverage` are distinct: only cases passing the entire native and
-metamorphic matrix count as verified. Internal errors, signals, timeouts,
-ordinary rejection, missing artifacts, wrong output, and nondeterminism remain
-distinct. Replay reports reproduced, disappeared, or replaced failures using
-the current selected toolchain; saved command text is never executed.
+oracle, configurations, exact command arguments, raw logs, compiler version,
+and a machine-readable report. `planned_coverage` and `verified_coverage` are
+distinct: only cases passing the entire native and metamorphic matrix count as
+verified. Internal errors, signals, timeouts, ordinary rejection, native
+object or link failures, missing artifacts, wrong output, and nondeterminism
+remain distinct. Replay reports reproduced, disappeared, or replaced failures
+using the current selected toolchain; saved command text is never executed.
 Version-two case records include control flow; version-one records remain
 replayable with that factor disabled and their original source hashes and
-oracle checked. Reports group matching failure predicates without discarding
-individual case paths. `triage` first reproduces the saved predicate, then
-probes verified MIR and C++ emission separately. Its retained `triage.json`
-identifies the measured failure boundary, not a proven compiler root cause.
+oracle checked. A failure record from the C++ era names a C++ standard
+(`["O3", "c++20"]`); because the case and oracle are backend-independent it
+replays at the same level on LLVM, and the replay, triage, and reduction
+outputs record that `migrated_configuration` and the command line announces
+it. Any other configuration is rejected by name. Reports group matching
+failure predicates without discarding individual case paths.
+
+`triage` first reproduces the saved predicate with the full build and run,
+then probes the LLVM-era stage boundaries separately: verified MIR
+(`--emit-mir`), LLVM IR (`--emit-llvm` at the failing level), native object
+emission and linking (the reproduced build), and execution. The direct driver
+has no semantic-only emission (`gti check` is project-only), so a frontend
+`GTI-L`/`GTI-P`/`GTI-S`/`GTI-I` rejection at the MIR probe is reported as
+`semantic-admission`, and any other MIR failure as `before-verified-mir`. The
+other boundaries are `llvm-ir-emission`, `native-object-or-link`, and
+`native-execution`. Its retained `triage.json` (schema v2) identifies the
+measured failure boundary, not a proven compiler root cause.
 
 Typed reduction removes feature wrappers and shrinks bounded scalar data,
 regenerating a valid source and its oracle after each step. A candidate must
@@ -12343,63 +12394,36 @@ or a fixed point within this bounded candidate family. This does not claim
 globally minimal syntax. Arbitrary source-graph reduction remains the existing
 bundle reducer's responsibility below.
 
-CTest registers the generator/decision tests and a fixed three-program smoke
-(24 native outcomes plus two invalid ownership siblings). The smoke does not
-claim complete pairwise coverage. Wider covering arrays and seeded exploration
-remain opt-in, and compiler findings must receive minimal regressions in their
-owning suites.
+CTest registers the generator/decision tests (`feature_interaction_model`)
+and a fixed three-program smoke (`feature_interaction_smoke`: 12 LLVM
+`O0`/`O3` native outcomes, two invalid ownership siblings, and the three
+reduced `tests/fixtures/feature_interaction_*_class.gti` regressions built
+and run at `O0` and `O3`). The smoke does not claim complete pairwise
+coverage. Wider covering arrays and seeded exploration remain opt-in, and
+compiler findings must receive minimal regressions in their owning suites.
 
-The initial Release/AppleClang 21/LLVM 22.1.8 run on macOS arm64 at
-`ca705977` generated 12 cases for seed `20261003`: eight passed all eight
-original/metamorphic and standard/optimization outcomes, while four failed
-C++ admission in every mode. Verified coverage was 193 of 219 required
-tuples; planned coverage was complete. The fixed smoke also fails on this
-baseline. These are compiler findings, not a complete passing gate:
-[#25](https://git.internal.howetotech.dev/gti-lang/gti/issues/25) records
-checked extraction of a copyable class from Expected, and
-[#26](https://git.internal.howetotech.dev/gti-lang/gti/issues/26) records direct
-and generic lambda class-result transport. Their minimal sources live in the
-three `tests/fixtures/feature_interaction_*_class.gti` fixtures. They pass
-verified MIR emission and must ultimately compile and exit zero. The smoke
-retains its ordinary pass expectation rather than excluding the failing
-shapes or treating their internal errors as expected behavior.
+The first LLVM-first campaign, on 2026-11-24 at `main` `ec726745e`
+(`gti 0.494.0`, Release/Ninja, AppleClang 21, LLVM 23.1.2, macOS
+arm64), passed completely. Seed `20261003` at strength 2: **12/12 cases, 48
+native outcomes, two negative controls, 275/275 required tuples verified**.
+`--strength 3 --extra-cases 20`: **38/38 cases (18 covering rows plus 20
+revisits), 152 native outcomes, 1302/1302 required three-way tuples**. No
+compiler finding was raised, so nothing was triaged or reduced. These are
+optimized macOS arm64 results, not a Linux or Windows claim.
 
-Reconciliation on 2026-10-04 against merged `main` at `67f95138`, with the
-approved control-flow and triage extension, passed all nine focused tooling
-and policy CTests, including the 24-outcome interaction smoke. The original
-three issue #25/#26 fixtures now compile and exit zero in all four C++20/C++23
-O0/O3 configurations. The optimized compiler is Release, AppleClang 21,
-LLVM 22.1.8 on macOS arm64. No compiler semantics changed in this PR.
-
-The first expanded eleven-factor seed `20261003` campaign passed 11 of 12
-cases, with 96 attempted native outcomes and 270 of 275 required
-interaction tuples verified. Case 6 (Expected, vector, nested call, and control
-flow; copyable payload without visible cleanup) raises `GTI-B0001` in all eight
-original/renamed configurations. Independent triage accepts verified MIR but
-rejects C++ emission for `exercise`; this identifies a measured boundary, not
-the underlying root cause. Regenerate this seed with the checked-in generator
-to reproduce it. Local raw evidence is retained at
-`/private/tmp/gti-pr27-reconciled-20261004` and
-`/private/tmp/gti-pr27-triage-20261004`.
-
-The follow-up `0.364.1` fix reduces this to checked extraction of a cleanup-free
-class directly into a prepared argument; loops and vectors are not required.
-It shares the existing receiver and class-result staging proofs. The unchanged
-campaign now passes **12/12 cases, 96 native outcomes, and 275/275 required
-tuples**, with evidence at `/private/tmp/gti-pr27-fixed-campaign-20261004`.
-`expected_payload_pair_emitter` checks argument identity, slot activation,
-receiver movement, consuming transfer, and failure-edge/cleanup corruption
-for both owning and cleanup-free payloads. The native argument suite covers
-success plus failure at either `.value()`/`.error()` argument, unchanged caller
-cleanup, C++20/C++23 at O0/O1/O3, no-elide, and ASan/UBSan. The bounded CTest
-smoke remains deliberately smaller than the complete optional campaign.
-
-Local follow-up validation passed four focused gates (72.02 seconds) and all
-36 selected compiler/backend/MIR/Expected/policy gates (132.21 seconds),
-including both corpus sweeps. The final seven-mutation emitter test also passed
-after rebuilding it. Clang-format 22.1.8 checked all 404 first-party C/C++ files;
-patch whitespace checks passed. These are optimized macOS arm64 results, not a
-new full-suite run or Linux/Windows execution claim.
+**C++-era history (2026-10).** These runs used the since-frozen C++ backend at
+C++20/C++23 `O0`/`O3` (eight native outcomes per case) and are kept as
+history only. The first Release run at `ca705977` (AppleClang 21, LLVM
+22.1.8, macOS arm64) passed 8 of 12 seed-`20261003` cases with 193 of 219
+tuples verified; four failed C++ admission. The reduced findings, issues #25
+(checked extraction of a copyable class from Expected) and #26 (direct and
+generic lambda class-result transport), became the three
+`feature_interaction_*_class.gti` fixtures. Reconciliation at `67f95138` on
+2026-10-04 made them compile and exit zero, and the expanded eleven-factor
+campaign passed 11 of 12 cases (96 outcomes, 270 of 275 tuples); case 6 raised
+`GTI-B0001` in C++ emission. After the `0.364.1` fix (checked extraction of a
+cleanup-free class into a prepared argument) the campaign passed 12/12 cases,
+96 native outcomes, and 275/275 tuples.
 
 The `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
 (design record:
@@ -12474,41 +12498,71 @@ generation, classification, and validation logic run under
 `compiler_debug_tooling`.
 
 `fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, the whole
-analysis-to-backend pipeline, and a bounded two/three-unit source-loader
-composition. They exist only under
-`GTI_BUILD_FUZZERS=ON` (Clang required; tree-wide
-`fuzzer-no-link,address,undefined` instrumentation; never installed), and the
-`fuzzer_smoke` test runs each fixed seed corpus deterministically. Coverage
-exploration is an explicit local activity, never a merge gate:
+analysis-to-LLVM pipeline, and a bounded two/three-unit source-loader
+composition. They are LLVM-first: they build in the default configuration,
+never need `GTI_ENABLE_CPP_BACKEND`, and the pipeline harness ends at the LLVM
+backend. They exist only under `GTI_BUILD_FUZZERS=ON` (Clang with
+libFuzzer required; tree-wide `fuzzer-no-link,address,undefined`
+instrumentation; never installed), and the `fuzzer_smoke` test runs each fixed
+seed corpus deterministically. AppleClang has no libFuzzer runtime, so on
+macOS configure with the Homebrew LLVM of the pinned major
+(`python3 scripts/llvm_pin.py --cmake-dir`). Coverage exploration is an
+explicit local activity, never a merge gate. Always cap memory with
+libFuzzer's own limits (macOS `ulimit -v` does not work):
 
 ```sh
 cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
+    -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF \
+    -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+    -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+    -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"
 python3 scripts/build_window.py --kind build -- \
-    cmake --build build-fuzz --target gti_parser_fuzzer \
+    cmake --build build-fuzz -j 8 --target gti_parser_fuzzer \
     gti_formatter_fuzzer gti_pipeline_fuzzer gti_source_loader_fuzzer
+ctest --test-dir build-fuzz -R '^fuzzer_smoke$' --output-on-failure
 mkdir -p /tmp/gti-fuzz-work
 build-fuzz/fuzz/gti_parser_fuzzer -dict=fuzz/dictionary/gti.dict \
-    -max_len=65536 /tmp/gti-fuzz-work fuzz/corpus/parser
+    -max_len=65536 -rss_limit_mb=4096 -malloc_limit_mb=4096 \
+    -max_total_time=300 /tmp/gti-fuzz-work fuzz/corpus/parser
 ```
 
-libFuzzer writes every discovered input into the *first* corpus directory, so
-always put a scratch work directory first and the checked-in seeds second —
-the repository corpus stays curated, and `-merge=1` is how a genuinely
-coverage-increasing input is promoted into it deliberately.
+The pipeline and source-loader harnesses skip inputs over 8 KiB, so pass them
+`-max_len=8192`. libFuzzer writes every discovered input into the *first*
+corpus directory, so always put a scratch work directory first and the
+checked-in seeds second — the repository corpus stays curated, and `-merge=1`
+is how a genuinely coverage-increasing input is promoted into it deliberately.
+A crash or timeout artifact is reduced with `-minimize_crash=1` (add
+`-timeout=5` for a hang) and `-exact_artifact_path=`.
 
 The formatter property compares significant production-lexer token kinds and
 normalized spellings whenever the original input is lexer-clean, in addition
 to byte idempotence; comments remain trivia and recovered lexical input makes
-no token-equivalence claim. The pipeline takes two fresh snapshots and compares
-acceptance, complete diagnostics, source/phase facts, optimizer reports,
-classified lowering disposition, and nonempty MIR/C++ artifacts. Every
-diagnostic, related span, and fix-it is range-checked against its owning source.
-The source-loader target reuses `Frontend` source overrides for a fixed quoted
-include chain and compares complete fresh source-graph snapshots without
-writing files or parsing includes itself. `fuzzer_smoke` contains a gated
-negative perturbation for every strengthened property as well as the
+no token-equivalence claim. The pipeline harness mirrors the driver's LLVM path
+(`detail::generateArtifact`) at the `-O0`..`-O3` level the first input byte
+selects, with the driver's GTI-to-LLVM codegen-level mapping. It takes two
+fresh snapshots and compares acceptance, complete diagnostics, source/phase
+facts, pre- and post-optimization MIR, optimizer reports, classified LLVM
+limitations, and the `--emit-mir`, `--emit-llvm` textual-module, and native
+object artifacts, all of which must be nonempty for an emitted program. A
+lowered-program construction failure or any backend exception other than a
+classified `BackendUnsupportedError` is the driver's GTI-B0001 internal error
+and therefore a fuzz failure; a limitation must also be shared by textual IR
+and object emission. The textual module is re-parsed in a fresh `LLVMContext`
+and must pass the LLVM verifier, as an `--emit-llvm` consumer would see it.
+Every diagnostic, related span, and fix-it is range-checked against its owning
+source. The source-loader target reuses `Frontend` source overrides for a
+fixed quoted include chain and compares complete fresh source-graph snapshots
+without writing files or parsing includes itself. `fuzzer_smoke` contains a
+gated negative perturbation for every strengthened property as well as the
 replayable generic crash-artifact check.
+
+The pipeline harness alone sets `detect_container_overflow=0` as its ASan
+default. The LLVM libraries it links are never ASan-built, and libc++'s
+container annotations then report a false container-overflow on vectors shared
+with GTI's instrumented LLVM passes (the pass list
+`PassBuilder::buildModuleOptimizationPipeline` builds at `-O1` and above).
+The parser, formatter, and source-loader harnesses keep the check, and an
+explicit `ASAN_OPTIONS` overrides the default.
 
 A finding follows the standing rule: capture it as a bundle, reduce it, and
 land a minimal deterministic regression in the owning suite.

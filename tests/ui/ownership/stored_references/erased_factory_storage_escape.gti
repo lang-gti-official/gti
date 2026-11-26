@@ -1,0 +1,22 @@
+// Returning an erased borrow of a local record requires the record itself to outlive the call.
+import std.memory;
+
+struct Record {
+  mut int& value;
+  Record(mut int& source) : value(source) {}
+};
+
+class View {
+  mut std::erased_object& owner;
+public:
+  View<T>(mut T& source) : owner(std::erase_mut(source)) {}
+};
+
+View borrow<T>(mut T& source) { return View(source); }
+
+View invalid(mut int& value) {
+  mut Record local{value};
+  return borrow(local); //~ ERROR GTI-S2045
+}
+
+int main() { return 0; }

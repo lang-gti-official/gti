@@ -1,0 +1,14 @@
+// Converted arguments retain cleanup when a later argument or the callee fails.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: GTI-R0014
+//@ stderr-contains: failure_during_cleanup
+struct Tracker {
+  implicit Tracker(int n) {}
+  ~Tracker() { mut int cleanup = 2147483647; cleanup += 1; }
+};
+int fail_argument() { mut int checked = 2147483647; return checked + 1; }  //~ WARN GTI-S2096
+int inspect(Tracker& t, int n) { return n; }
+int fail_body(Tracker& t) { mut int checked = 2147483647; return checked + 1; }  //~ WARN GTI-S2096
+int main() { return fail_body(1); }

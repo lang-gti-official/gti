@@ -1,0 +1,11 @@
+// A character array can own both counted and terminated text views.
+//@ run-pass
+import std.memory;
+int main() {
+  char bytes[2] = {'a', '\0'};
+  unsafe {
+    auto text = std::assume_string_view(&bytes[0], std::size_t(1), bytes);
+    c_string native = std::assume_c_string(&bytes[0], bytes);
+    return text[0] == 'a' && native != nullptr ? 0 : 1;
+  }
+}

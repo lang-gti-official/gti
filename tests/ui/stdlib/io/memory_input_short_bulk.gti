@@ -1,0 +1,20 @@
+// Bulk reads report the actual byte count and EOF after a short read.
+//@ run-pass
+import std.istream;
+import std.io;
+import std.cstdio;
+import std.vector;
+import std.span;
+int main() {
+  uint8_t source[2] = {uint8_t(65), uint8_t(66)};
+  mut std::byte_buffer dest{std::size_t(3)};
+  {
+    mut auto cursor = std::io::memory_reader(source.as_span());
+    mut std::basic_istream<std::io::memory_reader> input{std::move(cursor)};
+    mut auto bytes = dest.as_mutable_span();
+    if (input.peek() != 65) { return 1; }
+    input.read(bytes, std::size_t(3));
+    if (input.gcount() != 2 || !input.eof() || !input.fail() || input.bad()) { return 2; }
+  }
+  return (dest[0] == 65 && dest[1] == 66) ? 0 : 3;
+}

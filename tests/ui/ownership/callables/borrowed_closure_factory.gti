@@ -1,0 +1,18 @@
+// Returning a borrowing closure inside an owned generic wrapper requires a supported result contract.
+int sink(int value) { return value; }
+class Holder<F> {
+  F action;
+public:
+  Holder(F action) : action(action) {}
+  void run() { this.action(); }
+};
+Holder<F> hold<F>(F action) { return Holder<F>(action); }
+Holder<F> move_hold<F>(F action) { return Holder<F>(std::move(action)); }
+int main() {
+  int local = 2;
+  auto holder = hold([&local]() -> void { [[discard]] sink(local); });  //~ ERROR GTI-S2046 exact callable return
+  auto moved = move_hold([&local]() -> void { [[discard]] sink(local); });  //~ ERROR GTI-S2046 exact callable return
+  holder.run();
+  moved.run();
+  return 0;
+}

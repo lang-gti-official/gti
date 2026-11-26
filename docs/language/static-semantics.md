@@ -531,8 +531,8 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Assignment never uses it. Function arguments use only the narrower checked
-immediate construction rule in section 3.6.
+contextually typed call, or a function name. Assignment never uses it. Function arguments use the one-step argument construction rule in section 3.6,
+including eligible read-only temporary reference parameters.
 
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
@@ -1044,6 +1044,15 @@ consuming overload is preferred for those forms. A named value is never
 implicitly consumed. Read-only, mutable, and consuming overloads may coexist;
 arithmetic/bitwise value operators admit read-only and consuming forms.
 
+A shift overload with a trailing `mut` receiver takes one parameter and
+returns a mutable reference to the receiver type. Its result borrows the
+receiver, with an elided or explicit `this` region. In `out << a << b` the
+second call reborrows the result of the first. In `in >> a >> b` each call
+can also borrow its destination mutably. Ordinary borrow checks require the
+destination to be disjoint from the receiver for that call. Binding a chain's
+result to a reference keeps the receiver borrowed through the reference's
+last use.
+
 An accessor pair is the exception to the mutable preference: a read-only
 overload returning `T&` and an otherwise exact `mut` overload returning
 `mut T&` to the same referent, as a method, `operator[]`, `operator*` or
@@ -1176,20 +1185,35 @@ still requires an ownership contract beyond ordinary virtual dispatch.
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
 
-### Checked immediate argument construction
+### Implicit argument construction
 
-Only after the exact and temporary-borrow tiers are empty, a constant expression
-of type `T` may initialize a by-value class/struct parameter `P` through an
-accessible `implicit consteval` constructor. Its first explicit parameter must
+Only after the existing exact, temporary-borrow and contextual-integer tiers
+are empty, an argument of type `T` may initialize a class/struct parameter `P`
+through an accessible `implicit` constructor. Its first explicit parameter must
 be exactly `T` or read-only `T&`; any trailing parameters need defaults. There
-is one construction, with no numeric conversion, chained constructor, conversion
-operator, ordinary implicit constructor, or reference destination. The existing
-construction ownership/access checks and immediate publication limits apply.
-Assignment and all operators, including `operator()` and `operator[]`, keep
-exact matching.
+is one construction, with no numeric conversion, chained constructor or
+conversion operator. Ordinary, constexpr and consteval implicit constructors
+participate in the same final tier. A selected consteval constructor still
+requires a constant argument and retains its checked-immediate diagnostics.
+Assignment and member operators retain their existing matching rules.
+
+For a read-only `P&` parameter, the same construction supplies a fresh temporary
+only when the explicit `P(argument)` passes the existing temporary-borrow
+boundary. The selected GTI function or method must have a supported checked
+result contract that excludes that temporary as a supplier. Mutable reference
+parameters and native/callback temporary-reference targets are not admitted.
+The caller owns the constructed temporary through the enclosing full expression;
+its cleanup and external stored dependencies are preserved on normal and failure
+paths. `implicit` never extends a borrow's lifetime. Existing named move-only
+sources still require `std::move` when the constructor consumes them.
+
+For example, `void show(std::string& text)` can be called as `show("hello")`,
+exactly as `show(std::string("hello"))`. By-value parameters transfer the newly
+constructed value instead. Selected function items and lambdas admit by-value
+construction; their reference arguments retain their existing exact rules.
 
 The final tier requires one function and one constructor. It does not rank
-checked candidates by the number of conversions, receiver preference, generic
+converting candidates by the number of conversions, receiver preference, generic
 specificity, or defaults. Generic inference does not use a class parameter
 satisfied by this conversion: infer its arguments elsewhere or supply them
 explicitly, then check the substituted class. For example:
@@ -2127,15 +2151,16 @@ int64_t bits = raw;         // implicit: a declaration may use it
 
 The target is the operator's result type. A conversion operator is a
 non-static member with no parameters and a read-only, `mut`, or consuming
-(`&&`) receiver, and it may be `constexpr` or virtual. Its target is an owned
+(`&&`) receiver, and it may be `constexpr`. Its target is an owned
 value type: not `void`, a reference, a text view (`std::string_view`,
 `c_string`), a type carrying a borrow, or its own class. The boolean
 conversion is spelled `operator bool()`; another spelling of `bool`, such as an
 alias, is rejected. A class declares at most one conversion operator per target
 and receiver. Aliases denote their resolved target, and `implicit` does not
 distinguish declarations, so `operator Count()` and `operator int()` collide
-when `Count` aliases `int`. A conversion operator is inherited and overridden
-like any member; an override has the same target and receiver.
+when `Count` aliases `int`. Derived classes inherit conversion operators. Virtual conversion operators and
+conversion-operator overrides are currently rejected (GTI-S2022). For dynamic
+dispatch, have the conversion operator call a named virtual method.
 
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
@@ -2599,9 +2624,9 @@ body to mark and is constant-eligible with its class.
 - Releasing a region requires every object needing cleanup in it to have been
   destroyed. Every region must be released before the request completes, so an
   owning container never becomes a persistent constant.
-- A `constexpr` class static or namespace variable read during evaluation
-  takes the value its verified initializer computes. Other static storage is
-  not a constant.
+- A `constexpr` static or namespace variable read during evaluation takes
+  the value its verified initializer computes. Constant initialization
+  alone does not make a binding usable in constant expressions.
 - Raw pointers may appear in `constexpr` signatures, locals and fields.
   Every access requires a live object. A null pointer, a pointer into a
   released region or a returned call's local, and arithmetic outside one
@@ -2969,6 +2994,21 @@ enum's alternatives are not integer constants, so `value()` is rejected for
 them (`GTI-S2117`). `type<E>::enumerator_count()`, `is_payload_enum()` and
 `std::meta::is_payload_enum<E>()` report the shape; an out-of-range enumerator
 or payload index is rejected like a field index (`GTI-S2111`).
+
+For a payload enum, `std::meta::visit<R, E, Visitor>(subject, visitor)`
+selects the active alternative and calls `visitor.visit(alternative, fields...)`.
+The first argument is its enumerator descriptor. The remaining arguments borrow
+the active fields read-only, in declaration order. A unit case passes only its
+descriptor. A visitor can overload the method for different alternatives.
+
+`std::meta::visit_fields<Error, E, Visitor>(subject, visitor)` calls
+`begin(alternative)`, then `field(descriptor, value)` for each active field,
+then `end(alternative)`. Each callback returns `expected<void, Error>`.
+The first failure returns immediately, including a failure before `end`.
+`std::meta::make_alternative<E, Error, Producer, I>(producer)` constructs
+alternative `I` by calling `producer.produce(field)` in declaration order.
+Each call returns the field's value or an error. Earlier values are cleaned
+up on failure. A unit alternative requires no calls to the producer.
 
 `std::meta::bases_of<T>()` is a list of `std::meta::type<B>` over the direct
 bases of a class in declaration order (`type<T>::base_count()`, `bases()`);

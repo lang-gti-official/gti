@@ -1,0 +1,7 @@
+// A live mutable map projection blocks clearing its owner.
+import std.map;
+
+int main() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut auto& projected = *cursor; values.clear(); return projected.mapped();  //~ ERROR GTI-S2017
+}

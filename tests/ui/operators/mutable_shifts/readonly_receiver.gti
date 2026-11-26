@@ -1,0 +1,10 @@
+// A read-only receiver cannot be inserted into by a mutating shift.
+struct Output {
+  Output() {}
+  mut Output& operator<<(int v) mut { return this; }
+};
+int main() {
+  Output output{};
+  output << 1; //~ ERROR GTI-S2000 mutable receiver
+  return 0;
+}

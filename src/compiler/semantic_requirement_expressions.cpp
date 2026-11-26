@@ -702,10 +702,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
   // arguments still carry their proven primitive facts. Preserve those facts
   // explicitly rather than lending the query the caller's entire requires
   // clause or allowing it to assume its own desired expression.
+  auto &retained = worker->requestSession.queryArgumentConstraints;
   const auto retainArgumentFacts = [&](const auto &self,
                                        const SemanticType &type) -> void {
     if (type.kind == SemanticType::TypeParameter)
-      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+      retained[type.genericParameterId] |= constraintOf(type);
     for (const auto &argument : type.arguments)
       self(self, argument);
   };
@@ -1003,10 +1004,11 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfiedOnce(
   auto worker = unevaluatedExpressionWorker();
   worker->prepareRequirementLookup(lookupScope,
                                    sourceUnitFor(application.name.last()));
+  auto &retained = worker->requestSession.queryArgumentConstraints;
   const auto retainArgumentFacts = [&](const auto &self,
                                        const SemanticType &type) -> void {
     if (type.kind == SemanticType::TypeParameter)
-      worker->genericConstraints[type.genericParameterId] |= constraintOf(type);
+      retained[type.genericParameterId] |= constraintOf(type);
     for (const auto &argument : type.arguments)
       self(self, argument);
   };

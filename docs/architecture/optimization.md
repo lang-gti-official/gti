@@ -348,9 +348,13 @@ arguments. The pass is confined to mutable, initially uninitialized,
 non-address-taken, non-projected scalar places in acyclic bodies. It rejects
 owners, classes, references, arrays, closures, storage records, loans, drops,
 lifecycle state, raw memory, synchronization, and failure-sensitive bodies.
+Module initialization steps also retain their published storage writes.
 The canonical rewrite inserts merge parameters and edge arguments, replaces
 eligible loads with SSA identities, tombstones eliminated place operations,
 and retains source provenance. It is not memory SSA.
+
+Branch folding preserves the original edges in bodies carrying complete
+payload dependency sets, whose alternatives depend on reaching stores.
 
 Unreachable cleanup removes only blocks independently proved unreachable and
 not required by initialization, failure, cleanup, loan, or lifecycle

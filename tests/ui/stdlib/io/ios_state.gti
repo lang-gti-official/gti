@@ -1,0 +1,13 @@
+// EOF alone permits a successful extraction while failbit makes the stream false.
+//@ run-pass
+import std.ios;
+int main() {
+  mut std::ios_base state{};
+  if (!state) { return 1; }
+  state.setstate(std::ios::eofbit);
+  if (!state || !state.eof()) { return 2; }
+  state.setstate(std::ios::failbit);
+  if (state) { return 3; }
+  state.clear();
+  return state.good() ? 0 : 4;
+}

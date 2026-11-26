@@ -72,6 +72,8 @@ scriptIdentity(const ProjectBuildPlan &project, const BuildScriptPlan &plan,
   detail::IdentityBuilder identity;
   identity.add("schema", cacheSchema);
   identity.add("package", plan.packageIdentity);
+  identity.add("package-name", plan.packageName);
+  identity.add("package-version", plan.packageVersion);
   identity.add("host", targetTriple(TargetInfo::host()));
   identity.add("target", targetTriple(project.target()));
   identity.add("profile", project.profileName());
@@ -458,6 +460,38 @@ parseOutput(const BuildScriptPlan &plan, const TargetInfo &target,
                : std::nullopt;
 }
 
+// An output-free successful script needs no publication boilerplate. Persist
+// the empty output through the same manifest contract so cache reuse still
+// requires a present, valid manifest (and a removed manifest triggers a rerun).
+bool completeOutput(const BuildScriptPlan &plan,
+                    std::vector<Diagnostic> &diagnostics) {
+  const std::filesystem::path manifest = plan.outputDirectory / outputFilename;
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(manifest, error);
+  if (error && error != std::errc::no_such_file_or_directory) {
+    diagnostics.push_back(scriptDiagnostic(
+        plan, "GTI-B2003",
+        "Cannot inspect build-script output '" + manifest.string() +
+            "': " + error.message() + "."));
+    return false;
+  }
+  // Do not replace existing output, including a dangling symlink. Parsing and
+  // native-output validation remain authoritative for explicit publication.
+  if (status.type() != std::filesystem::file_type::not_found) {
+    return true;
+  }
+  std::ofstream output(manifest, std::ios::binary | std::ios::trunc);
+  output << "version = 1\n";
+  output.close();
+  if (!output) {
+    diagnostics.push_back(scriptDiagnostic(
+        plan, "GTI-B2003",
+        "Cannot write empty build-script output '" + manifest.string() + "'."));
+    return false;
+  }
+  return true;
+}
+
 void appendOutput(NativeInputs &inputs, const BuildScriptPlan &plan,
                   ScriptNativeOutput output) {
   if (plan.selectedPackage) {
@@ -554,7 +588,12 @@ std::optional<std::vector<std::string>> buildScriptCommand(
       CompilationRequest(*script.source, options.hostToolchain->standardLibrary,
                          TargetInfo::host(), OptimizationLevel::O0,
                          CppStandard::Cpp20)
-          .withBackend(project.backend()),
+          .withBackend(project.backend())
+          .withPackageSources({{.identity = script.packageIdentity,
+                                .name = script.packageName,
+                                .packageRoot = script.packageRoot,
+                                .sourceRoot = script.packageRoot,
+                                .packageVersion = script.packageVersion}}),
       *options.hostToolchain, generated, executable, options.hostCppCompiler,
       {}, false, true, options.verbose,
       ManagedOutputPolicy{.trustedRoot = project.workspaceRoot(),
@@ -728,6 +767,8 @@ executeBuildScripts(const ProjectBuildPlan &plan,
         .description = "build script for " + script.packageIdentity,
         .workingDirectory = script.packageRoot,
         .environment = {{"GTI_BUILD_PACKAGE_DIR", script.packageRoot.string()},
+                        {"GTI_BUILD_PACKAGE_NAME", script.packageName},
+                        {"GTI_BUILD_PACKAGE_VERSION", script.packageVersion},
                         {"GTI_BUILD_OUT_DIR", script.outputDirectory.string()},
                         {"GTI_BUILD_OUTPUT", output.string()},
                         {"GTI_BUILD_HOST", targetTriple(TargetInfo::host())},
@@ -754,6 +795,9 @@ executeBuildScripts(const ProjectBuildPlan &plan,
                 : process.output.substr(process.output.size() - limit));
       }
       result.diagnostics.push_back(std::move(diagnostic));
+      return result;
+    }
+    if (!completeOutput(script, result.diagnostics)) {
       return result;
     }
     std::optional<ScriptNativeOutput> native =

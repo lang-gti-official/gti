@@ -5,10 +5,12 @@ Generics are where the earlier corpus found the most ICEs, and instantiation
 interacts with constraints, containers and ownership. This crosses the shape of
 the generic declaration against the type it is instantiated with.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/genmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'generic-shape')
+OUT = M.out
 
 HEAD = """import std.vector;
 import std.string;
@@ -42,20 +44,6 @@ SHAPES = {
     "vector-of":     ("", "mut std::vector<{T}> bag = std::vector<{T}>(); bag.push_back({V}); total = int32_t(bag.size());"),
 }
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        run = subprocess.run([str(path) + ".bin"], capture_output=True, text=True, timeout=60)
-        return "ok" if run.returncode == 0 else f"RUN{run.returncode}"
-    if "GTI-B0001" in out: return "ICE"
-    if "Undefined symbols" in out: return "LINK"
-    if "error:" in out and "error[GTI-" not in out: return "BAD-CPP"
-    if not out.strip(): return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:").replace("GTI-", "") if code else f"exit{r.returncode}"
-
 results = {}
 for sname, (decl, use) in SHAPES.items():
     for aname, (T, V) in ARGS.items():
@@ -68,10 +56,7 @@ int main() {{
   return 0;
 }}
 """)
-        try:
-            results[(sname, aname)] = classify(src)
-        except subprocess.TimeoutExpired:
-            results[(sname, aname)] = "TIMEOUT"
+        results[(sname, aname)] = M.classify(src)
 
 hdr = f"{'shape':<16}" + "".join(f"{a:<11}" for a in ARGS)
 print(hdr); print("-" * len(hdr))
@@ -79,7 +64,8 @@ for s in SHAPES:
     print(f"{s:<16}" + "".join(f"{results[(s,a)]:<11}" for a in ARGS))
 
 bad = [(s, a, v) for (s, a), v in results.items()
-       if v in ("ICE", "BAD-CPP", "SILENT", "LINK", "TIMEOUT") or v.startswith("RUN")]
+       if matrix_support.hard(v)]
 print(f"\nhard failures: {len(bad)} / {len(results)}")
 for s, a, v in bad:
     print(f"  {v:<10} {s} / {a}")
+sys.exit(M.finish(bad))

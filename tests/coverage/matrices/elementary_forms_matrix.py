@@ -4,10 +4,12 @@
 `mut int32_t r;` turned out to be an ICE, so the most basic surface in the
 language is worth enumerating directly rather than assumed covered.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/basicmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'elementary-forms')
+OUT = M.out
 
 CASES = {
     # declarations
@@ -47,34 +49,18 @@ CASES = {
     "bool-ops":              "mut bool b = true && false || !true;",
 }
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=120)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        run = subprocess.run([str(path) + ".bin"], capture_output=True, text=True, timeout=60)
-        return "ok" if run.returncode == 0 else f"RUN{run.returncode}"
-    if "GTI-B0001" in out: return "ICE"
-    if "Undefined symbols" in out: return "LINK"
-    if "error:" in out and "error[GTI-" not in out: return "BAD-CPP"
-    if not out.strip(): return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:").replace("GTI-", "") if code else f"exit{r.returncode}"
-
 hard = []
 for name, body in CASES.items():
     src = OUT / f"{name}.gti"
     src.write_text("import std.string;\n"
                    "class Anchor { public: int32_t id() { return 0; } };\n"
                    f"int main() {{ {body} return 0; }}\n")
-    try:
-        v = classify(src)
-    except subprocess.TimeoutExpired:
-        v = "TIMEOUT"
+    v = M.classify(src)
     print(f"  {name:<24} {v}")
-    if v in ("ICE", "BAD-CPP", "SILENT", "LINK", "TIMEOUT") or v.startswith("RUN"):
+    if matrix_support.hard(v):
         hard.append((name, v))
 
 print(f"\nhard failures: {len(hard)} / {len(CASES)}")
 for n, v in hard:
     print(f"  {v:<10} {n}")
+sys.exit(M.finish(hard))

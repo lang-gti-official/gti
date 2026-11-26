@@ -1115,6 +1115,15 @@ package publication and publishing permissions are service operations, not
 automatic compiler release side effects. A registry remains a governance/trust
 commitment rather than a guarantee that arbitrary package code is safe to run.
 
+### Package metadata
+
+Implemented: `std.package` supplies owner-specific constexpr name/version
+strings to project source and build programs. Build contexts expose the same
+resolved fields without changing the existing argument protocol. Direct mode
+requires package metadata rather than guessing from ambient files; conditional
+compilation package expressions and semantic-version comparison remain outside
+this change.
+
 ### Build hooks
 
 Status: consumer-approved native package build programs are complete, including
@@ -1122,7 +1131,10 @@ GTI-authored `build.gti` programs and the original external-command form.
 
 The implemented hook accepts exactly one GTI source file or exact argv command,
 declared contained inputs, content-based cache identity, a managed output
-directory, and a versioned TOML output contract. GTI programs use the ordinary
+directory, and a versioned TOML output contract. Successful scripts with no
+native outputs need no explicit publication: the driver records the empty
+manifest and validates it on cache reuse. Explicit output remains validated.
+GTI programs use the ordinary
 compiler and the source-defined `<std/build>` context, exact-command, and
 structured-output API; external commands remain compatible. Dependency scripts
 require an exact `name@version` entry in
@@ -1346,6 +1358,15 @@ Acceptance criteria:
   path spelling is semantically observable;
 - **Passed:** deleting a cache entry never damages source or the published
   target and degrades to a clean rebuild.
+
+### Post-Milestone 4 addition: incremental LLVM machine-code generation
+
+- Hosted executable projects can opt into content-addressed reuse of optimized
+  code-generation units with `--incremental`. Reuse occurs after verified
+  whole-program optimization. Frontend and MIR recompilation after an edit
+  remain separate work.
+- The project regression compares an incremental function edit with an
+  independent clean build under the same partition policy.
 
 ### Post-Milestone 4 addition: native-source cache identity and parallel target builds
 
@@ -1737,6 +1758,12 @@ semantic and production-promotion goals remain open.
 | F3 generics and early constants / semantics + staged HIR/MIR — installed and project class-template imports implemented | F1/F2; generic recipe importer and instance inventory, shared consumer instantiation owner, query-driven completed constexpr closures | New consumer substitution, constraints/defaults/specializations, early array extent/value argument/static assertion/branch shaping, resource/cycle errors and compile-time/runtime parity; no requirement to seal whole-program MIR before these queries. Private generic dependencies and unrelated user types included. |
 | F4 reusable target graph / driver — package and same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
 | F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
+
+Concrete member and owning-result native calls now use the ordinary
+`gti-library` target. The source-free `native_module_members` project exercises
+an exported class, private helper, mutable receiver, owning `expected` and
+shared passive storage. Native publication of a standard-library module is a
+separate catalog decision, measured against its existing recipe.
 
 The installed standard library exercises this boundary with `std.cmath` and the
 deterministic seed and draw in `std.random`. Both dev and release consumers

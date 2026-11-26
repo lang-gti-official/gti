@@ -1,0 +1,5 @@
+// An explicit static lifetime cannot claim the borrow returned by a mutable shift.
+struct Output {
+  mut Output&<static> operator<<(int v) mut { return this; } //~ ERROR GTI-S2022 must borrow its receiver //~ ERROR GTI-S2127 static
+};
+int main() { return 0; }

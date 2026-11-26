@@ -1,0 +1,25 @@
+// An insertion reports the transport's error and stops issuing writes after badbit.
+//@ run-pass
+import std.ostream;
+import std.io;
+import std.cstdio;
+import std.span;
+struct FailingWriter {
+  mut int attempts = 0;
+  FailingWriter() {}
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& data) mut {
+    this.attempts += 1;
+    return unexpected(std::io_errc::write_failed);
+  }
+  expected<void, std::io_errc> flush() mut { return; }
+};
+int main() {
+  mut std::basic_ostream<FailingWriter> out{FailingWriter()};
+  out << 3 << 4;
+  if (out || !out.bad() || out.eof() || out.error() != std::io_errc::write_failed) { return 1; }
+  if (out.rdbuf().attempts != 1) { return 2; }
+  out.clear();
+  if (!out.good()) { return 3; }
+  out.put('x');
+  return out.bad() && out.rdbuf().attempts == 2 ? 0 : 4;
+}

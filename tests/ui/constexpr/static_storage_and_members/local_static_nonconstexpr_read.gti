@@ -1,0 +1,6 @@
+// Constant initialization does not make a static variable readable in a constexpr expression.
+int main() {
+  static int seed = 3;
+  constexpr int folded = seed;  //~ ERROR GTI-S2057
+  return folded;
+}

@@ -1,0 +1,19 @@
+import std.span;
+import std.vector;
+import std.functional;
+int64_t sum(std::span<int32_t> s) {
+  mut int64_t total = 0;
+  for (mut std::size_t i = std::size_t(0); i < s.size(); i += std::size_t(1)) total += int64_t(s[i]);
+  return total;
+}
+int check_span() {
+  mut std::vector<int32_t> values{};
+  values.push_back(4);
+  return sum(values.as_span()) == 4 ? 0 : 1;
+}
+
+int64_t triple(int64_t v) { return v * 3; }
+int main() {
+  std::function_ptr<int64_t(int64_t)> f = std::function_ptr<int64_t(int64_t)>(triple);
+  return f(int64_t(2)) == int64_t(6) ? check_span() : 1;
+}

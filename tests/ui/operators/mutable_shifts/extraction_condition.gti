@@ -1,0 +1,20 @@
+// An extraction result can be tested for success before using the extracted value.
+//@ run-pass
+struct Reader {
+  Reader() {}
+  mut int remaining = 2;
+  mut bool ok = true;
+  operator bool() { return this.ok; }
+  mut Reader& operator>>(mut int& v) mut {
+    this.ok = this.remaining > 0;
+    if (this.ok) { v = this.remaining; this.remaining -= 1; }
+    return this;
+  }
+};
+int main() {
+  mut Reader input{};
+  mut int n = 0;
+  mut int sum = 0;
+  while (input >> n) { sum += n; }
+  return sum - 3;
+}
