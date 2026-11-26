@@ -1,3 +1,4 @@
+// A scaled integer coordinate lowers to a floating floor without a successor overflow check.
 //@ check-pass
 //@ opt: O3
 //@ reason: the optimized backend folds a checked negative-fraction correction

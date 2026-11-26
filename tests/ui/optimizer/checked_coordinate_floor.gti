@@ -1,3 +1,4 @@
+// Checked floor conversion preserves values, side effects, diagnostics and cleanup near the i32 limits.
 //@ run-pass
 //@ opt: O3
 //@ reason: binary32 coordinate bounds and floor lowering preserve checked conversions and failure cleanup
