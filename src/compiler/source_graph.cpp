@@ -103,6 +103,16 @@ const std::vector<SourceImport> &SourceGraph::imports() const {
   return sourceImports;
 }
 
+const SourceImport *SourceGraph::namedImportAt(SourceUnitId requester,
+                                               std::size_t byteOffset) const {
+  for (const auto &import : imports()) {
+    if (import.requester == requester && !import.quoted &&
+        import.name.start <= byteOffset && byteOffset <= import.name.end)
+      return &import;
+  }
+  return nullptr;
+}
+
 const std::shared_ptr<const SourceOwnerRegistry> &
 SourceGraph::sourceOwners() const {
   return owners;

@@ -210,6 +210,12 @@ struct CompletionResult {
   // A complete, directly authored qualified-name or member list can be
   // narrowed while the user extends the same identifier.
   std::optional<SourceSpan> qualifiedPrefix;
+  // Checked matches beyond the visible protocol limit. Retention is bounded;
+  // if all matches cannot be kept, qualifiedPrefix is absent.
+  std::vector<CompletionCandidate> remainingQualifiedCandidates;
+  // Embedded inputs use saved bytes even when an editor overlay is open.
+  // Keep the compiler's captured bytes for exact checks on prefix reuse.
+  std::vector<EmbeddedFile> embeddedInputs;
   // Exact loaded inputs let asynchronous adapters reject results when a
   // dependency changes before publication, including newly discovered imports.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
@@ -224,6 +230,7 @@ struct CompletionInput {
   // Static templates are opt-in so plain symbol clients retain their complete
   // candidate budget and ranking, not a filtered/truncated snippet list.
   bool includeSnippets = false;
+  bool retainQualifiedCandidates = false;
   TargetInfo target = TargetInfo::host();
   ConfigurationFlags configurationFlags;
   ConfigurationFlags declaredConfigurationFlags;

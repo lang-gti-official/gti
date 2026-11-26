@@ -2,14 +2,14 @@
 {"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
 {"expect": {"id": 1, "result": "$ANY"}}
 {"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
-{"file": {"name": "main.gti", "text": "int main() { mut int x = 1; return x; }\n"}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"version": 1, "uri": "$URI", "text": "int main() { mut int x = 1; return x; }\n", "languageId": "gti"}}}}
-{"expect": {"method": "textDocument/publishDiagnostics", "params": {"version": 1, "uri": "$URI", "diagnostics": [{"code": "GTI-S2096"}]}}}
+{"file": {"name": "main.gti", "text": "int count(int counter) { return coutner; }\nint main() { return count(1); }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"version": 1, "uri": "$URI", "text": "int count(int counter) { return coutner; }\nint main() { return count(1); }\n", "languageId": "gti"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"version": 1, "uri": "$URI", "diagnostics": [{"code": "GTI-S2001"}]}}}
 {"analysisTrace": {"kind": "analysis", "generation": 1, "expeditedFix": false}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"version": 2, "uri": "$URI"}, "contentChanges": [{"text": "int main() {  int x = 1; return x; }\n"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"version": 2, "uri": "$URI"}, "contentChanges": [{"text": "int count(int counter) { return counter; }\nint main() { return count(1); }\n"}]}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"version": 2, "uri": "$URI", "diagnostics": []}}}
 {"analysisTrace": {"kind": "analysis", "generation": 2, "expeditedFix": true}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"version": 3, "uri": "$URI"}, "contentChanges": [{"text": "int main() {  int x = 2; return x; }\n"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"version": 3, "uri": "$URI"}, "contentChanges": [{"text": "int count(int counter) { return counter; }\nint main() { return count(2); }\n"}]}}}
 {"expect": {"method": "textDocument/publishDiagnostics", "params": {"version": 3, "uri": "$URI", "diagnostics": []}}}
 {"analysisTrace": {"kind": "analysis", "generation": 3, "expeditedFix": false}}
 {"send": {"jsonrpc": "2.0", "method": "shutdown", "params": null, "id": 98}}

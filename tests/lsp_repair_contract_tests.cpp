@@ -76,7 +76,8 @@ int main() {
   bad[1].uri = "file:///other.gti";
   require(!validRepairGroup(bad), "cross-document group partially accepted");
   bad = groups[0];
-  bad[1].source = std::make_shared<const std::string>(*bad[1].source + "changed");
+  bad[1].source =
+      std::make_shared<const std::string>(*bad[1].source + "changed");
   require(!validRepairGroup(bad), "inconsistent source identity accepted");
   bad = groups[0];
   bad[1].fix.applicability = lang::RepairApplicability::Incomplete;

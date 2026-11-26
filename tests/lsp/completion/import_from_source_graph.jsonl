@@ -1,0 +1,13 @@
+// Completing a module import uses the loader registry with no parser or semantic pass.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
+{"expect": {"id": 1}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "import std.vector;\nint main() { return 0; }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "text": "import std.vector;\nint main() { return 0; }\n", "languageId": "gti", "version": 1}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 14}}, "id": 2}}
+{"expect": {"id": 2, "result": {"items": {"$contains": [{"label": "std.vector", "textEdit": {"newText": "std.vector"}}]}}}}
+{"analysisTrace": {"kind": "completion", "requestId": "2", "parsedUnits": [], "semanticallyAnalyzedUnits": []}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": null, "id": 9}}
+{"expect": {"id": 9, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": null}}
+{"exit": 0}

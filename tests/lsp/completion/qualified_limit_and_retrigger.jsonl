@@ -1,0 +1,18 @@
+// A broad std:: list can be retriggered and narrowed to vector beyond its first 100 items without reanalyzing the program.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
+{"expect": {"id": 1}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.vector;\nimport std.string;\nimport std.algorithm;\nimport std.format;\nint main() { return std::; }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 4, "character": 25}}, "id": 2}}
+{"expect": {"id": 2, "result": {"isIncomplete": true}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 4, "character": 25}}, "id": 3}}
+{"expect": {"id": 3, "result": {"isIncomplete": true}}}
+{"analysisTrace": {"kind": "completion", "requestId": "3", "loadedUnits": [], "parsedUnits": [], "semanticallyAnalyzedUnits": []}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "import std.vector;\nimport std.string;\nimport std.algorithm;\nimport std.format;\nint main() { return std::vec; }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 4, "character": 28}}, "id": 4}}
+{"expect": {"id": 4, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "vector", "textEdit": {"newText": "vector", "range": {"start": {"character": 25}, "end": {"character": 28}}}}]}}}}
+{"analysisTrace": {"kind": "completion", "requestId": "4", "loadedUnits": [], "parsedUnits": [], "semanticallyAnalyzedUnits": []}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 5}}
+{"expect": {"id": 5}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": null}}
+{"exit": 0}

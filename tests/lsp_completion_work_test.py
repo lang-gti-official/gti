@@ -100,8 +100,11 @@ def reuse_and_diagnostics(executable, root):
         assert any(item["label"] == "size_t" for item in items[0]), items[0]
         completed = [row for row in records(trace) if row["kind"] == "completion"]
         assert len(completed) == 2, completed
-        assert all(row["preambleAdoptions"] == 1 and row["preambleBuilds"] == 0
-                   for row in completed), [
+        # The first marker adopts the compiler preamble. An identical
+        # retrigger returns the qualified list without running the frontend.
+        assert [row["preambleAdoptions"] for row in completed] == [1, 0] and all(
+            row["preambleBuilds"] == 0 for row in completed
+        ) and not completed[1]["parsedUnits"], [
                        {key: row[key] for key in ("kind", "preambleAdoptions", "preambleBuilds")}
                        for row in completed]
 

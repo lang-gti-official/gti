@@ -208,6 +208,10 @@ arrive before the first type-check diagnostics. A generic callable can acquire
 contracts from its body, and separate declarations and definitions can share
 documentation. Those hovers wait for the existing semantic checkpoints.
 
+A completion inside a named import uses the source loader’s module registry
+and authored spans as soon as the source graph is available. It skips parsing
+and checking the loaded function bodies for that request.
+
 A completed snapshot indexes the raw editor text on its first hover. Further
 hovers on that generation share the immutable bytes and line starts for both
 the cursor and response range. An edit retires that index along with its
@@ -1047,8 +1051,13 @@ cancellation flag reaches the same compiler safe points as diagnostic analysis.
 For a directly authored member or qualified name, the completion worker retains
 one complete compiler result. Extending its identifier with all surrounding
 source bytes unchanged reuses the same candidates, applies the compiler's
-prefix ranking again, and updates the replacement range. Truncated lists,
-other source edits, and changed project inputs require a fresh query. While a
+prefix ranking again, and updates the replacement range. An identical
+retrigger can share the same computation. The protocol publishes at most 100
+items. The worker can retain the complete matching set up to 1,024 candidates
+and 2 MiB of candidate data, so narrowing can surface an item outside the
+first 100. Larger sets, other source edits, changed saved embedded bytes,
+and changed project inputs require a fresh query. Retained lookups can
+revalidate up to 64 embedded inputs totalling at most 4 MiB per request. While a
 marker is still running, successive identifier extensions can share that
 computation. Its original request still receives the stale-version error and
 only the latest matching request receives candidates. Editing the receiver,

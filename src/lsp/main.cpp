@@ -306,12 +306,14 @@ bool validRepairGroup(const std::vector<LspFixIt> &fixes) {
     const auto &edit = fixes[i];
     const auto &span = edit.fix.span;
     if (!edit.sourceKnown || edit.uri != fixes.front().uri ||
-        (edit.source != fixes.front().source && *edit.source != *fixes.front().source) ||
+        (edit.source != fixes.front().source &&
+         *edit.source != *fixes.front().source) ||
         edit.fix.applicability == lang::RepairApplicability::Incomplete ||
         edit.fix.applicability != fixes.front().fix.applicability ||
         span.start > span.end || !boundary(*edit.source, span.start) ||
         !boundary(*edit.source, span.end) ||
-        std::string_view(*edit.source).substr(span.start, span.end - span.start) ==
+        std::string_view(*edit.source)
+                .substr(span.start, span.end - span.start) ==
             edit.fix.replacement)
       return false;
     for (std::size_t j = 0; j < i; ++j) {
@@ -453,10 +455,11 @@ JsonValue positionJson(Position position) {
   return JsonObject{{"line", position.line}, {"character", position.character}};
 }
 
-JsonValue rangeJson(const SourcePositionIndex &positions, std::size_t byteOffset,
-                    std::size_t byteLength) {
-  return JsonObject{{"start", positionJson(positions.at(byteOffset))},
-                    {"end", positionJson(positions.at(byteOffset + byteLength))}};
+JsonValue rangeJson(const SourcePositionIndex &positions,
+                    std::size_t byteOffset, std::size_t byteLength) {
+  return JsonObject{
+      {"start", positionJson(positions.at(byteOffset))},
+      {"end", positionJson(positions.at(byteOffset + byteLength))}};
 }
 
 JsonValue rangeJson(std::string_view source, std::size_t byteOffset,
@@ -948,9 +951,12 @@ private:
       else if (root)
         bytes = rootSource;
       auto text = std::make_shared<const std::string>(bytes);
-      it = indexed.emplace(span.source,
-              Source{uriForSource(span.source, rootPath, rootUri), text,
-                     SourcePositionIndex(*text), found != nullptr || root}).first;
+      it = indexed
+               .emplace(span.source,
+                        Source{uriForSource(span.source, rootPath, rootUri),
+                               text, SourcePositionIndex(*text),
+                               found != nullptr || root})
+               .first;
     }
     const auto &source = it->second;
     location.uri = source.uri;
@@ -1005,11 +1011,9 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
                          bool includeUnnecessaryTag,
                          bool includeDeprecatedTag) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
-  JsonObject result{
-      {"range",
-       diagnosticRangeJson(published.range)},
-      {"severity", static_cast<int>(diagnostic.severity)},
-      {"source", std::string(diagnosticSource)}};
+  JsonObject result{{"range", diagnosticRangeJson(published.range)},
+                    {"severity", static_cast<int>(diagnostic.severity)},
+                    {"source", std::string(diagnosticSource)}};
   if (!diagnostic.code.empty()) {
     result["code"] = diagnostic.code;
   }
@@ -1032,10 +1036,8 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
   if (includeRelatedInformation && !published.related.empty()) {
     JsonArray relatedInformation;
     for (const LspRelatedDiagnostic &related : published.related) {
-      JsonObject location{
-          {"uri", related.uri},
-          {"range",
-           diagnosticRangeJson(related.range)}};
+      JsonObject location{{"uri", related.uri},
+                          {"range", diagnosticRangeJson(related.range)}};
       relatedInformation.push_back(
           JsonObject{{"location", std::move(location)},
                      {"message", related.related.message}});
@@ -1062,14 +1064,14 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
       JsonArray fixes;
       for (std::size_t index = 0; index < published.fixes.size(); ++index) {
         const LspFixIt &fix = published.fixes[index];
-        fixes.push_back(JsonObject{
-            {"repairId", repairIdentity(fix, index)},
-            {"applicability",
-             std::string(applicabilityName(fix.fix.applicability))},
-            {"uri", fix.uri},
-            {"range", diagnosticRangeJson(fix.range)},
-            {"replacement", fix.fix.replacement},
-            {"message", fix.fix.message}});
+        fixes.push_back(
+            JsonObject{{"repairId", repairIdentity(fix, index)},
+                       {"applicability",
+                        std::string(applicabilityName(fix.fix.applicability))},
+                       {"uri", fix.uri},
+                       {"range", diagnosticRangeJson(fix.range)},
+                       {"replacement", fix.fix.replacement},
+                       {"message", fix.fix.message}});
       }
       data["fixes"] = std::move(fixes);
     }
@@ -1149,9 +1151,8 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
 
   JsonArray edits;
   for (const auto &fix : candidate.fixes) {
-    edits.push_back(
-        JsonObject{{"range", diagnosticRangeJson(fix.range)},
-                   {"newText", fix.fix.replacement}});
+    edits.push_back(JsonObject{{"range", diagnosticRangeJson(fix.range)},
+                               {"newText", fix.fix.replacement}});
   }
 
   JsonObject workspaceEdit;
@@ -1755,10 +1756,12 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
     if (span != previousSpan) {
       if (!positions)
         positions.emplace(source);
-      replacementRange = rangeJson(*positions, span.first, span.second - span.first);
+      replacementRange =
+          rangeJson(*positions, span.first, span.second - span.first);
       previousSpan = span;
     }
-    item["textEdit"] = JsonObject{{"range", replacementRange}, {"newText", insertion}};
+    item["textEdit"] =
+        JsonObject{{"range", replacementRange}, {"newText", insertion}};
     if (useSnippet) {
       item["insertTextFormat"] = 2;
     }
@@ -1918,7 +1921,7 @@ struct ActiveCompletionRequest {
   // The worker owns the stable request until it erases this entry under the
   // same mutex that protects readers.
   const CompletionRequest &request;
-  std::shared_ptr<std::atomic<bool>> cancellation;
+  std::atomic<bool> &superseded;
 };
 
 enum class SemanticRequestKind {
@@ -2406,7 +2409,10 @@ private:
   // unreachable and erases the learned digest. Obsolete rows remain subject
   // to the cache's global LRU instead of destroying ASTs on the protocol
   // thread while the editor is sending a change.
-  void invalidateFrontendSourceLocked(std::string_view canonicalPath) {
+  void invalidateFrontendSourceLocked(std::string_view canonicalPath,
+                                      bool documentEdit = false) {
+    if (!documentEdit || canonicalPath != completionEntryPath)
+      ++completionInputGeneration;
     ++includeDiscoveryGeneration;
     frontendSnapshots.invalidate(canonicalPath);
   }
@@ -2507,20 +2513,22 @@ private:
             if (prior != diagnosticsByRoot.end()) {
               for (const auto &d : prior->second) {
                 const auto &span = d.diagnostic.primary;
-                if (!appliedPublishedFix) {
-                  for (const auto &fix : d.fixes) {
-                    const auto &edit = fix.fix.span;
-                    if (fix.uri == uri && edit.start <= first &&
-                        oldEnd <= edit.end && edit.end <= old.size() &&
-                        std::string_view(source).substr(
-                            edit.start, end - edit.start + (edit.end - oldEnd)) ==
-                            fix.fix.replacement &&
-                        *fix.source == old) {
-                      appliedPublishedFix = true;
-                      break;
-                    }
-                  }
-                }
+                if (!appliedPublishedFix)
+                  appliedPublishedFix =
+                      std::ranges::any_of(d.fixes, [&](const auto &fix) {
+                        if (fix.uri != uri)
+                          return false;
+                        const auto &span = fix.fix.span;
+                        if (span.start > first || oldEnd > span.end ||
+                            span.end > old.size())
+                          return false;
+                        const auto replacement =
+                            std::string_view(source).substr(
+                                span.start,
+                                end - span.start + (span.end - oldEnd));
+                        return replacement == fix.fix.replacement &&
+                               *fix.source == old;
+                      });
                 if (progressiveOpenDiagnostics && !priorLookup &&
                     (d.provisionalLookup || d.diagnostic.localNameRepair) &&
                     d.uri == uri && span.start <= first && oldEnd <= span.end &&
@@ -2529,7 +2537,8 @@ private:
                                       true);
                   priorLookup = d.diagnostic;
                 }
-                if (appliedPublishedFix && (!progressiveOpenDiagnostics || priorLookup))
+                if (appliedPublishedFix &&
+                    (!progressiveOpenDiagnostics || priorLookup))
                   break;
               }
             }
@@ -2539,7 +2548,7 @@ private:
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(uri)) {
           const std::string canonical = canonicalPath(*path).string();
-          invalidateFrontendSourceLocked(canonical);
+          invalidateFrontendSourceLocked(canonical, true);
         }
         if (version) {
           documentVersions[uri] = *version;
@@ -2729,6 +2738,7 @@ private:
   void
   invalidateProjectSnapshotsLocked(std::vector<AnalysisRequest> &requests) {
     requests.clear();
+    ++completionInputGeneration;
     ++includeDiscoveryGeneration;
     frontendSnapshots.invalidateIncludeDiscovery();
     for (const auto &[uri, source] : documents) {
@@ -2892,7 +2902,8 @@ private:
   void respondHover(const JsonValue *id, Position position,
                     const AnalysisSnapshot &snapshot) {
     const auto &positions = snapshot.hoverSource->positions;
-    const std::optional<std::size_t> byteOffset = positions.byteOffset(position);
+    const std::optional<std::size_t> byteOffset =
+        positions.byteOffset(position);
     if (!byteOffset) {
       sendJson(response(id, nullptr));
       return;
@@ -3456,7 +3467,8 @@ private:
     const std::vector<lang::DocumentSymbolInfo> symbols =
         lang::LanguageQueries().documentSymbols(*snapshot.frontend, sourceUnit);
     if (hierarchicalDocumentSymbols) {
-      sendJson(response(id, JsonValue(documentSymbolArray(symbols, SourcePositionIndex(source)))));
+      sendJson(response(id, JsonValue(documentSymbolArray(
+                                symbols, SourcePositionIndex(source)))));
       return;
     }
     std::string clientUri;
@@ -3465,7 +3477,8 @@ private:
       clientUri = clientUriForKeyLocked(uri);
     }
     JsonArray flat;
-    flattenDocumentSymbols(symbols, {}, clientUri, SourcePositionIndex(source), flat);
+    flattenDocumentSymbols(symbols, {}, clientUri, SourcePositionIndex(source),
+                           flat);
     sendJson(response(id, JsonValue(std::move(flat))));
   }
 
@@ -3477,7 +3490,6 @@ private:
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     const std::optional<Position> position =
         positionMember(member(params, "position"));
-    std::string source;
     CompletionRequest request;
     bool validRequest = false;
     {
@@ -3486,9 +3498,8 @@ private:
       const auto generation = analysisGenerations.find(uri);
       if (position && document != documents.end() &&
           generation != analysisGenerations.end()) {
-        source = document->second;
         request.uri = uri;
-        request.source = source;
+        request.source = document->second;
         request.generation = generation->second;
         request.projectProfile = projectProfile;
         request.snippetSupport = completionSnippets;
@@ -3500,13 +3511,13 @@ private:
           if (path) {
             const auto canonical = canonicalPath(*path).string();
             request.sourceOverrides[canonical] = documentSource;
-            // The global counter advances once per source invalidation and
-            // once per project invalidation. Subtracting this source's
-            // counter leaves the identity of all surrounding inputs.
-            if (documentUri == uri)
-              request.surroundingInputsGeneration =
-                  includeDiscoveryGeneration -
-                  frontendSnapshots.generation(canonical);
+            if (documentUri == uri) {
+              if (canonical != completionEntryPath) {
+                completionEntryPath = canonical;
+                ++completionInputGeneration;
+              }
+              request.surroundingInputsGeneration = completionInputGeneration;
+            }
             if (const auto current = contentGenerations.find(documentUri);
                 current != contentGenerations.end())
               request.documentGenerations[documentUri] = current->second;
@@ -3516,19 +3527,19 @@ private:
       }
     }
     if (!validRequest) {
-      sendJson(
-          response(id, completionListJson({}, source, completionSnippets,
-                                          markdownCompletionDocumentation)));
+      sendJson(response(
+          id, completionListJson({}, request.source, completionSnippets,
+                                 markdownCompletionDocumentation)));
       return;
     }
 
     const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
     const std::optional<std::size_t> byteOffset =
-        SourcePositionIndex(source).byteOffset(*position);
+        SourcePositionIndex(request.source).byteOffset(*position);
     if (!filePath || !byteOffset) {
-      sendJson(
-          response(id, completionListJson({}, source, completionSnippets,
-                                          markdownCompletionDocumentation)));
+      sendJson(response(
+          id, completionListJson({}, request.source, completionSnippets,
+                                 markdownCompletionDocumentation)));
       return;
     }
     request.id = *id;
@@ -3969,7 +3980,8 @@ private:
         result.dependencies.try_emplace(
             authoredFileUriFromPath(*import.authoredLookupPath), 0);
     }
-    DiagnosticConverter converter(analysis.sources, rootPath, request.uri, request.source);
+    DiagnosticConverter converter(analysis.sources, rootPath, request.uri,
+                                  request.source);
     for (const lang::Diagnostic &diagnostic : diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic,
@@ -4223,7 +4235,8 @@ private:
       }
       if (const auto active = activeCompletionRequests.find(idKey);
           active != activeCompletionRequests.end()) {
-        active->second.cancellation->store(true, std::memory_order_relaxed);
+        active->second.request.cancellation->store(true,
+                                                   std::memory_order_relaxed);
         canceledRequests.insert(idKey);
       }
       for (auto request = pendingSemanticRequests.begin();
@@ -4253,11 +4266,16 @@ private:
         return;
       }
       for (const auto &[id, active] : activeCompletionRequests) {
-        if (active.request.uri == request.uri &&
-            lang::LanguageQueries::extendedQualifiedCompletionOffset(
+        if (active.request.uri != request.uri)
+          continue;
+        if (lang::LanguageQueries::extendedQualifiedCompletionOffset(
                 active.request.source, active.request.byteOffset,
-                request.source) != request.byteOffset)
-          active.cancellation->store(true, std::memory_order_relaxed);
+                request.source) == request.byteOffset) {
+          if (active.request.generation == request.generation)
+            active.superseded.store(true, std::memory_order_relaxed);
+        } else {
+          active.request.cancellation->store(true, std::memory_order_relaxed);
+        }
       }
       for (auto queued = completionRequests.begin();
            queued != completionRequests.end();) {
@@ -4292,6 +4310,7 @@ private:
     std::optional<PreviousCompletion> previous;
     while (true) {
       CompletionRequest request;
+      std::atomic<bool> superseded{false};
       {
         std::unique_lock lock(stateMutex);
         completionCondition.wait(lock, [this] {
@@ -4304,8 +4323,7 @@ private:
         completionRequests.pop_front();
         ++activeCompletions;
         activeCompletionRequests.emplace(
-            request.idKey,
-            ActiveCompletionRequest{request, request.cancellation});
+            request.idKey, ActiveCompletionRequest{request, superseded});
       }
 
       lang::CompletionResult completion;
@@ -4347,6 +4365,7 @@ private:
                    .source = request.source,
                    .byteOffset = request.byteOffset,
                    .includeSnippets = request.snippetSupport,
+                   .retainQualifiedCandidates = true,
                    .target = project.configuration.target(),
                    .configurationFlags =
                        project.configuration.configurationFlags(),
@@ -4380,11 +4399,13 @@ private:
             std::chrono::duration_cast<std::chrono::microseconds>(
                 SteadyClock::now() - frontendStart)
                 .count());
-        recordFrontendWork(request.cancellation->load(std::memory_order_relaxed)
-                               ? "completion-cancelled"
-                               : "completion",
-                           request.uri, request.generation, elapsedMicroseconds,
-                           workMetrics, std::nullopt, false, request.idKey);
+        recordFrontendWork(
+            (request.cancellation->load(std::memory_order_relaxed) ||
+             superseded.load(std::memory_order_relaxed))
+                ? "completion-cancelled"
+                : "completion",
+            request.uri, request.generation, elapsedMicroseconds, workMetrics,
+            std::nullopt, false, request.idKey);
       }
       std::unordered_map<std::string, std::uint64_t> completionDependencies;
       for (const auto &[path, digest] : completion.sourceDigests)
@@ -4407,7 +4428,8 @@ private:
         sendJson(errorResponse(request.id, -32800, "Request cancelled"));
       } else if (!current) {
         sendJson(errorResponse(request.id, -32801, "Content modified"));
-      } else if (request.cancellation->load(std::memory_order_relaxed)) {
+      } else if (request.cancellation->load(std::memory_order_relaxed) ||
+                 superseded.load(std::memory_order_relaxed)) {
         sendJson(errorResponse(request.id, -32802,
                                "Superseded by a newer completion request"));
       } else {
@@ -4568,7 +4590,8 @@ private:
         }
         lang::SourceManager source;
         source.set(baseline->path, request.source);
-        DiagnosticConverter converter(source, baseline->path, request.uri, request.source);
+        DiagnosticConverter converter(source, baseline->path, request.uri,
+                                      request.source);
         for (const auto &d : *answer)
           current.push_back(converter.convert(d));
         std::unordered_set<std::string> affected{request.uri};
@@ -4769,8 +4792,8 @@ private:
               guarded.analysis->frontend != nullptr &&
                   guarded.analysis->frontend->includeSuggestionsRequested,
               {}, guarded.analysis->mirSignatureOnlyFallback,
-              guarded.analysis->frontendPasses,
-              &*guarded.analysis, request.appliedPublishedFix && !fixedUpdateDebounce);
+              guarded.analysis->frontendPasses, &*guarded.analysis,
+              request.appliedPublishedFix && !fixedUpdateDebounce);
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -5062,8 +5085,10 @@ private:
       return;
     std::vector<LspDiagnostic> diagnostics;
     const auto rootPath = canonicalPath(*path).string();
-    DiagnosticConverter projectMessages(project.sources, rootPath, request.uri, request.source);
-    DiagnosticConverter adviceMessages(frontend->sources, rootPath, request.uri, request.source);
+    DiagnosticConverter projectMessages(project.sources, rootPath, request.uri,
+                                        request.source);
+    DiagnosticConverter adviceMessages(frontend->sources, rootPath, request.uri,
+                                       request.source);
     for (const auto &diagnostic : project.diagnostics)
       diagnostics.push_back(projectMessages.convert(diagnostic));
     for (const auto &diagnostic : advice->diagnostics) {
@@ -5660,7 +5685,7 @@ private:
           (!edit ||
            !lang::LanguageQueries::extendedQualifiedCompletionOffset(
                active.request.source, active.request.byteOffset, *edit)))
-        active.cancellation->store(true, std::memory_order_relaxed);
+        active.request.cancellation->store(true, std::memory_order_relaxed);
     }
     // Includes close/reopen and project changes, not only ordinary edits.
     if (const auto running = activeAnalysisCancellations.find(uri);
@@ -5942,13 +5967,11 @@ private:
       if (related.uri != uri ||
           !std::string_view(related.related.message).starts_with(marker))
         continue;
-      JsonObject companion{
-          {"range",
-           diagnosticRangeJson(related.range)},
-          {"severity", 3},
-          {"source", std::string(diagnosticSource)},
-          {"message",
-           "A macro expansion fails here: " + published.diagnostic.message}};
+      JsonObject companion{{"range", diagnosticRangeJson(related.range)},
+                           {"severity", 3},
+                           {"source", std::string(diagnosticSource)},
+                           {"message", "A macro expansion fails here: " +
+                                           published.diagnostic.message}};
       if (!published.diagnostic.code.empty())
         companion["code"] = published.diagnostic.code;
       companion["relatedInformation"] = JsonArray{JsonObject{
@@ -5984,7 +6007,8 @@ private:
       std::optional<std::size_t> retainedFrontends = std::nullopt,
       bool includeSuggestionsRequested = false, std::string_view requestId = {},
       bool mirSignatureOnlyFallback = false, unsigned frontendPasses = 0,
-      const DocumentAnalysis *analysis = nullptr, bool expeditedFix = false) const {
+      const DocumentAnalysis *analysis = nullptr,
+      bool expeditedFix = false) const {
     if (!frontendTracePath) {
       return;
     }
@@ -6175,7 +6199,7 @@ private:
       stoppingCompletion = true;
       for (const auto &[id, active] : activeCompletionRequests) {
         canceledRequests.insert(id);
-        active.cancellation->store(true, std::memory_order_relaxed);
+        active.request.cancellation->store(true, std::memory_order_relaxed);
       }
       abandoned.swap(completionRequests);
     }
@@ -6305,6 +6329,11 @@ private:
   // for dependency staleness made each publication along an include chain
   // invalidate every dependant above it.
   std::unordered_map<std::string, std::uint64_t> contentGenerations;
+  // Only ordinary edits to the current completion document can share a
+  // qualified candidate set. Close/reopen, project invalidation, source
+  // changes elsewhere and switching the requested document end that session.
+  std::string completionEntryPath;
+  std::uint64_t completionInputGeneration = 0;
   std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, AnalysisSnapshot> analysisSnapshots;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;

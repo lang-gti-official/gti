@@ -1,1 +1,1 @@
-The language server responds faster to member completion, repeated hovers and quick fixes. Files with many diagnostics use less memory and publish their results sooner.
+The language server reuses member and namespace suggestions as you type, answers module import completions sooner, and speeds up repeated hovers and quick fixes. Files with many diagnostics use less memory, and applying a suggested fix triggers an immediate recheck.

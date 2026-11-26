@@ -1,22 +1,33 @@
-// Extending a qualified completion re-ranks current items without frontend work and drops reuse after receiver or project changes.
+// Qualified completion reuses the compiler list across typed prefixes and rechecks when the receiver, project, or embedded bytes change.
 {"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
 {"expect": {"id": 1}}
 {"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "struct Api { int value; int valid; }; int main() { Api a{}; return a.; }"}}}}
+{"file": {"name": "payload.bin", "text": "one"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "struct Api { int value; int valid; }; int main() { Api a{}; return a.; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 69}}, "id": 2}}
 {"expect": {"id": 2, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "value", "textEdit": {"newText": "value", "range": {"start": {"character": 69}, "end": {"character": 69}}}}, {"label": "valid", "textEdit": {"newText": "valid", "range": {"start": {"character": 69}, "end": {"character": 69}}}}]}}}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "struct Api { int value; int valid; }; int main() { Api a{}; return a.v; }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "struct Api { int value; int valid; }; int main() { Api a{}; return a.v; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}]}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 70}}, "id": 3}}
 {"expect": {"id": 3, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "value", "textEdit": {"newText": "value", "range": {"start": {"character": 69}, "end": {"character": 70}}}}, {"label": "valid", "textEdit": {"newText": "valid", "range": {"start": {"character": 69}, "end": {"character": 70}}}}]}}}}
 {"analysisTrace": {"kind": "completion", "requestId": "3", "loadedUnits": [], "parsedUnits": [], "semanticallyAnalyzedUnits": []}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "struct Api { int value; int volume; }; int main() { Api a{}; return a.vo; }"}]}}}
+{"file": {"name": "payload.bin", "text": "two"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "struct Api { int value; int valid; }; int main() { Api a{}; return a.va; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 71}}, "id": 8}}
+{"expect": {"id": 8, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "value", "textEdit": {"newText": "value", "range": {"start": {"character": 69}, "end": {"character": 71}}}}, {"label": "valid", "textEdit": {"newText": "valid", "range": {"start": {"character": 69}, "end": {"character": 71}}}}]}}}}
+{"analysisTrace": {"kind": "completion", "requestId": "8", "parsedUnits": {"$contains": [{"$match": "main\\.gti$"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 4}, "contentChanges": [{"text": "struct Api { int value; int volume; }; int main() { Api a{}; return a.vo; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}]}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 72}}, "id": 4}}
 {"expect": {"id": 4, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "volume", "textEdit": {"newText": "volume", "range": {"start": {"character": 70}, "end": {"character": 72}}}}]}}}}
 {"send": {"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": {"changes": [{"uri": "$DIR_URI/gti.toml", "type": 2}]}}}
-{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 4}, "contentChanges": [{"text": "struct Api { int value; int volume; }; int main() { Api a{}; return a.vol; }"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 5}, "contentChanges": [{"text": "struct Api { int value; int volume; }; int main() { Api a{}; return a.vol; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}]}}}
 {"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 73}}, "id": 5}}
 {"expect": {"id": 5, "result": {"isIncomplete": false, "items": {"$contains": [{"label": "volume", "textEdit": {"newText": "volume", "range": {"start": {"character": 70}, "end": {"character": 73}}}}]}}}}
 {"analysisTrace": {"kind": "completion", "requestId": "5", "parsedUnits": {"$contains": [{"$match": "main\\.gti$"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {"textDocument": {"uri": "$URI"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "struct Api { int value; int volume; }; int main() { Api a{}; return a.vol; } int payload_size() { auto bytes = embed_bytes(\"payload.bin\"); return int(bytes.size()); }"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/completion", "id": 9, "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 73}}}}
+{"expect": {"id": 9, "result": {"items": {"$contains": [{"label": "volume"}]}}}}
+{"analysisTrace": {"kind": "completion", "requestId": "9", "semanticallyAnalyzedUnits": {"$contains": [{"$match": "main\\.gti$"}]}}}
 {"send": {"jsonrpc": "2.0", "method": "shutdown", "params": {}, "id": 6}}
 {"expect": {"id": 6}}
 {"send": {"jsonrpc": "2.0", "method": "exit", "params": null}}
