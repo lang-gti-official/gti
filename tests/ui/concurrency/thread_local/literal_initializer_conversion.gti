@@ -1,0 +1,30 @@
+// Every thread-local form stores its literal initializer converted to the declared scalar type.
+//@ run-pass
+thread_local mut double fromFloat = 0.1;
+thread_local mut double fromF32 = 0.5f32;
+thread_local mut double fromInteger = 2;
+thread_local mut float floatFromInteger = 3;
+thread_local mut int64_t wide = 5000000000;
+thread_local mut uint8_t narrow = 200;
+
+class Counter {
+public:
+  thread_local static mut double total = 0.25;
+};
+
+double bump() {
+  thread_local static mut double local = 1;
+  local = local + 0.5f64;
+  return local;
+}
+
+int main() {
+  if (fromFloat != double(0.1) || fromF32 != 0.5f64 || fromInteger != 2.0f64)
+    return 1;
+  if (floatFromInteger != 3.0 || wide != 5000000000 || narrow != 200u8)
+    return 2;
+  Counter::total = Counter::total + 1.0f64;
+  if (Counter::total != 1.25f64) return 3;
+  [[discard]] bump();
+  return bump() == 2.0f64 ? 0 : 4;
+}

@@ -1499,15 +1499,33 @@ private:
         continue;
       }
       if (step.role == ProgramInitializationStepRole::DataOnly) {
+        // Semantics selected the literal's own type and the implicit
+        // conversions (and grouping) that reach the declared type. The datum
+        // is the literal's value after them, spelled in the storage type.
         const auto *value = storage.initializer.findValue(*initializer);
+        std::vector<const HirValue *> conversions;
         std::unordered_set<HirValueId> visited;
         while (value != nullptr && visited.insert(value->id).second &&
-               value->kind == HirValueKind::Conversion &&
-               value->operands.size() == 1)
+               (value->kind == HirValueKind::Conversion ||
+                value->kind == HirValueKind::Grouping) &&
+               value->operands.size() == 1) {
+          conversions.push_back(value);
           value = storage.initializer.findValue(value->operands.front());
+        }
+        std::optional<ConstantValue> datum;
         if (value != nullptr && value->kind == HirValueKind::Literal &&
             value->literal && !step.requiresActiveCleanup)
-          storage.dataInitializer = value->literal;
+          datum = evaluateConstantLiteral(
+                      *value->literal, constantIntegerDomain(value->info.type))
+                      .value;
+        for (auto it = conversions.rbegin(); datum && it != conversions.rend();
+             ++it)
+          datum = dataConstantInType(*datum, (*it)->info.type);
+        if (datum)
+          datum = dataConstantInType(*datum, storage.type);
+        if (auto literal = datum ? dataConstantLiteral(*datum, storage.type)
+                                 : std::nullopt)
+          storage.dataInitializer = std::move(*literal);
         else
           lifecycleValid = false;
       }

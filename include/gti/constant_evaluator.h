@@ -184,6 +184,19 @@ constantAddressDependencies(const ConstantValue &value);
 [[nodiscard]] ConstantEvaluation
 convertConstantToType(const ConstantValue &value, const SemanticType &target);
 
+// Passive scalar program data (a literal-initialized thread-local) is one
+// Literal spelled in its storage type's own representation, so no consumer
+// converts it. dataConstantInType converts a scalar constant into the storage
+// type as its initialization does; text and null keep their value for
+// borrowed-text and nullable storage. dataConstantLiteral spells a constant
+// already of that type: the magnitude in the type's integer domain, the
+// type's binary float format, or the bool, character, text or null literal.
+// It returns nullopt when no such literal names the value in the type.
+[[nodiscard]] std::optional<ConstantValue>
+dataConstantInType(const ConstantValue &value, const SemanticType &type);
+[[nodiscard]] std::optional<Literal>
+dataConstantLiteral(const ConstantValue &value, const SemanticType &type);
+
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,
                                                   CheckedIntegerDomain domain);
 [[nodiscard]] CheckedIntegerValue
