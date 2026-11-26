@@ -1,0 +1,1 @@
+Optimized LLVM builds simplify checked binary32 floor-to-integer calculations and eliminate conversion checks when all callers supply provably bounded values. Unrestricted inputs keep their checked conversion behavior.

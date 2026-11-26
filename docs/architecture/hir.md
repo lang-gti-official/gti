@@ -216,6 +216,10 @@ discovery limits, semantic selection, or executable HIR/MIR behavior.
 An error inside a trusted library instance that user code first required is
 re-anchored the same way. Its primary becomes the requesting site, and the
 library location becomes a "Reported inside this library instance." note.
+The worklist also retains the application call that crossed into a trusted
+library. A failing library static assertion uses that call as primary and
+retains the outer request as context. Other library errors preserve the outer
+request as primary and show the distinct library call as context.
 A named call requests its instance at the callee name. An overloaded operator
 requests its instance at the operator token, such as the `=` of an assignment
 that selects `operator=`, and a contextual conversion at its converted

@@ -1,0 +1,1 @@
+Failed library static assertions point to the application call into the library. Other library instantiation errors identify the caller that selected the failing instance and include the library call as context. Diagnostics show matching installed source for precompiled library bodies.

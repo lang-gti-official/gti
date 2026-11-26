@@ -1,0 +1,10 @@
+// A comma ending in a program constant evaluates its left operand once and reads the constant value.
+//@ run-pass
+constexpr int LIMIT = 4;
+
+int main() {
+  mut int count = 0;
+  int value = (count = count + 1, LIMIT);
+  int grouped = 2 * (count = count + 1, (LIMIT));
+  return count == 2 && value == 4 && grouped == 8 ? 0 : 1;
+}

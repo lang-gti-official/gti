@@ -332,7 +332,7 @@ private:
     processedDestructors = 0;
     discoveryDepth = 0;
     discoverySite.reset();
-    discoveryOrigin.reset();
+    discoveryOrigin = {};
     discoveryLimitReached = false;
     discoveredGenericInstances = 0;
     classDiscoveryDepths.clear();
@@ -363,20 +363,33 @@ private:
   static constexpr std::size_t maximumDiscoveredInstances =
       GenericInstantiationLimits::maximumDistinctInstances;
 
+  // The first request distinguishes callers of a generic wrapper. A library
+  // assertion can also identify the application call that crossed into it.
+  struct RequestOrigin {
+    std::optional<SourceSpan> first;
+    std::optional<SourceSpan> libraryCall;
+  };
+
   struct InstanceDiscovery {
     std::size_t depth;
-    std::optional<SourceSpan> origin;
+    RequestOrigin origin;
   };
 
   [[nodiscard]] InstanceDiscovery
-  nextDiscovery(const std::optional<SourceSpan> &site) const {
-    return {discoveryDepth + 1, discoveryOrigin ? discoveryOrigin : site};
+  nextDiscovery(const std::optional<SourceSpan> &site,
+                const Token &declaration) const {
+    RequestOrigin origin = discoveryOrigin;
+    if (!origin.first)
+      origin.first = site;
+    if (site && !trustedSources.contains(site->source) &&
+        trustedSources.contains(declaration.source))
+      origin.libraryCall = site;
+    return {discoveryDepth + 1, std::move(origin)};
   }
 
   struct DiscoveryScope {
     DiscoveryScope(std::size_t &depth, std::optional<SourceSpan> &site,
-                   std::optional<SourceSpan> &origin,
-                   const InstanceDiscovery &next,
+                   RequestOrigin &origin, const InstanceDiscovery &next,
                    std::optional<SourceSpan> nextSite)
         : depth(depth), site(site), origin(origin), previous(depth),
           previousSite(site), previousOrigin(origin) {
@@ -391,10 +404,10 @@ private:
     }
     std::size_t &depth;
     std::optional<SourceSpan> &site;
-    std::optional<SourceSpan> &origin;
+    RequestOrigin &origin;
     std::size_t previous;
     std::optional<SourceSpan> previousSite;
-    std::optional<SourceSpan> previousOrigin;
+    RequestOrigin previousOrigin;
   };
 
   [[nodiscard]] bool admitInstance(const Token &declaration,
@@ -527,7 +540,7 @@ private:
       HirClassInstance &instance = output.program.classes[*existing - 1];
       if (!instance.instantiationSite && site) {
         classDiscoveryDepths[*existing - 1].origin =
-            discoveryOrigin ? discoveryOrigin : site;
+            nextDiscovery(site, instance.source->name()).origin;
         instance.instantiationSite = std::move(site);
       }
       return *existing;
@@ -660,7 +673,8 @@ private:
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
     classDiscoveryDepths.push_back(
-        nextDiscovery(output.program.classes.back().instantiationSite));
+        nextDiscovery(output.program.classes.back().instantiationSite,
+                      declaration->declaration->name()));
     discoveredGenericInstances += generic;
     if (declaration->enclosingClass != 0) {
       // Keep the lexical declaration shell even when only its child is used.
@@ -768,7 +782,7 @@ private:
       return 0;
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
-    functionDiscoveryDepths.push_back(nextDiscovery(site));
+    functionDiscoveryDepths.push_back(nextDiscovery(site, declarationToken));
     discoveredGenericInstances += generic;
     if (freeFunction || owner.has_value()) {
       // An instance whose owner failed to resolve was never matchable by the
@@ -969,7 +983,8 @@ private:
     // still counting a distinct generic constructor toward the request budget.
     // Ordinary constructor bodies retain their independent discovery edge.
     const InstanceDiscovery constructorDiscovery =
-        generatedBody ? classDiscoveryDepths[*owner - 1] : nextDiscovery(site);
+        generatedBody ? classDiscoveryDepths[*owner - 1]
+                      : nextDiscovery(site, declarationToken);
     const bool admitted = [&] {
       DiscoveryScope scope(discoveryDepth, discoverySite, discoveryOrigin,
                            {.depth = constructorDiscovery.depth - 1,
@@ -1042,7 +1057,8 @@ private:
       return std::nullopt;
     }
     destructorDiscoveryDepths.push_back(
-        nextDiscovery(classInstance.instantiationSite));
+        nextDiscovery(classInstance.instantiationSite,
+                      lifecycle->declaredDestructor->declaration->name()));
     discoveredGenericInstances += generic;
     output.program.destructors.push_back(
         {.codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
@@ -2260,9 +2276,16 @@ private:
 
   void appendInstanceDiagnostics(std::vector<Diagnostic> diagnostics,
                                  const std::optional<SourceSpan> &site,
-                                 const std::optional<SourceSpan> &origin) {
+                                 const RequestOrigin &provenance) {
+    const auto &origin = provenance.first;
     for (Diagnostic &diagnostic : diagnostics) {
-      const auto request = origin ? origin : site;
+      const auto &request = origin ? origin : site;
+      // A failed library assertion is an explicit contract at the library
+      // boundary. Other errors describe the instance selected by the caller.
+      const auto &libraryRequest =
+          diagnostic.code == "GTI-S2079" && provenance.libraryCall
+              ? provenance.libraryCall
+              : origin;
       const bool missingDefinition =
           diagnostic.code ==
           diagnosticDescriptor(DiagnosticId::MissingFunctionDefinition).code;
@@ -2272,9 +2295,10 @@ private:
             {diagnostic.primary,
              "This selected call requires the missing definition."});
         diagnostic.primary = *request;
-      } else if (origin && diagnostic.severity == DiagnosticSeverity::Error &&
+      } else if (libraryRequest &&
+                 diagnostic.severity == DiagnosticSeverity::Error &&
                  trustedSources.contains(diagnostic.primary.source) &&
-                 !trustedSources.contains(origin->source)) {
+                 !trustedSources.contains(libraryRequest->source)) {
         // Library internals are not the user's to fix: report where other
         // code first required this instance and keep the library location.
         // A warning there, such as a raw-pointer audit finding, describes the
@@ -2282,7 +2306,13 @@ private:
         // reports or drops it by that location.
         diagnostic.related.insert(diagnostic.related.begin(),
                                   {diagnostic.primary, libraryInstanceNote});
-        diagnostic.primary = *origin;
+        diagnostic.primary = *libraryRequest;
+        if (provenance.libraryCall &&
+            *provenance.libraryCall != diagnostic.primary &&
+            provenance.libraryCall != site) {
+          diagnostic.related.push_back(
+              {*provenance.libraryCall, "Application call into this library."});
+        }
         reanchored = true;
       }
       if (site && (!missingDefinition || diagnostic.primary != *site)) {
@@ -8143,7 +8173,7 @@ private:
   std::optional<SourceSpan> discoverySite;
   // Diagnostic provenance only; this does not participate in instance identity,
   // discovery limits, overload selection, or executable HIR/MIR semantics.
-  std::optional<SourceSpan> discoveryOrigin;
+  RequestOrigin discoveryOrigin;
   bool discoveryLimitReached = false;
   std::size_t discoveredGenericInstances = 0;
   std::vector<InstanceDiscovery> classDiscoveryDepths;

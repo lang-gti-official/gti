@@ -73,6 +73,7 @@ FrontendResult analyze(const CompilationRequest &request,
              request.packageWarnings().suppresses(diagnostic,
                                                   result.sourceGraph);
     });
+    detail::restoreInstalledDiagnosticSources(result);
     return result;
   };
   std::optional<std::vector<Diagnostic>> auditDiagnostics;

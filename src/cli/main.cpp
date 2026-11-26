@@ -2135,7 +2135,7 @@ void reportSourceExcerpt(const lang::SourceSpan &span,
                          const lang::SourceManager &sources, Style style) {
   const auto location = sources.locate(span);
   const auto line = sources.line(span);
-  if (line.empty())
+  if (line.find_first_not_of(" \t\r") == std::string_view::npos)
     return;
   const auto begin =
       std::clamp(span.start, location.lineStart, location.lineEnd) -

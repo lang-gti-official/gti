@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/checked_float.h"
 #include "../src/compiler/llvm/loop_invariants.h"
 #include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/scalar.h"
@@ -568,6 +569,62 @@ llvm::Function *addColdRegionFixture(llvm::Module &module) {
                                  llvm::ConstantInt::get(integer, index))});
   builder.CreateRet(llvm::ConstantInt::getSigned(integer, -1));
   return function;
+}
+
+// This proof must see every call. A second unconstrained call, taking the
+// function's address, or making the function public all invalidate it.
+void verifyCoordinateCallBounds() {
+  llvm::LLVMContext context;
+  llvm::Module module("coordinate-call-bounds", context);
+  llvm::IRBuilder<> builder(context);
+  auto *sinkType = llvm::FunctionType::get(builder.getInt1Ty(),
+                                           {builder.getFloatTy()}, false);
+  auto *driverType = llvm::FunctionType::get(
+      builder.getVoidTy(), {builder.getInt32Ty(), builder.getFloatTy()}, false);
+  auto *driver = llvm::Function::Create(
+      driverType, llvm::GlobalValue::ExternalLinkage, "callers", module);
+  auto *entry = llvm::BasicBlock::Create(context, "entry", driver);
+  llvm::SmallVector<llvm::ReturnInst *, 8> results;
+  for (llvm::StringRef shape :
+       {"scaled", "mixed", "escaped", "public", "wide", "nan", "infinity"}) {
+    auto *fn = llvm::Function::Create(sinkType,
+                                      shape == "public"
+                                          ? llvm::GlobalValue::ExternalLinkage
+                                          : llvm::GlobalValue::InternalLinkage,
+                                      shape, module);
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", fn));
+    auto *upper = llvm::ConstantFP::get(builder.getFloatTy(), 0x1p31);
+    auto *rounded =
+        builder.CreateUnaryIntrinsic(llvm::Intrinsic::trunc, fn->getArg(0));
+    results.push_back(builder.CreateRet(builder.CreateFCmpUGE(rounded, upper)));
+    builder.SetInsertPoint(entry);
+    auto *base = builder.CreateSIToFP(driver->getArg(0), builder.getFloatTy());
+    auto *scaled = builder.CreateFMul(
+        base, llvm::ConstantFP::get(builder.getFloatTy(), 0.125));
+    builder.CreateCall(fn, {shape == "wide" ? base : scaled});
+    if (shape == "escaped")
+      llvm::appendToUsed(module, {fn});
+    if (shape == "mixed")
+      builder.CreateCall(fn, {driver->getArg(1)});
+    if (shape == "nan")
+      builder.CreateCall(fn, {llvm::ConstantFP::getNaN(builder.getFloatTy())});
+    if (shape == "infinity")
+      builder.CreateCall(fn,
+                         {llvm::ConstantFP::getInfinity(builder.getFloatTy())});
+  }
+  builder.CreateRetVoid();
+  if (!lang::native_llvm::simplifyCheckedFloors(module) ||
+      llvm::verifyModule(module, &llvm::errs()))
+    throw std::runtime_error("failed to prove a scaled binary32 coordinate");
+  for (auto *ret : results) {
+    const bool folded = llvm::isa<llvm::ConstantInt>(ret->getReturnValue());
+    const auto name = ret->getFunction()->getName();
+    if (folded != (name == "scaled") ||
+        (folded &&
+         !llvm::cast<llvm::ConstantInt>(ret->getReturnValue())->isZero()))
+      throw std::runtime_error("unsound or missing coordinate bound for " +
+                               name.str());
+  }
 }
 
 void verifyCheckedSquareBounds() {
@@ -1160,6 +1217,7 @@ int main() {
   verifyRecoveryExecutionFrequency();
   verifyPrivateScalarResultPromotion();
   verifyBoundedRecursion();
+  verifyCoordinateCallBounds();
   verifyCheckedSquareBounds();
   verifySquareOffsetOptimization();
   verifyDischargedCheckFacts();

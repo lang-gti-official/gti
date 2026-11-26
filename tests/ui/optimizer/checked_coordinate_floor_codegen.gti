@@ -1,0 +1,16 @@
+// A scaled integer coordinate lowers to a floating floor without a successor overflow check.
+//@ check-pass
+//@ opt: O3
+//@ reason: the optimized backend folds a checked negative-fraction correction
+//@ snapshot: llvm-ir
+// CHECK: @llvm.floor.f32(
+// CHECK-NOT: icmp eq i32 {{.*}}, 2147483647
+extern "C" { int32_t sample_input(); }
+
+int32_t cell(float input) {
+  int32_t integral = int32_t(input);
+  if (input < float(integral)) return integral - 1;
+  return integral;
+}
+
+int main() { return cell(float(sample_input()) * 0.125) + 1; }
