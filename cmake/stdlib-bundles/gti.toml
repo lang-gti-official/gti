@@ -100,6 +100,10 @@ root = "stdlib/std/detail/chrono_discovery.gti"
 kind = "gti-library"
 root = "stdlib/std/detail/chrono_format.gti"
 
+[targets.detail_chrono_format_support]
+kind = "gti-library"
+root = "stdlib/std/detail/chrono_format_support.gti"
+
 [targets.detail_chrono_tzif]
 kind = "gti-library"
 root = "stdlib/std/detail/chrono_tzif.gti"

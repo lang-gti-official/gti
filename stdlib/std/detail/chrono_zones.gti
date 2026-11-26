@@ -360,3 +360,27 @@ for concept std::formatting<std::chrono::zoned_time> {
     return std::formatting<std::string>::format(text, output, spec);
   }
 };
+
+for concept std::chrono::detail::temporal_components<std::chrono::zoned_time> {
+  constexpr bool has_date() { return true; }
+  constexpr bool has_time() { return true; }
+  constexpr bool has_zone() { return true; }
+  expected<std::chrono::detail::time_fields, std::chrono::format_error> fields(std::chrono::zoned_time& value) {
+    mut std::chrono::detail::time_fields result{};
+    auto local = value.local();
+    std::chrono::detail::local_fields(result, local);
+    result.offset = value.offset_seconds();
+    result.abbreviation = std::string(value.abbreviation());
+    result.zone = std::string(value.zone_name());
+    return std::move(result);
+  }
+};
+class std::formatter<std::chrono::zoned_time> {
+  mut std::chrono::detail::temporal_formatter<std::chrono::zoned_time> implementation{};
+public:
+  constexpr formatter() {}
+  constexpr bool parse(std::format_parse_context& spec) mut { return this.implementation.parse(spec); }
+  expected<void, std::format_errc> format(std::chrono::zoned_time& value, mut std::string& output, std::format_parse_context& spec) {
+    return this.implementation.format(value, output, spec);
+  }
+};

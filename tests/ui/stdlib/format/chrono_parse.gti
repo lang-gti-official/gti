@@ -1,0 +1,27 @@
+// Calendar directives compose with indexing, padding, text, and checked output.
+//@ run-pass
+import std.chrono;
+import std.format;
+import std.string;
+int main() {
+  auto epoch = std::chrono::timestamp(0i64);
+  auto date = std::chrono::date::create(2026, 11, 22);
+  if (std::format("wal-{:%Y-%m-%d_%H-%M-%S}.log", epoch) != "wal-1970-01-01_00-00-00.log") { return 1; }
+  if (std::format("{0:%d/%m/%Y} {0:%Y}", date) != "22/11/2026 2026") { return 2; }
+  if (std::format("{:*>12%Y-%m-%d}", date) != "**2026-11-22") { return 3; }
+  if (std::format("{:%{zone} %:z %::z}", epoch) != "UTC +00:00 +00:00:00") { return 4; }
+  if (std::format("{}", date) != "2026-11-22") { return 5; }
+  if (std::format("{:>12s}", date) != "  2026-11-22") { return 6; }
+  std::string pattern = std::string("{:%Y}");
+  if (std::runtime_format(pattern.view(), date) != "2026") { return 7; }
+  mut std::string out = std::string("kept");
+  auto invalid = std::try_runtime_format_to(out, "{} {:%H}", date, date);
+  if (invalid || invalid.error() != std::format_errc::invalid_format || out != "kept") { return 8; }
+  if (std::try_runtime_format("{:%Q}", epoch)) { return 9; }
+  if (std::chrono::format(date, "%Y-%m-%d") != "2026-11-22") { return 10; }
+  auto prepared = std::chrono::prepare_time_pattern<std::chrono::date>("%d/%m");
+  if (prepared.format(date) != "22/11") { return 11; }
+  if (std::try_runtime_format("{:.3%Y}", date)) { return 12; }
+  if (std::format("{:%>12%Y-%m-%d}", date) != "%%2026-11-22") { return 13; }
+  return 0;
+}
