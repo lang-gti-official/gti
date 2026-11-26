@@ -1401,6 +1401,12 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
+  // Named import completion reads the loader's module registry and source
+  // spans. It needs no parsed bodies or semantic facts from this graph.
+  if (options.completionOffset &&
+      result.sourceGraph.namedImportAt(result.sourceGraph.entryUnit(),
+                                       *options.completionOffset))
+    return result;
   if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
     return result;
   if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
@@ -1834,6 +1840,7 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
         semanticLimits);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
+    semantic.setEnumSwitchCaseSuggestions(options.suggestEnumSwitchCases);
     semantic.setCancellation(options.cancellation);
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     semantic.setConstexprBodyDeferral(options.deferConstexprBodies);

@@ -24,6 +24,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
                                       workMetrics, sources, rawPointerAudit,
                                       requireFunctionDefinitions, trustedBodies,
                                       sourceDebugProfile, compileLimits);
+  fresh->suggestEnumSwitchCases = suggestEnumSwitchCases;
   fresh->cancellation = cancellation;
   fresh->reuseConstantEvaluations = reuseConstantEvaluations;
   fresh->deferConstexprBodies = deferConstexprBodies;
@@ -79,6 +80,10 @@ bool SemanticVisitor::check(const Program &program) {
     impl->analysisCancelled = true;
     return false;
   }
+}
+
+void SemanticVisitor::setEnumSwitchCaseSuggestions(bool enabled) {
+  impl->suggestEnumSwitchCases = enabled;
 }
 
 void SemanticVisitor::setCancellation(const std::atomic<bool> *cancellation) {
@@ -240,6 +245,7 @@ SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
   auto worker = unevaluatedExpressionWorker(&input.model);
   worker->sourceGraph = &input.graph;
   worker->sources = &input.sources;
+  worker->suggestEnumSwitchCases = suggestEnumSwitchCases && !lookup;
   worker->analyzedProgram = &input.program;
   worker->cancellation = cancellation;
   const std::optional<ClassId> owner =
@@ -312,14 +318,34 @@ SemanticVisitor::Impl::diagnoseEditedBody(const EditedFunctionBody &input,
     // to the authoritative whole-snapshot run.
     const bool inBody = diagnostic.primary.start >= checked.start &&
                         diagnostic.primary.end <= checked.end;
+    // The scalar switch hint is proved by this reparse. Its only edit must
+    // insert inside the same body; it cannot stand in for borrow verification.
+    if (diagnostic.code == "GTI-S2130" && inBody &&
+        diagnostic.primary.source == checked.source &&
+        diagnostic.related.empty() && diagnostic.fixes.size() == 1) {
+      const auto &edit = diagnostic.fixes.front().span;
+      if (edit.source == checked.source && edit.start == edit.end &&
+          edit.start >= checked.start && edit.end <= checked.end)
+        continue;
+    }
     if (diagnostic.severity != DiagnosticSeverity::Error ||
         diagnostic.primary.source != checked.source ||
         (!inBody && diagnostic.primary != tokenSpan(name)) ||
         !localEvidence(diagnostic))
       return std::nullopt;
   }
-  if (input.verify && worker->diagnostics.empty())
-    return input.verify(worker->model(), *worker, function->id);
+  if (!hasErrorDiagnostics(worker->diagnostics)) {
+    if (input.verify) {
+      auto verified = input.verify(worker->model(), *worker, function->id);
+      // Match full publication order: semantic findings precede MIR findings.
+      if (verified)
+        verified->insert(verified->begin(), worker->diagnostics.begin(),
+                         worker->diagnostics.end());
+      return verified;
+    }
+    if (!worker->diagnostics.empty())
+      return std::nullopt;
+  }
   return worker->diagnostics;
 }
 

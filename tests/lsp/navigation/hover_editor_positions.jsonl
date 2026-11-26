@@ -1,0 +1,21 @@
+// Hover ranges follow the current editor buffer across repeated requests, CRLF and non-BMP characters.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {}}, "id": 1}}
+{"expect": {"id": 1, "result": {"capabilities": "$ANY"}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int narrow() { return 1; }\r\nint main() { /* 🌱 */ return narrow(); }\r\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "version": 1, "languageId": "gti", "text": "int narrow() { return 1; }\r\nint main() { /* 🌱 */ return narrow(); }\r\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 29}}, "id": 10}}
+{"expect": {"id": 10, "result": {"range": {"start": {"line": 1, "character": 29}, "end": {"line": 1, "character": 35}}, "contents": {"value": {"$contains": "narrow"}}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 30}}, "id": 11}}
+{"expect": {"id": 11, "result": {"range": {"start": {"line": 1, "character": 29}, "end": {"line": 1, "character": 35}}, "contents": {"value": {"$contains": "narrow"}}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "// moved\r\nint widened() { return 2; }\r\nint main() { /* 🌱🌱 */ return widened(); }\r\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 31}}, "id": 20}}
+{"expect": {"id": 20, "result": {"range": {"start": {"line": 2, "character": 31}, "end": {"line": 2, "character": 38}}, "contents": {"value": {"$contains": "widened"}}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 32}}, "id": 21}}
+{"expect": {"id": 21, "result": {"range": {"start": {"line": 2, "character": 31}, "end": {"line": 2, "character": 38}}, "contents": {"value": {"$contains": "widened"}}}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "params": null, "id": 99}}
+{"expect": {"id": 99, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit", "params": null}}
+{"exit": 0}

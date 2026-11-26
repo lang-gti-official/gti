@@ -180,6 +180,8 @@ public:
   [[nodiscard]] ModuleId moduleForUnit(SourceUnitId id) const;
   [[nodiscard]] bool sameModule(SourceUnitId left, SourceUnitId right) const;
   [[nodiscard]] const std::vector<SourceImport> &imports() const;
+  [[nodiscard]] const SourceImport *namedImportAt(SourceUnitId requester,
+                                                  std::size_t byteOffset) const;
   [[nodiscard]] const std::shared_ptr<const SourceOwnerRegistry> &
   sourceOwners() const;
   [[nodiscard]] const std::vector<SourceDependency> &dependencyEdges() const;

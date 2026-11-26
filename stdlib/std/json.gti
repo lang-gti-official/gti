@@ -23,6 +23,7 @@ export module json;
 // (encoding only), integral enums (by enumerator name), tagged payload enums, std::optional<T>
 // (`null` or an absent member), std::vector<E>, std::map and
 // std::unordered_map with std::string keys (objects with dynamic keys),
+// chrono durations and calendar counts (signed integers),
 // std::json::value and std::json::object, nested reflectable structs, and any type with a
 // `std::json::codec<T>` specialization. Anything else is
 // rejected where it is used.
@@ -637,8 +638,18 @@ constexpr bool is_optional<T>() {
   return std::meta::primary_name_of<T>() == "std::optional";
 }
 
-constexpr bool is_vector<T>() {
-  return std::meta::primary_name_of<T>() == "std::vector";
+constexpr bool is_sequence<T>() {
+  return std::meta::primary_name_of<T>() == "std::vector" ||
+         std::meta::primary_name_of<T>() == "std::deque" ||
+         std::meta::primary_name_of<T>() == "std::list" ||
+         std::meta::primary_name_of<T>() == "std::forward_list";
+}
+
+constexpr bool is_chrono_count<T>() {
+  return std::meta::primary_name_of<T>() == "std::chrono::duration" ||
+         std::meta::name_of<T>() == "std::chrono::calendar_days" ||
+         std::meta::name_of<T>() == "std::chrono::months" ||
+         std::meta::name_of<T>() == "std::chrono::years";
 }
 
 constexpr bool is_string_map<T>() {
@@ -812,13 +823,16 @@ expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& sty
     return std::meta::visit_fields<error, F, payload_encoder>(item, visitor);
   } else if constexpr (std::meta::is_enum<F>()) {
     return encode_enum(out, item);
+  } else if constexpr (is_chrono_count<F>()) {
+    append_signed(out, item.count());
+    return;
   } else if constexpr (is_optional<F>()) {
     if (item.has_value()) {
       return encode_value(out, item.value(), style, depth);
     }
     out.append("null");
     return;
-  } else if constexpr (is_vector<F>()) {
+  } else if constexpr (is_sequence<F>()) {
     out.push_back('[');
     mut bool first = true;
     for (auto& element : item) {
@@ -1627,6 +1641,9 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     return decode_payload_enum<F>(text, start, stop, options);
   } else if constexpr (std::meta::is_enum<F>()) {
     return decode_enum<F>(text, start, stop, options);
+  } else if constexpr (is_chrono_count<F>()) {
+    int64_t count = ?decode_signed<int64_t>(text, start, stop);
+    return F(count);
   } else if constexpr (is_optional<F>()) {
     if (range_is(text, start, stop, "null")) {
       return F();
@@ -1637,14 +1654,21 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     mut F out = F();
     out.emplace(std::move(inner));
     return std::move(out);
-  } else if constexpr (is_vector<F>()) {
+  } else if constexpr (is_sequence<F>()) {
     mut F out = F();
     std::vector<member> elements = ?parse_elements(text, start, stop, options);
     mut std::size_t index = 0;
     for (auto& element : elements) {
       auto value = ?decode_element(std::meta::list_first<std::meta::argument_list<F>>(), text, element.begin, element.end, options, index);
-      out.push_back(std::move(value));
+      if constexpr (std::meta::primary_name_of<F>() == "std::forward_list") {
+        out.push_front(std::move(value));
+      } else {
+        out.push_back(std::move(value));
+      }
       index = index + std::size_t(1);
+    }
+    if constexpr (std::meta::primary_name_of<F>() == "std::forward_list") {
+      out.reverse();
     }
     return std::move(out);
   } else if constexpr (is_string_map<F>()) {

@@ -198,6 +198,15 @@
     "arguments": 0
   },
   {
+    "id": "MissingEnumSwitchCases",
+    "code": "GTI-S2130",
+    "phase": "Semantics",
+    "severity": "Hint",
+    "group": "switch",
+    "format": "Switch omits named enum values.",
+    "arguments": 0
+  },
+  {
     "id": "AnalysisErrorLimit",
     "code": "GTI-D0002",
     "phase": "Driver",

@@ -15,6 +15,7 @@ import std.io;
 import std.cstdio;
 import std.chrono;
 import std.format;
+import std.json;
 
 export namespace gti_internal {
 // The owned native descriptor. It is never exposed to application code; the
@@ -1752,5 +1753,65 @@ export for concept std::formatting<std::tcp::socket_address> {
     std::string text = value.to_string();
     output.append(text.view());
     return;
+  }
+};
+
+namespace std { namespace tcp { namespace detail {
+expected<void, std::json::error> encode_address_text(std::string spelling, mut std::string& out) {
+  auto encoded = ?std::json::encode(spelling);
+  out.append(encoded.view());
+  return;
+}
+
+expected<std::string, std::json::error> decode_address_text(std::string_view text) {
+  mut std::json::decode_options limits{};
+  limits.set_max_document_bytes(text.size());
+  return std::json::decode<std::string>(text, limits);
+}
+
+std::json::error invalid_json_address(std::tcp::errc code) {
+  return std::json::error(std::json::errc::type_mismatch, std::size_t(0), std::size_t(1), std::size_t(1));
+}
+} } }
+
+export class std::json::codec<std::tcp::ipv4_address> {
+public:
+  codec() = default;
+
+  expected<void, std::json::error> encode(std::tcp::ipv4_address& address, mut std::string& out) {
+    return std::tcp::detail::encode_address_text(address.to_string(), out);
+  }
+
+  expected<std::tcp::ipv4_address, std::json::error> decode(std::string_view text) {
+    auto spelling = ?std::tcp::detail::decode_address_text(text);
+    return std::tcp::ipv4_address::parse(spelling.view()).transform_error(std::tcp::detail::invalid_json_address);
+  }
+};
+
+export class std::json::codec<std::tcp::ipv6_address> {
+public:
+  codec() = default;
+
+  expected<void, std::json::error> encode(std::tcp::ipv6_address& address, mut std::string& out) {
+    return std::tcp::detail::encode_address_text(address.to_string(), out);
+  }
+
+  expected<std::tcp::ipv6_address, std::json::error> decode(std::string_view text) {
+    auto spelling = ?std::tcp::detail::decode_address_text(text);
+    return std::tcp::ipv6_address::parse(spelling.view()).transform_error(std::tcp::detail::invalid_json_address);
+  }
+};
+
+export class std::json::codec<std::tcp::socket_address> {
+public:
+  codec() = default;
+
+  expected<void, std::json::error> encode(std::tcp::socket_address& address, mut std::string& out) {
+    return std::tcp::detail::encode_address_text(address.to_string(), out);
+  }
+
+  expected<std::tcp::socket_address, std::json::error> decode(std::string_view text) {
+    auto spelling = ?std::tcp::detail::decode_address_text(text);
+    return std::tcp::socket_address::parse(spelling.view()).transform_error(std::tcp::detail::invalid_json_address);
   }
 };

@@ -4920,7 +4920,9 @@
         "tests/fixtures/filesystem_path.gti",
         "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
         "stdlib/std/filesystem.gti",
-        "tests/ui/filesystem/windows_drive.gti"
+        "tests/ui/filesystem/windows_drive.gti",
+        "owning paths round-trip as exact UTF-8 JSON spellings",
+        "tests/slow/stdlib/json/stdlib_values.gti"
       ]
     },
     {
@@ -5957,7 +5959,8 @@
         "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
         "pretty printing and decode limits",
         "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs",
-        "payload enums with unit and named-field cases, nested checked URLs, custom codec precedence and absolute error paths"
+        "payload enums with unit and named-field cases, nested checked URLs, custom codec precedence and absolute error paths",
+        "ordered lists and deques, typed chrono counts and nested domain values through compact and pretty JSON"
       ],
       "evidence": [
         "docs/language/json.md",
@@ -5974,7 +5977,10 @@
         "tests/slow/stdlib/json/http_url_codec.gti",
         "tests/slow/stdlib/json/payload_enum_codec.gti",
         "tests/slow/stdlib/json/payload_enum_errors.gti",
-        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti",
+        "tests/slow/stdlib/json/calendar_sequence.gti",
+        "tests/slow/stdlib/json/network_addresses.gti",
+        "tests/slow/stdlib/json/stdlib_values.gti"
       ]
     },
     {
@@ -8813,6 +8819,8 @@
         "tests/fixtures/stdlib_surface_tcp.gti",
         "tests/fixtures/stdlib_surface_tcp_serve.gti",
         "tests/fixtures/stdlib_surface_tcp_threads.gti",
+        "validated numeric IPv4, IPv6 and scoped endpoint JSON round trips",
+        "tests/slow/stdlib/json/network_addresses.gti",
         "tests/slow/project/http_server_event_loop/test.transcript",
         "tests/slow/stdlib/tcp/poller_drop_safety.gti",
         "tests/ui/stdlib/tcp/poller/readiness.gti",

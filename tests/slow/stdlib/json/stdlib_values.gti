@@ -1,0 +1,30 @@
+// Configuration fields preserve lexical path text, duration counts, and sequence order.
+//@ run-pass
+//@ slow
+import std.json;
+import std.string;
+import std.filesystem;
+import std.chrono;
+import std.deque;
+import std.list;
+
+struct Configuration {
+  std::filesystem::path file;
+  std::chrono::milliseconds timeout;
+  std::deque<int32_t> ports;
+  std::list<std::string> names;
+};
+
+int main() {
+  auto config = std::json::decode<Configuration>("{\"file\":\"a//./b\\\"c\",\"timeout\":-1500,\"ports\":[9,2,9],\"names\":[\"first\",\"last\"]}");
+  if (!config || config.value().file.view() != "a//./b\"c" || config.value().timeout.count() != -1500i64) { return 1; }
+  auto compact = std::json::encode(config.value());
+  if (!compact || compact.value().view() != "{\"file\":\"a//./b\\\"c\",\"timeout\":-1500,\"ports\":[9,2,9],\"names\":[\"first\",\"last\"]}") { return 2; }
+  auto pretty = std::json::encode_pretty(config.value());
+  if (!pretty || !std::json::decode<Configuration>(pretty.value().view())) { return 3; }
+  auto overflow = std::json::decode<std::chrono::seconds>("9223372036854775808");
+  if (overflow || overflow.error().code != std::json::errc::number_out_of_range) { return 4; }
+  auto invalid = std::json::decode<std::list<int32_t>>("[1,\"x\"]");
+  if (invalid || invalid.error().path.view() != "/1") { return 5; }
+  return 0;
+}
