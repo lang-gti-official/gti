@@ -1,0 +1,40 @@
+manifest-version = 1
+
+[package]
+name = "voxel-sandbox"
+version = "0.1.0"
+
+[package.native]
+frameworks = ["OpenGL"]
+
+[dependencies]
+glfw = { path = "../../packages/glfw" }
+
+[build]
+allow-build-scripts = ["gti-glfw@0.1.0"]
+
+[targets.voxel-sandbox]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.voxel-bench]
+kind = "executable"
+root = "src/bench/headless_main.gti"
+
+[targets.world-tests]
+kind = "test"
+root = "src/tests/world_test.gti"
+
+[targets.core-tests]
+kind = "test"
+root = "src/tests/core_test.gti"
+
+[targets.game-tests]
+kind = "test"
+root = "src/tests/game_test.gti"
+
+[profiles.dev]
+optimization = 0
+
+[profiles.release]
+optimization = 3

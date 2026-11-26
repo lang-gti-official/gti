@@ -1,0 +1,136 @@
+// OpenGL 3.3/4.1 core entry points used by the renderer.
+//
+// macOS exports every core-profile function directly from OpenGL.framework,
+// so these are ordinary C ABI declarations with no loader in between. Each
+// pointer parameter is declared with the element type the engine actually
+// passes (packed uint32 vertices, RGBA8 texels, float matrices); the C ABI
+// representation is one pointer either way.
+export module gl;
+
+export namespace gl {
+constexpr uint32_t COLOR_BUFFER_BIT = uint32_t(0x00004000);
+constexpr uint32_t DEPTH_BUFFER_BIT = uint32_t(0x00000100);
+constexpr uint32_t TRIANGLES = uint32_t(0x0004);
+constexpr uint32_t LINES = uint32_t(0x0001);
+constexpr uint32_t FLOAT = uint32_t(0x1406);
+constexpr uint32_t UNSIGNED_INT = uint32_t(0x1405);
+constexpr uint32_t UNSIGNED_BYTE = uint32_t(0x1401);
+constexpr uint32_t ARRAY_BUFFER = uint32_t(0x8892);
+constexpr uint32_t ELEMENT_ARRAY_BUFFER = uint32_t(0x8893);
+constexpr uint32_t STATIC_DRAW = uint32_t(0x88E4);
+constexpr uint32_t DYNAMIC_DRAW = uint32_t(0x88E8);
+constexpr uint32_t STREAM_DRAW = uint32_t(0x88E0);
+constexpr uint32_t VERTEX_SHADER = uint32_t(0x8B31);
+constexpr uint32_t FRAGMENT_SHADER = uint32_t(0x8B30);
+constexpr uint32_t COMPILE_STATUS = uint32_t(0x8B81);
+constexpr uint32_t LINK_STATUS = uint32_t(0x8B82);
+constexpr uint32_t DEPTH_TEST = uint32_t(0x0B71);
+constexpr uint32_t CULL_FACE = uint32_t(0x0B44);
+constexpr uint32_t BLEND = uint32_t(0x0BE2);
+constexpr uint32_t BACK = uint32_t(0x0405);
+constexpr uint32_t CCW = uint32_t(0x0901);
+constexpr uint32_t SRC_ALPHA = uint32_t(0x0302);
+constexpr uint32_t ONE_MINUS_SRC_ALPHA = uint32_t(0x0303);
+constexpr uint32_t LEQUAL = uint32_t(0x0203);
+constexpr uint32_t LESS = uint32_t(0x0201);
+constexpr uint32_t TEXTURE0 = uint32_t(0x84C0);
+constexpr uint32_t TEXTURE_2D = uint32_t(0x0DE1);
+constexpr uint32_t TEXTURE_2D_ARRAY = uint32_t(0x8C1A);
+constexpr uint32_t TEXTURE_MIN_FILTER = uint32_t(0x2801);
+constexpr uint32_t TEXTURE_MAG_FILTER = uint32_t(0x2800);
+constexpr uint32_t TEXTURE_WRAP_S = uint32_t(0x2802);
+constexpr uint32_t TEXTURE_WRAP_T = uint32_t(0x2803);
+constexpr uint32_t TEXTURE_MAX_LEVEL = uint32_t(0x813D);
+constexpr int32_t NEAREST = 0x2600;
+constexpr int32_t NEAREST_MIPMAP_LINEAR = 0x2702;
+constexpr int32_t REPEAT = 0x2901;
+constexpr int32_t CLAMP_TO_EDGE = 0x812F;
+constexpr int32_t RGBA8 = 0x8058;
+constexpr uint32_t RGBA = uint32_t(0x1908);
+constexpr uint32_t TIME_ELAPSED = uint32_t(0x88BF);
+constexpr uint32_t QUERY_RESULT = uint32_t(0x8866);
+constexpr uint32_t QUERY_RESULT_AVAILABLE = uint32_t(0x8867);
+constexpr uint32_t RENDERER = uint32_t(0x1F01);
+constexpr uint32_t VERSION = uint32_t(0x1F02);
+constexpr uint32_t FALSE = uint32_t(0);
+
+extern "C" {
+  void glClearColor(float red, float green, float blue, float alpha);
+  void glClear(uint32_t mask);
+  void glViewport(int32_t x, int32_t y, int32_t width, int32_t height);
+  void glEnable(uint32_t capability);
+  void glDisable(uint32_t capability);
+  void glCullFace(uint32_t mode);
+  void glFrontFace(uint32_t mode);
+  void glDepthFunc(uint32_t func);
+  void glDepthMask(uint8_t flag);
+  void glBlendFunc(uint32_t source, uint32_t destination);
+  void glLineWidth(float width);
+  uint32_t glGetError();
+  c_string glGetString(uint32_t name);
+
+  uint32_t glCreateShader(uint32_t type);
+  void glShaderSource(uint32_t shader, int32_t count, c_string* source,
+                      int32_t* length);
+  void glCompileShader(uint32_t shader);
+  void glGetShaderiv(uint32_t shader, uint32_t parameter, int32_t* value);
+  void glGetShaderInfoLog(uint32_t shader, int32_t capacity, int32_t* length,
+                          uint8_t* log);
+  void glDeleteShader(uint32_t shader);
+  uint32_t glCreateProgram();
+  void glAttachShader(uint32_t program, uint32_t shader);
+  void glLinkProgram(uint32_t program);
+  void glGetProgramiv(uint32_t program, uint32_t parameter, int32_t* value);
+  void glUseProgram(uint32_t program);
+  void glDeleteProgram(uint32_t program);
+  int32_t glGetUniformLocation(uint32_t program, c_string name);
+  void glUniform1i(int32_t location, int32_t value);
+  void glUniform1f(int32_t location, float value);
+  void glUniform3f(int32_t location, float x, float y, float z);
+  void glUniform4f(int32_t location, float x, float y, float z, float w);
+  void glUniformMatrix4fv(int32_t location, int32_t count, uint8_t transpose,
+                          float* value);
+
+  void glGenVertexArrays(int32_t count, uint32_t* arrays);
+  void glBindVertexArray(uint32_t array);
+  void glDeleteVertexArrays(int32_t count, uint32_t* arrays);
+  void glGenBuffers(int32_t count, uint32_t* buffers);
+  void glBindBuffer(uint32_t target, uint32_t buffer);
+  void glDeleteBuffers(int32_t count, uint32_t* buffers);
+  // Packed integer vertex streams (chunk meshes, overlay quads).
+  void glBufferData(uint32_t target, int64_t bytes, uint32_t* data,
+                    uint32_t usage);
+  void glVertexAttribIPointer(uint32_t index, int32_t size, uint32_t type,
+                              int32_t stride, uint64_t offset);
+  void glVertexAttribPointer(uint32_t index, int32_t size, uint32_t type,
+                             uint8_t normalized, int32_t stride,
+                             uint64_t offset);
+  void glEnableVertexAttribArray(uint32_t index);
+  void glDrawArrays(uint32_t mode, int32_t first, int32_t count);
+  void glDrawElements(uint32_t mode, int32_t count, uint32_t type,
+                      uint64_t offset);
+
+  void glGenTextures(int32_t count, uint32_t* textures);
+  void glBindTexture(uint32_t target, uint32_t texture);
+  void glDeleteTextures(int32_t count, uint32_t* textures);
+  void glActiveTexture(uint32_t unit);
+  void glTexParameteri(uint32_t target, uint32_t name, int32_t value);
+  void glTexImage3D(uint32_t target, int32_t level, int32_t internal_format,
+                    int32_t width, int32_t height, int32_t depth,
+                    int32_t border, uint32_t format, uint32_t type,
+                    uint8_t* pixels);
+  void glTexImage2D(uint32_t target, int32_t level, int32_t internal_format,
+                    int32_t width, int32_t height, int32_t border,
+                    uint32_t format, uint32_t type, uint8_t* pixels);
+  void glGenerateMipmap(uint32_t target);
+
+  void glGenQueries(int32_t count, uint32_t* queries);
+  void glDeleteQueries(int32_t count, uint32_t* queries);
+  void glBeginQuery(uint32_t target, uint32_t query);
+  void glEndQuery(uint32_t target);
+  void glGetQueryObjectiv(uint32_t query, uint32_t parameter, int32_t* value);
+  void glGetQueryObjectui64v(uint32_t query, uint32_t parameter,
+                             uint64_t* value);
+  void glFinish();
+}
+}

@@ -1,0 +1,67 @@
+import "render/gl.gti";
+import glfw.glfw;
+import std.format;
+import std.vector;
+import std.string;
+
+uint32_t compile(uint32_t kind, c_string source) {
+  unsafe {
+    uint32_t shader = gl::glCreateShader(kind);
+    mut c_string text = source;
+    gl::glShaderSource(shader, 1, &text, nullptr);
+    gl::glCompileShader(shader);
+    mut int32_t ok = 0;
+    gl::glGetShaderiv(shader, gl::COMPILE_STATUS, &ok);
+    std::println("shader ok {}", ok);
+    return shader;
+  }
+}
+
+int main() {
+  unsafe {
+    if (glfwInit() == GLFW_FALSE) { return 1; }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+    GLFWwindow* window = glfwCreateWindow(640, 480, "spike", nullptr, nullptr);
+    if (window == nullptr) { return 2; }
+    glfwMakeContextCurrent(window);
+    std::string version = std::string(gl::glGetString(gl::VERSION));
+    std::println("GL {}", version);
+    uint32_t vs = compile(gl::VERTEX_SHADER, "#version 410 core\nlayout(location=0) in uvec2 v;\nuniform float s;\nvoid main(){ gl_Position = vec4(float(v.x)*s-0.5, float(v.y)*s-0.5, 0.0, 1.0); }\n");
+    uint32_t fs = compile(gl::FRAGMENT_SHADER, "#version 410 core\nout vec4 c;\nvoid main(){ c = vec4(1.0,0.5,0.2,1.0); }\n");
+    uint32_t program = gl::glCreateProgram();
+    gl::glAttachShader(program, vs);
+    gl::glAttachShader(program, fs);
+    gl::glLinkProgram(program);
+    mut std::vector<uint32_t> verts{};
+    verts.push_back(uint32_t(0)); verts.push_back(uint32_t(0));
+    verts.push_back(uint32_t(10)); verts.push_back(uint32_t(0));
+    verts.push_back(uint32_t(0)); verts.push_back(uint32_t(10));
+    mut uint32_t vao = uint32_t(0);
+    mut uint32_t vbo = uint32_t(0);
+    gl::glGenVertexArrays(1, &vao);
+    gl::glGenBuffers(1, &vbo);
+    gl::glBindVertexArray(vao);
+    gl::glBindBuffer(gl::ARRAY_BUFFER, vbo);
+    int64_t bytes = int64_t(verts.size() * uint64_t(4));
+    gl::glBufferData(gl::ARRAY_BUFFER, bytes, &verts[0], gl::STATIC_DRAW);
+    gl::glVertexAttribIPointer(uint32_t(0), 2, gl::UNSIGNED_INT, 8, uint64_t(0));
+    gl::glEnableVertexAttribArray(uint32_t(0));
+    int32_t loc = gl::glGetUniformLocation(program, "s");
+    for (mut int frame = 0; frame < 90; frame++) {
+      gl::glClearColor(0.4, 0.6, 0.9, 1.0);
+      gl::glClear(gl::COLOR_BUFFER_BIT);
+      gl::glUseProgram(program);
+      gl::glUniform1f(loc, 0.1);
+      gl::glDrawArrays(gl::TRIANGLES, 0, 3);
+      glfwSwapBuffers(window);
+      glfwPollEvents();
+    }
+    std::println("gl error {}", gl::glGetError());
+    glfwDestroyWindow(window);
+    glfwTerminate();
+  }
+  return 0;
+}

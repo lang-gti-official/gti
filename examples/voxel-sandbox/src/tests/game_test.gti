@@ -1,0 +1,11 @@
+import "../world/block.gti";
+import "../world/chunk.gti";
+int main() {
+  mut voxel::Chunk chunk = voxel::Chunk(0, 0);
+  chunk.set(1, 2, 3, voxel::STONE);
+  if (chunk.get(1, 2, 3) != voxel::STONE) return 1;
+  if (voxel::chunk_coord(-1) != -1 or voxel::local_coord(-1) != 15) return 2;
+  if (voxel::chunk_coord(-16) != -1 or voxel::chunk_coord(-17) != -2) return 3;
+  if (voxel::tile_for(voxel::GRASS, voxel::FACE_POS_Y) != voxel::T_GRASS_TOP) return 4;
+  return 0;
+}

@@ -1,0 +1,123 @@
+// Block identities, texture tiles and per-block material properties.
+//
+// This file is the contract shared by world generation, meshing, texture
+// generation and rendering. Texture tile numbers are layers of the
+// GL_TEXTURE_2D_ARRAY that render/textures.gti generates, in this order.
+export module block;
+
+export namespace voxel {
+constexpr uint8_t AIR = uint8_t(0);
+constexpr uint8_t STONE = uint8_t(1);
+constexpr uint8_t DIRT = uint8_t(2);
+constexpr uint8_t GRASS = uint8_t(3);
+constexpr uint8_t SAND = uint8_t(4);
+constexpr uint8_t WATER = uint8_t(5);
+constexpr uint8_t LOG = uint8_t(6);
+constexpr uint8_t LEAVES = uint8_t(7);
+constexpr uint8_t PLANKS = uint8_t(8);
+constexpr uint8_t COBBLESTONE = uint8_t(9);
+constexpr uint8_t BEDROCK = uint8_t(10);
+constexpr uint8_t SNOW = uint8_t(11);
+constexpr uint8_t GRAVEL = uint8_t(12);
+constexpr uint8_t COAL_ORE = uint8_t(13);
+constexpr uint8_t IRON_ORE = uint8_t(14);
+constexpr uint8_t GLASS = uint8_t(15);
+constexpr uint8_t CACTUS = uint8_t(16);
+constexpr uint8_t BRICK = uint8_t(17);
+constexpr uint8_t SANDSTONE = uint8_t(18);
+constexpr int32_t BLOCK_COUNT = 19;
+
+// Texture array layers.
+constexpr uint32_t T_STONE = uint32_t(0);
+constexpr uint32_t T_DIRT = uint32_t(1);
+constexpr uint32_t T_GRASS_TOP = uint32_t(2);
+constexpr uint32_t T_GRASS_SIDE = uint32_t(3);
+constexpr uint32_t T_SAND = uint32_t(4);
+constexpr uint32_t T_WATER = uint32_t(5);
+constexpr uint32_t T_LOG_SIDE = uint32_t(6);
+constexpr uint32_t T_LOG_TOP = uint32_t(7);
+constexpr uint32_t T_LEAVES = uint32_t(8);
+constexpr uint32_t T_PLANKS = uint32_t(9);
+constexpr uint32_t T_COBBLESTONE = uint32_t(10);
+constexpr uint32_t T_BEDROCK = uint32_t(11);
+constexpr uint32_t T_SNOW = uint32_t(12);
+constexpr uint32_t T_SNOW_SIDE = uint32_t(13);
+constexpr uint32_t T_GRAVEL = uint32_t(14);
+constexpr uint32_t T_COAL_ORE = uint32_t(15);
+constexpr uint32_t T_IRON_ORE = uint32_t(16);
+constexpr uint32_t T_GLASS = uint32_t(17);
+constexpr uint32_t T_CACTUS_SIDE = uint32_t(18);
+constexpr uint32_t T_CACTUS_TOP = uint32_t(19);
+constexpr uint32_t T_BRICK = uint32_t(20);
+constexpr uint32_t T_SANDSTONE = uint32_t(21);
+constexpr uint32_t T_SANDSTONE_TOP = uint32_t(22);
+constexpr int32_t TILE_COUNT = 23;
+constexpr int32_t TILE_SIZE = 16;
+
+// Face numbering used by the mesher, the vertex format and the shaders.
+constexpr int32_t FACE_POS_X = 0;
+constexpr int32_t FACE_NEG_X = 1;
+constexpr int32_t FACE_POS_Y = 2;
+constexpr int32_t FACE_NEG_Y = 3;
+constexpr int32_t FACE_POS_Z = 4;
+constexpr int32_t FACE_NEG_Z = 5;
+
+// Collides with the player and can be targeted by the block cursor's
+// "solid" checks.
+bool is_solid(uint8_t id) { return id != AIR and id != WATER; }
+
+// A face next to an opaque block is never visible.
+bool is_opaque(uint8_t id) {
+  return id != AIR and id != WATER and id != GLASS and id != LEAVES;
+}
+
+// Rendered in the alpha-blended translucent pass.
+bool is_translucent(uint8_t id) { return id == WATER; }
+
+// Rendered in the opaque pass with alpha-tested (discarded) texels.
+bool is_cutout(uint8_t id) { return id == LEAVES or id == GLASS; }
+
+// The ray cast can hit it (water and air are skipped).
+bool is_targetable(uint8_t id) { return id != AIR and id != WATER; }
+
+uint32_t tile_for(uint8_t id, int32_t face) {
+  bool top = face == FACE_POS_Y;
+  bool bottom = face == FACE_NEG_Y;
+  if (id == STONE) return T_STONE;
+  if (id == DIRT) return T_DIRT;
+  if (id == GRASS) {
+    if (top) return T_GRASS_TOP;
+    if (bottom) return T_DIRT;
+    return T_GRASS_SIDE;
+  }
+  if (id == SAND) return T_SAND;
+  if (id == WATER) return T_WATER;
+  if (id == LOG) {
+    if (top or bottom) return T_LOG_TOP;
+    return T_LOG_SIDE;
+  }
+  if (id == LEAVES) return T_LEAVES;
+  if (id == PLANKS) return T_PLANKS;
+  if (id == COBBLESTONE) return T_COBBLESTONE;
+  if (id == BEDROCK) return T_BEDROCK;
+  if (id == SNOW) {
+    if (top) return T_SNOW;
+    if (bottom) return T_DIRT;
+    return T_SNOW_SIDE;
+  }
+  if (id == GRAVEL) return T_GRAVEL;
+  if (id == COAL_ORE) return T_COAL_ORE;
+  if (id == IRON_ORE) return T_IRON_ORE;
+  if (id == GLASS) return T_GLASS;
+  if (id == CACTUS) {
+    if (top or bottom) return T_CACTUS_TOP;
+    return T_CACTUS_SIDE;
+  }
+  if (id == BRICK) return T_BRICK;
+  if (id == SANDSTONE) {
+    if (top or bottom) return T_SANDSTONE_TOP;
+    return T_SANDSTONE;
+  }
+  return T_STONE;
+}
+}

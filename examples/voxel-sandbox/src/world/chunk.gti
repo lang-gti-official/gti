@@ -1,0 +1,60 @@
+// A 16 x 128 x 16 column of blocks.
+//
+// Storage order is x fastest, then z, then y:
+//   index = (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x
+// so one horizontal layer is a contiguous 256-byte run.
+export module chunk;
+
+import "block.gti";
+import std.vector;
+
+export namespace voxel {
+constexpr int32_t CHUNK_WIDTH = 16;   // x
+constexpr int32_t CHUNK_DEPTH = 16;   // z
+constexpr int32_t CHUNK_HEIGHT = 128; // y
+constexpr int32_t CHUNK_LAYER = CHUNK_WIDTH * CHUNK_DEPTH;
+constexpr int32_t CHUNK_VOLUME = CHUNK_LAYER * CHUNK_HEIGHT;
+constexpr int32_t SEA_LEVEL = 48;
+
+int32_t chunk_index(int32_t x, int32_t y, int32_t z) {
+  return (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
+}
+
+// Floor division for world -> chunk coordinates (works for negatives).
+int32_t chunk_coord(int32_t world) {
+  if (world >= 0) return world / CHUNK_WIDTH;
+  return -((-world - 1) / CHUNK_WIDTH) - 1;
+}
+
+int32_t local_coord(int32_t world) {
+  return world - chunk_coord(world) * CHUNK_WIDTH;
+}
+
+class Chunk {
+public:
+  int32_t cx;
+  int32_t cz;
+  mut std::vector<uint8_t> blocks{};
+  // Bumped on every edit so the renderer knows to re-mesh.
+  mut uint32_t revision = uint32_t(0);
+
+  Chunk(int32_t cx, int32_t cz) : cx(cx), cz(cz) {
+    this.blocks.reserve(uint64_t(CHUNK_VOLUME));
+    for (mut int32_t i = 0; i < CHUNK_VOLUME; i++) {
+      this.blocks.push_back(AIR);
+    }
+  }
+  Chunk(Chunk& other) = delete;
+
+  uint8_t get(int32_t x, int32_t y, int32_t z) {
+    if (y < 0 or y >= CHUNK_HEIGHT) return AIR;
+    return this.blocks[uint64_t(chunk_index(x, y, z))];
+  }
+
+  void set(int32_t x, int32_t y, int32_t z, uint8_t id) mut {
+    if (y < 0 or y >= CHUNK_HEIGHT) return;
+    this.blocks[uint64_t(chunk_index(x, y, z))] = id;
+    this.revision += uint32_t(1);
+  }
+};
+}
