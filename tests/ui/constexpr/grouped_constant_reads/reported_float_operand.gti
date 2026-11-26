@@ -1,0 +1,9 @@
+// A parenthesized constexpr float read as an operand under the concurrent profile is its constant value.
+//@ run-pass
+//@ execution-profile: concurrent
+constexpr float SPEED = 2.0;
+
+int main() {
+  float v = 1.0 * (SPEED);
+  return v == 2.0 ? 0 : 1;
+}
