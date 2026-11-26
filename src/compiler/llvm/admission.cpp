@@ -5359,9 +5359,9 @@ public:
         else
           pending.push_back(&argument);
       };
-      for (const SemanticType &argument : type.lambdaEnclosingClassTypes)
+      for (const SemanticType &argument : type.lambdaClassTypeArguments())
         enclosing(argument);
-      for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes)
+      for (const SemanticType &argument : type.lambdaFunctionTypeArguments())
         enclosing(argument);
     }
   }

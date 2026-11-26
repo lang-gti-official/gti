@@ -327,6 +327,34 @@ struct ConcurrencyCapabilities {
   bool shareCapable = false;
 };
 
+// Only lambdas in a generic context carry enclosing arguments. Keep these
+// off the common type representation and share the immutable argument lists
+// when a type is copied between semantic analysis, HIR and MIR.
+struct LambdaEnclosingArguments {
+  std::vector<SemanticType> classTypes;
+  std::vector<SemanticType> functionTypes;
+  std::vector<CompileTimeValue> classValues;
+  std::vector<CompileTimeValue> functionValues;
+
+  friend bool operator==(const LambdaEnclosingArguments &,
+                         const LambdaEnclosingArguments &);
+};
+
+class LambdaTypeContext {
+public:
+  LambdaTypeContext() = default;
+  explicit LambdaTypeContext(LambdaEnclosingArguments arguments);
+
+  [[nodiscard]] const LambdaEnclosingArguments &arguments() const;
+  template <class Transform> void transform(Transform transform);
+
+  friend bool operator==(const LambdaTypeContext &a,
+                         const LambdaTypeContext &b);
+
+private:
+  std::shared_ptr<const LambdaEnclosingArguments> storage;
+};
+
 struct SemanticType {
   enum Kind {
     Unknown,
@@ -579,14 +607,18 @@ struct SemanticType {
                           parameterTypes.end());
     type.arguments.insert(type.arguments.end(), captureTypes.begin(),
                           captureTypes.end());
-    type.lambdaEnclosingClassTypes.assign(classTypeArguments.begin(),
-                                          classTypeArguments.end());
-    type.lambdaEnclosingFunctionTypes.assign(functionTypeArguments.begin(),
-                                             functionTypeArguments.end());
-    type.lambdaEnclosingClassValues.assign(classValueArguments.begin(),
-                                           classValueArguments.end());
-    type.lambdaEnclosingFunctionValues.assign(functionValueArguments.begin(),
-                                              functionValueArguments.end());
+    if (!classTypeArguments.empty() || !functionTypeArguments.empty() ||
+        !classValueArguments.empty() || !functionValueArguments.empty()) {
+      type.lambdaContext = LambdaTypeContext({
+          .classTypes = {classTypeArguments.begin(), classTypeArguments.end()},
+          .functionTypes = {functionTypeArguments.begin(),
+                            functionTypeArguments.end()},
+          .classValues = {classValueArguments.begin(),
+                          classValueArguments.end()},
+          .functionValues = {functionValueArguments.begin(),
+                             functionValueArguments.end()},
+      });
+    }
     return type;
   }
 
@@ -623,22 +655,22 @@ struct SemanticType {
   }
 
   [[nodiscard]] std::span<const SemanticType> lambdaClassTypeArguments() const {
-    return lambdaEnclosingClassTypes;
+    return lambdaContext.arguments().classTypes;
   }
 
   [[nodiscard]] std::span<const SemanticType>
   lambdaFunctionTypeArguments() const {
-    return lambdaEnclosingFunctionTypes;
+    return lambdaContext.arguments().functionTypes;
   }
 
   [[nodiscard]] std::span<const CompileTimeValue>
   lambdaClassValueArguments() const {
-    return lambdaEnclosingClassValues;
+    return lambdaContext.arguments().classValues;
   }
 
   [[nodiscard]] std::span<const CompileTimeValue>
   lambdaFunctionValueArguments() const {
-    return lambdaEnclosingFunctionValues;
+    return lambdaContext.arguments().functionValues;
   }
 
   [[nodiscard]] static SemanticType arrayOf(SemanticType element,
@@ -694,10 +726,7 @@ struct SemanticType {
   LambdaId lambdaId = 0;
   std::uint64_t lambdaParameterCount = 0;
   std::uint64_t lambdaCaptureCount = 0;
-  std::vector<SemanticType> lambdaEnclosingClassTypes;
-  std::vector<SemanticType> lambdaEnclosingFunctionTypes;
-  std::vector<CompileTimeValue> lambdaEnclosingClassValues;
-  std::vector<CompileTimeValue> lambdaEnclosingFunctionValues;
+  LambdaTypeContext lambdaContext;
   std::uint64_t arrayLength = 0;
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
@@ -715,6 +744,31 @@ struct SemanticType {
     return kind == TypeParameter && projectionConcept != 0;
   }
 };
+
+inline bool operator==(const LambdaEnclosingArguments &,
+                       const LambdaEnclosingArguments &) = default;
+
+inline bool operator==(const LambdaTypeContext &a, const LambdaTypeContext &b) {
+  return a.storage == b.storage || a.arguments() == b.arguments();
+}
+
+inline LambdaTypeContext::LambdaTypeContext(LambdaEnclosingArguments arguments)
+    : storage(std::make_shared<const LambdaEnclosingArguments>(
+          std::move(arguments))) {}
+
+inline const LambdaEnclosingArguments &LambdaTypeContext::arguments() const {
+  static const LambdaEnclosingArguments empty;
+  return storage ? *storage : empty;
+}
+
+template <class Transform>
+void LambdaTypeContext::transform(Transform transform) {
+  if (storage) {
+    auto updated = std::make_shared<LambdaEnclosingArguments>(*storage);
+    transform(*updated);
+    storage = std::move(updated);
+  }
+}
 
 // A declaration-bound monotone predicate over concurrency facts. Source concept
 // expressions are resolved once in semantics; concrete HIR/MIR retain the typed

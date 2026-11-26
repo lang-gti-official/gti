@@ -1176,10 +1176,12 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                                   SemanticType type) -> SemanticType {
       for (auto &argument : type.arguments)
         argument = self(self, std::move(argument));
-      for (auto &argument : type.lambdaEnclosingClassTypes)
-        argument = self(self, std::move(argument));
-      for (auto &argument : type.lambdaEnclosingFunctionTypes)
-        argument = self(self, std::move(argument));
+      type.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+        for (auto &argument : context.classTypes)
+          argument = self(self, std::move(argument));
+        for (auto &argument : context.functionTypes)
+          argument = self(self, std::move(argument));
+      });
       if (type.kind == SemanticType::Class) {
         for (const auto &row : program.declarations()) {
           const auto *candidate =

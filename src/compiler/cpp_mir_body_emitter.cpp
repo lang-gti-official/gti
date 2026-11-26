@@ -23554,10 +23554,10 @@ private:
     for (const SemanticType &argument : type.arguments) {
       requireType(argument, block, instruction);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    for (const SemanticType &argument : type.lambdaClassTypeArguments()) {
       requireType(argument, block, instruction);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    for (const SemanticType &argument : type.lambdaFunctionTypeArguments()) {
       requireType(argument, block, instruction);
     }
   }

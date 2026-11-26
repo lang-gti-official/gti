@@ -3,13 +3,54 @@
 // installed; the toolchain has no external hashing dependency.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 
+#if defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#endif
+
 namespace lang::driver {
+
+#if defined(__APPLE__)
+class Sha256 final {
+public:
+  Sha256() { CC_SHA256_Init(&context); }
+
+  void update(std::string_view bytes) {
+    // CommonCrypto accepts a 32-bit byte count, even on 64-bit hosts.
+    while (!bytes.empty()) {
+      const auto size = static_cast<CC_LONG>(std::min<std::size_t>(
+          bytes.size(), std::numeric_limits<CC_LONG>::max()));
+      CC_SHA256_Update(&context, bytes.data(), size);
+      bytes.remove_prefix(size);
+    }
+  }
+
+  [[nodiscard]] std::string finishHex() const {
+    auto copy = context;
+    std::array<unsigned char, CC_SHA256_DIGEST_LENGTH> digest;
+    CC_SHA256_Final(digest.data(), &copy);
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (const auto byte : digest) {
+      result.push_back(digits[byte >> 4]);
+      result.push_back(digits[byte & 15]);
+    }
+    return result;
+  }
+
+private:
+  CC_SHA256_CTX context;
+};
+#else
 
 class Sha256 final {
 public:
@@ -19,12 +60,25 @@ public:
 
   void update(std::string_view bytes) {
     totalBytes += bytes.size();
-    for (const unsigned char byte : bytes) {
-      buffer[bufferSize++] = byte;
-      if (bufferSize == buffer.size()) {
-        transform(buffer);
-        bufferSize = 0;
-      }
+    if (bytes.empty())
+      return;
+    if (bufferSize) {
+      const auto count = std::min(buffer.size() - bufferSize, bytes.size());
+      std::memcpy(buffer.data() + bufferSize, bytes.data(), count);
+      bufferSize += count;
+      if (bufferSize < buffer.size())
+        return;
+      transform(buffer.data());
+      bufferSize = 0;
+      bytes.remove_prefix(count);
+    }
+    while (bytes.size() >= buffer.size()) {
+      transform(reinterpret_cast<const std::uint8_t *>(bytes.data()));
+      bytes.remove_prefix(buffer.size());
+    }
+    if (!bytes.empty()) {
+      std::memcpy(buffer.data(), bytes.data(), bytes.size());
+      bufferSize = bytes.size();
     }
   }
 
@@ -75,12 +129,12 @@ private:
   void appendPaddingByte(std::uint8_t byte) {
     buffer[bufferSize++] = byte;
     if (bufferSize == buffer.size()) {
-      transform(buffer);
+      transform(buffer.data());
       bufferSize = 0;
     }
   }
 
-  void transform(const std::array<std::uint8_t, 64> &block) {
+  void transform(const std::uint8_t *block) {
     std::array<std::uint32_t, 64> words{};
     for (std::size_t index = 0; index < 16; ++index) {
       const std::size_t offset = index * 4;
@@ -141,5 +195,7 @@ private:
   std::uint64_t totalBytes = 0;
   std::size_t bufferSize = 0;
 };
+
+#endif
 
 } // namespace lang::driver

@@ -1652,11 +1652,11 @@ exactVirtualReceiver(const MirProgram &program, const MirBody &body,
       });
     };
     return closedValues(type.valueArguments) &&
-           closedValues(type.lambdaEnclosingClassValues) &&
-           closedValues(type.lambdaEnclosingFunctionValues) &&
+           closedValues(type.lambdaContext.arguments().classValues) &&
+           closedValues(type.lambdaContext.arguments().functionValues) &&
            closedTypes(type.arguments) &&
-           closedTypes(type.lambdaEnclosingClassTypes) &&
-           closedTypes(type.lambdaEnclosingFunctionTypes);
+           closedTypes(type.lambdaContext.arguments().classTypes) &&
+           closedTypes(type.lambdaContext.arguments().functionTypes);
   };
   if (!closed(closed, place->type))
     return nullptr;

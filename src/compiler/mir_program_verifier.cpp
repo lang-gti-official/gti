@@ -24884,8 +24884,8 @@ mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
           [&](const auto &argument) { return self(self, argument); });
     };
     return validArguments(type.arguments) &&
-           validArguments(type.lambdaEnclosingClassTypes) &&
-           validArguments(type.lambdaEnclosingFunctionTypes);
+           validArguments(type.lambdaContext.arguments().classTypes) &&
+           validArguments(type.lambdaContext.arguments().functionTypes);
   };
   const auto validEnumIdentity = [&](const auto &self,
                                      const SemanticType &type) -> bool {
@@ -25058,11 +25058,11 @@ mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
             [&](const auto &argument) { return self(self, argument); });
       };
       return valuesClosed(type.valueArguments) &&
-             valuesClosed(type.lambdaEnclosingClassValues) &&
-             valuesClosed(type.lambdaEnclosingFunctionValues) &&
+             valuesClosed(type.lambdaContext.arguments().classValues) &&
+             valuesClosed(type.lambdaContext.arguments().functionValues) &&
              typesClosed(type.arguments) &&
-             typesClosed(type.lambdaEnclosingClassTypes) &&
-             typesClosed(type.lambdaEnclosingFunctionTypes);
+             typesClosed(type.lambdaContext.arguments().classTypes) &&
+             typesClosed(type.lambdaContext.arguments().functionTypes);
     };
     for (const auto &alias : instance.typeAliases) {
       checkProgramType(alias.type);

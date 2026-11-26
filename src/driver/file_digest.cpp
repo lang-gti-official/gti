@@ -1,10 +1,11 @@
 #include "file_digest.h"
 #include <array>
 #include <fstream>
-#include <llvm/ADT/StringExtras.h>
+#include <string_view>
 #if defined(__APPLE__)
-#include <CommonCrypto/CommonDigest.h>
+#include "sha256.h"
 #else
+#include <llvm/ADT/StringExtras.h>
 #include <llvm/Support/SHA256.h>
 #endif
 
@@ -24,8 +25,7 @@ std::optional<FileDigest> digestFile(const std::filesystem::path &path,
     return std::nullopt;
   }
 #if defined(__APPLE__)
-  CC_SHA256_CTX hash;
-  CC_SHA256_Init(&hash);
+  Sha256 hash;
 #else
   llvm::SHA256 hash;
 #endif
@@ -37,23 +37,17 @@ std::optional<FileDigest> digestFile(const std::filesystem::path &path,
     if (count == 0)
       break;
     bytes += count;
-#if defined(__APPLE__)
-    CC_SHA256_Update(&hash, buffer.data(), static_cast<CC_LONG>(count));
-#else
-    hash.update(llvm::StringRef(buffer.data(), count));
-#endif
+    hash.update(std::string_view(buffer.data(), count));
   }
   if (input.bad() || !input.eof() || bytes != expectedSize) {
     errorMessage = "cannot finish reading '" + path.string() + "'";
     return std::nullopt;
   }
 #if defined(__APPLE__)
-  std::array<uint8_t, CC_SHA256_DIGEST_LENGTH> result;
-  CC_SHA256_Final(result.data(), &hash);
+  return FileDigest{hash.finishHex(), bytes};
 #else
-  const auto result = hash.final();
+  return FileDigest{llvm::toHex(hash.final(), true), bytes};
 #endif
-  return FileDigest{llvm::toHex(result, true), bytes};
 }
 
 } // namespace lang::driver

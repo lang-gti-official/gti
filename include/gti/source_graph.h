@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -221,6 +222,8 @@ private:
           std::optional<std::string> packageRelativePath = std::nullopt);
 
   void addDependency(SourceDependency dependency);
+  [[nodiscard]] std::span<const std::size_t>
+  outgoingEdges(SourceUnitId unit) const;
   void addImport(SourceImport import);
   void setSourceOwners(std::shared_ptr<const SourceOwnerRegistry> owners);
 
@@ -242,6 +245,8 @@ private:
   std::vector<SourceImport> sourceImports;
   std::shared_ptr<const SourceOwnerRegistry> owners;
   std::vector<SourceDependency> dependencies;
+  // Indices remain valid when dependency storage grows or the graph is copied.
+  std::vector<std::vector<std::size_t>> edgesBySource;
   std::vector<SourceUnitId> configuredPreludeRoots;
   std::vector<SourceImplementation> implementationRoots;
   std::unordered_map<std::string, SourceUnitId> unitsByPath;
