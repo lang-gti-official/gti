@@ -1,0 +1,50 @@
+// The editor scaffolds missing distinct enum values for a checked error accessor or named value.
+namespace api { enum class errc { first = 1, alias = 1, second = 3 }; }
+void inspect(expected<bool, api::errc>& result) {
+  if (!result.has_value()) {
+    switch (result.error()) {  //~ HINT GTI-S2130
+      /*^blank*/
+    }
+  }
+}
+//@ code-action @blank: "Insert missing switch cases" => step 2
+// --- step 2
+namespace api { enum class errc { first = 1, alias = 1, second = 3 }; }
+void inspect(expected<bool, api::errc>& result) {
+  if (!result.has_value()) {
+    switch (result.error()) {
+    case api::errc::first:
+      // TODO: Handle this case.
+      break;
+    case api::errc::second:
+      // TODO: Handle this case.
+      break;
+    }
+  }
+}
+// --- step 3
+namespace api { enum class errc { first = 1, alias = 1, second = 3 }; }
+void inspect(api::errc value) {
+  /*@sw*/switch (value) {  //~ HINT GTI-S2130
+    case api::errc::alias: break;
+  }
+}
+//@ code-action @sw: "Insert missing switch cases" => step 4
+// --- step 4
+namespace api { enum class errc { first = 1, alias = 1, second = 3 }; }
+void inspect(api::errc value) {
+  switch (value) {
+    case api::errc::alias: break;
+    case api::errc::second:
+      // TODO: Handle this case.
+      break;
+  }
+}
+// --- step 5
+enum class E { a, b };
+void inspect(E value) {
+  switch (value) { default: break; }
+  switch (value) { case /*@invalid*/1: break; }  //~ ERROR GTI-S2037
+  switch (1) {}
+}
+//@ no-code-action @invalid: "Insert missing switch cases"

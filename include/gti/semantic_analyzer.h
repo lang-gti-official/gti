@@ -114,6 +114,8 @@ public:
   // Stops check(program) at its next safe point once `cancellation` is set;
   // check then returns false and cancelled() reports why.
   void setCancellation(const std::atomic<bool> *cancellation);
+  // Offer review-only scaffolds for ordinary enums in the edited source.
+  void setEnumSwitchCaseSuggestions(bool enabled);
   // FrontendOptions::reuseConstantEvaluations. Set before check().
   void setConstantEvaluationReuse(bool reuse);
   // FrontendOptions::deferConstexprBodies (test-only). Set before check() or

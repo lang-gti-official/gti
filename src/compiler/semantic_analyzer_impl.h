@@ -277,6 +277,7 @@ public:
 
   bool check(const Program &program);
 
+  bool suggestEnumSwitchCases = false;
   std::unordered_set<const FunctionDecl *> requiredFunctionBodies;
   // Cooperative cancellation of check(program) (see SemanticVisitor). Safe
   // points throw AnalysisCancelled, which only SemanticVisitor::check catches;
