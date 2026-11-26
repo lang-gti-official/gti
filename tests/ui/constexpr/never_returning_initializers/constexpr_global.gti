@@ -1,0 +1,5 @@
+// A constexpr namespace global whose constant evaluation reaches a never-returning call is rejected at compile time.
+import std.panic;
+[[noreturn]] constexpr int die() { std::panic("constant initializer failed"); }  //~ ERROR GTI-S2057 initializer for constexpr binding 'C' failed
+constexpr int C = die();
+int main() { return C; }

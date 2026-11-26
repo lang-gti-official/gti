@@ -1,0 +1,21 @@
+// After a never-returning initializer, later initializers and main never run, and earlier completed globals are cleaned up.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stdout: 1
+//@ stderr-contains: middle failed
+import std.format;
+import std.panic;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) { std::println(value); }
+  ~Marker() { std::println(value); }
+};
+[[noreturn]] int die() { std::panic("middle failed"); }
+Marker first{1};
+int G = die();
+int H = 3;
+Marker second{2};
+int K = G + H;
+int main() { std::println(K); return 0; }

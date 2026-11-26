@@ -7745,8 +7745,6 @@ private:
       const ClassDecl *owner = nullptr;
       ClassId ownerId = 0;
       SourceUnitId sourceUnit = 0;
-      bool reachable = true;
-      bool reportedUnreachable = false;
     };
     std::vector<LexicalFrame> lexicalFrames;
     std::size_t lexicalFrameVersion = 0;

@@ -14259,7 +14259,8 @@ private:
     if (!thenCompletes && !elseCompletes) {
       callTransferredLoanEndpoints = incomingTransferEndpoints;
       temporaryDrops = incomingTemporaryDrops;
-      terminate({.kind = MirTerminatorKind::Unreachable});
+      // The dead join names the conditional whose result is never published.
+      terminate({.kind = MirTerminatorKind::Unreachable, .hirValue = value.id});
       emittedValues.insert(value.id);
       return;
     }
@@ -18442,18 +18443,24 @@ private:
             step.id);
       }
 
-      const MirBlockId predecessor = current;
-      currentProgramInitializationStep = step.id;
-      const MirBlockId entryBlock = appendBlock();
-      if (output.entry == 0) {
-        output.entry = entryBlock;
-      } else if (predecessor == 0 || terminated()) {
-        valid = false;
-      } else {
-        current = predecessor;
-        terminate({.kind = MirTerminatorKind::Goto, .target = entryBlock});
+      // Once an earlier initializer never completes, no execution reaches
+      // this step: it keeps its storage identity but owns no blocks.
+      const bool unreached = loweredProgramInitialization->terminalStep != 0;
+      MirBlockId entryBlock = 0;
+      if (!unreached) {
+        const MirBlockId predecessor = current;
+        currentProgramInitializationStep = step.id;
+        entryBlock = appendBlock();
+        if (output.entry == 0) {
+          output.entry = entryBlock;
+        } else if (predecessor == 0 || terminated()) {
+          valid = false;
+        } else {
+          current = predecessor;
+          terminate({.kind = MirTerminatorKind::Goto, .target = entryBlock});
+        }
+        current = entryBlock;
       }
-      current = entryBlock;
 
       const HirBinding *binding = findBinding(step.binding);
       const MirPlaceId storagePlace = placeForBinding(step.binding);
@@ -18495,15 +18502,16 @@ private:
             lowered.dataConstant
                 ? MirProgramDataInitializationKind::Constant
                 : MirProgramDataInitializationKind::ImplicitZero;
-        lowered.storageInitialization = appendInstruction(
-            {.kind = MirInstructionKind::Initialize,
-             .destination = storagePlace,
-             .info = binding == nullptr
-                         ? ExpressionInfo{}
-                         : ExpressionInfo{.type = binding->info.type,
-                                          .category = ValueCategory::Place,
-                                          .access = binding->info.access,
-                                          .traits = binding->info.traits}});
+        if (!unreached)
+          lowered.storageInitialization = appendInstruction(
+              {.kind = MirInstructionKind::Initialize,
+               .destination = storagePlace,
+               .info = binding == nullptr
+                           ? ExpressionInfo{}
+                           : ExpressionInfo{.type = binding->info.type,
+                                            .category = ValueCategory::Place,
+                                            .access = binding->info.access,
+                                            .traits = binding->info.traits}});
       } else if (step.role == ProgramInitializationStepRole::Initializer) {
         const HirStatement *statement = findStatement(step.statement);
         const HirValue *initializer =
@@ -18525,9 +18533,25 @@ private:
         std::vector<HirBindingId> locals(reachable.bindings.begin(),
                                          reachable.bindings.end());
         std::sort(locals.begin(), locals.end());
-        lowered.storageInitialization =
-            statement == nullptr ? 0 : lowerVariable(*statement);
+        if (!unreached && statement != nullptr) {
+          lowered.storageInitialization = lowerVariable(*statement);
+          // A never-returning call ended every path of this initializer, as
+          // it would end a function body: the program terminates here.
+          if (terminated()) {
+            if (lowered.storageInitialization != 0)
+              valid = false;
+            loweredProgramInitialization->terminalStep = step.id;
+          }
+        }
+        const bool terminal =
+            loweredProgramInitialization->terminalStep == step.id;
         for (const HirBindingId id : locals) {
+          // An unreached initializer's locals never exist at run time.
+          if (unreached) {
+            if (!initializerLocalBindings.insert(id).second)
+              valid = false;
+            continue;
+          }
           const HirBinding *local = findBinding(id);
           const MirPlaceId place = placeForBinding(id);
           if (local == nullptr || place == 0 ||
@@ -18543,15 +18567,19 @@ private:
             initializer == nullptr
                 ? fullExpressionIds.end()
                 : fullExpressionIds.find(initializer->fullExpression);
-        if (fullExpression == fullExpressionIds.end()) {
-          valid = false;
-        } else {
+        if (fullExpression != fullExpressionIds.end()) {
           lowered.fullExpression = fullExpression->second;
+        } else if (!unreached) {
+          valid = false;
         }
+        // An unreached initializer publishes no full expression; a terminal
+        // one publishes only the nested expressions its live path lowered.
         for (const HirFullExpression &expression : source.fullExpressions) {
-          if (!reachable.statements.contains(expression.statement))
+          if (unreached || !reachable.statements.contains(expression.statement))
             continue;
           const auto nested = fullExpressionIds.find(expression.id);
+          if (nested == fullExpressionIds.end() && terminal)
+            continue;
           if (nested == fullExpressionIds.end() ||
               nested->second == lowered.fullExpression) {
             valid = false;
@@ -18562,7 +18590,8 @@ private:
       } else {
         valid = false;
       }
-      if (lowered.storageInitialization == 0) {
+      if (lowered.storageInitialization == 0 && !unreached &&
+          loweredProgramInitialization->terminalStep != step.id) {
         valid = false;
       }
       loweredProgramInitialization->steps.push_back(std::move(lowered));

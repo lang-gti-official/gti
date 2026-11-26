@@ -1,0 +1,19 @@
+// A never-returning initializer in an imported unit terminates program initialization before the importing unit's steps.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: imported unit failed
+// --- main.gti
+import "other.gti";
+import std.format;
+int note(int value) {
+  std::println(value);
+  return value;
+}
+int Later = note(4);
+int main() { return imported_value() + Later; }
+// --- other.gti
+export module other;
+import std.panic;
+[[noreturn]] int die() { std::panic("imported unit failed"); }
+int G = die();
+export int imported_value() { return G; }

@@ -673,6 +673,24 @@ a frontend-computed `constexpr` value without forming a place, address,
 reference, or runtime load does not access its storage and is independent of
 the runtime step.
 
+A dynamic initializer follows the [terminal-call rule](#function-contracts)
+like any other evaluated path. A namespace global, class static field or
+`thread_local` initializer that calls a never-returning function, directly or
+as an operand such as `1 + die()`, is well-formed. When the call is
+evaluated, the terminal call ends the initializer and, for a failure such as
+`std::panic`, terminates through the hosted containment boundary like any
+other initializer failure. In program initialization the earlier completed
+steps are cleaned up, the step's storage is never published, and later steps
+and `main` never run; a `thread_local` value instead terminates at its first
+use on that thread. A call in an unselected conditional or short-circuit
+operand, as in `flag ? die() : 1`, does not terminate the initializer.
+Initializers that GTI evaluates during compilation diagnose the call instead:
+a `constexpr` namespace or static binding and a function-local `static` report
+`GTI-S2057` when evaluation reaches a never-returning call or the initializer
+calls a function that is not `constexpr`. This follows Rust's model adapted to GTI's dynamic initialization: Rust
+rejects a diverging `static` or `const` because those are always
+const-evaluated, while its lazily initialized statics panic at run time.
+
 A function-local declaration such as `static mut int count = 0;` has one
 storage slot for the program and can be named within its lexical scope.
 The explicit initializer is evaluated at compile time and emitted as data.

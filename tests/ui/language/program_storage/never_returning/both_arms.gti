@@ -1,0 +1,14 @@
+// A conditional initializer whose arms both never return terminates program initialization, and its dead join publishes no result.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: second arm failed
+import std.panic;
+[[noreturn]] int die(bool first) {
+  if (first)
+    std::panic("first arm failed");
+  std::panic("second arm failed");
+}
+bool select(bool value) { return value; }
+int G = select(false) ? die(true) : die(false);
+int H = 2;
+int main() { return G + H; }

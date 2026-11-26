@@ -4654,6 +4654,21 @@ distinct canonical empty shells after their storage moves into Module. Checked
 dynamic initialization retains ordinary verified failure records and edges;
 production emission and hosted containment consume that same schedule.
 
+A never-returning call ends an initializer path exactly as it ends a path in a
+function body: the call's normal continuation holds only lifetime bookkeeping
+and ends in `Unreachable`. In the Module that terminator is legal only as such
+a continuation, and a step's normal blocks must reach its boundary or one of
+these ends. When some path of a step's initializer completes, as in
+`flag ? die() : 1`, the step keeps its storage `Initialize`, full-expression
+marker and boundary. When none does, as in `int G = 1 + die();`, the plan
+records that step as `terminalStep`. It has no storage `Initialize` or
+boundary, and Module/0 has no `Exit`. Every later step is unreached: it keeps
+its storage identity and data provenance, so other bodies still name its
+storage, but owns no block, entry, `Initialize`, full expression or local, and
+none of its storage is ever published or cleaned up. A terminal call that
+fails, such as `std::panic`, reaches hosted containment through its ordinary
+failure edge, which cleans up the earlier completed steps.
+
 `MirClassInstance` carries the selected `[[c_abi]]` record size, alignment, and
 ordered field offsets. Program verification checks that this metadata is
 structurally complete and within the record bounds; deterministic printing

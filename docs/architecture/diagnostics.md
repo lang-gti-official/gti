@@ -1173,7 +1173,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   declarations, documentation, or deliberately retained code.
   Emit this advisory from primary analysis only: a concrete `if constexpr`
   branch cannot establish declaration-wide unreachability. Instance reanalysis
-  still checks the retained tail for semantic errors.
+  still checks the retained tail for semantic errors. Only body statements
+  form a tail: a never-returning namespace or static-field initializer ends
+  program initialization but does not make a later declaration unreachable,
+  and a function-local `static` declaration falls through because its
+  initializer runs during compilation.
 - `GTI-S2096` warns when an explicitly `mut` ordinary local value is never
   written, addressed mutably, passed by mutable reference, or used as a mutable
   receiver. Mutable-reference parameters of the selected constructor count as

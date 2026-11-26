@@ -1,0 +1,8 @@
+// A static constexpr field whose initializer reaches a never-returning operand is rejected at compile time.
+import std.panic;
+[[noreturn]] constexpr int die() { std::panic("constant operand failed"); }  //~ ERROR GTI-S2057 initializer for constexpr binding 'value' failed
+class Limits {
+public:
+  static constexpr int value = 1 + die();
+};
+int main() { return Limits::value; }

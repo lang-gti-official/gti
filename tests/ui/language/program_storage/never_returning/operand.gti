@@ -1,0 +1,9 @@
+// A never-returning operand ends the whole initializer, so the addition and the storage are never reached.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: operand failed
+import std.panic;
+[[noreturn]] int die() { std::panic("operand failed"); }
+int add(int left, int right) { return left + right; }
+int G = 1 + add(2, die());
+int main() { return G; }

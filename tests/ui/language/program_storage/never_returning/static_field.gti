@@ -1,0 +1,12 @@
+// A never-returning call terminates program initialization from a class static field's initializer.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: static field failed
+import std.panic;
+[[noreturn]] int die() { std::panic("static field failed"); }
+class Counter {
+public:
+  static int start = die();
+  static mut int next = 4;
+};
+int main() { return Counter::start + Counter::next; }

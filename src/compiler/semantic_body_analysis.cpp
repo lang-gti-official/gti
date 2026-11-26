@@ -5178,8 +5178,6 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
   }
   lexicalLoanFlow = loanFlow;
   lexicalBodyFlow = bodyFlow;
-  lexicalFrames.back().reachable =
-      summarizeFlow(statement.get()).canFallThrough;
 }
 
 auto SemanticVisitor::Impl::advanceLexicalPass(const FunctionDecl *until)
@@ -5200,15 +5198,9 @@ auto SemanticVisitor::Impl::advanceLexicalPass(const FunctionDecl *until)
     loanFlow.currentRegion = frame.region;
     loanFlow.currentOrder = frame.index;
     loanFlow.currentStatement = statement.get();
-    if (!frame.reachable && !frame.reportedUnreachable) {
-      frame.reportedUnreachable = true;
-      if (!instanceAnalysisActive && statement->extent()) {
-        Diagnostic diagnostic = makeDiagnostic(
-            DiagnosticId::UnreachableStatement, *statement->extent());
-        diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
-        diagnostics.emplace_back(std::move(diagnostic));
-      }
-    }
+    // Declarations are not a statement sequence: a never-returning global
+    // initializer ends program initialization, but it does not make a later
+    // declaration an unreachable statement (GTI-S2095 is for body statements).
     const SourceUnitId statementUnit = statementSourceUnit(*statement);
     const SourceUnitId unit =
         statementUnit != 0 ? statementUnit : frame.sourceUnit;
@@ -17264,7 +17256,10 @@ auto SemanticVisitor::Impl::summarizeFlow(
                 !expressionNeverReturns(expression->expression().get())};
   }
   if (const auto *declaration = stmtAs<VariableDecl>(statement)) {
+    // A function-local static is constant-initialized during compilation, so
+    // its declaration never evaluates the initializer at run time.
     return {.canFallThrough =
+                (declaration->isStatic() && !declaration->isThreadLocal()) ||
                 !expressionNeverReturns(declaration->initializer().get())};
   }
   if (const auto *control = stmtAs<LoopControlStmt>(statement)) {

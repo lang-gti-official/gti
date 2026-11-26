@@ -1,0 +1,8 @@
+// A function-local static cannot call a never-returning function that is not constexpr.
+import std.panic;
+[[noreturn]] int die() { std::panic("runtime only"); }
+int read() {
+  static int cached = die();  //~ ERROR GTI-S2057 Call to non-constexpr function 'die'
+  return cached;
+}
+int main() { return read(); }
