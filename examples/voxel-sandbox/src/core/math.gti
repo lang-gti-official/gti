@@ -1,0 +1,188 @@
+// Small linear-algebra kit: vectors, column-major 4x4 matrices and a view
+// frustum. Matrices are stored column-major to upload directly to GLSL.
+export module math;
+
+import std.cmath;
+
+export namespace voxel {
+constexpr float PI = 3.14159265358979323846;
+
+float clampf(float value, float low, float high) {
+  if (value < low) return low;
+  if (value > high) return high;
+  return value;
+}
+
+float absf(float value) {
+  if (value < 0.0) return -value;
+  return value;
+}
+
+int32_t floor_to_int(float value) {
+  return int32_t(std::floor(value));
+}
+
+struct Vec3 {
+public:
+  mut float x = 0.0;
+  mut float y = 0.0;
+  mut float z = 0.0;
+
+  Vec3() = default;
+  Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+
+  Vec3 operator+(Vec3 other) { return Vec3(this.x + other.x, this.y + other.y, this.z + other.z); }
+  Vec3 operator-(Vec3 other) { return Vec3(this.x - other.x, this.y - other.y, this.z - other.z); }
+  Vec3 scaled(float factor) { return Vec3(this.x * factor, this.y * factor, this.z * factor); }
+  float dot(Vec3 other) { return this.x * other.x + this.y * other.y + this.z * other.z; }
+  Vec3 cross(Vec3 other) {
+    return Vec3(this.y * other.z - this.z * other.y,
+                this.z * other.x - this.x * other.z,
+                this.x * other.y - this.y * other.x);
+  }
+  float length() { return std::sqrt(this.dot(Vec3(this.x, this.y, this.z))); }
+  Vec3 normalized() {
+    float len = this.length();
+    if (len <= 0.000001) return Vec3(0.0, 0.0, 0.0);
+    return this.scaled(1.0 / len);
+  }
+};
+
+// Unit view direction for the yaw/pitch convention shared with the flight
+// path: yaw = 0 looks toward -Z, positive pitch looks up.
+Vec3 direction_from(float yaw, float pitch) {
+  float cp = std::cos(pitch);
+  return Vec3(std::sin(yaw) * cp, std::sin(pitch), -std::cos(yaw) * cp);
+}
+
+class Mat4 {
+public:
+  mut float m[16] = {};
+
+  Mat4() {}
+
+  static Mat4 identity() {
+    mut Mat4 r = Mat4();
+    r.m[0] = 1.0;
+    r.m[5] = 1.0;
+    r.m[10] = 1.0;
+    r.m[15] = 1.0;
+    return r;
+  }
+
+  float at(int32_t row, int32_t column) { return this.m[column * 4 + row]; }
+
+  Mat4 multiply(Mat4& rhs) {
+    mut Mat4 r = Mat4();
+    for (mut int32_t c = 0; c < 4; c++) {
+      for (mut int32_t row = 0; row < 4; row++) {
+        mut float sum = 0.0;
+        for (mut int32_t k = 0; k < 4; k++) {
+          sum += this.m[k * 4 + row] * rhs.m[c * 4 + k];
+        }
+        r.m[c * 4 + row] = sum;
+      }
+    }
+    return r;
+  }
+
+  static Mat4 perspective(float fov_y, float aspect, float near, float far) {
+    mut Mat4 r = Mat4();
+    float f = 1.0 / std::tan(fov_y * 0.5);
+    r.m[0] = f / aspect;
+    r.m[5] = f;
+    r.m[10] = (far + near) / (near - far);
+    r.m[11] = -1.0;
+    r.m[14] = (2.0 * far * near) / (near - far);
+    return r;
+  }
+
+  static Mat4 orthographic(float left, float right, float bottom, float top) {
+    mut Mat4 r = Mat4::identity();
+    r.m[0] = 2.0 / (right - left);
+    r.m[5] = 2.0 / (top - bottom);
+    r.m[10] = -1.0;
+    r.m[12] = -(right + left) / (right - left);
+    r.m[13] = -(top + bottom) / (top - bottom);
+    return r;
+  }
+
+  // View matrix for an eye position looking along `forward`.
+  static Mat4 look_along(Vec3 eye, Vec3 forward) {
+    Vec3 f = forward.normalized();
+    Vec3 up = Vec3(0.0, 1.0, 0.0);
+    mut Vec3 s = f.cross(up).normalized();
+    if (s.length() < 0.5) {
+      s = Vec3(1.0, 0.0, 0.0);
+    }
+    Vec3 u = s.cross(f);
+    mut Mat4 r = Mat4::identity();
+    r.m[0] = s.x;
+    r.m[4] = s.y;
+    r.m[8] = s.z;
+    r.m[1] = u.x;
+    r.m[5] = u.y;
+    r.m[9] = u.z;
+    r.m[2] = -f.x;
+    r.m[6] = -f.y;
+    r.m[10] = -f.z;
+    r.m[12] = -s.dot(eye);
+    r.m[13] = -u.dot(eye);
+    r.m[14] = f.dot(eye);
+    return r;
+  }
+};
+
+// Six clip planes (a, b, c, d) extracted from a view-projection matrix
+// (Gribb/Hartmann). A point p is inside a plane when a*x + b*y + c*z + d >= 0.
+class Frustum {
+public:
+  mut float planes[24] = {};
+
+  Frustum() {}
+
+  void extract(Mat4& vp) mut {
+    for (mut int32_t i = 0; i < 3; i++) {
+      for (mut int32_t sign = 0; sign < 2; sign++) {
+        int32_t plane = i * 2 + sign;
+        mut float s = 1.0;
+        if (sign == 1) s = -1.0;
+        mut float a = vp.at(3, 0) + s * vp.at(i, 0);
+        mut float b = vp.at(3, 1) + s * vp.at(i, 1);
+        mut float c = vp.at(3, 2) + s * vp.at(i, 2);
+        mut float d = vp.at(3, 3) + s * vp.at(i, 3);
+        float len = std::sqrt(a * a + b * b + c * c);
+        if (len > 0.0) {
+          a = a / len;
+          b = b / len;
+          c = c / len;
+          d = d / len;
+        }
+        this.planes[plane * 4] = a;
+        this.planes[plane * 4 + 1] = b;
+        this.planes[plane * 4 + 2] = c;
+        this.planes[plane * 4 + 3] = d;
+      }
+    }
+  }
+
+  // Conservative AABB test: false only when the box is fully outside a plane.
+  bool box_visible(float min_x, float min_y, float min_z, float max_x,
+                   float max_y, float max_z) {
+    for (mut int32_t p = 0; p < 6; p++) {
+      float a = this.planes[p * 4];
+      float b = this.planes[p * 4 + 1];
+      float c = this.planes[p * 4 + 2];
+      float d = this.planes[p * 4 + 3];
+      mut float x = min_x;
+      if (a >= 0.0) x = max_x;
+      mut float y = min_y;
+      if (b >= 0.0) y = max_y;
+      mut float z = min_z;
+      if (c >= 0.0) z = max_z;
+      if (a * x + b * y + c * z + d < 0.0) return false;
+    }
+    return true;
+  }
+};
+}

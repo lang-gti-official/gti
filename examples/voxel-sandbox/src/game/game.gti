@@ -1,0 +1,509 @@
+// The game loop: input, player simulation, chunk streaming, meshing,
+// rendering, HUD and profiling, plus the scripted flight benchmark.
+export module game;
+
+import "window.gti";
+import "player.gti";
+import "../core/math.gti";
+import "../core/profiler.gti";
+import "../world/block.gti";
+import "../world/chunk.gti";
+import "../world/world.gti";
+import "../world/mesher.gti";
+import "../render/renderer.gti";
+import "../render/textures.gti";
+import "../render/hud.gti";
+import "../bench/flight.gti";
+import glfw.glfw;
+import std.format;
+import std.string;
+import std.vector;
+
+export namespace voxel {
+struct GameOptions {
+public:
+  mut uint32_t seed = uint32_t(1337);
+  mut int32_t render_distance = 10; // chunks
+  mut bool vsync = true;
+  mut bool fullscreen = false;
+  mut int32_t width = 1600;
+  mut int32_t height = 900;
+  mut bool benchmark = false;
+  mut double benchmark_seconds = 0.0; // 0 = full flight path
+  mut std::string report_path{};
+  // Benchmark: capture the frame at this time (seconds) to screenshot_path.
+  mut double screenshot_at = -1.0;
+  mut std::string screenshot_path{};
+  // Per-frame CPU budget for generating and meshing chunks.
+  mut double stream_budget_ms = 6.0;
+  GameOptions() = default;
+};
+
+struct ChunkOffset {
+public:
+  mut int32_t dx = 0;
+  mut int32_t dz = 0;
+  ChunkOffset() = default;
+  ChunkOffset(int32_t dx, int32_t dz) : dx(dx), dz(dz) {}
+};
+
+// Offsets within `radius`, nearest first, so streaming always fills the
+// area around the player outward.
+std::vector<ChunkOffset> spiral_offsets(int32_t radius) {
+  mut std::vector<ChunkOffset> offsets{};
+  for (mut int32_t ring = 0; ring <= radius; ring++) {
+    for (mut int32_t dz = -ring; dz <= ring; dz++) {
+      for (mut int32_t dx = -ring; dx <= ring; dx++) {
+        mut int32_t ax = dx;
+        if (ax < 0) ax = -ax;
+        mut int32_t az = dz;
+        if (az < 0) az = -az;
+        mut int32_t chebyshev = ax;
+        if (az > chebyshev) chebyshev = az;
+        if (chebyshev != ring) continue;
+        if (dx * dx + dz * dz > (radius + 1) * (radius + 1)) continue;
+        offsets.push_back(ChunkOffset(dx, dz));
+      }
+    }
+  }
+  return offsets;
+}
+
+class Game {
+  mut GameOptions options = GameOptions();
+  mut Window window{};
+  mut Renderer renderer{};
+  mut Hud hud{};
+  mut Profiler profiler = Profiler();
+  mut World world = World(uint32_t(1337));
+  mut Player player = Player();
+  mut ChunkMesh mesh = ChunkMesh();
+  mut Frustum frustum = Frustum();
+  mut FlightPath flight = FlightPath();
+  mut std::vector<ChunkOffset> generate_order{};
+  mut std::vector<ChunkOffset> mesh_order{};
+  mut std::vector<uint8_t> hotbar{};
+  mut int32_t selected = 0;
+  mut bool show_debug = true;
+  mut RayHit target = RayHit();
+  mut int64_t chunks_generated_total = 0;
+  mut int64_t chunks_meshed_total = 0;
+  mut double first_full_load_seconds = -1.0;
+  mut bool screenshot_taken = false;
+  mut int32_t screenshot_counter = 0;
+
+  void save_screenshot(std::string_view path, int32_t width, int32_t height) {
+    std::vector<uint8_t> rgb = this.renderer.read_framebuffer_rgb(width, height);
+    if (write_png_rgb(rgb, width, height, path)) {
+      std::println("screenshot written to {}", path);
+    } else {
+      std::println("could not write screenshot {}", path);
+    }
+  }
+
+  int32_t player_chunk_x() { return chunk_coord(floor_to_int(this.player.position.x)); }
+  int32_t player_chunk_z() { return chunk_coord(floor_to_int(this.player.position.z)); }
+
+  void setup_hotbar() mut {
+    this.hotbar.push_back(GRASS);
+    this.hotbar.push_back(DIRT);
+    this.hotbar.push_back(STONE);
+    this.hotbar.push_back(COBBLESTONE);
+    this.hotbar.push_back(PLANKS);
+    this.hotbar.push_back(LOG);
+    this.hotbar.push_back(GLASS);
+    this.hotbar.push_back(BRICK);
+    this.hotbar.push_back(SAND);
+  }
+
+  void spawn() mut {
+    // Generate the spawn neighbourhood synchronously and stand on it.
+    for (mut int32_t dz = -2; dz <= 2; dz++) {
+      for (mut int32_t dx = -2; dx <= 2; dx++) {
+        this.world.generate_chunk(dx, dz);
+      }
+    }
+    mut int32_t best_x = 8;
+    mut int32_t best_z = 8;
+    // Prefer dry land near the origin.
+    for (mut int32_t r = 0; r < 24; r++) {
+      int32_t x = 8 + r;
+      int32_t z = 8 + (r * 7) % 13 - 6;
+      int32_t h = this.world.surface_height(x, z);
+      if (h > SEA_LEVEL) {
+        best_x = x;
+        best_z = z;
+        break;
+      }
+    }
+    int32_t ground = this.world.surface_height(best_x, best_z);
+    this.player.position = Vec3(float(best_x) + 0.5, float(ground + 1) + 0.01,
+                                float(best_z) + 0.5);
+  }
+
+  // Generates missing chunks near the player, meshes chunks whose blocks
+  // changed and unloads chunks that fell out of range, all within a time
+  // budget so a fast-moving camera never stalls a frame for long.
+  void stream_chunks() mut {
+    int32_t pcx = this.player_chunk_x();
+    int32_t pcz = this.player_chunk_z();
+    int64_t budget_ns = int64_t(this.options.stream_budget_ms * 1000000.0);
+    int64_t start = now_ns();
+
+    // Unload far chunks (world and GPU) with some hysteresis.
+    int32_t keep = this.options.render_distance + 3;
+    std::vector<int64_t> loaded = this.world.loaded_chunk_keys();
+    for (mut uint64_t i = uint64_t(0); i < loaded.size(); i++) {
+      int32_t cx = key_cx(loaded[i]);
+      int32_t cz = key_cz(loaded[i]);
+      int32_t dx = cx - pcx;
+      int32_t dz = cz - pcz;
+      if (dx * dx + dz * dz > keep * keep) {
+        this.world.remove_chunk(cx, cz);
+        this.renderer.remove_chunk(cx, cz);
+      }
+    }
+
+    mut int64_t generated = 0;
+    this.profiler.zone_begin(ZONE_WORLDGEN);
+    uint64_t generate_count = this.generate_order.size();
+    for (mut uint64_t i = uint64_t(0); i < generate_count; i++) {
+      ChunkOffset o = this.generate_order[i];
+      int32_t cx = pcx + o.dx;
+      int32_t cz = pcz + o.dz;
+      if (this.world.has_chunk(cx, cz)) continue;
+      this.world.generate_chunk(cx, cz);
+      generated += 1i64;
+      if (now_ns() - start > budget_ns) break;
+    }
+    this.profiler.zone_end(ZONE_WORLDGEN);
+
+    mut int64_t meshed = 0;
+    mut bool all_meshed = true;
+    uint64_t mesh_count = this.mesh_order.size();
+    for (mut uint64_t i = uint64_t(0); i < mesh_count; i++) {
+      ChunkOffset o = this.mesh_order[i];
+      int32_t cx = pcx + o.dx;
+      int32_t cz = pcz + o.dz;
+      if (!this.world.has_chunk(cx, cz)) {
+        all_meshed = false;
+        continue;
+      }
+      uint32_t revision = this.world.chunk_revision(cx, cz);
+      if (this.renderer.chunk_revision(cx, cz) == revision) continue;
+      if (now_ns() - start > budget_ns and meshed > 0i64) {
+        all_meshed = false;
+        break;
+      }
+      this.profiler.zone_begin(ZONE_MESHING);
+      bool built = this.world.build_mesh(cx, cz, this.mesh);
+      this.profiler.zone_end(ZONE_MESHING);
+      if (!built) {
+        all_meshed = false;
+        continue;
+      }
+      this.profiler.zone_begin(ZONE_UPLOAD);
+      this.renderer.upload_chunk(cx, cz, revision, this.mesh.opaque, this.mesh.translucent);
+      this.profiler.zone_end(ZONE_UPLOAD);
+      meshed += 1i64;
+    }
+    if (all_meshed and this.first_full_load_seconds < 0.0) {
+      this.first_full_load_seconds = this.window.time();
+    }
+    this.chunks_generated_total += generated;
+    this.chunks_meshed_total += meshed;
+    this.profiler.count(CTR_CHUNKS_GENERATED, generated);
+    this.profiler.count(CTR_CHUNKS_MESHED, meshed);
+    this.profiler.count(CTR_CHUNKS_LOADED, this.world.chunk_count());
+  }
+
+  void handle_input(float dt) mut {
+    if (this.window.key_pressed(GLFW_KEY_ESCAPE)) {
+      if (this.window.cursor_captured() and !this.options.benchmark) {
+        this.window.capture_cursor(false);
+      } else {
+        this.window.request_close();
+      }
+    }
+    if (!this.window.cursor_captured() and
+        this.window.mouse_pressed(GLFW_MOUSE_BUTTON_LEFT)) {
+      this.window.capture_cursor(true);
+      return;
+    }
+    if (this.window.key_pressed(GLFW_KEY_F3)) this.show_debug = !this.show_debug;
+    if (this.window.key_pressed(GLFW_KEY_F)) {
+      this.player.flying = !this.player.flying;
+      this.player.velocity = Vec3();
+    }
+    for (mut int32_t slot = 0; slot < 9; slot++) {
+      if (this.window.key_pressed(GLFW_KEY_1 + slot)) this.selected = slot;
+    }
+    if (this.window.key_pressed(GLFW_KEY_Q)) this.selected = (this.selected + 8) % 9;
+    if (this.window.key_pressed(GLFW_KEY_E)) this.selected = (this.selected + 1) % 9;
+
+    if (this.window.cursor_captured()) {
+      float sensitivity = 0.0022;
+      this.player.look(float(this.window.mouse_dx()) * sensitivity,
+                       -float(this.window.mouse_dy()) * sensitivity);
+    }
+
+    mut MoveInput input = MoveInput();
+    if (this.window.key_down(GLFW_KEY_W)) input.forward += 1.0;
+    if (this.window.key_down(GLFW_KEY_S)) input.forward -= 1.0;
+    if (this.window.key_down(GLFW_KEY_D)) input.strafe += 1.0;
+    if (this.window.key_down(GLFW_KEY_A)) input.strafe -= 1.0;
+    input.jump = this.window.key_down(GLFW_KEY_SPACE);
+    input.descend = this.window.key_down(GLFW_KEY_LEFT_SHIFT);
+    input.sprint = this.window.key_down(GLFW_KEY_LEFT_CONTROL);
+
+    this.profiler.zone_begin(ZONE_PHYSICS);
+    this.player.update(this.world, input, dt);
+    this.target = cast_ray(this.world, this.player.eye(), this.player.look_direction(), REACH);
+    this.profiler.zone_end(ZONE_PHYSICS);
+
+    if (this.window.cursor_captured() and this.target.hit) {
+      if (this.window.mouse_pressed(GLFW_MOUSE_BUTTON_LEFT)) {
+        if (this.world.get_block(this.target.x, this.target.y, this.target.z) != BEDROCK) {
+          [[discard]] this.world.set_block(this.target.x, this.target.y, this.target.z, AIR);
+        }
+      }
+      if (this.window.mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT)) {
+        int32_t px = this.target.place_x;
+        int32_t py = this.target.place_y;
+        int32_t pz = this.target.place_z;
+        uint8_t existing = this.world.get_block(px, py, pz);
+        if ((existing == AIR or existing == WATER) and !this.player.overlaps_cell(px, py, pz)) {
+          [[discard]] this.world.set_block(px, py, pz, this.hotbar[uint64_t(this.selected)]);
+        }
+      }
+    }
+  }
+
+  void drive_benchmark(double t) mut {
+    mut float x = 0.0;
+    mut float y = 0.0;
+    mut float z = 0.0;
+    mut float yaw = 0.0;
+    mut float pitch = 0.0;
+    this.flight.pose_at(t, x, y, z, yaw, pitch);
+    this.player.position = Vec3(x, y - PLAYER_EYE, z);
+    this.player.yaw = yaw;
+    this.player.pitch = pitch;
+    this.player.velocity = Vec3();
+    this.target = RayHit();
+  }
+
+  void draw_hud(int32_t width, int32_t height, RenderStats& stats) mut {
+    this.profiler.zone_begin(ZONE_HUD);
+    this.hud.begin(width, height);
+    if (!this.options.benchmark) {
+      this.hud.crosshair();
+      this.hud.hotbar(this.hotbar, this.selected);
+    }
+    if (this.show_debug) {
+      std::vector<std::string> lines = this.profiler.overlay_lines();
+      float scale = 2.0;
+      float line_height = 10.0 * scale;
+      mut float y = 8.0;
+      Vec3 p = this.player.position;
+      std::string position = std::format("XYZ {:.2f} {:.2f} {:.2f}  chunk {} {}",
+                                         p.x, p.y, p.z, this.player_chunk_x(),
+                                         this.player_chunk_z());
+      mut std::string mode = std::string("walk");
+      if (this.player.flying) mode = std::string("fly");
+      if (this.options.benchmark) mode = std::string("benchmark flight");
+      std::string world_line = std::format(
+          "seed {}  render distance {}  mode {}  loaded {}  gpu chunks {}",
+          this.options.seed, this.options.render_distance, mode,
+          this.world.chunk_count(), this.renderer.chunk_count());
+      std::string draw_line = std::format("visible {}  draws {}  quads {}",
+                                          stats.visible_chunks, stats.draw_calls, stats.quads);
+      mut float widest = this.hud.text_width(world_line.view(), scale);
+      for (mut uint64_t i = uint64_t(0); i < lines.size(); i++) {
+        float w = this.hud.text_width(lines[i].view(), scale);
+        if (w > widest) widest = w;
+      }
+      float panel_height = line_height * float(lines.size() + uint64_t(4)) + 12.0;
+      this.hud.rect(4.0, 4.0, widest + 16.0, panel_height, uint32_t(0x00000090));
+      this.hud.text(12.0, y + 4.0, scale, "GTI voxel sandbox", uint32_t(0xFFE070FF));
+      y += line_height;
+      this.hud.text(12.0, y + 4.0, scale, position.view(), uint32_t(0xFFFFFFFF));
+      y += line_height;
+      this.hud.text(12.0, y + 4.0, scale, world_line.view(), uint32_t(0xFFFFFFFF));
+      y += line_height;
+      this.hud.text(12.0, y + 4.0, scale, draw_line.view(), uint32_t(0xFFFFFFFF));
+      y += line_height;
+      for (mut uint64_t i = uint64_t(0); i < lines.size(); i++) {
+        this.hud.text(12.0, y + 4.0, scale, lines[i].view(), uint32_t(0xD0F0FFFF));
+        y += line_height;
+      }
+    }
+    this.hud.flush();
+    this.profiler.zone_end(ZONE_HUD);
+  }
+
+public:
+  Game() {}
+  Game(Game& other) = delete;
+  Game(Game&& other) = delete;
+
+  int run(GameOptions& options) mut {
+    this.options.seed = options.seed;
+    this.options.render_distance = options.render_distance;
+    this.options.vsync = options.vsync;
+    this.options.fullscreen = options.fullscreen;
+    this.options.width = options.width;
+    this.options.height = options.height;
+    this.options.benchmark = options.benchmark;
+    this.options.benchmark_seconds = options.benchmark_seconds;
+    this.options.report_path = std::string(options.report_path.view());
+    this.options.stream_budget_ms = options.stream_budget_ms;
+    this.options.screenshot_at = options.screenshot_at;
+    this.options.screenshot_path = std::string(options.screenshot_path.view());
+    this.world = World(this.options.seed);
+
+    if (!this.window.initialize(this.options.width, this.options.height,
+                                "GTI voxel sandbox", this.options.vsync,
+                                this.options.fullscreen)) {
+      std::println("failed to create a window with an OpenGL 4.1 core context");
+      return 1;
+    }
+    std::vector<uint8_t> tiles = generate_tiles(this.options.seed);
+    if (!this.renderer.initialize(tiles, TILE_COUNT)) {
+      std::println("renderer initialization failed: {}", this.renderer.error());
+      return 2;
+    }
+    if (!this.hud.initialize()) {
+      std::println("HUD initialization failed");
+      return 3;
+    }
+    this.setup_hotbar();
+    this.generate_order = spiral_offsets(this.options.render_distance + 1);
+    this.mesh_order = spiral_offsets(this.options.render_distance);
+
+    this.profiler.set_meta("program", "gti-voxel-sandbox");
+    this.profiler.set_meta("gl_renderer", this.renderer.renderer_name().view());
+    this.profiler.set_meta("seed", std::format("{}", this.options.seed).view());
+    this.profiler.set_meta("render_distance",
+                           std::format("{}", this.options.render_distance).view());
+    this.profiler.set_meta("vsync", std::format("{}", this.options.vsync).view());
+    mut std::string mode_name = std::string("interactive");
+    if (this.options.benchmark) mode_name = std::string("benchmark");
+    this.profiler.set_meta("mode", mode_name.view());
+
+    if (this.options.benchmark) {
+      this.drive_benchmark(0.0f64);
+      this.show_debug = true;
+    } else {
+      this.spawn();
+      this.window.capture_cursor(true);
+    }
+
+    double start_time = this.window.time();
+    mut double last_time = start_time;
+    mut double duration = this.flight.duration_seconds();
+    if (this.options.benchmark_seconds > 0.0 and this.options.benchmark_seconds < duration) {
+      duration = this.options.benchmark_seconds;
+    }
+    mut int32_t width = 0;
+    mut int32_t height = 0;
+
+    while (!this.window.should_close()) {
+      this.profiler.frame_begin();
+      double now = this.window.time();
+      float dt = float(now - last_time);
+      last_time = now;
+
+      this.profiler.zone_begin(ZONE_INPUT);
+      this.window.poll();
+      this.profiler.zone_end(ZONE_INPUT);
+
+      if (this.options.benchmark) {
+        double t = now - start_time;
+        if (t >= duration) {
+          this.profiler.frame_end();
+          break;
+        }
+        this.drive_benchmark(t);
+        if (this.window.key_pressed(GLFW_KEY_ESCAPE)) this.window.request_close();
+        if (this.window.key_pressed(GLFW_KEY_F3)) this.show_debug = !this.show_debug;
+      } else {
+        this.handle_input(dt);
+      }
+
+      this.stream_chunks();
+
+      this.window.framebuffer_size(width, height);
+      mut RenderStats stats = RenderStats();
+      if (width > 0 and height > 0) {
+        this.profiler.zone_begin(ZONE_RENDER);
+        mut FrameView view = FrameView();
+        view.eye = this.player.eye();
+        view.yaw = this.player.yaw;
+        view.pitch = this.player.pitch;
+        view.width = width;
+        view.height = height;
+        view.view_distance = float(this.options.render_distance * CHUNK_WIDTH);
+        view.underwater = this.player.head_in_water;
+        view.has_target = this.target.hit;
+        view.target_x = this.target.x;
+        view.target_y = this.target.y;
+        view.target_z = this.target.z;
+        view.time = float(now - start_time);
+        stats = this.renderer.render(view, this.frustum);
+        this.profiler.zone_end(ZONE_RENDER);
+        this.profiler.count(CTR_CHUNKS_VISIBLE, stats.visible_chunks);
+        this.profiler.count(CTR_DRAW_CALLS, stats.draw_calls);
+        this.profiler.count(CTR_QUADS_DRAWN, stats.quads);
+        this.draw_hud(width, height, stats);
+      }
+      int64_t gpu = this.renderer.poll_gpu_ns();
+      if (gpu >= 0i64) this.profiler.record_gpu_ns(gpu);
+
+      if (width > 0 and height > 0) {
+        bool timed_shot = this.options.screenshot_at >= 0.0 and !this.screenshot_taken and
+                          now - start_time >= this.options.screenshot_at;
+        if (timed_shot and this.options.screenshot_path.size() > uint64_t(0)) {
+          this.screenshot_taken = true;
+          this.save_screenshot(this.options.screenshot_path.view(), width, height);
+        }
+        if (this.window.key_pressed(GLFW_KEY_F2)) {
+          std::string shot = std::format("screenshot-{}.png", this.screenshot_counter);
+          this.screenshot_counter += 1;
+          this.save_screenshot(shot.view(), width, height);
+        }
+      }
+
+      this.profiler.zone_begin(ZONE_SWAP);
+      this.window.swap();
+      this.profiler.zone_end(ZONE_SWAP);
+      this.profiler.frame_end();
+
+      if (this.profiler.one_second_elapsed()) {
+        std::string line = this.profiler.summary_line();
+        std::string title = std::format("GTI voxel sandbox - {}", line);
+        this.window.set_title(title.c_string());
+        std::println("{}", line);
+      }
+    }
+
+    this.profiler.set_meta("chunks_generated",
+                           std::format("{}", this.chunks_generated_total).view());
+    this.profiler.set_meta("chunks_meshed",
+                           std::format("{}", this.chunks_meshed_total).view());
+    this.profiler.set_meta("first_full_load_seconds",
+                           std::format("{:.3f}", this.first_full_load_seconds - start_time).view());
+    if (this.options.report_path.size() > uint64_t(0)) {
+      if (this.profiler.write_report(this.options.report_path.view())) {
+        std::println("profile report written to {}", this.options.report_path);
+      } else {
+        std::println("could not write profile report to {}", this.options.report_path);
+      }
+    }
+    this.hud.shutdown();
+    this.renderer.shutdown();
+    this.window.shutdown();
+    return 0;
+  }
+};
+}

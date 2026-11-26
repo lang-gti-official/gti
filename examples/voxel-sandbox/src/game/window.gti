@@ -1,0 +1,183 @@
+// GLFW window, OpenGL 4.1 core context and per-frame input snapshot.
+export module window;
+
+import glfw.glfw;
+
+export namespace voxel {
+constexpr int32_t KEY_SLOTS = 349;
+
+class Window {
+  mut GLFWwindow* handle = nullptr;
+  mut bool started = false;
+  mut bool keys_now[349] = {};
+  mut bool keys_before[349] = {};
+  mut bool mouse_now[3] = {};
+  mut bool mouse_before[3] = {};
+  mut double cursor_x = 0.0;
+  mut double cursor_y = 0.0;
+  mut double delta_x = 0.0;
+  mut double delta_y = 0.0;
+  mut bool have_cursor = false;
+  mut bool captured = false;
+
+public:
+  Window() {}
+  Window(Window& other) = delete;
+  Window(Window&& other) = delete;
+  ~Window() { this.shutdown(); }
+
+  bool initialize(int32_t width, int32_t height, c_string title, bool vsync,
+                  bool fullscreen) mut {
+    unsafe {
+      if (glfwInit() == GLFW_FALSE) return false;
+      this.started = true;
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+      glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+      glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+      mut GLFWmonitor* monitor = nullptr;
+      mut int32_t w = width;
+      mut int32_t h = height;
+      if (fullscreen) {
+        monitor = glfwGetPrimaryMonitor();
+        if (monitor != nullptr) {
+          auto mode = glfwGetVideoMode(monitor);
+          if (mode != nullptr) {
+            w = mode->width;
+            h = mode->height;
+          }
+        }
+      }
+      this.handle = glfwCreateWindow(w, h, title, monitor, nullptr);
+      if (this.handle == nullptr) {
+        this.shutdown();
+        return false;
+      }
+      glfwMakeContextCurrent(this.handle);
+      if (vsync) {
+        glfwSwapInterval(1);
+      } else {
+        glfwSwapInterval(0);
+      }
+      return true;
+    }
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.handle != nullptr) {
+        glfwDestroyWindow(this.handle);
+        this.handle = nullptr;
+      }
+      if (this.started) {
+        glfwTerminate();
+        this.started = false;
+      }
+    }
+  }
+
+  bool should_close() {
+    unsafe {
+      if (this.handle == nullptr) return true;
+      return glfwWindowShouldClose(this.handle) != GLFW_FALSE;
+    }
+  }
+
+  void request_close() mut {
+    unsafe {
+      if (this.handle != nullptr) glfwSetWindowShouldClose(this.handle, GLFW_TRUE);
+    }
+  }
+
+  void set_title(c_string title) {
+    unsafe {
+      if (this.handle != nullptr) glfwSetWindowTitle(this.handle, title);
+    }
+  }
+
+  void capture_cursor(bool capture) mut {
+    unsafe {
+      if (this.handle == nullptr) return;
+      if (capture) {
+        glfwSetInputMode(this.handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (glfwRawMouseMotionSupported() != GLFW_FALSE) {
+          glfwSetInputMode(this.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        }
+      } else {
+        glfwSetInputMode(this.handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+      }
+      this.captured = capture;
+      this.have_cursor = false;
+    }
+  }
+
+  bool cursor_captured() { return this.captured; }
+
+  // Polls events and snapshots keyboard/mouse state for this frame.
+  void poll() mut {
+    unsafe {
+      glfwPollEvents();
+      if (this.handle == nullptr) return;
+      for (mut int32_t key = 32; key < KEY_SLOTS; key++) {
+        this.keys_before[key] = this.keys_now[key];
+        int32_t state = glfwGetKey(this.handle, key);
+        this.keys_now[key] = state == GLFW_PRESS or state == GLFW_REPEAT;
+      }
+      for (mut int32_t button = 0; button < 3; button++) {
+        this.mouse_before[button] = this.mouse_now[button];
+        this.mouse_now[button] =
+            glfwGetMouseButton(this.handle, button) == GLFW_PRESS;
+      }
+      mut double x = 0.0;
+      mut double y = 0.0;
+      glfwGetCursorPos(this.handle, &x, &y);
+      if (this.have_cursor) {
+        this.delta_x = x - this.cursor_x;
+        this.delta_y = y - this.cursor_y;
+      } else {
+        this.delta_x = 0.0;
+        this.delta_y = 0.0;
+        this.have_cursor = true;
+      }
+      this.cursor_x = x;
+      this.cursor_y = y;
+    }
+  }
+
+  bool key_down(int32_t key) {
+    if (key < 0 or key >= KEY_SLOTS) return false;
+    return this.keys_now[key];
+  }
+
+  bool key_pressed(int32_t key) {
+    if (key < 0 or key >= KEY_SLOTS) return false;
+    return this.keys_now[key] and !this.keys_before[key];
+  }
+
+  bool mouse_down(int32_t button) { return this.mouse_now[button]; }
+  bool mouse_pressed(int32_t button) {
+    return this.mouse_now[button] and !this.mouse_before[button];
+  }
+
+  double mouse_dx() { return this.delta_x; }
+  double mouse_dy() { return this.delta_y; }
+
+  void framebuffer_size(mut int32_t& width, mut int32_t& height) {
+    unsafe {
+      width = 0;
+      height = 0;
+      if (this.handle != nullptr) glfwGetFramebufferSize(this.handle, &width, &height);
+    }
+  }
+
+  double time() {
+    return glfwGetTime();
+  }
+
+  void swap() {
+    unsafe {
+      if (this.handle != nullptr) glfwSwapBuffers(this.handle);
+    }
+  }
+};
+}

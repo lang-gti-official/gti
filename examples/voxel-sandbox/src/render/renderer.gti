@@ -1,0 +1,625 @@
+// World renderer: chunk meshes on the GPU, the block texture array, frustum
+// culling, fog, water and the block-selection outline.
+//
+// Chunk vertices are two packed uint32 words (see world/mesher.gti); the
+// vertex shader decodes position, face, ambient occlusion and texture layer,
+// and every quad shares one static index buffer (0,1,2, 2,3,0).
+export module renderer;
+
+import "gl.gti";
+import "../core/math.gti";
+import "../world/chunk.gti";
+import std.format;
+import std.string;
+import std.unordered_map;
+import std.vector;
+
+export namespace voxel {
+constexpr int32_t MAX_QUADS_PER_DRAW = 98304;
+constexpr int32_t GPU_QUERY_RING = 4;
+
+std::string_view chunk_vertex_source() {
+  return R"glsl(#version 410 core
+layout(location = 0) in uvec2 a_packed;
+uniform mat4 u_view_projection;
+uniform vec3 u_origin;
+uniform float u_time;
+out vec3 v_local;
+out vec3 v_view;
+flat out uint v_face;
+flat out uint v_tile;
+out float v_shade;
+void main() {
+  uint w0 = a_packed.x;
+  uint w1 = a_packed.y;
+  vec3 local = vec3(float(w0 & 31u), float((w0 >> 5u) & 255u), float((w0 >> 13u) & 31u));
+  uint face = (w0 >> 18u) & 7u;
+  float ao = float((w0 >> 21u) & 3u);
+  if (((w1 >> 8u) & 1u) == 1u) {
+    vec3 wp = local + u_origin;
+    local.y -= 0.14 + 0.04 * sin(u_time * 1.7 + wp.x * 0.6 + wp.z * 0.45);
+  }
+  float face_light = 1.0;
+  if (face == 0u || face == 1u) face_light = 0.78;
+  if (face == 4u || face == 5u) face_light = 0.88;
+  if (face == 3u) face_light = 0.55;
+  v_shade = face_light * (0.46 + 0.18 * ao);
+  v_local = local;
+  v_face = face;
+  v_tile = w1 & 255u;
+  vec3 view = local + u_origin;
+  v_view = view;
+  gl_Position = u_view_projection * vec4(view, 1.0);
+}
+)glsl";
+}
+
+std::string_view chunk_fragment_source() {
+  return R"glsl(#version 410 core
+uniform sampler2DArray u_tiles;
+uniform vec3 u_fog_color;
+uniform float u_fog_start;
+uniform float u_fog_end;
+uniform float u_translucent;
+in vec3 v_local;
+in vec3 v_view;
+flat in uint v_face;
+flat in uint v_tile;
+in float v_shade;
+out vec4 o_color;
+void main() {
+  vec2 uv;
+  if (v_face == 0u) uv = vec2(1.0 - fract(v_local.z), 1.0 - fract(v_local.y));
+  else if (v_face == 1u) uv = vec2(fract(v_local.z), 1.0 - fract(v_local.y));
+  else if (v_face == 4u) uv = vec2(fract(v_local.x), 1.0 - fract(v_local.y));
+  else if (v_face == 5u) uv = vec2(1.0 - fract(v_local.x), 1.0 - fract(v_local.y));
+  else uv = vec2(fract(v_local.x), fract(v_local.z));
+  vec4 texel = texture(u_tiles, vec3(uv, float(v_tile)));
+  if (u_translucent < 0.5 && texel.a < 0.5) discard;
+  vec3 color = texel.rgb * v_shade;
+  float distance = length(v_view.xz);
+  float fog = clamp((distance - u_fog_start) / (u_fog_end - u_fog_start), 0.0, 1.0);
+  color = mix(color, u_fog_color, fog * fog);
+  float alpha = u_translucent > 0.5 ? max(texel.a, 0.55) : 1.0;
+  o_color = vec4(color, alpha);
+}
+)glsl";
+}
+
+std::string_view line_vertex_source() {
+  return R"glsl(#version 410 core
+layout(location = 0) in uvec3 a_corner;
+uniform mat4 u_view_projection;
+uniform vec3 u_origin;
+void main() {
+  vec3 p = vec3(a_corner) * 1.004 - 0.002;
+  gl_Position = u_view_projection * vec4(p + u_origin, 1.0);
+}
+)glsl";
+}
+
+std::string_view line_fragment_source() {
+  return R"glsl(#version 410 core
+out vec4 o_color;
+void main() { o_color = vec4(0.05, 0.05, 0.05, 0.85); }
+)glsl";
+}
+
+int64_t chunk_key(int32_t cx, int32_t cz) {
+  return (int64_t(cx) << 32i64) ^ (int64_t(cz) & 0xFFFFFFFFi64);
+}
+
+struct GpuChunk {
+public:
+  mut int32_t cx = 0;
+  mut int32_t cz = 0;
+  mut uint32_t revision = uint32_t(0);
+  mut uint32_t opaque_vao = uint32_t(0);
+  mut uint32_t opaque_vbo = uint32_t(0);
+  mut int32_t opaque_quads = 0;
+  mut uint32_t water_vao = uint32_t(0);
+  mut uint32_t water_vbo = uint32_t(0);
+  mut int32_t water_quads = 0;
+  mut float sort_distance = 0.0;
+  GpuChunk() = default;
+};
+
+void release_gpu_chunk(GpuChunk chunk) {
+  mut uint32_t opaque_vao = chunk.opaque_vao;
+  mut uint32_t opaque_vbo = chunk.opaque_vbo;
+  mut uint32_t water_vao = chunk.water_vao;
+  mut uint32_t water_vbo = chunk.water_vbo;
+  unsafe {
+    if (opaque_vao != uint32_t(0)) gl::glDeleteVertexArrays(1, &opaque_vao);
+    if (opaque_vbo != uint32_t(0)) gl::glDeleteBuffers(1, &opaque_vbo);
+    if (water_vao != uint32_t(0)) gl::glDeleteVertexArrays(1, &water_vao);
+    if (water_vbo != uint32_t(0)) gl::glDeleteBuffers(1, &water_vbo);
+  }
+}
+
+// Per-frame statistics the game forwards to the profiler.
+struct RenderStats {
+public:
+  mut int64_t visible_chunks = 0;
+  mut int64_t draw_calls = 0;
+  mut int64_t quads = 0;
+  RenderStats() = default;
+};
+
+struct FrameView {
+public:
+  mut Vec3 eye = Vec3();
+  mut float yaw = 0.0;
+  mut float pitch = 0.0;
+  mut float fov_y = 1.22;
+  mut int32_t width = 1;
+  mut int32_t height = 1;
+  mut float view_distance = 160.0;
+  mut bool underwater = false;
+  mut bool has_target = false;
+  mut int32_t target_x = 0;
+  mut int32_t target_y = 0;
+  mut int32_t target_z = 0;
+  mut float time = 0.0;
+  FrameView() = default;
+};
+
+class Renderer {
+  mut uint32_t chunk_program = uint32_t(0);
+  mut uint32_t line_program = uint32_t(0);
+  mut uint32_t quad_indices = uint32_t(0);
+  mut uint32_t tiles = uint32_t(0);
+  mut uint32_t line_vao = uint32_t(0);
+  mut uint32_t line_vbo = uint32_t(0);
+  mut int32_t u_chunk_vp = -1;
+  mut int32_t u_chunk_origin = -1;
+  mut int32_t u_chunk_time = -1;
+  mut int32_t u_chunk_tiles = -1;
+  mut int32_t u_chunk_fog_color = -1;
+  mut int32_t u_chunk_fog_start = -1;
+  mut int32_t u_chunk_fog_end = -1;
+  mut int32_t u_chunk_translucent = -1;
+  mut int32_t u_line_vp = -1;
+  mut int32_t u_line_origin = -1;
+  mut std::vector<GpuChunk> chunks{};
+  mut std::unordered_map<int64_t, uint64_t> slots{};
+  mut std::vector<uint64_t> draw_order{};
+  mut uint32_t queries[4] = {};
+  mut bool query_pending[4] = {};
+  mut int32_t query_next = 0;
+  mut std::string gl_renderer_name{};
+  mut std::string last_error{};
+
+  uint32_t compile(uint32_t kind, std::string_view source) mut {
+    std::string owned = std::string(source);
+    unsafe {
+      uint32_t shader = gl::glCreateShader(kind);
+      mut c_string text = owned.c_string();
+      gl::glShaderSource(shader, 1, &text, nullptr);
+      gl::glCompileShader(shader);
+      mut int32_t ok = 0;
+      gl::glGetShaderiv(shader, gl::COMPILE_STATUS, &ok);
+      if (ok == 0) {
+        mut uint8_t log[2048] = {};
+        mut int32_t length = 0;
+        gl::glGetShaderInfoLog(shader, 2047, &length, &log[0]);
+        mut std::string message{};
+        for (mut int32_t i = 0; i < length; i++) {
+          message.push_back(char(log[i]));
+        }
+        this.last_error = std::move(message);
+        gl::glDeleteShader(shader);
+        return uint32_t(0);
+      }
+      return shader;
+    }
+  }
+
+  uint32_t link(std::string_view vertex, std::string_view fragment) mut {
+    uint32_t vs = this.compile(gl::VERTEX_SHADER, vertex);
+    if (vs == uint32_t(0)) return uint32_t(0);
+    uint32_t fs = this.compile(gl::FRAGMENT_SHADER, fragment);
+    unsafe {
+      if (fs == uint32_t(0)) {
+        gl::glDeleteShader(vs);
+        return uint32_t(0);
+      }
+      uint32_t program = gl::glCreateProgram();
+      gl::glAttachShader(program, vs);
+      gl::glAttachShader(program, fs);
+      gl::glLinkProgram(program);
+      gl::glDeleteShader(vs);
+      gl::glDeleteShader(fs);
+      mut int32_t ok = 0;
+      gl::glGetProgramiv(program, gl::LINK_STATUS, &ok);
+      if (ok == 0) {
+        this.last_error = std::string("program link failed");
+        gl::glDeleteProgram(program);
+        return uint32_t(0);
+      }
+      return program;
+    }
+  }
+
+  uint32_t make_chunk_vao(uint32_t vbo) {
+    unsafe {
+      mut uint32_t vao = uint32_t(0);
+      gl::glGenVertexArrays(1, &vao);
+      gl::glBindVertexArray(vao);
+      gl::glBindBuffer(gl::ARRAY_BUFFER, vbo);
+      gl::glVertexAttribIPointer(uint32_t(0), 2, gl::UNSIGNED_INT, 8, uint64_t(0));
+      gl::glEnableVertexAttribArray(uint32_t(0));
+      gl::glBindBuffer(gl::ELEMENT_ARRAY_BUFFER, this.quad_indices);
+      gl::glBindVertexArray(uint32_t(0));
+      return vao;
+    }
+  }
+
+
+  // Uploads one stream into `vbo` (creating it and its VAO on first use).
+  void upload_stream(mut uint32_t& vao, mut uint32_t& vbo, mut int32_t& quads,
+                     std::vector<uint32_t>& words) {
+    uint64_t count = words.size();
+    quads = int32_t(count / uint64_t(8));
+    if (quads == 0) return;
+    unsafe {
+      if (vbo == uint32_t(0)) {
+        gl::glGenBuffers(1, &vbo);
+        vao = this.make_chunk_vao(vbo);
+      }
+      gl::glBindBuffer(gl::ARRAY_BUFFER, vbo);
+      int64_t bytes = int64_t(count) * 4i64;
+      gl::glBufferData(gl::ARRAY_BUFFER, bytes, &words[0], gl::STATIC_DRAW);
+    }
+  }
+
+public:
+  Renderer() {}
+  Renderer(Renderer& other) = delete;
+  Renderer(Renderer&& other) = delete;
+  ~Renderer() { this.shutdown(); }
+
+  std::string& error() { return this.last_error; }
+  std::string& renderer_name() { return this.gl_renderer_name; }
+  uint32_t texture_array() { return this.tiles; }
+
+  bool initialize(std::vector<uint8_t>& tile_pixels, int32_t tile_count) mut {
+    this.chunk_program = this.link(chunk_vertex_source(), chunk_fragment_source());
+    if (this.chunk_program == uint32_t(0)) return false;
+    this.line_program = this.link(line_vertex_source(), line_fragment_source());
+    if (this.line_program == uint32_t(0)) return false;
+    unsafe {
+      this.gl_renderer_name = std::string(gl::glGetString(gl::RENDERER));
+      this.u_chunk_vp = gl::glGetUniformLocation(this.chunk_program, "u_view_projection");
+      this.u_chunk_origin = gl::glGetUniformLocation(this.chunk_program, "u_origin");
+      this.u_chunk_time = gl::glGetUniformLocation(this.chunk_program, "u_time");
+      this.u_chunk_tiles = gl::glGetUniformLocation(this.chunk_program, "u_tiles");
+      this.u_chunk_fog_color = gl::glGetUniformLocation(this.chunk_program, "u_fog_color");
+      this.u_chunk_fog_start = gl::glGetUniformLocation(this.chunk_program, "u_fog_start");
+      this.u_chunk_fog_end = gl::glGetUniformLocation(this.chunk_program, "u_fog_end");
+      this.u_chunk_translucent = gl::glGetUniformLocation(this.chunk_program, "u_translucent");
+      this.u_line_vp = gl::glGetUniformLocation(this.line_program, "u_view_projection");
+      this.u_line_origin = gl::glGetUniformLocation(this.line_program, "u_origin");
+
+      // Shared quad index buffer.
+      mut std::vector<uint32_t> indices{};
+      indices.reserve(uint64_t(MAX_QUADS_PER_DRAW) * uint64_t(6));
+      for (mut uint32_t q = uint32_t(0); q < uint32_t(MAX_QUADS_PER_DRAW); q++) {
+        uint32_t base = q * uint32_t(4);
+        indices.push_back(base);
+        indices.push_back(base + uint32_t(1));
+        indices.push_back(base + uint32_t(2));
+        indices.push_back(base + uint32_t(2));
+        indices.push_back(base + uint32_t(3));
+        indices.push_back(base);
+      }
+      gl::glGenBuffers(1, &this.quad_indices);
+      gl::glBindBuffer(gl::ELEMENT_ARRAY_BUFFER, this.quad_indices);
+      int64_t index_bytes = int64_t(indices.size()) * 4i64;
+      gl::glBufferData(gl::ELEMENT_ARRAY_BUFFER, index_bytes, &indices[0], gl::STATIC_DRAW);
+
+      // Block texture array with mipmaps (nearest texel, blended levels).
+      gl::glGenTextures(1, &this.tiles);
+      gl::glActiveTexture(gl::TEXTURE0);
+      gl::glBindTexture(gl::TEXTURE_2D_ARRAY, this.tiles);
+      gl::glTexImage3D(gl::TEXTURE_2D_ARRAY, 0, gl::RGBA8, 16, 16, tile_count, 0,
+                       gl::RGBA, gl::UNSIGNED_BYTE, &tile_pixels[0]);
+      gl::glTexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::NEAREST_MIPMAP_LINEAR);
+      gl::glTexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+      gl::glTexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::REPEAT);
+      gl::glTexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::REPEAT);
+      gl::glTexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAX_LEVEL, 4);
+      gl::glGenerateMipmap(gl::TEXTURE_2D_ARRAY);
+
+      // Selection outline: the 12 edges of a unit cube as integer corners;
+      // the line shader inflates it slightly to avoid z-fighting.
+      mut uint32_t corners[72] = {
+          0u32, 0u32, 0u32, 1u32, 0u32, 0u32,  1u32, 0u32, 0u32, 1u32, 0u32, 1u32,
+          1u32, 0u32, 1u32, 0u32, 0u32, 1u32,  0u32, 0u32, 1u32, 0u32, 0u32, 0u32,
+          0u32, 1u32, 0u32, 1u32, 1u32, 0u32,  1u32, 1u32, 0u32, 1u32, 1u32, 1u32,
+          1u32, 1u32, 1u32, 0u32, 1u32, 1u32,  0u32, 1u32, 1u32, 0u32, 1u32, 0u32,
+          0u32, 0u32, 0u32, 0u32, 1u32, 0u32,  1u32, 0u32, 0u32, 1u32, 1u32, 0u32,
+          1u32, 0u32, 1u32, 1u32, 1u32, 1u32,  0u32, 0u32, 1u32, 0u32, 1u32, 1u32,
+      };
+      gl::glGenVertexArrays(1, &this.line_vao);
+      gl::glGenBuffers(1, &this.line_vbo);
+      gl::glBindVertexArray(this.line_vao);
+      gl::glBindBuffer(gl::ARRAY_BUFFER, this.line_vbo);
+      gl::glBufferData(gl::ARRAY_BUFFER, 288i64, &corners[0], gl::STATIC_DRAW);
+      gl::glVertexAttribIPointer(uint32_t(0), 3, gl::UNSIGNED_INT, 12, uint64_t(0));
+      gl::glEnableVertexAttribArray(uint32_t(0));
+      gl::glBindVertexArray(uint32_t(0));
+
+      gl::glGenQueries(GPU_QUERY_RING, &this.queries[0]);
+      return gl::glGetError() == uint32_t(0);
+    }
+  }
+
+  void shutdown() mut {
+    for (mut uint64_t i = uint64_t(0); i < this.chunks.size(); i++) {
+      release_gpu_chunk(this.chunks[i]);
+    }
+    this.chunks.clear();
+    this.slots.clear();
+    unsafe {
+      if (this.queries[0] != uint32_t(0)) {
+        gl::glDeleteQueries(GPU_QUERY_RING, &this.queries[0]);
+        this.queries[0] = uint32_t(0);
+      }
+      if (this.line_vbo != uint32_t(0)) {
+        gl::glDeleteBuffers(1, &this.line_vbo);
+        this.line_vbo = uint32_t(0);
+      }
+      if (this.line_vao != uint32_t(0)) {
+        gl::glDeleteVertexArrays(1, &this.line_vao);
+        this.line_vao = uint32_t(0);
+      }
+      if (this.tiles != uint32_t(0)) {
+        gl::glDeleteTextures(1, &this.tiles);
+        this.tiles = uint32_t(0);
+      }
+      if (this.quad_indices != uint32_t(0)) {
+        gl::glDeleteBuffers(1, &this.quad_indices);
+        this.quad_indices = uint32_t(0);
+      }
+      if (this.chunk_program != uint32_t(0)) {
+        gl::glDeleteProgram(this.chunk_program);
+        this.chunk_program = uint32_t(0);
+      }
+      if (this.line_program != uint32_t(0)) {
+        gl::glDeleteProgram(this.line_program);
+        this.line_program = uint32_t(0);
+      }
+    }
+  }
+
+  bool has_chunk(int32_t cx, int32_t cz) {
+    int64_t key = chunk_key(cx, cz);
+    return this.slots.contains(key);
+  }
+
+  // Revision the uploaded mesh was built from; 0xFFFFFFFF when absent.
+  uint32_t chunk_revision(int32_t cx, int32_t cz) {
+    int64_t key = chunk_key(cx, cz);
+    if (!this.slots.contains(key)) return uint32_t(0xFFFFFFFF);
+    return this.chunks[this.slots.at(key)].revision;
+  }
+
+  int64_t chunk_count() { return int64_t(this.chunks.size()); }
+
+  void upload_chunk(int32_t cx, int32_t cz, uint32_t revision,
+                    std::vector<uint32_t>& opaque,
+                    std::vector<uint32_t>& translucent) mut {
+    int64_t key = chunk_key(cx, cz);
+    if (!this.slots.contains(key)) {
+      mut GpuChunk fresh = GpuChunk();
+      fresh.cx = cx;
+      fresh.cz = cz;
+      this.chunks.push_back(fresh);
+      this.slots.insert_or_assign(key, this.chunks.size() - uint64_t(1));
+    }
+    uint64_t slot = this.slots.at(key);
+    mut GpuChunk chunk = this.chunks[slot];
+    chunk.revision = revision;
+    this.upload_stream(chunk.opaque_vao, chunk.opaque_vbo, chunk.opaque_quads, opaque);
+    this.upload_stream(chunk.water_vao, chunk.water_vbo, chunk.water_quads, translucent);
+    this.chunks[slot] = chunk;
+  }
+
+  void remove_chunk(int32_t cx, int32_t cz) mut {
+    int64_t key = chunk_key(cx, cz);
+    if (!this.slots.contains(key)) return;
+    uint64_t slot = this.slots.at(key);
+    release_gpu_chunk(this.chunks[slot]);
+    uint64_t last = this.chunks.size() - uint64_t(1);
+    if (slot != last) {
+      GpuChunk moved = this.chunks[last];
+      this.chunks[slot] = moved;
+      this.slots.insert_or_assign(chunk_key(moved.cx, moved.cz), slot);
+    }
+    this.chunks.pop_back();
+    [[discard]] this.slots.erase(key);
+  }
+
+  // Returns GPU nanoseconds of the oldest finished frame, or -1.
+  int64_t poll_gpu_ns() mut {
+    mut int64_t result = -1i64;
+    unsafe {
+      for (mut int32_t i = 0; i < GPU_QUERY_RING; i++) {
+        if (!this.query_pending[i]) continue;
+        mut int32_t available = 0;
+        gl::glGetQueryObjectiv(this.queries[i], gl::QUERY_RESULT_AVAILABLE, &available);
+        if (available != 0) {
+          mut uint64_t ns = uint64_t(0);
+          gl::glGetQueryObjectui64v(this.queries[i], gl::QUERY_RESULT, &ns);
+          this.query_pending[i] = false;
+          result = int64_t(ns);
+        }
+      }
+    }
+    return result;
+  }
+
+  RenderStats render(FrameView& view, mut Frustum& frustum) mut {
+    mut RenderStats stats = RenderStats();
+    float aspect = float(view.width) / float(view.height);
+    float far = view.view_distance + 64.0;
+    Mat4 projection = Mat4::perspective(view.fov_y, aspect, 0.05, far);
+    // Camera-relative rendering: the view sits at the origin and each chunk
+    // is offset by (origin - eye), so float precision never depends on how
+    // far the player has walked.
+    Mat4 look = Mat4::look_along(Vec3(0.0, 0.0, 0.0), direction_from(view.yaw, view.pitch));
+    mut Mat4 vp = projection.multiply(look);
+    frustum.extract(vp);
+
+    mut float fog_r = 0.62;
+    mut float fog_g = 0.78;
+    mut float fog_b = 0.96;
+    mut float fog_start = view.view_distance * 0.55;
+    mut float fog_end = view.view_distance;
+    if (view.underwater) {
+      fog_r = 0.10;
+      fog_g = 0.22;
+      fog_b = 0.45;
+      fog_start = 2.0;
+      fog_end = 28.0;
+    }
+
+    // Visible chunks, nearest first (front-to-back helps early depth reject).
+    this.draw_order.clear();
+    for (mut uint64_t i = uint64_t(0); i < this.chunks.size(); i++) {
+      GpuChunk chunk = this.chunks[i];
+      float min_x = float(chunk.cx * CHUNK_WIDTH) - view.eye.x;
+      float min_z = float(chunk.cz * CHUNK_DEPTH) - view.eye.z;
+      float center_x = min_x + 8.0;
+      float center_z = min_z + 8.0;
+      float horizontal = center_x * center_x + center_z * center_z;
+      float limit = view.view_distance + 24.0;
+      if (horizontal > limit * limit) continue;
+      if (!frustum.box_visible(min_x, -view.eye.y, min_z, min_x + 16.0,
+                               128.0 - view.eye.y, min_z + 16.0)) continue;
+      this.chunks[i].sort_distance = horizontal;
+      this.draw_order.push_back(i);
+    }
+    this.sort_draw_order();
+
+    unsafe {
+      int32_t q = this.query_next;
+      bool timing = !this.query_pending[q];
+      if (timing) gl::glBeginQuery(gl::TIME_ELAPSED, this.queries[q]);
+
+      gl::glViewport(0, 0, view.width, view.height);
+      gl::glClearColor(fog_r, fog_g, fog_b, 1.0);
+      gl::glClear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+      gl::glEnable(gl::DEPTH_TEST);
+      gl::glDepthFunc(gl::LEQUAL);
+      gl::glEnable(gl::CULL_FACE);
+      gl::glCullFace(gl::BACK);
+      gl::glFrontFace(gl::CCW);
+      gl::glDisable(gl::BLEND);
+
+      gl::glUseProgram(this.chunk_program);
+      gl::glUniformMatrix4fv(this.u_chunk_vp, 1, uint8_t(0), &vp.m[0]);
+      gl::glUniform1i(this.u_chunk_tiles, 0);
+      gl::glUniform1f(this.u_chunk_time, view.time);
+      gl::glUniform3f(this.u_chunk_fog_color, fog_r, fog_g, fog_b);
+      gl::glUniform1f(this.u_chunk_fog_start, fog_start);
+      gl::glUniform1f(this.u_chunk_fog_end, fog_end);
+      gl::glUniform1f(this.u_chunk_translucent, 0.0);
+      gl::glActiveTexture(gl::TEXTURE0);
+      gl::glBindTexture(gl::TEXTURE_2D_ARRAY, this.tiles);
+
+      uint64_t visible = this.draw_order.size();
+      for (mut uint64_t n = uint64_t(0); n < visible; n++) {
+        GpuChunk chunk = this.chunks[this.draw_order[n]];
+        stats.visible_chunks += 1i64;
+        if (chunk.opaque_quads == 0) continue;
+        gl::glUniform3f(this.u_chunk_origin, float(chunk.cx * CHUNK_WIDTH) - view.eye.x,
+                        -view.eye.y, float(chunk.cz * CHUNK_DEPTH) - view.eye.z);
+        gl::glBindVertexArray(chunk.opaque_vao);
+        gl::glDrawElements(gl::TRIANGLES, chunk.opaque_quads * 6, gl::UNSIGNED_INT, uint64_t(0));
+        stats.draw_calls += 1i64;
+        stats.quads += int64_t(chunk.opaque_quads);
+      }
+
+      // Translucent water, far to near, depth-tested but not depth-written.
+      gl::glEnable(gl::BLEND);
+      gl::glBlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+      gl::glDepthMask(uint8_t(0));
+      gl::glDisable(gl::CULL_FACE);
+      gl::glUniform1f(this.u_chunk_translucent, 1.0);
+      for (mut uint64_t n = visible; n > uint64_t(0); n--) {
+        GpuChunk chunk = this.chunks[this.draw_order[n - uint64_t(1)]];
+        if (chunk.water_quads == 0) continue;
+        gl::glUniform3f(this.u_chunk_origin, float(chunk.cx * CHUNK_WIDTH) - view.eye.x,
+                        -view.eye.y, float(chunk.cz * CHUNK_DEPTH) - view.eye.z);
+        gl::glBindVertexArray(chunk.water_vao);
+        gl::glDrawElements(gl::TRIANGLES, chunk.water_quads * 6, gl::UNSIGNED_INT, uint64_t(0));
+        stats.draw_calls += 1i64;
+        stats.quads += int64_t(chunk.water_quads);
+      }
+      gl::glDepthMask(uint8_t(1));
+      gl::glEnable(gl::CULL_FACE);
+
+      if (view.has_target) {
+        gl::glUseProgram(this.line_program);
+        gl::glUniformMatrix4fv(this.u_line_vp, 1, uint8_t(0), &vp.m[0]);
+        gl::glUniform3f(this.u_line_origin, float(view.target_x) - view.eye.x,
+                        float(view.target_y) - view.eye.y,
+                        float(view.target_z) - view.eye.z);
+        gl::glBindVertexArray(this.line_vao);
+        gl::glDrawArrays(gl::LINES, 0, 24);
+        stats.draw_calls += 1i64;
+      }
+      gl::glDisable(gl::BLEND);
+      gl::glBindVertexArray(uint32_t(0));
+
+      if (timing) {
+        gl::glEndQuery(gl::TIME_ELAPSED);
+        this.query_pending[q] = true;
+        this.query_next = (q + 1) % GPU_QUERY_RING;
+      }
+    }
+    return stats;
+  }
+
+  // Reads the back buffer (before swap) as top-row-first RGB bytes.
+  std::vector<uint8_t> read_framebuffer_rgb(int32_t width, int32_t height) {
+    uint64_t pixels = uint64_t(width) * uint64_t(height);
+    mut std::vector<uint8_t> rgba{};
+    rgba.reserve(pixels * uint64_t(4));
+    for (mut uint64_t i = uint64_t(0); i < pixels * uint64_t(4); i++) rgba.push_back(uint8_t(0));
+    unsafe {
+      gl::glReadPixels(0, 0, width, height, gl::RGBA, gl::UNSIGNED_BYTE, &rgba[0]);
+    }
+    mut std::vector<uint8_t> rgb{};
+    rgb.reserve(pixels * uint64_t(3));
+    for (mut int32_t y = height - 1; y >= 0; y--) {
+      uint64_t row = uint64_t(y) * uint64_t(width) * uint64_t(4);
+      for (mut int32_t x = 0; x < width; x++) {
+        uint64_t at = row + uint64_t(x) * uint64_t(4);
+        rgb.push_back(rgba[at]);
+        rgb.push_back(rgba[at + uint64_t(1)]);
+        rgb.push_back(rgba[at + uint64_t(2)]);
+      }
+    }
+    return rgb;
+  }
+
+  // Insertion sort by distance: the order barely changes between frames, so
+  // this is close to linear in practice.
+  void sort_draw_order() mut {
+    uint64_t count = this.draw_order.size();
+    for (mut uint64_t i = uint64_t(1); i < count; i++) {
+      uint64_t value = this.draw_order[i];
+      float key = this.chunks[value].sort_distance;
+      mut uint64_t j = i;
+      while (j > uint64_t(0) and this.chunks[this.draw_order[j - uint64_t(1)]].sort_distance > key) {
+        this.draw_order[j] = this.draw_order[j - uint64_t(1)];
+        j = j - uint64_t(1);
+      }
+      this.draw_order[j] = value;
+    }
+  }
+};
+}

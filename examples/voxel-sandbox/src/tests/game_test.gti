@@ -1,5 +1,11 @@
 import "../world/block.gti";
 import "../world/chunk.gti";
+import "../core/math.gti";
+import "../render/renderer.gti";
+import "../game/window.gti";
+
+bool near(float a, float b) { return voxel::absf(a - b) < 0.0001; }
+
 int main() {
   mut voxel::Chunk chunk = voxel::Chunk(0, 0);
   chunk.set(1, 2, 3, voxel::STONE);
@@ -7,5 +13,19 @@ int main() {
   if (voxel::chunk_coord(-1) != -1 or voxel::local_coord(-1) != 15) return 2;
   if (voxel::chunk_coord(-16) != -1 or voxel::chunk_coord(-17) != -2) return 3;
   if (voxel::tile_for(voxel::GRASS, voxel::FACE_POS_Y) != voxel::T_GRASS_TOP) return 4;
+
+  voxel::Vec3 forward = voxel::direction_from(0.0, 0.0);
+  if (!near(forward.z, -1.0)) return 10;
+  voxel::Mat4 view = voxel::Mat4::look_along(voxel::Vec3(0.0, 0.0, 0.0), forward);
+  voxel::Mat4 proj = voxel::Mat4::perspective(1.2, 1.5, 0.1, 500.0);
+  voxel::Mat4 vp = proj.multiply(view);
+  mut voxel::Frustum frustum = voxel::Frustum();
+  frustum.extract(vp);
+  if (!frustum.box_visible(-1.0, -1.0, -11.0, 1.0, 1.0, -9.0)) return 11;
+  if (frustum.box_visible(-1.0, -1.0, 9.0, 1.0, 1.0, 11.0)) return 12;
+  if (frustum.box_visible(200.0, -1.0, -11.0, 202.0, 1.0, -9.0)) return 13;
+  voxel::Mat4 id = voxel::Mat4::identity();
+  voxel::Mat4 same = vp.multiply(id);
+  if (!near(same.at(2, 3), vp.at(2, 3))) return 14;
   return 0;
 }
