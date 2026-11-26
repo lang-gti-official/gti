@@ -15,7 +15,7 @@ class ReadFirst<lifetime a> {
   int&<a> input;
   mut int&<a> target;
 public:
-  ReadFirst(int&<a> input, mut int&<a> target) : input(input), target(target) {}
+  ReadFirst(mut int&<a> target, int&<a> input) : input(input), target(target) {}
   void assign() mut { this.target = this.input + 2; }
 };
 class Owner {
@@ -24,7 +24,7 @@ public:
   Owner() = default;
   int read() { return this.target; }
   Fields<int, this> from_owner() mut { return Fields<int, this>(this.target, this.source); }
-  ReadFirst<this> read_first() mut { return ReadFirst<this>(this.source, this.target); }
+  ReadFirst<this> read_first() mut { return ReadFirst<this>(this.target, this.source); }
   int source = 19;
 };
 int main() {

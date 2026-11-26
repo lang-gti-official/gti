@@ -6417,8 +6417,23 @@ auto SemanticVisitor::Impl::storedCarrierConstructorParameters(
       constructor.declaration != nullptr)
     if (auto suppliers = constructorLifetimeSuppliers(*owner->declaration,
                                                       *constructor.declaration);
-        suppliers.size() > 1)
+        suppliers.size() > 1) {
+      // Signature suppliers are in parameter order. The leading loan is
+      // published with the first stored field's permission. When the first
+      // formal has different access, select the mapped supplier of that field.
+      if (suppliers.front() >= parameterTypes.size() ||
+          borrowAccess(parameterTypes[suppliers.front()]) == borrowAccess(type))
+        return suppliers;
+      const auto bindings = storedCarrierConstructorBindings(
+          type, constructor.declaration, parameterTypes);
+      if (!bindings.empty()) {
+        const auto first = std::find(suppliers.begin(), suppliers.end(),
+                                     bindings.front().parameter);
+        if (first != suppliers.end())
+          std::rotate(suppliers.begin(), first, first + 1);
+      }
       return suppliers;
+    }
   const auto bindings = storedCarrierConstructorBindings(
       type, constructor.declaration, parameterTypes);
   std::vector<std::size_t> result;
