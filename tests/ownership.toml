@@ -1885,6 +1885,8 @@ paths = [
   "tests/slow/language/construction/object_construction_reference.gti",
   "tests/slow/language/construction/borrowed_array_cleanup.gti",
   "tests/slow/language/construction/borrowed_vector_cleanup.gti",
+  "tests/slow/stdlib/tcp/poller_drop_safety.gti",
+  "tests/slow/project/http_server_event_loop/",
 ]
 owners = ["^gti_test_ui(_shard_[1-4])?$"]
 consumers = []

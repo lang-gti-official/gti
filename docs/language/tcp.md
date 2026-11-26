@@ -197,6 +197,75 @@ a time; a program built with `--execution-profile concurrent` can instead move
 each accepted `stream` into a `std::thread` task, because streams are
 transfer-capable.
 
+## Readiness Polling
+
+`std::tcp::poller` waits on many streams and listeners at once, so one thread
+can drive many nonblocking connections
+([RFC 0014](https://github.com/lang-gti-official/rfcs/pull/15)):
+
+```gti
+mut auto poll = ?std::tcp::poller::create();
+?server.set_nonblocking(true);
+?poll.add(server, uint64_t(0));                           // acceptance
+?poll.add(connection, uint64_t(1), std::tcp::interest::readable);
+
+mut std::vector<std::tcp::readiness> storage = std::vector<std::tcp::readiness>();
+storage.resize(std::size_t(16));
+mut auto events = storage.as_mutable_span();
+std::size_t count = ?poll.wait(events, std::chrono::nanoseconds(1_000_000_000i64));
+for (mut std::size_t i = 0; i < count; i++) {
+  std::tcp::readiness event = events[i];
+  // event.token(), event.readable(), writable(), closed(), failed()
+}
+```
+
+**Registration.**
+
+- `add(stream&, token, interest)` registers a stream under a package-chosen
+  `uint64_t` token. `interest` is `readable`, `writable` or `read_write`.
+- `add(listener&, token)` registers acceptance, reported as `readable`.
+- `modify(token, interest)` changes a registration, `remove(token)` deletes
+  it, and `size()` and `contains(token)` inspect the set.
+- A token already in use, an unknown token and a negative timeout are
+  `invalid_argument`. Registering a closed socket is `not_open`.
+
+**Ownership.**
+
+- Registration takes the socket by read-only reference and keeps no reference
+  to it. The package still owns the socket and can use, move or close it.
+- A registered socket that is moved keeps its registration.
+- Once a registered socket is closed or dropped, its registration reports
+  nothing, even if the host reuses its descriptor number for another socket:
+  - the runtime gives every descriptor an identity when it is created and
+    forgets it before closing;
+  - `wait` reports a registration only if its identity matches both before
+    and after the host wait.
+- The token of a closed or dropped socket stays reserved until `remove`.
+- Dropping a poller closes no socket.
+- A poller is move-only, transferable and not shareable, like the sockets.
+
+**Waiting.**
+
+- Delivery is level-triggered: every wait reports each registration that is
+  ready, so data a package leaves unread is reported again.
+- `closed` (the peer hung up) and `failed` (a pending socket error) are
+  reported whatever the interest.
+- `wait(events, timeout)` writes at most `events.size()` reports into
+  caller-owned storage. It returns how many it wrote, zero on timeout, and
+  allocates nothing.
+- Readiness that does not fit is reported by the next wait. The starting
+  registration rotates so that a small span cannot starve any registration.
+- A positive timeout rounds up to whole milliseconds. Interrupted host waits
+  resume with the remaining time.
+- `wait(events)` waits without a timeout. Doing so with nothing registered is
+  `invalid_argument`, because nothing could end the wait.
+- Readiness is a hint: an operation it suggests may still report
+  `would_block`.
+
+[`tests/slow/project/http_server_event_loop`](../../tests/slow/project/http_server_event_loop)
+is a complete package that serves concurrent HTTP connections from one
+poller.
+
 ## Errors
 
 `std::tcp::errc` has stable categories, mapped from host error numbers by the
@@ -228,13 +297,17 @@ call-bounded pointer and length pairs inside lexical `unsafe` blocks; the
 runtime retains nothing. A blocking socket whose `SO_RCVTIMEO`/`SO_SNDTIMEO`
 expires reports `timed_out`, while a nonblocking socket reports
 `would_block`. Connection timeouts use a nonblocking `connect` and `poll`,
-then restore blocking mode.
+then restore blocking mode. A poller passes its registrations to
+`gti_rt_tcp_poll_v1`, one `poll(2)` call on both macOS and Linux. That call
+checks each registration's identity, which `gti_rt_tcp_identity_v1`
+reports, before and after the wait.
 
 Importing `std.tcp` on Windows or an unknown target is a compile-time error;
 the runtime's Windows entries return `unsupported` only so the archive links.
 
 ## Not Yet Provided
 
-UDP, Unix-domain sockets, TLS, a readiness multiplexer over many sockets, a
-concurrent or asynchronous `serve`, socket options beyond those listed,
+UDP, Unix-domain sockets, TLS, edge-triggered or one-shot readiness, a
+cross-thread waker for a poller, kqueue or epoll backends, a concurrent or
+asynchronous `serve`, socket options beyond those listed,
 scatter/gather I/O and Windows support.

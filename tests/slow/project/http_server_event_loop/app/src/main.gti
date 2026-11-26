@@ -1,0 +1,15 @@
+import web.session;
+import std.tcp;
+import std.cstdio;
+import std.format;
+
+int main() {
+  mut auto listener = std::tcp::listen("127.0.0.1", uint16_t(0)).expect("listen");
+  auto address = listener.local_address().expect("address");
+  std::println("{}", address.port());
+  std::try_flush_stdout().expect("flush");
+  mut auto loop = dashboard::server::open(std::move(listener));
+  loop.run(std::size_t(2));
+  dashboard::marker("served");
+  return 0;
+}

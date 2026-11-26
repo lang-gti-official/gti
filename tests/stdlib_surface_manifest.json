@@ -8758,6 +8758,18 @@
         "std::tcp::listener::local_address",
         "std::tcp::listener::set_nonblocking",
         "std::tcp::listener::wait_acceptable",
+        "std::tcp::poller::add",
+        "std::tcp::poller::contains",
+        "std::tcp::poller::create",
+        "std::tcp::poller::modify",
+        "std::tcp::poller::remove",
+        "std::tcp::poller::size",
+        "std::tcp::poller::wait",
+        "std::tcp::readiness::closed",
+        "std::tcp::readiness::failed",
+        "std::tcp::readiness::readable",
+        "std::tcp::readiness::token",
+        "std::tcp::readiness::writable",
         "std::tcp::resolve",
         "std::tcp::serve",
         "std::tcp::socket_address::ipv4",
@@ -8800,7 +8812,11 @@
         "examples/193-tcp-line-server.gti",
         "tests/fixtures/stdlib_surface_tcp.gti",
         "tests/fixtures/stdlib_surface_tcp_serve.gti",
-        "tests/fixtures/stdlib_surface_tcp_threads.gti"
+        "tests/fixtures/stdlib_surface_tcp_threads.gti",
+        "tests/slow/project/http_server_event_loop/test.transcript",
+        "tests/slow/stdlib/tcp/poller_drop_safety.gti",
+        "tests/ui/stdlib/tcp/poller/readiness.gti",
+        "tests/ui/stdlib/tcp/poller/rejections.gti"
       ]
     },
     {

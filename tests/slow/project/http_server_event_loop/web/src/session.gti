@@ -1,0 +1,253 @@
+// A package-owned HTTP server: one thread and one std::tcp::poller drive every connection.
+export module session;
+import std.http;
+import std.tcp;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+import std.chrono;
+import std.vector;
+import std.format;
+import std.panic;
+
+export namespace dashboard {
+enum class wait_for { readable, writable, complete, closed };
+enum class phase { head, body, output };
+
+void marker(std::string_view text) {
+  std::println(text);
+  std::try_flush_stdout().expect("flush");
+}
+void marker(std::string text) { marker(text.view()); }
+
+class peer {
+  mut std::tcp::stream socket;
+  mut std::http::server_codec codec;
+  mut phase state = phase::head;
+  mut std::byte_buffer input{std::size_t(4096)};
+  mut std::byte_buffer scratch{std::size_t(4096)};
+  // The /bulk representation is fixed-length and contains zero bytes.
+  mut std::byte_buffer zeros{std::size_t(65536)};
+  mut std::size_t first = 0;
+  mut std::size_t last = 0;
+  mut uint16_t status = 0;
+  mut std::size_t length = 0;
+  mut std::string posted{};
+  mut std::string current{};
+  mut bool partial = false;
+  mut bool stalled = false;
+  mut bool open = true;
+
+  void dispatch(std::http::request_head& request) mut {
+    this.current = std::format("{} {}", request.method_text(), request.raw_target());
+    this.partial = false;
+    this.stalled = false;
+    this.status = uint16_t(404);
+    this.length = 0;
+    if (request.method_text() == "GET" && request.raw_target() == "/monitors") {
+      this.status = uint16_t(200);
+    } else if (request.method_text() == "POST" && request.raw_target() == "/monitors") {
+      this.status = uint16_t(201);
+    } else if (request.method_text() == "GET" && request.raw_target() == "/bulk") {
+      this.status = uint16_t(200);
+      this.length = std::size_t(64 * 1024 * 1024);
+    }
+    this.posted.clear();
+    this.state = phase::body;
+    if (this.status == uint16_t(404)) { this.start_reply(); }
+    else if (request.expects_continue()) {
+      this.codec.begin_continue().expect("continue");
+      this.state = phase::output;
+    }
+  }
+  void start_reply() mut {
+    auto head = std::http::response_head::create(this.status).expect("status");
+    this.codec.begin_response(head, this.length, std::http::connection_policy::automatic).expect("reply");
+    this.state = phase::output;
+  }
+
+public:
+  peer(std::tcp::stream socket, std::http::server_codec codec) : socket(std::move(socket)), codec(std::move(codec)) {}
+  std::tcp::stream& connection() { return this.socket; }
+  std::string_view request() { return this.current.view(); }
+  /// Whether the last `readable` result left a request head half-read.
+  bool mid_head() { return this.partial; }
+  /// True the first time the current response waits for send capacity.
+  bool first_stall() mut {
+    bool first = !this.stalled;
+    this.stalled = true;
+    return first;
+  }
+
+  /// Makes progress until the socket would block, a response completes, or
+  /// the connection ends. Never waits.
+  wait_for pump() mut {
+    if (!this.open) { return wait_for::closed; }
+    while (true) {
+      if (this.state == phase::output) {
+        mut std::size_t count = 0;
+        mut bool flush = false;
+        {
+          auto pending = this.codec.next_output();
+          switch (pending.value()) {
+          case std::http::output_step<_>::flush: flush = true; break;
+          case std::http::output_step<_>::framing(auto& data): {
+            auto sent = this.socket.send(data);
+            if (!sent && sent.error() == std::tcp::errc::would_block) { return wait_for::writable; }
+            count = std::move(sent).expect("send head");
+            break;
+          }
+          case std::http::output_step<_>::body(remaining): {
+            auto block = this.zeros.as_span();
+            auto data = block.first(remaining < block.size() ? remaining : block.size());
+            auto sent = this.socket.send(data);
+            if (!sent && sent.error() == std::tcp::errc::would_block) { return wait_for::writable; }
+            count = std::move(sent).expect("send body");
+            break;
+          }
+          }
+        }
+        if (flush) {
+          this.socket.flush().expect("flush");
+          auto after = this.codec.finish_flush().expect("finish");
+          if (after == std::http::disposition::continue_sent) { this.state = phase::body; continue; }
+          this.state = phase::head;
+          if (after == std::http::disposition::close) {
+            this.socket.close().expect("close");
+            this.open = false;
+          }
+          return wait_for::complete;
+        }
+        this.codec.advance_output(count).expect("ack");
+        continue;
+      }
+      if (this.state == phase::body) {
+        {
+          auto all = this.input.as_span();
+          auto suffix = all.subspan(this.first, this.last - this.first);
+          mut auto dst = this.scratch.as_mutable_span();
+          auto used = this.codec.parse_body(suffix, dst).expect("parse body");
+          this.first += used.consumed;
+          for (mut std::size_t i = 0; i < used.written; i++) { this.posted.push_back(char(dst[i])); }
+          if (used.state == std::http::body_state::body_end) {
+            if (this.status == uint16_t(201) && this.posted.view() != "{}") { this.status = uint16_t(400); }
+            this.start_reply();
+            continue;
+          }
+          if (this.first < this.last) { continue; }
+        }
+      } else if (this.first < this.last) {
+        auto all = this.input.as_span();
+        auto suffix = all.subspan(this.first, this.last - this.first);
+        auto parsed = this.codec.parse_head(suffix).expect("parse head");
+        this.first += parsed.consumed;
+        this.partial = true;
+        if (parsed.head.has_value()) { this.dispatch(parsed.head.value()); }
+        continue;
+      }
+      mut auto dst = this.input.as_mutable_span();
+      auto received = this.socket.receive(dst);
+      if (!received && received.error() == std::tcp::errc::would_block) { return wait_for::readable; }
+      this.first = 0;
+      this.last = std::move(received).expect("receive");
+      if (this.last == 0) {
+        this.codec.end_input().expect("clean EOF");
+        this.open = false;
+        return wait_for::closed;
+      }
+    }
+  }
+};
+
+/// One thread, one poller: accepts `expected` connections and serves each
+/// until it closes, never blocking on a single socket.
+class server {
+  mut std::tcp::listener listener;
+  mut std::tcp::poller poll;
+  mut std::vector<peer> peers = std::vector<peer>();
+  mut std::vector<uint64_t> tokens = std::vector<uint64_t>();
+  mut uint64_t next_token = 1;
+  mut std::size_t accepted = 0;
+
+  std::size_t index_of(uint64_t token) {
+    for (mut std::size_t i = 0; i < this.tokens.size(); i++) {
+      if (this.tokens[i] == token) { return i; }
+    }
+    return this.tokens.size();
+  }
+
+  void accept_pending() mut {
+    while (true) {
+      auto connection = this.listener.accept();
+      if (!connection && connection.error() == std::tcp::errc::would_block) { return; }
+      mut auto stream = std::move(connection).expect("accept");
+      stream.set_nonblocking(true).expect("nonblocking");
+      std::http::server_limits limits{};
+      mut auto codec = std::http::server_codec::open(limits).expect("codec");
+      uint64_t token = this.next_token;
+      this.next_token++;
+      this.poll.add(stream, token, std::tcp::interest::readable).expect("register");
+      this.peers.push_back(peer(std::move(stream), std::move(codec)));
+      this.tokens.push_back(token);
+      this.accepted++;
+      marker(std::format("accepted {}", token));
+    }
+  }
+
+  void drive(uint64_t token) mut {
+    std::size_t index = this.index_of(token);
+    if (index == this.tokens.size()) { return; }
+    while (true) {
+      auto next = this.peers[index].pump();
+      if (next == wait_for::complete) {
+        marker(std::format("complete {}", this.peers[index].request()));
+        continue;
+      }
+      if (next == wait_for::readable) {
+        if (this.peers[index].mid_head()) { marker(std::format("partial head {}", token)); }
+        this.poll.modify(token, std::tcp::interest::readable).expect("read interest");
+        return;
+      }
+      if (next == wait_for::writable) {
+        if (this.peers[index].first_stall()) {
+          marker(std::format("backpressured {}", this.peers[index].request()));
+        }
+        this.poll.modify(token, std::tcp::interest::writable).expect("write interest");
+        return;
+      }
+      this.poll.remove(token).expect("deregister");
+      this.peers.erase(index);
+      this.tokens.erase(index);
+      marker(std::format("closed {}", token));
+      return;
+    }
+  }
+
+public:
+  server(std::tcp::listener listener, std::tcp::poller poll) : listener(std::move(listener)), poll(std::move(poll)) {}
+
+  static server open(std::tcp::listener listener) {
+    mut auto socket = std::move(listener);
+    socket.set_nonblocking(true).expect("nonblocking listener");
+    mut auto poll = std::tcp::poller::create().expect("poller");
+    poll.add(socket, uint64_t(0)).expect("register listener");
+    return server(std::move(socket), std::move(poll));
+  }
+
+  void run(std::size_t expected) mut {
+    mut std::vector<std::tcp::readiness> storage = std::vector<std::tcp::readiness>();
+    storage.resize(std::size_t(16));
+    while (this.accepted < expected || !this.peers.empty()) {
+      mut auto events = storage.as_mutable_span();
+      std::size_t count = this.poll.wait(events, std::chrono::nanoseconds(10_000_000_000i64)).expect("wait");
+      if (count == std::size_t(0)) { std::panic("event loop stalled"); }
+      for (mut std::size_t i = 0; i < count; i++) {
+        std::tcp::readiness event = events[i];
+        if (event.token() == uint64_t(0)) { this.accept_pending(); }
+        else { this.drive(event.token()); }
+      }
+    }
+  }
+};
+}
