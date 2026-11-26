@@ -1,0 +1,20 @@
+// Batched references use the dirty dependency and its client URI; highlights and local edits keep exact UTF-16 ranges.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "params": {"capabilities": {"workspace": {"workspaceEdit": {"documentChanges": true}}}}, "id": 1}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "helper.gti", "text": "export module helper;\nexport int green() { return 1; }\n"}}
+{"file": {"name": "main.gti", "text": "import \"helper.gti\";\nint main() {\n  /*🌳*/ int item = green() + green();\n  return item;\n}\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$DIR_URI/./helper.gti", "languageId": "gti", "version": 1, "text": "export module helper;\n/*🌳🌳*/ export int green() { return 1; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$DIR_URI/./helper.gti", "version": 1, "diagnostics": "$ANY"}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import \"helper.gti\";\nint main() {\n  /*🌳*/ int item = green() + green();\n  return item;\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/references", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 20}, "context": {"includeDeclaration": true}}, "id": 2}}
+{"expect": {"id": 2, "result": [{"uri": "$DIR_URI/./helper.gti", "range": {"start": {"line": 1, "character": 20}, "end": {"line": 1, "character": 25}}}, {"uri": "$URI", "range": {"start": {"line": 2, "character": 20}, "end": {"line": 2, "character": 25}}}, {"uri": "$URI", "range": {"start": {"line": 2, "character": 30}, "end": {"line": 2, "character": 35}}}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/documentHighlight", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 2, "character": 20}}, "id": 3}}
+{"expect": {"id": 3, "result": [{"range": {"start": {"line": 2, "character": 20}, "end": {"line": 2, "character": 25}}}, {"range": {"start": {"line": 2, "character": 30}, "end": {"line": 2, "character": 35}}}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/rename", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 3, "character": 9}, "newName": "amount"}, "id": 4}}
+{"expect": {"id": 4, "result": {"documentChanges": [{"textDocument": {"uri": "$URI", "version": 1}, "edits": [{"range": {"start": {"line": 2, "character": 13}, "end": {"line": 2, "character": 17}}, "newText": "amount"}, {"range": {"start": {"line": 3, "character": 9}, "end": {"line": 3, "character": 13}}, "newText": "amount"}]}]}}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "id": 5}}
+{"expect": {"id": 5, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

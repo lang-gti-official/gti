@@ -397,12 +397,14 @@ hover, completion, definition, and signature rendering compile in
 `src/compiler/language_queries.cpp`. Semantic tokens use compiler symbol and
 occurrence facts for identifiers and lexical facts for keywords, literals,
 operators, and comments. Line and block comments are split into per-line LSP
-tokens with UTF-16 lengths; delimiters inside literals are excluded. The
+tokens with UTF-16 lengths; delimiters inside literals are excluded. Lexical
+tokens and comments each advance through source in byte order, accumulating
+UTF-16 columns. Their ordered streams are merged for the protocol response. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
 
 JSON-RPC admits only valid UTF-8 document text. Compiler byte offsets are
-converted through one source-position index at the protocol boundary; Unicode
+converted to LSP positions at the protocol boundary; Unicode
 supplementary scalars count as two UTF-16 code units, CRLF counts as one line
 break, and an explicit leading BOM occupies one UTF-16 position before the
 first token. The compiler remains the authority for BOM placement, ASCII token
@@ -615,7 +617,9 @@ binding through recorded capture links; the new name must lex as a single
 non-reserved identifier; a conservative visibility check rejects any new name
 already spelled in the touched source units; and every edited range is
 verified against the snapshot source before edits are produced. The protocol
-layer only serializes the resulting spans.
+layer projects those spans in a batch. References and rename borrow the source
+text from the same immutable snapshot and build one position index per file.
+Document highlights use the cursor’s position index for every local occurrence.
 
 Document symbols walk the recovered AST for the requested source unit —
 namespaces, types, members, enums and enumerators, functions, globals,
@@ -1046,7 +1050,14 @@ the diagnostic snapshot's entry-point and test-program policy and the same
 import-prefix eligibility rules; those settings participate in semantic cache
 identity. Current entry text still receives completion-marker analysis, and
 changed dependency contents invalidate reuse. Like analysis, it never
-builds a missing preamble itself. Its request-owned
+builds a missing preamble itself. For a directly authored member marker in a concrete
+entry-file function or constructor, semantic
+analysis collects the receiver's candidates through the ordinary lexical
+body pass, including visibility, overloads, substituted types and declaration
+documentation. Once those facts are available the query can return a partial
+semantic model without checking unrelated deferred bodies or finalizing
+whole-program contracts. This query-only model never enters lowering.
+Its request-owned
 cancellation flag reaches the same compiler safe points as diagnostic analysis.
 For a directly authored member or qualified name, the completion worker retains
 one complete compiler result. Extending its identifier with all surrounding

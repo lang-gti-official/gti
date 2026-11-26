@@ -107,6 +107,9 @@ public:
   // A subsequent check invalidates references borrowed from model() or
   // errors(), including when a rejected preamble adoption restarts the request.
   bool check(const Program &program);
+  // A captured member list needs only the declaration and body facts that
+  // produced it. The resulting partial model cannot be lowered.
+  void setMemberCompletionQuery(bool enabled);
   using EntryDiagnosticObserver =
       std::function<void(std::span<const Diagnostic>)>;
   bool check(const Program &program, const EntryDiagnosticObserver &observer,

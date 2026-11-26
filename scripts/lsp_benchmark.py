@@ -199,6 +199,54 @@ def read_trace(path):
     ]
 
 
+def large_document_requests(session, fixture):
+    # The long first line exercises UTF-16 projection; the remaining lines
+    # distinguish indexing a whole source once from indexing it per occurrence.
+    comments = 6000
+    uses = 400
+    padding = "// An ordinary source line interspersed with references.\n"
+    source = (
+        "/*😀*/ " * comments + "int main() {\n  mut int total = 0;\n"
+        + (padding * 12 + "  total += 1;\n") * uses + "  return total;\n}\n"
+    )
+    path = fixture / "large.gti"
+    path.write_text(source, encoding="utf-8")
+    document = {"uri": path.as_uri()}
+    session.send({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {"textDocument": {
+            **document, "version": 1, "languageId": "gti", "text": source,
+        }},
+    })
+    assert_clean_diagnostics(session.receive(diagnostics_for(path.as_uri(), 1)))
+
+    timings = {}
+    def request(request_id, method, metric, **params):
+        start = time.perf_counter_ns()
+        session.send({
+            "jsonrpc": "2.0", "id": request_id, "method": "textDocument/" + method,
+            "params": {"textDocument": document, **params},
+        })
+        result = session.receive(lambda message: message.get("id") == request_id)
+        timings[metric] = elapsed_ms(start)
+        return result["result"]
+
+    data = request(14, "semanticTokens/full", "largeDocumentSemanticTokens")["data"]
+    # Each comment is six UTF-16 units wide and is followed by one space.
+    assert data[:3] == [0, 0, 6]
+    assert data[5:comments * 5] == [0, 7, 6, data[3], data[4]] * (comments - 1)
+    assert data[comments * 5:comments * 5 + 3] == [0, 7, 3]  # int after last comment
+
+    position = {"line": 1, "character": 12}
+    highlights = request(15, "documentHighlight", "largeDocumentHighlights", position=position)
+    refs = request(16, "references", "largeDocumentReferences", position=position,
+                   context={"includeDeclaration": True})
+    rename = request(17, "rename", "largeDocumentRename", position=position, newName="sum")
+    assert len(highlights) == len(refs) == len(rename["changes"][path.as_uri()]) == uses + 2
+    return timings
+
+
 def run_workload(executable, standard_library, fixture, run_root, dependency_count):
     source = write_fixture(fixture, dependency_count)
     root_path = (fixture / "main.gti").resolve()
@@ -366,6 +414,7 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
         final_diagnostics = session.receive(diagnostics_for(root_uri, final_version))
         timings["supersededDiagnostics"] = elapsed_ms(start)
         assert_clean_diagnostics(final_diagnostics)
+        timings.update(large_document_requests(session, fixture))
     finally:
         session.close()
     return {"timingsMilliseconds": timings, "frontendTrace": read_trace(trace_path)}

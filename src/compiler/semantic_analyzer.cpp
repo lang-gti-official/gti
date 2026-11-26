@@ -26,6 +26,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
                                       sourceDebugProfile, compileLimits);
   fresh->suggestEnumSwitchCases = suggestEnumSwitchCases;
   fresh->cancellation = cancellation;
+  fresh->memberCompletionQuery = memberCompletionQuery;
   fresh->reuseConstantEvaluations = reuseConstantEvaluations;
   fresh->deferConstexprBodies = deferConstexprBodies;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
@@ -53,6 +54,11 @@ bool SemanticVisitor::check(const Program &program,
     impl->registrationObserver = nullptr;
   });
   return check(program);
+}
+
+void SemanticVisitor::setMemberCompletionQuery(bool enabled) {
+  impl->memberCompletionQuery = enabled;
+  impl->concreteMemberCapture.reset();
 }
 
 bool SemanticVisitor::check(const Program &program) {

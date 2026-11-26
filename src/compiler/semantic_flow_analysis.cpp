@@ -6621,9 +6621,44 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
   semanticModel.recordCompletion(std::move(context));
 }
 
+bool SemanticVisitor::Impl::isConcreteMemberQuerySite(
+    const Token &token) const {
+  if (instanceAnalysisActive || token.generated || token.expansion != 0 ||
+      functionDepth != 1 || lambdaDepth != 0 || !sourceGraph ||
+      currentSourceUnit != sourceGraph->entryUnit())
+    return false;
+  for (ClassId id = currentClass.value_or(0); id != 0;
+       id = classInfo(id).enclosingClass)
+    if (!classInfo(id).genericParameters.empty())
+      return false;
+
+  const Stmt *owner = nullptr;
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Function &&
+      currentFunctionDeclaration && !currentFunctionDeclaration->isMacro() &&
+      currentFunctionDeclaration->sourceGenericParameters().empty()) {
+    owner = currentFunctionDeclaration;
+  } else if (currentProgramEffectOwner.kind ==
+             ProgramEffectOwnerKind::Constructor) {
+    const auto *constructor = programConstructor(currentProgramEffectOwner.id);
+    if (constructor && constructor->declaration &&
+        constructor->declaration->sourceGenericParameters().empty())
+      owner = constructor->declaration;
+  }
+  // Exclude (for example) a field initializer analyzed on behalf of a
+  // constructor. Only the authored marker inside this body's extent qualifies.
+  return owner && owner->extent() && owner->extent()->source == token.source &&
+         owner->extent()->start <= token.position &&
+         token.position < owner->extent()->end;
+}
+
 auto SemanticVisitor::Impl::captureMemberCompletion(
     const Token &completion, const SemanticType &objectType,
     bool mutableReceiver) -> void {
+  // A generic body or expansion may visit the same written marker again with
+  // other concrete types. Preserve the complete analysis in those contexts.
+  if (memberCompletionQuery)
+    concreteMemberCapture = !concreteMemberCapture.has_value() &&
+                            isConcreteMemberQuerySite(completion);
   SemanticCompletionContext context{.kind = SemanticCompletionKind::Member,
                                     .sourceUnit = currentSourceUnit,
                                     .replacementRange = tokenSpan(completion),
