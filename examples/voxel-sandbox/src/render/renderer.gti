@@ -105,7 +105,7 @@ void main() { o_color = vec4(0.05, 0.05, 0.05, 0.85); }
 )glsl";
 }
 
-int64_t chunk_key(int32_t cx, int32_t cz) {
+int64_t render_chunk_key(int32_t cx, int32_t cz) {
   return (int64_t(cx) << 32i64) ^ (int64_t(cz) & 0xFFFFFFFFi64);
 }
 
@@ -188,6 +188,7 @@ class Renderer {
   mut bool query_pending[4] = {};
   mut int32_t query_next = 0;
   mut std::string gl_renderer_name{};
+  mut std::string gl_version_name{};
   mut std::string last_error{};
 
   uint32_t compile(uint32_t kind, std::string_view source) mut {
@@ -281,6 +282,7 @@ public:
 
   std::string& error() { return this.last_error; }
   std::string& renderer_name() { return this.gl_renderer_name; }
+  std::string& gl_version() { return this.gl_version_name; }
   uint32_t texture_array() { return this.tiles; }
 
   bool initialize(std::vector<uint8_t>& tile_pixels, int32_t tile_count) mut {
@@ -290,6 +292,7 @@ public:
     if (this.line_program == uint32_t(0)) return false;
     unsafe {
       this.gl_renderer_name = std::string(gl::glGetString(gl::RENDERER));
+      this.gl_version_name = std::string(gl::glGetString(gl::VERSION));
       this.u_chunk_vp = gl::glGetUniformLocation(this.chunk_program, "u_view_projection");
       this.u_chunk_origin = gl::glGetUniformLocation(this.chunk_program, "u_origin");
       this.u_chunk_time = gl::glGetUniformLocation(this.chunk_program, "u_time");
@@ -394,13 +397,13 @@ public:
   }
 
   bool has_chunk(int32_t cx, int32_t cz) {
-    int64_t key = chunk_key(cx, cz);
+    int64_t key = render_chunk_key(cx, cz);
     return this.slots.contains(key);
   }
 
   // Revision the uploaded mesh was built from; 0xFFFFFFFF when absent.
   uint32_t chunk_revision(int32_t cx, int32_t cz) {
-    int64_t key = chunk_key(cx, cz);
+    int64_t key = render_chunk_key(cx, cz);
     if (!this.slots.contains(key)) return uint32_t(0xFFFFFFFF);
     return this.chunks[this.slots.at(key)].revision;
   }
@@ -410,7 +413,7 @@ public:
   void upload_chunk(int32_t cx, int32_t cz, uint32_t revision,
                     std::vector<uint32_t>& opaque,
                     std::vector<uint32_t>& translucent) mut {
-    int64_t key = chunk_key(cx, cz);
+    int64_t key = render_chunk_key(cx, cz);
     if (!this.slots.contains(key)) {
       mut GpuChunk fresh = GpuChunk();
       fresh.cx = cx;
@@ -427,7 +430,7 @@ public:
   }
 
   void remove_chunk(int32_t cx, int32_t cz) mut {
-    int64_t key = chunk_key(cx, cz);
+    int64_t key = render_chunk_key(cx, cz);
     if (!this.slots.contains(key)) return;
     uint64_t slot = this.slots.at(key);
     release_gpu_chunk(this.chunks[slot]);
@@ -435,29 +438,28 @@ public:
     if (slot != last) {
       GpuChunk moved = this.chunks[last];
       this.chunks[slot] = moved;
-      this.slots.insert_or_assign(chunk_key(moved.cx, moved.cz), slot);
+      this.slots.insert_or_assign(render_chunk_key(moved.cx, moved.cz), slot);
     }
     this.chunks.pop_back();
     [[discard]] this.slots.erase(key);
   }
 
-  // Returns GPU nanoseconds of the oldest finished frame, or -1.
+  // Returns GPU nanoseconds of the oldest in-flight frame once its result
+  // is ready, or -1. Only the query issued GPU_QUERY_RING - 1 frames ago is
+  // asked: asking about the frame just submitted makes the driver flush and
+  // can stall the CPU on Apple's GL-over-Metal.
   int64_t poll_gpu_ns() mut {
-    mut int64_t result = -1i64;
+    int32_t oldest = this.query_next;
+    if (!this.query_pending[oldest]) return -1i64;
     unsafe {
-      for (mut int32_t i = 0; i < GPU_QUERY_RING; i++) {
-        if (!this.query_pending[i]) continue;
-        mut int32_t available = 0;
-        gl::glGetQueryObjectiv(this.queries[i], gl::QUERY_RESULT_AVAILABLE, &available);
-        if (available != 0) {
-          mut uint64_t ns = uint64_t(0);
-          gl::glGetQueryObjectui64v(this.queries[i], gl::QUERY_RESULT, &ns);
-          this.query_pending[i] = false;
-          result = int64_t(ns);
-        }
-      }
+      mut int32_t available = 0;
+      gl::glGetQueryObjectiv(this.queries[oldest], gl::QUERY_RESULT_AVAILABLE, &available);
+      if (available == 0) return -1i64;
+      mut uint64_t ns = uint64_t(0);
+      gl::glGetQueryObjectui64v(this.queries[oldest], gl::QUERY_RESULT, &ns);
+      this.query_pending[oldest] = false;
+      return int64_t(ns);
     }
-    return result;
   }
 
   RenderStats render(FrameView& view, mut Frustum& frustum) mut {
@@ -577,8 +579,8 @@ public:
       if (timing) {
         gl::glEndQuery(gl::TIME_ELAPSED);
         this.query_pending[q] = true;
-        this.query_next = (q + 1) % GPU_QUERY_RING;
       }
+      this.query_next = (q + 1) % GPU_QUERY_RING;
     }
     return stats;
   }

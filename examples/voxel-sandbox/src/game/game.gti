@@ -149,9 +149,10 @@ class Game {
     int32_t pcz = this.player_chunk_z();
     int64_t budget_ns = int64_t(this.options.stream_budget_ms * 1000000.0);
     int64_t start = now_ns();
+    this.profiler.zone_begin(ZONE_STREAM);
 
     // Unload far chunks (world and GPU) with some hysteresis.
-    int32_t keep = this.options.render_distance + 3;
+    int32_t keep = this.options.render_distance + 4;
     std::vector<int64_t> loaded = this.world.loaded_chunk_keys();
     for (mut uint64_t i = uint64_t(0); i < loaded.size(); i++) {
       int32_t cx = key_cx(loaded[i]);
@@ -165,6 +166,7 @@ class Game {
     }
 
     mut int64_t generated = 0;
+    this.profiler.zone_end(ZONE_STREAM);
     this.profiler.zone_begin(ZONE_WORLDGEN);
     uint64_t generate_count = this.generate_order.size();
     for (mut uint64_t i = uint64_t(0); i < generate_count; i++) {
@@ -180,6 +182,7 @@ class Game {
 
     mut int64_t meshed = 0;
     mut bool all_meshed = true;
+    this.profiler.zone_begin(ZONE_STREAM);
     uint64_t mesh_count = this.mesh_order.size();
     for (mut uint64_t i = uint64_t(0); i < mesh_count; i++) {
       ChunkOffset o = this.mesh_order[i];
@@ -195,9 +198,11 @@ class Game {
         all_meshed = false;
         break;
       }
+      this.profiler.zone_end(ZONE_STREAM);
       this.profiler.zone_begin(ZONE_MESHING);
       bool built = this.world.build_mesh(cx, cz, this.mesh);
       this.profiler.zone_end(ZONE_MESHING);
+      this.profiler.zone_begin(ZONE_STREAM);
       if (!built) {
         all_meshed = false;
         continue;
@@ -207,6 +212,7 @@ class Game {
       this.profiler.zone_end(ZONE_UPLOAD);
       meshed += 1i64;
     }
+    this.profiler.zone_end(ZONE_STREAM);
     if (all_meshed and this.first_full_load_seconds < 0.0) {
       this.first_full_load_seconds = this.window.time();
     }
@@ -298,12 +304,13 @@ class Game {
     this.hud.begin(width, height);
     if (!this.options.benchmark) {
       this.hud.crosshair();
+      this.hud.set_block_texture(this.renderer.texture_array());
       this.hud.hotbar(this.hotbar, this.selected);
     }
     if (this.show_debug) {
       std::vector<std::string> lines = this.profiler.overlay_lines();
-      float scale = 2.0;
-      float line_height = 10.0 * scale;
+      float scale = this.hud.ui_scale();
+      float line_height = this.hud.line_height(scale);
       mut float y = 8.0;
       Vec3 p = this.player.position;
       std::string position = std::format("XYZ {:.2f} {:.2f} {:.2f}  chunk {} {}",
@@ -334,7 +341,7 @@ class Game {
       this.hud.text(12.0, y + 4.0, scale, draw_line.view(), uint32_t(0xFFFFFFFF));
       y += line_height;
       for (mut uint64_t i = uint64_t(0); i < lines.size(); i++) {
-        this.hud.text(12.0, y + 4.0, scale, lines[i].view(), uint32_t(0xD0F0FFFF));
+        this.hud.text_shadowed(12.0, y + 4.0, scale, lines[i].view(), uint32_t(0xD0F0FFFF));
         y += line_height;
       }
     }
@@ -378,7 +385,7 @@ public:
       return 3;
     }
     this.setup_hotbar();
-    this.generate_order = spiral_offsets(this.options.render_distance + 1);
+    this.generate_order = spiral_offsets(this.options.render_distance + 2);
     this.mesh_order = spiral_offsets(this.options.render_distance);
 
     this.profiler.set_meta("program", "gti-voxel-sandbox");
@@ -390,6 +397,11 @@ public:
     mut std::string mode_name = std::string("interactive");
     if (this.options.benchmark) mode_name = std::string("benchmark");
     this.profiler.set_meta("mode", mode_name.view());
+    this.profiler.set_meta("gl_version", this.renderer.gl_version().view());
+    this.profiler.set_meta("window_size", std::format("{}x{}", this.options.width, this.options.height).view());
+    this.profiler.set_meta("fullscreen", std::format("{}", this.options.fullscreen).view());
+    this.profiler.set_meta("stream_budget_ms", std::format("{}", this.options.stream_budget_ms).view());
+    this.profiler.set_meta("chunk_size", "16x128x16");
 
     if (this.options.benchmark) {
       this.drive_benchmark(0.0f64);
@@ -457,8 +469,10 @@ public:
         this.profiler.count(CTR_QUADS_DRAWN, stats.quads);
         this.draw_hud(width, height, stats);
       }
+      this.profiler.zone_begin(ZONE_STATS);
       int64_t gpu = this.renderer.poll_gpu_ns();
       if (gpu >= 0i64) this.profiler.record_gpu_ns(gpu);
+      this.profiler.zone_end(ZONE_STATS);
 
       if (width > 0 and height > 0) {
         bool timed_shot = this.options.screenshot_at >= 0.0 and !this.screenshot_taken and
@@ -477,9 +491,12 @@ public:
       this.profiler.zone_begin(ZONE_SWAP);
       this.window.swap();
       this.profiler.zone_end(ZONE_SWAP);
+      this.profiler.zone_begin(ZONE_STATS);
+      bool report_second = this.profiler.one_second_elapsed();
+      this.profiler.zone_end(ZONE_STATS);
       this.profiler.frame_end();
 
-      if (this.profiler.one_second_elapsed()) {
+      if (report_second) {
         std::string line = this.profiler.summary_line();
         std::string title = std::format("GTI voxel sandbox - {}", line);
         this.window.set_title(title.c_string());
@@ -493,6 +510,7 @@ public:
                            std::format("{}", this.chunks_meshed_total).view());
     this.profiler.set_meta("first_full_load_seconds",
                            std::format("{:.3f}", this.first_full_load_seconds - start_time).view());
+    this.profiler.set_meta("framebuffer_size", std::format("{}x{}", width, height).view());
     if (this.options.report_path.size() > uint64_t(0)) {
       if (this.profiler.write_report(this.options.report_path.view())) {
         std::println("profile report written to {}", this.options.report_path);

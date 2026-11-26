@@ -1,0 +1,109 @@
+// Deterministic benchmark camera path.
+//
+// Convention: yaw in radians about +Y, yaw = 0 looks toward -Z, forward =
+// (sin(yaw)*cos(pitch), sin(pitch), -cos(yaw)*cos(pitch)); pitch + is up.
+//
+// Default 60 s path (sea level 48, terrain mostly 40..90):
+//   0 .. 25 s  straight leg toward -Z at 24 blocks/s (~600 blocks: forces new
+//              chunk generation and meshing every frame, like a player running
+//              or flying across the world),
+//  25 .. 40 s  wide 90-degree right turn (radius ~230 blocks) onto +X,
+//  40 .. 44 s  ease down to a 3 blocks/s drift,
+//  42 .. 58 s  slow 360-degree pan with a gentle look down and back up
+//              (stresses frustum culling and overdraw over all directions),
+//  58 .. 60 s  settle.
+// Speed, heading, look yaw and pitch are smooth functions of time; the
+// position is their integral, precomputed at 240 Hz and linearly
+// interpolated, so the path has no jumps at any frame rate.
+export module flight;
+
+import std.cmath;
+import std.vector;
+
+export namespace voxel {
+constexpr double FLIGHT_PI = 3.14159265358979d;
+
+double flight_smoothstep(double a, double b, double t) {
+  if (t <= a) return 0.0d;
+  if (t >= b) return 1.0d;
+  double u = (t - a) / (b - a);
+  return u * u * (3.0d - 2.0d * u);
+}
+
+class FlightPath {
+  mut double duration_ = 60.0d;
+  mut double step_ = 1.0d / 240.0d;
+  // Wall seconds -> path seconds (1 for the default 60 s path).
+  mut double time_scale_ = 1.0d;
+  mut std::vector<float> xs_{};
+  mut std::vector<float> zs_{};
+
+  double heading_at(double t) {
+    return FLIGHT_PI * 0.5d * flight_smoothstep(25.0d, 40.0d, t);
+  }
+
+  double speed_at(double t) {
+    return 24.0d - 21.0d * flight_smoothstep(40.0d, 44.0d, t);
+  }
+
+  void build() mut {
+    uint64_t samples = uint64_t(this.duration_ / this.step_) + uint64_t(2);
+    this.xs_.reserve(samples);
+    this.zs_.reserve(samples);
+    mut double x = 8.0d;
+    mut double z = 8.0d;
+    for (mut uint64_t i = uint64_t(0); i < samples; i++) {
+      this.xs_.push_back(float(x));
+      this.zs_.push_back(float(z));
+      // Midpoint integration of the velocity field.
+      double t = double(i) * this.step_ + this.step_ * 0.5d;
+      double h = this.heading_at(t);
+      double v = this.speed_at(t);
+      x += double(std::sin(float(h))) * v * this.step_;
+      z -= double(std::cos(float(h))) * v * this.step_;
+    }
+  }
+
+public:
+  FlightPath() { this.build(); }
+
+  // The same path, traversed in `seconds` of wall time (faster or slower).
+  FlightPath(double seconds) {
+    if (seconds > 0.0d) this.time_scale_ = this.duration_ / seconds;
+    this.build();
+  }
+
+  double duration_seconds() { return this.duration_ / this.time_scale_; }
+
+  void pose_at(double t_in, mut float& x, mut float& y, mut float& z,
+               mut float& yaw, mut float& pitch) {
+    mut double t = t_in * this.time_scale_;
+    if (t < 0.0d) t = 0.0d;
+    if (t > this.duration_) t = this.duration_;
+    double fi = t / this.step_;
+    mut uint64_t i = uint64_t(fi);
+    uint64_t last = this.xs_.size() - uint64_t(2);
+    if (i > last) i = last;
+    float f = float(fi - double(i));
+    float x0 = this.xs_[i];
+    float x1 = this.xs_[i + uint64_t(1)];
+    float z0 = this.zs_[i];
+    float z1 = this.zs_[i + uint64_t(1)];
+    x = x0 + (x1 - x0) * f;
+    z = z0 + (z1 - z0) * f;
+
+    // Altitude: gentle swell while cruising, rising slightly for the pan.
+    float tf = float(t);
+    float cruise = 90.0 + 4.0 * std::sin(tf * 0.35);
+    float pan_alt = float(flight_smoothstep(38.0d, 44.0d, t));
+    y = cruise * (1.0 - pan_alt) + 96.0 * pan_alt;
+
+    double pan = flight_smoothstep(42.0d, 58.0d, t);
+    yaw = float(this.heading_at(t) + 2.0d * FLIGHT_PI * pan);
+    // Look slightly down at the terrain; during the pan dip to ~-0.32 rad
+    // and come back up, so both near ground and the horizon are swept.
+    float dip = std::sin(float(pan * FLIGHT_PI));
+    pitch = -0.12 - 0.2 * dip;
+  }
+};
+}

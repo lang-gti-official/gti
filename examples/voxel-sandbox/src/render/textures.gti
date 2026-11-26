@@ -1,0 +1,760 @@
+// Procedural 16x16 block tiles.
+//
+// Every tile is generated from deterministic integer hash noise, a small
+// per-material palette and a few shapes (cells, rings, boards, bricks). The
+// art is original to this project. Output layout: TILE_COUNT layers, each
+// TILE_SIZE x TILE_SIZE RGBA8 texels, row-major, row 0 = top of the tile as
+// seen on a side face. Layer index = the T_* constant in world/block.gti.
+//
+// All noise wraps at the tile edge, so tiles repeat seamlessly.
+export module textures;
+
+import "../world/block.gti";
+import std.cmath;
+import std.cstdio;
+import std.numeric;
+import std.string;
+import std.vector;
+
+export namespace voxel {
+constexpr int32_t TEX_N = 16;
+
+// --- hashing -------------------------------------------------------------
+
+uint32_t tex_hash(uint32_t seed, int32_t x, int32_t y, uint32_t salt) {
+  mut uint32_t h = std::wrapping_mul(seed ^ salt, uint32_t(0x9E3779B1));
+  h = h ^ std::wrapping_mul(uint32_t(x & 0xFFFF), uint32_t(0x85EBCA77));
+  h = std::wrapping_mul(h ^ (h >> uint32_t(15)), uint32_t(0x27D4EB2F));
+  h = h ^ std::wrapping_mul(uint32_t(y & 0xFFFF), uint32_t(0xC2B2AE3D));
+  h = std::wrapping_mul(h ^ (h >> uint32_t(13)), uint32_t(0x165667B1));
+  h = h ^ (h >> uint32_t(16));
+  return h;
+}
+
+// Uniform [0, 1).
+float tex_rand(uint32_t seed, int32_t x, int32_t y, uint32_t salt) {
+  return float(tex_hash(seed, x, y, salt) >> uint32_t(8)) / 16777216.0;
+}
+
+int32_t wrap16(int32_t v) { return ((v % TEX_N) + TEX_N) % TEX_N; }
+
+// Smooth value noise with a lattice of `cell` texels, wrapping at 16.
+float tex_noise(uint32_t seed, int32_t x, int32_t y, int32_t cell, uint32_t salt) {
+  int32_t cells = TEX_N / cell;
+  int32_t cx = x / cell;
+  int32_t cy = y / cell;
+  float fx = float(x % cell) / float(cell);
+  float fy = float(y % cell) / float(cell);
+  float sx = fx * fx * (3.0 - 2.0 * fx);
+  float sy = fy * fy * (3.0 - 2.0 * fy);
+  int32_t x1 = (cx + 1) % cells;
+  int32_t y1 = (cy + 1) % cells;
+  float a = tex_rand(seed, cx, cy, salt);
+  float b = tex_rand(seed, x1, cy, salt);
+  float c = tex_rand(seed, cx, y1, salt);
+  float d = tex_rand(seed, x1, y1, salt);
+  float top = a + (b - a) * sx;
+  float bottom = c + (d - c) * sx;
+  return top + (bottom - top) * sy;
+}
+
+int32_t clamp255(int32_t v) {
+  if (v < 0) return 0;
+  if (v > 255) return 255;
+  return v;
+}
+
+// --- pixel access ----------------------------------------------------------
+
+void put(mut std::vector<uint8_t>& px, uint32_t layer, int32_t x, int32_t y,
+         int32_t r, int32_t g, int32_t b, int32_t a) {
+  uint64_t i = ((uint64_t(layer) * uint64_t(TEX_N) + uint64_t(y)) * uint64_t(TEX_N) +
+                uint64_t(x)) * uint64_t(4);
+  px[i] = uint8_t(clamp255(r));
+  px[i + uint64_t(1)] = uint8_t(clamp255(g));
+  px[i + uint64_t(2)] = uint8_t(clamp255(b));
+  px[i + uint64_t(3)] = uint8_t(clamp255(a));
+}
+
+// Base color scaled by brightness factor `k` (1.0 = unchanged).
+void put_shade(mut std::vector<uint8_t>& px, uint32_t layer, int32_t x, int32_t y,
+               int32_t r, int32_t g, int32_t b, float k) {
+  put(px, layer, x, y, int32_t(float(r) * k), int32_t(float(g) * k),
+      int32_t(float(b) * k), 255);
+}
+
+uint8_t get_channel(std::vector<uint8_t>& px, uint32_t layer, int32_t x, int32_t y,
+                    int32_t channel) {
+  uint64_t i = ((uint64_t(layer) * uint64_t(TEX_N) + uint64_t(y)) * uint64_t(TEX_N) +
+                uint64_t(x)) * uint64_t(4) + uint64_t(channel);
+  return px[i];
+}
+
+void copy_layer(mut std::vector<uint8_t>& px, uint32_t from, uint32_t to) {
+  uint64_t size = uint64_t(TEX_N * TEX_N * 4);
+  uint64_t a = uint64_t(from) * size;
+  uint64_t b = uint64_t(to) * size;
+  for (mut uint64_t i = uint64_t(0); i < size; i++) {
+    px[b + i] = px[a + i];
+  }
+}
+
+// Distance to the nearest and second-nearest of `count` jittered feature
+// points on a wrapping 16x16 torus (squared distances). Writes the index of
+// the nearest point.
+void cells(uint32_t seed, uint32_t salt, int32_t count, int32_t x, int32_t y,
+           mut float& d1, mut float& d2, mut int32_t& nearest) {
+  d1 = 1000000.0;
+  d2 = 1000000.0;
+  nearest = 0;
+  for (mut int32_t i = 0; i < count; i++) {
+    float px = tex_rand(seed, i, 0, salt) * 16.0;
+    float py = tex_rand(seed, i, 1, salt) * 16.0;
+    mut float dx = float(x) + 0.5 - px;
+    mut float dy = float(y) + 0.5 - py;
+    if (dx > 8.0) dx = dx - 16.0;
+    if (dx < -8.0) dx = dx + 16.0;
+    if (dy > 8.0) dy = dy - 16.0;
+    if (dy < -8.0) dy = dy + 16.0;
+    float d = dx * dx + dy * dy;
+    if (d < d1) {
+      d2 = d1;
+      d1 = d;
+      nearest = i;
+    } else if (d < d2) {
+      d2 = d;
+    }
+  }
+}
+
+// --- materials -------------------------------------------------------------
+
+void gen_stone(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float coarse = tex_noise(seed, x, y, 4, uint32_t(11));
+      float fine = tex_rand(seed, x, y, uint32_t(12));
+      mut float k = 0.86 + coarse * 0.16 + (fine - 0.5) * 0.12;
+      // Short horizontal fissures.
+      float crack = tex_rand(seed, x / 3, y, uint32_t(13));
+      if (crack > 0.93) k = k * 0.78;
+      put_shade(px, layer, x, y, 128, 128, 132, k);
+    }
+  }
+}
+
+void gen_dirt(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float coarse = tex_noise(seed, x, y, 4, uint32_t(21));
+      float fine = tex_rand(seed, x, y, uint32_t(22));
+      float k = 0.84 + coarse * 0.2 + (fine - 0.5) * 0.16;
+      int32_t r = 136;
+      int32_t g = 96;
+      int32_t b = 64;
+      if (fine > 0.94) {
+        // Small light pebble.
+        put_shade(px, layer, x, y, 160, 132, 104, 1.0);
+      } else if (fine < 0.05) {
+        put_shade(px, layer, x, y, r, g, b, 0.62);
+      } else {
+        put_shade(px, layer, x, y, r, g, b, k);
+      }
+    }
+  }
+}
+
+void grass_color(uint32_t seed, int32_t x, int32_t y, mut int32_t& r, mut int32_t& g,
+                 mut int32_t& b) {
+  float coarse = tex_noise(seed, x, y, 4, uint32_t(31));
+  float fine = tex_rand(seed, x, y, uint32_t(32));
+  mut float k = 0.82 + coarse * 0.18 + (fine - 0.5) * 0.22;
+  if (fine > 0.92) k = k + 0.14;
+  r = int32_t(88.0 * k);
+  g = int32_t(156.0 * k);
+  b = int32_t(58.0 * k);
+}
+
+void gen_grass_top(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      mut int32_t r = 0;
+      mut int32_t g = 0;
+      mut int32_t b = 0;
+      grass_color(seed, x, y, r, g, b);
+      put(px, layer, x, y, r, g, b, 255);
+    }
+  }
+}
+
+// Dirt with a cap of `color` hanging down 3-6 texels.
+void gen_capped_side(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer,
+                     uint32_t dirt_layer, bool snowy) {
+  copy_layer(px, dirt_layer, layer);
+  for (mut int32_t x = 0; x < TEX_N; x++) {
+    float h = tex_rand(seed, x, 0, snowy ? uint32_t(41) : uint32_t(42));
+    mut int32_t depth = 3 + int32_t(h * 3.0);
+    if (h > 0.9) depth = depth + 2;
+    for (mut int32_t y = 0; y < depth; y++) {
+      if (snowy) {
+        float n = tex_rand(seed, x, y, uint32_t(43));
+        mut float k = 0.95 + n * 0.05;
+        if (y == depth - 1) k = 0.86;
+        put(px, layer, x, y, int32_t(236.0 * k), int32_t(242.0 * k), int32_t(250.0 * k), 255);
+      } else {
+        mut int32_t r = 0;
+        mut int32_t g = 0;
+        mut int32_t b = 0;
+        grass_color(seed, x, y, r, g, b);
+        if (y == depth - 1) {
+          r = r * 4 / 5;
+          g = g * 4 / 5;
+          b = b * 4 / 5;
+        }
+        put(px, layer, x, y, r, g, b, 255);
+      }
+    }
+  }
+}
+
+void gen_sand(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer, bool stone) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float fine = tex_rand(seed, x, y, uint32_t(51));
+      float coarse = tex_noise(seed, x, y, 8, uint32_t(52));
+      mut float k = 0.93 + coarse * 0.08 + (fine - 0.5) * 0.09;
+      if (fine > 0.96) k = k - 0.12;
+      if (stone) {
+        put_shade(px, layer, x, y, 214, 196, 146, k);
+      } else {
+        put_shade(px, layer, x, y, 226, 212, 160, k);
+      }
+    }
+  }
+}
+
+void gen_sandstone_side(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  gen_sand(px, seed, layer, true);
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float wobble = tex_rand(seed, x / 4, y, uint32_t(55));
+      mut float k = 1.0;
+      if (y == 0 or y == 3) k = 1.06;
+      if (y == 4 or y == 11 or (y == 12 and wobble > 0.5)) k = 0.84;
+      if (y == 15) k = 0.8;
+      if (k != 1.0) {
+        int32_t r = int32_t(get_channel(px, layer, x, y, 0));
+        int32_t g = int32_t(get_channel(px, layer, x, y, 1));
+        int32_t b = int32_t(get_channel(px, layer, x, y, 2));
+        put(px, layer, x, y, int32_t(float(r) * k), int32_t(float(g) * k),
+            int32_t(float(b) * k), 255);
+      }
+    }
+  }
+}
+
+void gen_sandstone_top(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  gen_sand(px, seed, layer, true);
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      bool edge = x == 0 or y == 0 or x == TEX_N - 1 or y == TEX_N - 1;
+      bool inner = x == 2 or y == 2 or x == TEX_N - 3 or y == TEX_N - 3;
+      bool inside = x >= 2 and y >= 2 and x <= TEX_N - 3 and y <= TEX_N - 3;
+      if (edge or (inner and inside)) {
+        int32_t r = int32_t(get_channel(px, layer, x, y, 0));
+        int32_t g = int32_t(get_channel(px, layer, x, y, 1));
+        int32_t b = int32_t(get_channel(px, layer, x, y, 2));
+        put(px, layer, x, y, r * 5 / 6, g * 5 / 6, b * 5 / 6, 255);
+      }
+    }
+  }
+}
+
+void gen_water(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float coarse = tex_noise(seed, x, y, 8, uint32_t(61));
+      float fine = tex_rand(seed, x, y, uint32_t(62));
+      // Diagonal wave crests every 8 texels, displaced by noise.
+      int32_t phase = (x + y * 2 + int32_t(coarse * 4.0)) % 8;
+      mut float k = 0.88 + coarse * 0.12 + (fine - 0.5) * 0.05;
+      if (phase == 5) k = k - 0.1;
+      if (phase == 0 and fine > 0.25) {
+        put(px, layer, x, y, 120, 170, 240, 190);
+      } else if (phase == 1) {
+        put(px, layer, x, y, int32_t(70.0 * k), int32_t(126.0 * k), int32_t(226.0 * k), 175);
+      } else {
+        put(px, layer, x, y, int32_t(46.0 * k), int32_t(98.0 * k), int32_t(206.0 * k), 170);
+      }
+    }
+  }
+}
+
+void gen_log_side(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float col = tex_rand(seed, x, 0, uint32_t(71));
+      float fine = tex_rand(seed, x, y, uint32_t(72));
+      // Bark grooves: some columns are dark, broken by short gaps.
+      float run = tex_rand(seed, x, y / 5 + x, uint32_t(73));
+      mut float k = 0.86 + col * 0.16 + (fine - 0.5) * 0.12;
+      if (col < 0.3 and run > 0.25) k = 0.62 + fine * 0.08;
+      if (col > 0.85 and fine > 0.5) k = k + 0.08;
+      put_shade(px, layer, x, y, 104, 80, 50, k);
+    }
+  }
+}
+
+void gen_log_top(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float fine = tex_rand(seed, x, y, uint32_t(81));
+      float dx = float(x) - 7.5;
+      float dy = float(y) - 7.5;
+      // Chebyshev-ish rounded distance gives squarish rings that read well
+      // at 16x16.
+      mut float ax = dx;
+      if (ax < 0.0) ax = -ax;
+      mut float ay = dy;
+      if (ay < 0.0) ay = -ay;
+      mut float m = ax;
+      if (ay > m) m = ay;
+      float d = m * 0.7 + (ax + ay) * 0.15;
+      bool edge = x == 0 or y == 0 or x == TEX_N - 1 or y == TEX_N - 1;
+      if (edge) {
+        put_shade(px, layer, x, y, 104, 80, 50, 0.8 + fine * 0.15);
+      } else {
+        int32_t ring = int32_t(d + fine * 0.6);
+        mut float k = 0.95 + (fine - 0.5) * 0.08;
+        if (ring % 2 == 1) k = 0.8 + (fine - 0.5) * 0.06;
+        put_shade(px, layer, x, y, 184, 150, 96, k);
+      }
+    }
+  }
+}
+
+void gen_leaves(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float fine = tex_rand(seed, x, y, uint32_t(91));
+      float clump = tex_noise(seed, x, y, 4, uint32_t(92));
+      if (fine < 0.1 + (1.0 - clump) * 0.18) {
+        put(px, layer, x, y, 0, 0, 0, 0);
+      } else {
+        mut float k = 0.7 + clump * 0.3 + (fine - 0.5) * 0.25;
+        if (fine > 0.9) k = k + 0.15;
+        put(px, layer, x, y, int32_t(54.0 * k), int32_t(124.0 * k), int32_t(42.0 * k), 255);
+      }
+    }
+  }
+}
+
+void gen_planks(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    int32_t board = y / 4;
+    int32_t seam_x = int32_t(tex_rand(seed, board, 0, uint32_t(101)) * 16.0);
+    float board_tone = tex_rand(seed, board, 1, uint32_t(102));
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float grain = tex_rand(seed, x / 3 + board * 7, y, uint32_t(103));
+      float fine = tex_rand(seed, x, y, uint32_t(104));
+      mut float k = 0.9 + board_tone * 0.12 + (grain - 0.5) * 0.1 + (fine - 0.5) * 0.04;
+      if (y % 4 == 3) k = 0.62;
+      if (x == seam_x and y % 4 != 3) k = 0.68;
+      if (grain > 0.94 and y % 4 == 1) k = k - 0.14;
+      put_shade(px, layer, x, y, 170, 136, 82, k);
+    }
+  }
+}
+
+void gen_cobble(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      mut float d1 = 0.0;
+      mut float d2 = 0.0;
+      mut int32_t nearest = 0;
+      cells(seed, uint32_t(111), 9, x, y, d1, d2, nearest);
+      float fine = tex_rand(seed, x, y, uint32_t(112));
+      float tone = tex_rand(seed, nearest, 7, uint32_t(113));
+      float gap = std::sqrt(d2) - std::sqrt(d1);
+      if (gap < 0.9) {
+        put_shade(px, layer, x, y, 70, 70, 74, 0.85 + fine * 0.15);
+      } else {
+        mut float k = 0.82 + tone * 0.3 + (fine - 0.5) * 0.1;
+        // Light top-left rim on each stone.
+        if (gap < 1.8 and fine > 0.4) k = k - 0.08;
+        put_shade(px, layer, x, y, 132, 132, 136, k);
+      }
+    }
+  }
+}
+
+void gen_bedrock(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float coarse = tex_noise(seed, x, y, 2, uint32_t(121));
+      float fine = tex_rand(seed, x, y, uint32_t(122));
+      mut float k = 0.3 + coarse * 0.7 + (fine - 0.5) * 0.2;
+      if (k < 0.45) k = 0.2;
+      put_shade(px, layer, x, y, 112, 110, 112, k);
+    }
+  }
+}
+
+void gen_snow(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float coarse = tex_noise(seed, x, y, 4, uint32_t(131));
+      float fine = tex_rand(seed, x, y, uint32_t(132));
+      mut float k = 0.93 + coarse * 0.05 + (fine - 0.5) * 0.03;
+      if (fine > 0.95) k = 1.0;
+      put(px, layer, x, y, int32_t(238.0 * k), int32_t(244.0 * k), int32_t(252.0 * k), 255);
+    }
+  }
+}
+
+void gen_gravel(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      mut float d1 = 0.0;
+      mut float d2 = 0.0;
+      mut int32_t nearest = 0;
+      cells(seed, uint32_t(141), 30, x, y, d1, d2, nearest);
+      float fine = tex_rand(seed, x, y, uint32_t(142));
+      float tone = tex_rand(seed, nearest, 3, uint32_t(143));
+      float hue = tex_rand(seed, nearest, 4, uint32_t(144));
+      float gap = std::sqrt(d2) - std::sqrt(d1);
+      mut float k = 0.62 + tone * 0.5 + (fine - 0.5) * 0.08;
+      if (gap < 0.5) k = 0.5;
+      if (fine > 0.9) k = k + 0.1;
+      if (hue > 0.65) {
+        put_shade(px, layer, x, y, 140, 120, 104, k);
+      } else {
+        put_shade(px, layer, x, y, 132, 128, 126, k);
+      }
+    }
+  }
+}
+
+// Stone with four irregular blobs of the ore color. Each blob gets a lit
+// upper-left and a dark rim on the lower-right so it reads as embedded.
+void gen_ore(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer,
+             uint32_t stone_layer, uint32_t salt, int32_t r, int32_t g, int32_t b) {
+  copy_layer(px, stone_layer, layer);
+  mut std::vector<bool> mask = std::vector<bool>(uint64_t(TEX_N * TEX_N));
+  for (mut int32_t c = 0; c < 4; c++) {
+    // One blob per quadrant, jittered, so ores are evenly spread.
+    int32_t cx = (c % 2) * 8 + 2 + int32_t(tex_rand(seed, c, 0, salt) * 4.0);
+    int32_t cy = (c / 2) * 8 + 2 + int32_t(tex_rand(seed, c, 1, salt) * 4.0);
+    for (mut int32_t dy = -2; dy <= 2; dy++) {
+      for (mut int32_t dx = -2; dx <= 2; dx++) {
+        int32_t x = wrap16(cx + dx);
+        int32_t y = wrap16(cy + dy);
+        float jitter = tex_rand(seed, x, y, salt + uint32_t(1));
+        int32_t dist = dx * dx + dy * dy;
+        bool take = (dist <= 1 and jitter < 0.9) or (dist == 2 and jitter > 0.5) or
+                    ((dist == 4 or dist == 5) and jitter > 0.72);
+        if (take) {
+          mask[uint64_t(y * TEX_N + x)] = true;
+        }
+      }
+    }
+  }
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      bool here = mask[uint64_t(y * TEX_N + x)];
+      bool up = mask[uint64_t(wrap16(y - 1) * TEX_N + x)];
+      bool left = mask[uint64_t(y * TEX_N + wrap16(x - 1))];
+      bool down = mask[uint64_t(wrap16(y + 1) * TEX_N + x)];
+      bool right = mask[uint64_t(y * TEX_N + wrap16(x + 1))];
+      float shade = tex_rand(seed, x, y, salt + uint32_t(2));
+      if (here) {
+        mut float k = 0.88 + shade * 0.18;
+        if (!up or !left) k = k + 0.14;
+        if (!down or !right) k = k - 0.16;
+        put_shade(px, layer, x, y, r, g, b, k);
+      } else if ((up and !down) or (left and !right)) {
+        // Shadow cast by the ore onto the stone below/right of it.
+        int32_t sr = int32_t(get_channel(px, layer, x, y, 0));
+        int32_t sg = int32_t(get_channel(px, layer, x, y, 1));
+        int32_t sb = int32_t(get_channel(px, layer, x, y, 2));
+        put(px, layer, x, y, sr * 3 / 4, sg * 3 / 4, sb * 3 / 4, 255);
+      }
+    }
+  }
+}
+
+void gen_glass(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      bool frame = x == 0 or y == 0 or x == TEX_N - 1 or y == TEX_N - 1;
+      bool corner = (x <= 1 or x >= TEX_N - 2) and (y <= 1 or y >= TEX_N - 2);
+      int32_t diag = x + y;
+      bool streak = (diag == 9 or diag == 10) and x >= 3 and x <= 8;
+      bool streak2 = diag == 13 and x >= 6 and x <= 8;
+      if (frame) {
+        float fine = tex_rand(seed, x, y, uint32_t(151));
+        mut float k = 0.92 + fine * 0.08;
+        if (x == TEX_N - 1 or y == TEX_N - 1) k = 0.72;
+        put(px, layer, x, y, int32_t(196.0 * k), int32_t(226.0 * k), int32_t(232.0 * k), 255);
+      } else if (corner) {
+        put(px, layer, x, y, 214, 236, 240, 255);
+      } else if (streak or streak2) {
+        put(px, layer, x, y, 240, 250, 255, 190);
+      } else {
+        put(px, layer, x, y, 0, 0, 0, 0);
+      }
+    }
+  }
+}
+
+void gen_cactus_side(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float fine = tex_rand(seed, x, y, uint32_t(161));
+      mut float k = 0.92 + (fine - 0.5) * 0.1;
+      // Ribs every 4 texels; the outer columns are the inset skin.
+      if (x % 4 == 1) k = 1.08;
+      if (x % 4 == 3) k = 0.8;
+      if (x == 0 or x == TEX_N - 1) k = 0.6;
+      bool spine = x % 4 == 1 and (y + x * 3) % 5 == 0;
+      if (spine) {
+        put(px, layer, x, y, 228, 226, 186, 255);
+      } else {
+        put_shade(px, layer, x, y, 74, 136, 48, k);
+      }
+    }
+  }
+}
+
+void gen_cactus_top(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      float fine = tex_rand(seed, x, y, uint32_t(171));
+      mut int32_t ex = x;
+      if (TEX_N - 1 - x < ex) ex = TEX_N - 1 - x;
+      mut int32_t ey = y;
+      if (TEX_N - 1 - y < ey) ey = TEX_N - 1 - y;
+      mut int32_t e = ex;
+      if (ey < e) e = ey;
+      mut float k = 0.95 + (fine - 0.5) * 0.08;
+      if (e == 0) k = 0.6;
+      if (e == 1) k = 1.05;
+      if (e == 3 or e == 6) k = 0.82;
+      if (e == 7) k = 1.12;
+      put_shade(px, layer, x, y, 82, 144, 54, k);
+    }
+  }
+}
+
+void gen_brick(mut std::vector<uint8_t>& px, uint32_t seed, uint32_t layer) {
+  for (mut int32_t y = 0; y < TEX_N; y++) {
+    int32_t row = y / 4;
+    int32_t offset = (row % 2) * 4;
+    for (mut int32_t x = 0; x < TEX_N; x++) {
+      int32_t bx = wrap16(x + offset);
+      int32_t brick = row * 4 + bx / 8;
+      float tone = tex_rand(seed, brick, 0, uint32_t(181));
+      float fine = tex_rand(seed, x, y, uint32_t(182));
+      bool mortar = y % 4 == 3 or bx % 8 == 7;
+      if (mortar) {
+        put_shade(px, layer, x, y, 184, 174, 164, 0.86 + fine * 0.1);
+      } else {
+        mut float k = 0.85 + tone * 0.22 + (fine - 0.5) * 0.12;
+        if (y % 4 == 0) k = k + 0.07;
+        put_shade(px, layer, x, y, 154, 72, 56, k);
+      }
+    }
+  }
+}
+
+// Generates every tile. Deterministic for a given seed.
+std::vector<uint8_t> generate_tiles(uint32_t seed) {
+  uint64_t bytes = uint64_t(TILE_COUNT) * uint64_t(TEX_N * TEX_N * 4);
+  mut std::vector<uint8_t> px = std::vector<uint8_t>(bytes);
+  gen_stone(px, seed, T_STONE);
+  gen_dirt(px, seed, T_DIRT);
+  gen_grass_top(px, seed, T_GRASS_TOP);
+  gen_capped_side(px, seed, T_GRASS_SIDE, T_DIRT, false);
+  gen_sand(px, seed, T_SAND, false);
+  gen_water(px, seed, T_WATER);
+  gen_log_side(px, seed, T_LOG_SIDE);
+  gen_log_top(px, seed, T_LOG_TOP);
+  gen_leaves(px, seed, T_LEAVES);
+  gen_planks(px, seed, T_PLANKS);
+  gen_cobble(px, seed, T_COBBLESTONE);
+  gen_bedrock(px, seed, T_BEDROCK);
+  gen_snow(px, seed, T_SNOW);
+  gen_capped_side(px, seed, T_SNOW_SIDE, T_DIRT, true);
+  gen_gravel(px, seed, T_GRAVEL);
+  gen_ore(px, seed, T_COAL_ORE, T_STONE, uint32_t(191), 38, 36, 38);
+  gen_ore(px, seed, T_IRON_ORE, T_STONE, uint32_t(201), 212, 170, 138);
+  gen_glass(px, seed, T_GLASS);
+  gen_cactus_side(px, seed, T_CACTUS_SIDE);
+  gen_cactus_top(px, seed, T_CACTUS_TOP);
+  gen_brick(px, seed, T_BRICK);
+  gen_sandstone_side(px, seed, T_SANDSTONE);
+  gen_sandstone_top(px, seed, T_SANDSTONE_TOP);
+  return px;
+}
+
+// --- PNG preview ------------------------------------------------------------
+// Minimal PNG encoder: 8-bit RGB, zlib stream of stored (uncompressed)
+// deflate blocks, CRC-32 and Adler-32 per the PNG/zlib specifications.
+
+void push_be32(mut std::vector<uint8_t>& out, uint32_t v) {
+  out.push_back(uint8_t(v >> uint32_t(24)));
+  out.push_back(uint8_t((v >> uint32_t(16)) & uint32_t(255)));
+  out.push_back(uint8_t((v >> uint32_t(8)) & uint32_t(255)));
+  out.push_back(uint8_t(v & uint32_t(255)));
+}
+
+uint32_t crc32_update(uint32_t crc_in, std::vector<uint8_t>& data, uint64_t first,
+                      uint64_t last) {
+  mut uint32_t crc = crc_in;
+  for (mut uint64_t i = first; i < last; i++) {
+    crc = crc ^ uint32_t(data[i]);
+    for (mut int32_t k = 0; k < 8; k++) {
+      if ((crc & uint32_t(1)) != uint32_t(0)) {
+        crc = (crc >> uint32_t(1)) ^ uint32_t(0xEDB88320);
+      } else {
+        crc = crc >> uint32_t(1);
+      }
+    }
+  }
+  return crc;
+}
+
+// Appends one chunk: length, 4-byte type, payload, CRC over type+payload.
+void png_chunk(mut std::vector<uint8_t>& out, std::string_view type,
+               std::vector<uint8_t>& payload) {
+  push_be32(out, uint32_t(payload.size()));
+  uint64_t type_at = out.size();
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(4); i++) {
+    out.push_back(uint8_t(type[i]));
+  }
+  for (mut uint64_t i = uint64_t(0); i < payload.size(); i++) {
+    out.push_back(payload[i]);
+  }
+  uint64_t end = out.size();
+  uint32_t crc = crc32_update(uint32_t(0xFFFFFFFF), out, type_at, end) ^ uint32_t(0xFFFFFFFF);
+  push_be32(out, crc);
+}
+
+bool write_bytes_file(std::string_view path, std::vector<uint8_t>& bytes) {
+  auto opened = std::fopen(path, std::file_mode::write);
+  if (!opened) return false;
+  mut auto file = std::move(opened).value();
+  uint64_t total = bytes.size();
+  mut uint64_t done = uint64_t(0);
+  auto all = bytes.as_span();
+  while (done < total) {
+    auto rest = all.subspan(done, total - done);
+    auto written = file->write_some(rest);
+    if (!written) return false;
+    if (written.value() == uint64_t(0)) return false;
+    done = done + written.value();
+  }
+  auto closed = std::fclose(*file);
+  return closed.has_value();
+}
+
+// rgb: width*height*3 bytes, row-major, top row first.
+bool write_png_rgb(std::vector<uint8_t>& rgb, int32_t width, int32_t height,
+                   std::string_view path) {
+  mut std::vector<uint8_t> out{};
+  uint8_t[8] signature = {uint8_t(137), uint8_t(80), uint8_t(78), uint8_t(71),
+                          uint8_t(13), uint8_t(10), uint8_t(26), uint8_t(10)};
+  for (mut int32_t i = 0; i < 8; i++) out.push_back(signature[i]);
+
+  mut std::vector<uint8_t> ihdr{};
+  push_be32(ihdr, uint32_t(width));
+  push_be32(ihdr, uint32_t(height));
+  ihdr.push_back(uint8_t(8));  // bit depth
+  ihdr.push_back(uint8_t(2));  // color type RGB
+  ihdr.push_back(uint8_t(0));  // deflate
+  ihdr.push_back(uint8_t(0));  // adaptive filtering
+  ihdr.push_back(uint8_t(0));  // no interlace
+  png_chunk(out, "IHDR", ihdr);
+
+  // Raw scanlines with filter byte 0.
+  mut std::vector<uint8_t> raw{};
+  uint64_t stride = uint64_t(width) * uint64_t(3);
+  for (mut int32_t y = 0; y < height; y++) {
+    raw.push_back(uint8_t(0));
+    uint64_t row = uint64_t(y) * stride;
+    for (mut uint64_t i = uint64_t(0); i < stride; i++) raw.push_back(rgb[row + i]);
+  }
+  mut std::vector<uint8_t> z{};
+  z.push_back(uint8_t(0x78));
+  z.push_back(uint8_t(0x01));
+  uint64_t n = raw.size();
+  mut uint64_t at = uint64_t(0);
+  mut uint32_t a = uint32_t(1);
+  mut uint32_t b = uint32_t(0);
+  while (at < n) {
+    mut uint64_t len = n - at;
+    if (len > uint64_t(65535)) len = uint64_t(65535);
+    bool last = at + len == n;
+    z.push_back(last ? uint8_t(1) : uint8_t(0));
+    uint32_t l = uint32_t(len);
+    uint32_t nl = l ^ uint32_t(0xFFFF);
+    z.push_back(uint8_t(l & uint32_t(255)));
+    z.push_back(uint8_t(l >> uint32_t(8)));
+    z.push_back(uint8_t(nl & uint32_t(255)));
+    z.push_back(uint8_t(nl >> uint32_t(8)));
+    for (mut uint64_t i = uint64_t(0); i < len; i++) {
+      uint8_t v = raw[at + i];
+      z.push_back(v);
+      a = (a + uint32_t(v)) % uint32_t(65521);
+      b = (b + a) % uint32_t(65521);
+    }
+    at = at + len;
+  }
+  push_be32(z, (b << uint32_t(16)) | a);
+  png_chunk(out, "IDAT", z);
+  std::vector<uint8_t> empty{};
+  png_chunk(out, "IEND", empty);
+  return write_bytes_file(path, out);
+}
+
+// Lays the tiles out in an 8-column grid, each scaled `scale`x, composited
+// over a checkerboard so transparent texels are visible.
+bool write_tiles_png_preview(std::vector<uint8_t>& tiles, std::string_view path) {
+  int32_t scale = 8;
+  int32_t columns = 8;
+  int32_t gap = 8;
+  int32_t rows = (TILE_COUNT + columns - 1) / columns;
+  int32_t cell = TEX_N * scale + gap;
+  int32_t width = columns * cell + gap;
+  int32_t height = rows * cell + gap;
+  mut std::vector<uint8_t> rgb = std::vector<uint8_t>(uint64_t(width) * uint64_t(height) * uint64_t(3));
+  for (mut int32_t y = 0; y < height; y++) {
+    for (mut int32_t x = 0; x < width; x++) {
+      uint64_t o = (uint64_t(y) * uint64_t(width) + uint64_t(x)) * uint64_t(3);
+      rgb[o] = uint8_t(40);
+      rgb[o + uint64_t(1)] = uint8_t(42);
+      rgb[o + uint64_t(2)] = uint8_t(48);
+    }
+  }
+  for (mut int32_t t = 0; t < TILE_COUNT; t++) {
+    int32_t ox = gap + (t % columns) * cell;
+    int32_t oy = gap + (t / columns) * cell;
+    for (mut int32_t y = 0; y < TEX_N * scale; y++) {
+      for (mut int32_t x = 0; x < TEX_N * scale; x++) {
+        int32_t tx = x / scale;
+        int32_t ty = y / scale;
+        bool dark = ((x / 8) + (y / 8)) % 2 == 0;
+        int32_t bg = dark ? 150 : 200;
+        int32_t al = int32_t(get_channel(tiles, uint32_t(t), tx, ty, 3));
+        uint64_t o = (uint64_t(oy + y) * uint64_t(width) + uint64_t(ox + x)) * uint64_t(3);
+        for (mut int32_t ch = 0; ch < 3; ch++) {
+          int32_t c = int32_t(get_channel(tiles, uint32_t(t), tx, ty, ch));
+          int32_t v = (c * al + bg * (255 - al)) / 255;
+          rgb[o + uint64_t(ch)] = uint8_t(v);
+        }
+      }
+    }
+  }
+  return write_png_rgb(rgb, width, height, path);
+}
+}

@@ -3,6 +3,9 @@ import "../world/chunk.gti";
 import "../core/math.gti";
 import "../render/renderer.gti";
 import "../game/window.gti";
+import "../game/player.gti";
+import "../world/world.gti";
+import std.memory;
 
 bool near(float a, float b) { return voxel::absf(a - b) < 0.0001; }
 
@@ -27,5 +30,57 @@ int main() {
   voxel::Mat4 id = voxel::Mat4::identity();
   voxel::Mat4 same = vp.multiply(id);
   if (!near(same.at(2, 3), vp.at(2, 3))) return 14;
+
+  // A flat 3x3-chunk test world: stone below y = 10.
+  mut voxel::World world = voxel::World(uint32_t(7));
+  for (mut int32_t cz = -1; cz <= 1; cz++) {
+    for (mut int32_t cx = -1; cx <= 1; cx++) {
+      mut auto flat = std::make_unique<voxel::Chunk>(cx, cz);
+      for (mut int32_t y = 0; y < 10; y++) {
+        for (mut int32_t z = 0; z < 16; z++) {
+          for (mut int32_t x = 0; x < 16; x++) flat->set(x, y, z, voxel::STONE);
+        }
+      }
+      if (!world.insert_chunk(std::move(flat))) return 20;
+    }
+  }
+
+  // Falling player lands on the floor.
+  mut voxel::Player player = voxel::Player();
+  player.position = voxel::Vec3(0.5, 20.0, 0.5);
+  voxel::MoveInput idle = voxel::MoveInput();
+  for (mut int32_t frame = 0; frame < 180; frame++) player.update(world, idle, 1.0 / 60.0);
+  if (!player.on_ground) return 21;
+  if (voxel::absf(player.position.y - 10.0) > 0.01) return 22;
+
+  // Walking into a wall stops at the wall face.
+  if (!world.set_block(3, 10, 0, voxel::STONE)) return 19;
+  if (!world.set_block(3, 11, 0, voxel::STONE)) return 19;
+  player.yaw = voxel::PI * 0.5; // facing +X
+  mut voxel::MoveInput walk = voxel::MoveInput();
+  walk.forward = 1.0;
+  for (mut int32_t frame = 0; frame < 120; frame++) player.update(world, walk, 1.0 / 60.0);
+  if (player.position.x > 3.0 - voxel::PLAYER_HALF_WIDTH + 0.001) return 23;
+  if (player.position.x < 2.5) return 24;
+
+  // Jumping leaves the ground and comes back down.
+  mut voxel::MoveInput hop = voxel::MoveInput();
+  hop.jump = true;
+  player.update(world, hop, 1.0 / 60.0);
+  player.update(world, idle, 1.0 / 60.0);
+  if (player.on_ground or player.position.y <= 10.0) return 25;
+  for (mut int32_t frame = 0; frame < 120; frame++) player.update(world, idle, 1.0 / 60.0);
+  if (!player.on_ground) return 26;
+
+  // Ray straight down hits the floor; placement cell is just above it.
+  voxel::RayHit down = voxel::cast_ray(world, voxel::Vec3(-4.5, 15.5, -4.5),
+                                       voxel::Vec3(0.0, -1.0, 0.0), 8.0);
+  if (!down.hit or down.x != -5 or down.y != 9 or down.z != -5) return 27;
+  if (down.place_y != 10 or down.place_x != -5) return 28;
+  voxel::RayHit miss = voxel::cast_ray(world, voxel::Vec3(0.5, 15.5, 0.5),
+                                       voxel::Vec3(0.0, 1.0, 0.0), 8.0);
+  if (miss.hit) return 29;
+  if (!player.overlaps_cell(voxel::floor_to_int(player.position.x), 10,
+                            voxel::floor_to_int(player.position.z))) return 30;
   return 0;
 }

@@ -35,6 +35,8 @@ root = "src/tests/game_test.gti"
 
 [profiles.dev]
 optimization = 0
+execution-profile = "concurrent"
 
 [profiles.release]
 optimization = 3
+execution-profile = "concurrent"

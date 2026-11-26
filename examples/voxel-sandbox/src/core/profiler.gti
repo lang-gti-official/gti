@@ -1,0 +1,525 @@
+// Frame profiler: CPU zones, GPU timer results, per-frame counters, and
+// frame-time statistics (percentiles, 1% / 0.1% lows) with JSON + CSV
+// reports. See docs/PROFILING.md for what each number means.
+//
+// Cost model: zone_begin/zone_end are one steady-clock read each plus an
+// indexed store/add. frame_end appends one int64 per zone plus the frame
+// total and GPU slot to flat vectors, so steady state allocates only through
+// amortized vector growth. Statistics are computed once per second (for the
+// title/overlay) and once at report time.
+export module profiler;
+
+import std.algorithm;
+import std.chrono;
+import std.cstdio;
+import std.format;
+import std.string;
+import std.vector;
+
+export namespace voxel {
+constexpr int32_t ZONE_INPUT = 0;
+constexpr int32_t ZONE_PHYSICS = 1;
+constexpr int32_t ZONE_WORLDGEN = 2;
+constexpr int32_t ZONE_MESHING = 3;
+constexpr int32_t ZONE_UPLOAD = 4;
+constexpr int32_t ZONE_CULL = 5;
+constexpr int32_t ZONE_RENDER = 6;
+constexpr int32_t ZONE_HUD = 7;
+constexpr int32_t ZONE_SWAP = 8;
+// Chunk streaming bookkeeping outside generation/meshing (range scans, unloads).
+constexpr int32_t ZONE_STREAM = 9;
+// Statistics, window title and GPU query polling.
+constexpr int32_t ZONE_STATS = 10;
+constexpr int32_t ZONE_COUNT = 11;
+
+constexpr int32_t CTR_CHUNKS_GENERATED = 0;
+constexpr int32_t CTR_CHUNKS_MESHED = 1;
+constexpr int32_t CTR_CHUNKS_VISIBLE = 2;
+constexpr int32_t CTR_DRAW_CALLS = 3;
+constexpr int32_t CTR_QUADS_DRAWN = 4;
+constexpr int32_t CTR_CHUNKS_LOADED = 5;
+constexpr int32_t CTR_COUNT = 6;
+
+int64_t now_ns() {
+  return std::chrono::steady_clock::now().value().time_since_origin().count();
+}
+
+std::string zone_name(int32_t zone) {
+  if (zone == ZONE_INPUT) return std::string("input");
+  if (zone == ZONE_PHYSICS) return std::string("physics");
+  if (zone == ZONE_WORLDGEN) return std::string("worldgen");
+  if (zone == ZONE_MESHING) return std::string("meshing");
+  if (zone == ZONE_UPLOAD) return std::string("upload");
+  if (zone == ZONE_CULL) return std::string("cull");
+  if (zone == ZONE_RENDER) return std::string("render");
+  if (zone == ZONE_HUD) return std::string("hud");
+  if (zone == ZONE_SWAP) return std::string("swap");
+  if (zone == ZONE_STREAM) return std::string("stream");
+  if (zone == ZONE_STATS) return std::string("stats");
+  return std::string("?");
+}
+
+std::string counter_name(int32_t counter) {
+  if (counter == CTR_CHUNKS_GENERATED) return std::string("chunks_generated");
+  if (counter == CTR_CHUNKS_MESHED) return std::string("chunks_meshed");
+  if (counter == CTR_CHUNKS_VISIBLE) return std::string("chunks_visible");
+  if (counter == CTR_DRAW_CALLS) return std::string("draw_calls");
+  if (counter == CTR_QUADS_DRAWN) return std::string("quads_drawn");
+  if (counter == CTR_CHUNKS_LOADED) return std::string("chunks_loaded");
+  return std::string("?");
+}
+
+double ns_to_ms(int64_t ns) { return double(ns) / 1000000.0d; }
+
+// Nearest-rank percentile of an ascending sample set: the smallest sample
+// such that at least p percent of the samples are <= it. p in [0, 100].
+int64_t percentile_sorted(std::vector<int64_t>& sorted, double p) {
+  uint64_t n = sorted.size();
+  if (n == uint64_t(0)) return int64_t(0);
+  double rank_real = p / 100.0d * double(n);
+  mut uint64_t rank = uint64_t(rank_real);
+  // Tolerance: 99.9% of 1000 must be rank 999, not 1000 from rounding.
+  if (double(rank) + 0.000001d < rank_real) rank = rank + uint64_t(1);
+  if (rank < uint64_t(1)) rank = uint64_t(1);
+  if (rank > n) rank = n;
+  return sorted[rank - uint64_t(1)];
+}
+
+// "x% low" fps: the frame rate implied by the mean duration of the slowest
+// `fraction` of frames (at least one frame). Uses an ascending sample set.
+double low_fps_sorted(std::vector<int64_t>& sorted, double fraction) {
+  uint64_t n = sorted.size();
+  if (n == uint64_t(0)) return 0.0d;
+  mut uint64_t k = uint64_t(double(n) * fraction);
+  if (k < uint64_t(1)) k = uint64_t(1);
+  mut int64_t sum = int64_t(0);
+  for (mut uint64_t i = n - k; i < n; i++) {
+    sum += sorted[i];
+  }
+  double mean_ns = double(sum) / double(k);
+  if (mean_ns <= 0.0d) return 0.0d;
+  return 1000000000.0d / mean_ns;
+}
+
+// JSON string escaping for meta values (GL renderer strings, paths).
+std::string json_escape(std::string_view s) {
+  mut std::string out{};
+  for (mut uint64_t i = uint64_t(0); i < s.size(); i++) {
+    char c = s[i];
+    if (c == '"') {
+      out.append("\\\"");
+    } else if (c == '\\') {
+      out.append("\\\\");
+    } else if (c == '\n') {
+      out.append("\\n");
+    } else if (uint8_t(c) < uint8_t(32)) {
+      out.append(" ");
+    } else {
+      out.push_back(c);
+    }
+  }
+  return out;
+}
+
+bool write_text_file(std::string_view path, std::string_view text) {
+  auto opened = std::fopen(path, std::file_mode::write);
+  if (!opened) return false;
+  mut auto file = std::move(opened).value();
+  auto written = std::fwrite(text, *file);
+  if (!written) return false;
+  if (written.value() != text.size()) return false;
+  auto closed = std::fclose(*file);
+  return closed.has_value();
+}
+
+// Statistics over a contiguous range of recorded frames.
+struct FrameStats {
+  mut int64_t frames = int64_t(0);
+  mut double seconds = 0.0d;
+  mut double fps = 0.0d;
+  mut double avg_ms = 0.0d;
+  mut double median_ms = 0.0d;
+  mut double p95_ms = 0.0d;
+  mut double p99_ms = 0.0d;
+  mut double p999_ms = 0.0d;
+  mut double max_ms = 0.0d;
+  mut double low1_fps = 0.0d;
+  mut double low01_fps = 0.0d;
+  mut double gpu_avg_ms = 0.0d;
+  mut int64_t gpu_samples = int64_t(0);
+  mut std::vector<double> zone_avg_ms{};
+
+public:
+  FrameStats() = default;
+};
+
+class Profiler {
+  // Per recorded frame (flat, frame-major).
+  mut std::vector<int64_t> frame_ns_{};
+  mut std::vector<int64_t> zone_ns_{};   // frame * ZONE_COUNT + zone
+  mut std::vector<int64_t> gpu_ns_{};    // -1 when no GPU result arrived
+  // Current frame.
+  mut int64_t frame_start_ = int64_t(0);
+  mut bool in_frame_ = false;
+  mut std::vector<int64_t> zone_start_{};
+  mut std::vector<int64_t> zone_accum_{};
+  mut int64_t gpu_current_ = int64_t(-1);
+  mut std::vector<int64_t> ctr_current_{};
+  mut std::vector<int64_t> ctr_last_{};
+  mut std::vector<int64_t> ctr_total_{};
+  mut std::vector<int64_t> ctr_max_{};
+  // Run-wide GPU aggregate (results may arrive a few frames late).
+  mut int64_t gpu_sum_ = int64_t(0);
+  mut int64_t gpu_count_ = int64_t(0);
+  mut int64_t gpu_last_ = int64_t(-1);
+  // Once-per-second window.
+  mut int64_t run_start_ = int64_t(0);
+  mut int64_t window_start_ns_ = int64_t(0);
+  mut uint64_t window_first_ = uint64_t(0);
+  mut FrameStats window_{};
+  mut std::vector<std::string> meta_keys_{};
+  mut std::vector<std::string> meta_values_{};
+
+public:
+  Profiler() {
+    this.zone_start_.resize(uint64_t(ZONE_COUNT));
+    this.zone_accum_.resize(uint64_t(ZONE_COUNT));
+    this.ctr_current_.resize(uint64_t(CTR_COUNT));
+    this.ctr_last_.resize(uint64_t(CTR_COUNT));
+    this.ctr_total_.resize(uint64_t(CTR_COUNT));
+    this.ctr_max_.resize(uint64_t(CTR_COUNT));
+    this.window_.zone_avg_ms.resize(uint64_t(ZONE_COUNT));
+    this.frame_ns_.reserve(uint64_t(16384));
+    this.zone_ns_.reserve(uint64_t(16384 * ZONE_COUNT));
+    this.gpu_ns_.reserve(uint64_t(16384));
+    int64_t t = now_ns();
+    this.run_start_ = t;
+    this.window_start_ns_ = t;
+  }
+
+  void frame_begin() mut {
+    this.frame_start_ = now_ns();
+    this.in_frame_ = true;
+  }
+
+  void frame_end() mut {
+    int64_t t = now_ns();
+    if (!this.in_frame_) {
+      this.frame_start_ = t;
+    }
+    this.record_frame(t - this.frame_start_);
+    this.in_frame_ = false;
+  }
+
+  // Record one completed frame with an explicit wall time, using the zone,
+  // GPU and counter values accumulated since the previous frame. frame_end()
+  // calls this; tests and offline tools use it to inject known samples.
+  void record_frame(int64_t total_ns) mut {
+    this.frame_ns_.push_back(total_ns);
+    for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+      this.zone_ns_.push_back(this.zone_accum_[uint64_t(z)]);
+      this.zone_accum_[uint64_t(z)] = int64_t(0);
+    }
+    this.gpu_ns_.push_back(this.gpu_current_);
+    this.gpu_current_ = int64_t(-1);
+    for (mut int32_t c = 0; c < CTR_COUNT; c++) {
+      uint64_t i = uint64_t(c);
+      int64_t v = this.ctr_current_[i];
+      this.ctr_last_[i] = v;
+      this.ctr_total_[i] = this.ctr_total_[i] + v;
+      if (v > this.ctr_max_[i]) this.ctr_max_[i] = v;
+      this.ctr_current_[i] = int64_t(0);
+    }
+  }
+
+  void zone_begin(int32_t zone) mut {
+    if (zone < 0 or zone >= ZONE_COUNT) return;
+    this.zone_start_[uint64_t(zone)] = now_ns();
+  }
+
+  void zone_end(int32_t zone) mut {
+    if (zone < 0 or zone >= ZONE_COUNT) return;
+    int64_t t = now_ns();
+    uint64_t i = uint64_t(zone);
+    this.zone_accum_[i] = this.zone_accum_[i] + (t - this.zone_start_[i]);
+  }
+
+  // Add an explicit duration to a zone of the current frame (tests, or work
+  // timed elsewhere such as a worker thread's report).
+  void zone_add_ns(int32_t zone, int64_t ns) mut {
+    if (zone < 0 or zone >= ZONE_COUNT) return;
+    uint64_t i = uint64_t(zone);
+    this.zone_accum_[i] = this.zone_accum_[i] + ns;
+  }
+
+  void record_gpu_ns(int64_t ns) mut {
+    if (ns < int64_t(0)) return;
+    this.gpu_current_ = ns;
+    this.gpu_last_ = ns;
+    this.gpu_sum_ += ns;
+    this.gpu_count_ += int64_t(1);
+  }
+
+  void count(int32_t counter, int64_t value) mut {
+    if (counter < 0 or counter >= CTR_COUNT) return;
+    uint64_t i = uint64_t(counter);
+    this.ctr_current_[i] = this.ctr_current_[i] + value;
+  }
+
+  void set_meta(std::string_view key, std::string_view value) mut {
+    for (mut uint64_t i = uint64_t(0); i < this.meta_keys_.size(); i++) {
+      if (this.meta_keys_[i].view() == key) {
+        this.meta_values_[i] = std::string(value);
+        return;
+      }
+    }
+    this.meta_keys_.push_back(std::string(key));
+    this.meta_values_.push_back(std::string(value));
+  }
+
+  // Discard every recorded frame (e.g. after a warm-up period) while keeping
+  // meta data. Counter run totals restart as well.
+  void reset_frames() mut {
+    this.frame_ns_.clear();
+    this.zone_ns_.clear();
+    this.gpu_ns_.clear();
+    for (mut int32_t c = 0; c < CTR_COUNT; c++) {
+      this.ctr_total_[uint64_t(c)] = int64_t(0);
+      this.ctr_max_[uint64_t(c)] = int64_t(0);
+    }
+    this.gpu_sum_ = int64_t(0);
+    this.gpu_count_ = int64_t(0);
+    this.window_first_ = uint64_t(0);
+    int64_t t = now_ns();
+    this.run_start_ = t;
+    this.window_start_ns_ = t;
+  }
+
+  int64_t frame_count() { return int64_t(this.frame_ns_.size()); }
+  int64_t frame_ns_at(int64_t frame) { return this.frame_ns_[uint64_t(frame)]; }
+  int64_t zone_ns_at(int64_t frame, int32_t zone) {
+    return this.zone_ns_[uint64_t(frame) * uint64_t(ZONE_COUNT) + uint64_t(zone)];
+  }
+  int64_t counter_last(int32_t counter) { return this.ctr_last_[uint64_t(counter)]; }
+  int64_t counter_total(int32_t counter) { return this.ctr_total_[uint64_t(counter)]; }
+  int64_t gpu_last_ns() { return this.gpu_last_; }
+
+  // Statistics over frames [first, last).
+  FrameStats stats_range(uint64_t first, uint64_t last) {
+    mut FrameStats s{};
+    s.zone_avg_ms.resize(uint64_t(ZONE_COUNT));
+    if (last <= first) return s;
+    uint64_t n = last - first;
+    mut std::vector<int64_t> sorted{};
+    sorted.reserve(n);
+    mut int64_t sum = int64_t(0);
+    for (mut uint64_t i = first; i < last; i++) {
+      int64_t v = this.frame_ns_[i];
+      sorted.push_back(v);
+      sum += v;
+    }
+    std::sort(sorted);
+    s.frames = int64_t(n);
+    s.seconds = double(sum) / 1000000000.0d;
+    s.avg_ms = ns_to_ms(sum) / double(n);
+    if (sum > int64_t(0)) s.fps = double(n) / s.seconds;
+    s.median_ms = ns_to_ms(percentile_sorted(sorted, 50.0d));
+    s.p95_ms = ns_to_ms(percentile_sorted(sorted, 95.0d));
+    s.p99_ms = ns_to_ms(percentile_sorted(sorted, 99.0d));
+    s.p999_ms = ns_to_ms(percentile_sorted(sorted, 99.9d));
+    s.max_ms = ns_to_ms(sorted[n - uint64_t(1)]);
+    s.low1_fps = low_fps_sorted(sorted, 0.01d);
+    s.low01_fps = low_fps_sorted(sorted, 0.001d);
+    for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+      mut int64_t zsum = int64_t(0);
+      for (mut uint64_t i = first; i < last; i++) {
+        zsum += this.zone_ns_[i * uint64_t(ZONE_COUNT) + uint64_t(z)];
+      }
+      s.zone_avg_ms[uint64_t(z)] = ns_to_ms(zsum) / double(n);
+    }
+    mut int64_t gsum = int64_t(0);
+    mut int64_t gcount = int64_t(0);
+    for (mut uint64_t i = first; i < last; i++) {
+      int64_t g = this.gpu_ns_[i];
+      if (g >= int64_t(0)) {
+        gsum += g;
+        gcount += int64_t(1);
+      }
+    }
+    s.gpu_samples = gcount;
+    if (gcount > int64_t(0)) s.gpu_avg_ms = ns_to_ms(gsum) / double(gcount);
+    return s;
+  }
+
+  FrameStats stats() { return this.stats_range(uint64_t(0), this.frame_ns_.size()); }
+
+  // True once per wall-clock second; refreshes the window statistics used by
+  // summary_line() and overlay_lines().
+  bool one_second_elapsed() mut {
+    int64_t t = now_ns();
+    if (t - this.window_start_ns_ < int64_t(1000000000)) return false;
+    uint64_t last = this.frame_ns_.size();
+    this.window_ = this.stats_range(this.window_first_, last);
+    this.window_first_ = last;
+    this.window_start_ns_ = t;
+    return true;
+  }
+
+  // Window statistics from the last one_second_elapsed() refresh.
+  FrameStats& window_stats() { return this.window_; }
+
+  std::string summary_line() {
+    FrameStats& w = this.window_;
+    mut std::string line = std::format("{:.0f} fps | {:.2f} ms avg | {:.2f} ms p99",
+                                       w.fps, w.avg_ms, w.p99_ms);
+    // Top three zones by average time.
+    mut std::vector<bool> used{};
+    used.resize(uint64_t(ZONE_COUNT));
+    if (w.zone_avg_ms.size() == uint64_t(ZONE_COUNT)) {
+      for (mut int32_t k = 0; k < 3; k++) {
+        mut int32_t best = -1;
+        mut double best_ms = -1.0d;
+        for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+          double ms = w.zone_avg_ms[uint64_t(z)];
+          if (!used[uint64_t(z)] and ms > best_ms) {
+            best = z;
+            best_ms = ms;
+          }
+        }
+        if (best < 0 or best_ms <= 0.0d) break;
+        used[uint64_t(best)] = true;
+        std::format_to(line, " | {} {:.2f}", zone_name(best), best_ms);
+      }
+    }
+    if (w.gpu_samples > int64_t(0)) {
+      std::format_to(line, " | gpu {:.2f}", w.gpu_avg_ms);
+    }
+    return line;
+  }
+
+  std::vector<std::string> overlay_lines() {
+    FrameStats& w = this.window_;
+    mut std::vector<std::string> lines{};
+    lines.push_back(std::format("{:.0f} fps  ({} frames in {:.2f} s)", w.fps,
+                                w.frames, w.seconds));
+    lines.push_back(std::format("frame ms  avg {:.2f}  med {:.2f}  p99 {:.2f}  max {:.2f}",
+                                w.avg_ms, w.median_ms, w.p99_ms, w.max_ms));
+    lines.push_back(std::format("1% low {:.0f} fps   0.1% low {:.0f} fps",
+                                w.low1_fps, w.low01_fps));
+    if (w.gpu_samples > int64_t(0)) {
+      lines.push_back(std::format("gpu ms    avg {:.2f}", w.gpu_avg_ms));
+    } else {
+      lines.push_back(std::string("gpu ms    n/a"));
+    }
+    if (w.zone_avg_ms.size() == uint64_t(ZONE_COUNT)) {
+      for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+        lines.push_back(std::format("  {:<9} {:6.2f} ms", zone_name(z),
+                                    w.zone_avg_ms[uint64_t(z)]));
+      }
+    }
+    for (mut int32_t c = 0; c < CTR_COUNT; c++) {
+      lines.push_back(std::format("  {:<16} {}", counter_name(c),
+                                  this.ctr_last_[uint64_t(c)]));
+    }
+    for (mut uint64_t i = uint64_t(0); i < this.meta_keys_.size(); i++) {
+      lines.push_back(std::format("{}: {}", this.meta_keys_[i], this.meta_values_[i]));
+    }
+    return lines;
+  }
+
+  std::string report_json() {
+    FrameStats s = this.stats();
+    mut std::string j = std::string("{\n  \"schema\": \"voxel-sandbox-profile/1\",\n  \"meta\": {");
+    for (mut uint64_t i = uint64_t(0); i < this.meta_keys_.size(); i++) {
+      if (i > uint64_t(0)) j.append(",");
+      std::format_to(j, "\n    \"{}\": \"{}\"", json_escape(this.meta_keys_[i].view()),
+                           json_escape(this.meta_values_[i].view()));
+    }
+    j.append("\n  },\n");
+    std::format_to(j, "  \"frames\": {},\n", s.frames);
+    std::format_to(j, "  \"duration_s\": {:.4f},\n", s.seconds);
+    std::format_to(j, "  \"fps_avg\": {:.3f},\n", s.fps);
+    j.append("  \"frame_ms\": {");
+    std::format_to(j, "\"avg\": {:.4f}, \"median\": {:.4f}, \"p95\": {:.4f}, ",
+                         s.avg_ms, s.median_ms, s.p95_ms);
+    std::format_to(j, "\"p99\": {:.4f}, \"p99_9\": {:.4f}, \"max\": {:.4f}}},\n",
+                         s.p99_ms, s.p999_ms, s.max_ms);
+    std::format_to(j, "  \"low_1pct_fps\": {:.3f},\n", s.low1_fps);
+    std::format_to(j, "  \"low_0_1pct_fps\": {:.3f},\n", s.low01_fps);
+    j.append("  \"zones\": {");
+    mut double zone_total = 0.0d;
+    for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+      zone_total += s.zone_avg_ms[uint64_t(z)];
+    }
+    for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+      double ms = s.zone_avg_ms[uint64_t(z)];
+      mut double share = 0.0d;
+      if (s.avg_ms > 0.0d) share = ms / s.avg_ms;
+      if (z > 0) j.append(",");
+      std::format_to(j, "\n    \"{}\": {{\"avg_ms\": {:.4f}, \"share\": {:.4f}}}",
+                           zone_name(z), ms, share);
+    }
+    j.append("\n  },\n");
+    mut double untracked = s.avg_ms - zone_total;
+    if (untracked < 0.0d) untracked = 0.0d;
+    std::format_to(j, "  \"untracked_ms\": {:.4f},\n", untracked);
+    if (s.gpu_samples > int64_t(0)) {
+      std::format_to(j, "  \"gpu_ms_avg\": {:.4f},\n", s.gpu_avg_ms);
+    } else {
+      j.append("  \"gpu_ms_avg\": null,\n");
+    }
+    std::format_to(j, "  \"gpu_samples\": {},\n", s.gpu_samples);
+    j.append("  \"counters\": {");
+    for (mut int32_t c = 0; c < CTR_COUNT; c++) {
+      uint64_t i = uint64_t(c);
+      mut double avg = 0.0d;
+      if (s.frames > int64_t(0)) avg = double(this.ctr_total_[i]) / double(s.frames);
+      if (c > 0) j.append(",");
+      std::format_to(j, "\n    \"{}\": {{\"total\": {}, \"per_frame_avg\": {:.3f}, \"max\": {}}}",
+                           counter_name(c), this.ctr_total_[i], avg, this.ctr_max_[i]);
+    }
+    j.append("\n  }\n}\n");
+    return j;
+  }
+
+  std::string report_csv() {
+    mut std::string csv = std::string("frame,total_ms");
+    for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+      std::format_to(csv, ",{}_ms", zone_name(z));
+    }
+    csv.append(",gpu_ms\n");
+    uint64_t n = this.frame_ns_.size();
+    for (mut uint64_t f = uint64_t(0); f < n; f++) {
+      std::format_to(csv, "{},{:.4f}", f, ns_to_ms(this.frame_ns_[f]));
+      for (mut int32_t z = 0; z < ZONE_COUNT; z++) {
+        std::format_to(csv, ",{:.4f}",
+                               ns_to_ms(this.zone_ns_[f * uint64_t(ZONE_COUNT) + uint64_t(z)]));
+      }
+      int64_t g = this.gpu_ns_[f];
+      if (g >= int64_t(0)) {
+        std::format_to(csv, ",{:.4f}\n", ns_to_ms(g));
+      } else {
+        csv.append(",\n");
+      }
+    }
+    return csv;
+  }
+
+  // Writes `path` (JSON) and a sibling CSV: "x.json" -> "x.csv", any other
+  // name -> name + ".csv".
+  bool write_report(std::string_view path) mut {
+    std::string json = this.report_json();
+    if (!write_text_file(path, json.view())) return false;
+    mut std::string csv_path{};
+    if (path.ends_with(".json")) {
+      csv_path = std::string(path.substr(uint64_t(0), path.size() - uint64_t(5)));
+      csv_path.append(".csv");
+    } else {
+      csv_path = std::string(path);
+      csv_path.append(".csv");
+    }
+    std::string csv = this.report_csv();
+    return write_text_file(csv_path.view(), csv.view());
+  }
+};
+}

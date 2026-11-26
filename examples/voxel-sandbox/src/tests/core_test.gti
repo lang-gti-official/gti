@@ -1,1 +1,312 @@
-int main() { return 0; }
+// Tests for the profiler, procedural textures and the benchmark flight path.
+// The HUD needs a GL context; importing it here keeps it compiling.
+import "../core/profiler.gti";
+import "../render/textures.gti";
+import "../render/hud.gti";
+import "../bench/flight.gti";
+import "../world/block.gti";
+import std.cstdio;
+import std.filesystem;
+import std.format;
+import std.string;
+import std.testing;
+import std.vector;
+
+namespace voxel::tests {
+
+uint8_t texel(std::vector<uint8_t>& tiles, uint32_t layer, int32_t x, int32_t y,
+              int32_t channel) {
+  return tiles[((uint64_t(layer) * uint64_t(16) + uint64_t(y)) * uint64_t(16) + uint64_t(x)) *
+                   uint64_t(4) + uint64_t(channel)];
+}
+
+int32_t count_alpha(std::vector<uint8_t>& tiles, uint32_t layer, uint8_t alpha) {
+  mut int32_t n = 0;
+  for (mut int32_t y = 0; y < 16; y++) {
+    for (mut int32_t x = 0; x < 16; x++) {
+      if (texel(tiles, layer, x, y, 3) == alpha) n++;
+    }
+  }
+  return n;
+}
+
+std::string read_file(std::string_view path) {
+  auto opened = std::fopen(path, std::file_mode::read);
+  std::testing::check(opened.has_value(), "report file can be opened");
+  mut auto file = std::move(opened).value();
+  mut std::string all{};
+  while (true) {
+    auto chunk = std::fread(*file, uint64_t(65536));
+    std::testing::check(chunk.has_value(), "report file can be read");
+    if (chunk.value().empty()) break;
+    all.append(chunk.value().view());
+  }
+  return all;
+}
+
+// --- profiler ---------------------------------------------------------------
+
+[[test]]
+void percentiles_on_known_data() {
+  mut Profiler p = Profiler();
+  // 1..100 ms, recorded in a scrambled order.
+  for (mut int32_t i = 0; i < 100; i++) {
+    int32_t ms = (i * 37) % 100 + 1;
+    p.record_frame(int64_t(ms) * int64_t(1000000));
+  }
+  FrameStats s = p.stats();
+  std::testing::check_eq!(s.frames, int64_t(100));
+  std::testing::check_approx(s.avg_ms, 50.5d, 0.000000001d);
+  std::testing::check_approx(s.median_ms, 50.0d, 0.000000001d);
+  std::testing::check_approx(s.p95_ms, 95.0d, 0.000000001d);
+  std::testing::check_approx(s.p99_ms, 99.0d, 0.000000001d);
+  std::testing::check_approx(s.p999_ms, 100.0d, 0.000000001d);
+  std::testing::check_approx(s.max_ms, 100.0d, 0.000000001d);
+  // 1% low: slowest 1 frame (100 ms) -> 10 fps. 0.1% low: at least 1 frame.
+  std::testing::check_approx(s.low1_fps, 10.0d, 0.000000001d);
+  std::testing::check_approx(s.low01_fps, 10.0d, 0.000000001d);
+  // 5050 ms total for 100 frames.
+  std::testing::check_approx(s.fps, 100.0d / 5.05d, 0.000000001d);
+}
+
+[[test]]
+void percentile_helpers() {
+  mut std::vector<int64_t> sorted{};
+  for (mut int32_t i = 1; i <= 1000; i++) sorted.push_back(int64_t(i));
+  std::testing::check_eq!(percentile_sorted(sorted, 50.0d), int64_t(500));
+  std::testing::check_eq!(percentile_sorted(sorted, 99.0d), int64_t(990));
+  std::testing::check_eq!(percentile_sorted(sorted, 99.9d), int64_t(999));
+  std::testing::check_eq!(percentile_sorted(sorted, 100.0d), int64_t(1000));
+  std::testing::check_eq!(percentile_sorted(sorted, 0.0d), int64_t(1));
+  // Slowest 1% = 991..1000 ns, mean 995.5 ns.
+  std::testing::check_approx(low_fps_sorted(sorted, 0.01d), 1000000000.0d / 995.5d, 0.000001d);
+  std::vector<int64_t> empty{};
+  std::testing::check_eq!(percentile_sorted(empty, 50.0d), int64_t(0));
+}
+
+[[test]]
+void zones_accumulate_and_counters_sum() {
+  mut Profiler p = Profiler();
+  p.zone_add_ns(ZONE_MESHING, int64_t(2000000));
+  p.zone_add_ns(ZONE_MESHING, int64_t(1000000));
+  p.zone_add_ns(ZONE_RENDER, int64_t(4000000));
+  p.count(CTR_DRAW_CALLS, int64_t(10));
+  p.count(CTR_DRAW_CALLS, int64_t(5));
+  p.record_gpu_ns(int64_t(3000000));
+  p.record_frame(int64_t(10000000));
+  std::testing::check_eq!(p.zone_ns_at(int64_t(0), ZONE_MESHING), int64_t(3000000));
+  std::testing::check_eq!(p.zone_ns_at(int64_t(0), ZONE_RENDER), int64_t(4000000));
+  std::testing::check_eq!(p.zone_ns_at(int64_t(0), ZONE_INPUT), int64_t(0));
+  std::testing::check_eq!(p.counter_last(CTR_DRAW_CALLS), int64_t(15));
+
+  // Second frame: zones and per-frame counters restart; totals keep going.
+  p.count(CTR_DRAW_CALLS, int64_t(7));
+  p.record_frame(int64_t(20000000));
+  std::testing::check_eq!(p.zone_ns_at(int64_t(1), ZONE_MESHING), int64_t(0));
+  std::testing::check_eq!(p.counter_last(CTR_DRAW_CALLS), int64_t(7));
+  std::testing::check_eq!(p.counter_total(CTR_DRAW_CALLS), int64_t(22));
+
+  FrameStats s = p.stats();
+  std::testing::check_approx(s.zone_avg_ms[uint64_t(ZONE_MESHING)], 1.5d, 0.000000001d);
+  std::testing::check_approx(s.gpu_avg_ms, 3.0d, 0.000000001d);
+  std::testing::check_eq!(s.gpu_samples, int64_t(1));
+
+  // Real clock zones: begin/end twice in one frame accumulate.
+  p.frame_begin();
+  p.zone_begin(ZONE_CULL);
+  p.zone_end(ZONE_CULL);
+  p.zone_begin(ZONE_CULL);
+  p.zone_end(ZONE_CULL);
+  p.frame_end();
+  std::testing::check_eq!(p.frame_count(), int64_t(3));
+  std::testing::check(p.zone_ns_at(int64_t(2), ZONE_CULL) >= int64_t(0));
+  std::testing::check(p.frame_ns_at(int64_t(2)) >= p.zone_ns_at(int64_t(2), ZONE_CULL));
+  std::testing::check(now_ns() > int64_t(0));
+}
+
+[[test]]
+void report_written_and_read_back() {
+  mut Profiler p = Profiler();
+  p.set_meta("render_distance", "8");
+  p.set_meta("gl_renderer", "Test \"GPU\"");
+  p.set_meta("render_distance", "12");
+  for (mut int32_t i = 0; i < 10; i++) {
+    p.zone_add_ns(ZONE_WORLDGEN, int64_t(500000));
+    p.count(CTR_CHUNKS_GENERATED, int64_t(2));
+    p.record_frame(int64_t(16000000));
+  }
+  std::testing::check(p.overlay_lines().size() > uint64_t(10));
+  std::testing::check(p.summary_line().contains("fps"));
+
+  auto tmp = std::filesystem::temp_directory_path();
+  std::testing::check(tmp.has_value());
+  mut std::string base = std::string(tmp.value().view());
+  if (!base.ends_with("/")) base.append("/");
+  mut std::string json_path = base.clone();
+  json_path.append("voxel_core_test_report.json");
+  mut std::string csv_path = base.clone();
+  csv_path.append("voxel_core_test_report.csv");
+  std::testing::check(p.write_report(json_path.view()), "write_report succeeds");
+
+  std::string json = read_file(json_path.view());
+  std::testing::check(json.contains("\"frames\": 10,"), "frame count");
+  std::testing::check(json.contains("\"render_distance\": \"12\""), "meta replaced");
+  std::testing::check(json.contains("\"Test \\\"GPU\\\"\""), "meta escaped");
+  std::testing::check(json.contains("\"avg\": 16.0000"), "frame avg");
+  std::testing::check(json.contains("\"worldgen\": {\"avg_ms\": 0.5000, \"share\": 0.0312}"),
+                      "zone share");
+  std::testing::check(json.contains("\"chunks_generated\": {\"total\": 20, \"per_frame_avg\": 2.000"),
+                      "counter total");
+  std::testing::check(json.contains("\"gpu_ms_avg\": null"), "no gpu samples");
+
+  std::string csv = read_file(csv_path.view());
+  std::testing::check(csv.starts_with("frame,total_ms,input_ms"), "csv header");
+  std::testing::check(csv.contains("\n9,16.0000,"), "csv last frame");
+  mut int32_t lines = 0;
+  for (mut uint64_t i = uint64_t(0); i < csv.size(); i++) {
+    if (csv[i] == '\n') lines++;
+  }
+  std::testing::check_eq!(lines, 11);
+  auto removed_json = std::filesystem::remove(json_path.view());
+  auto removed_csv = std::filesystem::remove(csv_path.view());
+  std::testing::check(removed_json.has_value() and removed_csv.has_value());
+}
+
+// --- textures ---------------------------------------------------------------
+
+[[test]]
+void tiles_size_and_determinism() {
+  std::vector<uint8_t> a = generate_tiles(uint32_t(7));
+  std::vector<uint8_t> b = generate_tiles(uint32_t(7));
+  std::vector<uint8_t> c = generate_tiles(uint32_t(8));
+  std::testing::check_eq!(a.size(), uint64_t(TILE_COUNT * 16 * 16 * 4));
+  mut bool same = true;
+  mut bool differs = false;
+  for (mut uint64_t i = uint64_t(0); i < a.size(); i++) {
+    if (a[i] != b[i]) same = false;
+    if (a[i] != c[i]) differs = true;
+  }
+  std::testing::check(same, "same seed, same tiles");
+  std::testing::check(differs, "different seed, different tiles");
+}
+
+[[test]]
+void tiles_alpha_rules() {
+  std::vector<uint8_t> t = generate_tiles(uint32_t(1234));
+  // Opaque materials.
+  std::testing::check_eq!(count_alpha(t, T_STONE, uint8_t(255)), 256);
+  std::testing::check_eq!(count_alpha(t, T_GRASS_SIDE, uint8_t(255)), 256);
+  std::testing::check_eq!(count_alpha(t, T_COBBLESTONE, uint8_t(255)), 256);
+  // Leaves: cutout holes but mostly foliage.
+  int32_t holes = count_alpha(t, T_LEAVES, uint8_t(0));
+  std::testing::check(holes > 10 and holes < 128, "leaves have some holes");
+  // Glass: opaque frame, transparent middle.
+  std::testing::check_eq!(texel(t, T_GLASS, 0, 0, 3), uint8_t(255));
+  std::testing::check_eq!(texel(t, T_GLASS, 15, 8, 3), uint8_t(255));
+  std::testing::check_eq!(texel(t, T_GLASS, 8, 4, 3), uint8_t(0));
+  std::testing::check(count_alpha(t, T_GLASS, uint8_t(0)) > 120, "glass mostly clear");
+  // Water is translucent everywhere.
+  std::testing::check_eq!(count_alpha(t, T_WATER, uint8_t(255)), 0);
+  // Grass side has a green top row and a brown bottom row.
+  std::testing::check(texel(t, T_GRASS_SIDE, 5, 0, 1) > texel(t, T_GRASS_SIDE, 5, 0, 0));
+  std::testing::check(texel(t, T_GRASS_SIDE, 5, 15, 0) > texel(t, T_GRASS_SIDE, 5, 15, 1));
+}
+
+// --- HUD (CPU side only) ------------------------------------------------------
+
+[[test]]
+void font_atlas_has_glyphs() {
+  std::vector<uint8_t> atlas = build_font_atlas();
+  std::testing::check_eq!(atlas.size(), uint64_t(96 * 60 * 4));
+  // Space is empty; 'A' (glyph 33: column 1, row 2) has ink.
+  mut int32_t ink_space = 0;
+  mut int32_t ink_a = 0;
+  for (mut int32_t y = 0; y < 8; y++) {
+    for (mut int32_t x = 0; x < 5; x++) {
+      if (atlas[(uint64_t(y) * uint64_t(96) + uint64_t(x)) * uint64_t(4) + uint64_t(3)] != uint8_t(0)) ink_space++;
+      uint64_t ay = uint64_t(20 + y);
+      uint64_t ax = uint64_t(6 + x);
+      if (atlas[(ay * uint64_t(96) + ax) * uint64_t(4) + uint64_t(3)] != uint8_t(0)) ink_a++;
+    }
+  }
+  std::testing::check_eq!(ink_space, 0);
+  std::testing::check(ink_a > 10, "'A' has ink");
+  Hud hud = Hud();
+  std::testing::check_approx(hud.text_width("abc", 2.0), 34.0, 0.000001);
+  std::testing::check_approx(hud.text_width("ab\nabcd", 1.0), 23.0, 0.000001);
+}
+
+// --- flight path ----------------------------------------------------------------
+
+[[test]]
+void flight_path_is_smooth() {
+  FlightPath path = FlightPath();
+  std::testing::check_approx(path.duration_seconds(), 60.0d, 0.000000001d);
+  mut float px = 0.0;
+  mut float py = 0.0;
+  mut float pz = 0.0;
+  mut float pyaw = 0.0;
+  mut float ppitch = 0.0;
+  path.pose_at(0.0d, px, py, pz, pyaw, ppitch);
+  mut float max_step = 0.0;
+  mut float max_turn = 0.0;
+  mut float min_y = 1000.0;
+  mut float max_y = -1000.0;
+  double dt = 1.0d / 144.0d;
+  for (mut int32_t i = 1; i <= 144 * 60; i++) {
+    mut float x = 0.0;
+    mut float y = 0.0;
+    mut float z = 0.0;
+    mut float yaw = 0.0;
+    mut float pitch = 0.0;
+    path.pose_at(double(i) * dt, x, y, z, yaw, pitch);
+    float dx = x - px;
+    float dy = y - py;
+    float dz = z - pz;
+    float step = dx * dx + dy * dy + dz * dz;
+    if (step > max_step) max_step = step;
+    mut float turn = yaw - pyaw;
+    if (turn < 0.0) turn = -turn;
+    if (turn > max_turn) max_turn = turn;
+    float pitch_change = pitch - ppitch;
+    std::testing::check(pitch_change < 0.01 and pitch_change > -0.01, "pitch is smooth");
+    std::testing::check(pitch < 0.5 and pitch > -0.6, "pitch stays sane");
+    if (y < min_y) min_y = y;
+    if (y > max_y) max_y = y;
+    px = x;
+    py = y;
+    pz = z;
+    pyaw = yaw;
+    ppitch = pitch;
+  }
+  // 24 blocks/s at 144 Hz is 0.167 blocks per frame; allow some slack.
+  std::testing::check(max_step < 0.25 * 0.25, "no position jumps");
+  std::testing::check(max_turn < 0.02, "no yaw jumps");
+  std::testing::check(min_y >= 84.0 and max_y <= 100.0, "altitude in 85..100");
+  // The straight leg travels far toward -Z; the 360 pan ends one full turn
+  // past the turn heading.
+  mut float x = 0.0;
+  mut float y = 0.0;
+  mut float z = 0.0;
+  mut float yaw = 0.0;
+  mut float pitch = 0.0;
+  path.pose_at(25.0d, x, y, z, yaw, pitch);
+  std::testing::check(z < -550.0, "straight leg covers new ground");
+  std::testing::check_approx(yaw, 0.0, 0.0001);
+  path.pose_at(60.0d, x, y, z, yaw, pitch);
+  std::testing::check_approx(yaw, float(FLIGHT_PI * 2.5d), 0.001);
+  // Clamped outside the path.
+  mut float x2 = 0.0;
+  path.pose_at(1000.0d, x2, y, z, yaw, pitch);
+  std::testing::check_approx(x2, x, 0.0001);
+  // A 30 s run flies the same route twice as fast.
+  FlightPath fast = FlightPath(30.0d);
+  std::testing::check_approx(fast.duration_seconds(), 30.0d, 0.000001d);
+  mut float fx = 0.0;
+  mut float fz = 0.0;
+  fast.pose_at(12.5d, fx, y, fz, yaw, pitch);
+  path.pose_at(25.0d, x, y, z, yaw, pitch);
+  std::testing::check_approx(fx, x, 0.0001);
+  std::testing::check_approx(fz, z, 0.0001);
+}
+}

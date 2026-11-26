@@ -1,0 +1,394 @@
+// 2D overlay: rectangles, bitmap text, block icons, crosshair and hotbar.
+//
+// Everything queued between begin() and flush() goes into one vertex stream
+// drawn with one glDrawArrays call. Each vertex is four uint32 words read as
+// one `uvec4` integer attribute, so no float bit-casting is needed:
+//   x: pixel x * 4 (low 16 bits) | pixel y * 4 (high 16 bits)
+//   y: u (low 16) | v (high 16), in texels of the source image
+//   z: texture-array layer (low 16) | mode (high 16): 0 solid, 1 font, 2 block
+//   w: color 0xRRGGBBAA
+// Coordinates are framebuffer pixels with the origin at the top-left; values
+// are clamped to [0, 16383.75].
+export module hud;
+
+import "gl.gti";
+import "../world/block.gti";
+import std.format;
+import std.string;
+import std.vector;
+
+export namespace voxel {
+// Font: 5x8 glyphs (7 rows above the baseline, 1 descender row) for ASCII
+// 32..126, designed for this project (original pixel art, no third-party
+// font data). Eight base-32 digits per glyph, one per row, top row first;
+// bit 4 of each digit is the leftmost column.
+constexpr int32_t FONT_GLYPH_W = 5;
+constexpr int32_t FONT_GLYPH_H = 8;
+constexpr int32_t FONT_CELL_W = 6;   // advance
+constexpr int32_t FONT_CELL_H = 10;  // line height
+constexpr int32_t FONT_ATLAS_COLS = 16;
+constexpr int32_t FONT_ATLAS_ROWS = 6;
+
+std::string_view font_rows() {
+  // One literal: GTI has no adjacent string-literal concatenation.
+  return "0000000044444040aa000000aavavaa04fke5u40op248j30cik8lid044000000248884208422248004lel400044v440000000448000v00000000004001248g00ehjlphe04c4444e0eh1248v0v2421he026aiv220vgu11he068guhhe0v1248880ehhehhe0ehhf12c00040040000400448248g842000v0v00084212480eh124040ehnlnge0ehhvhhh0uhhuhhu0ehggghe0sihhhis0vgguggv0vgguggg0ehgnhhf0hhhvhhh0e44444e072222ic0hikokih0ggggggv0hrllhhh0hhpljhh0ehhhhhe0uhhuggg0ehhhlid0uhhukih0fgge11u0v4444440hhhhhhe0hhhhha40hhhllla0hha4ahh0hha44440v1248gv0e88888e00g842100e22222e04ah00000000000v08400000000e1fhf0ggmphhu000egghe011djhhf000ehvge0698s888000fhhf1eggmphhh040c444e0206222icggikoki0c44444e000qlllh000mphhh000ehhhe000uhhugg00fhhf1100mpggg000fge1u088s8896000hhhjd000hhha4000hhlla000ha4ah000hhhf1e00v248v03448443044444440o44244o0008l2000";
+}
+
+int32_t font_digit(char c) {
+  uint8_t v = uint8_t(c);
+  if (v >= uint8_t(48) and v <= uint8_t(57)) return int32_t(v) - 48;
+  if (v >= uint8_t(97) and v <= uint8_t(118)) return int32_t(v) - 97 + 10;
+  return 0;
+}
+
+// Atlas: 16 x 6 cells of FONT_CELL_W x FONT_CELL_H texels, RGBA8 white with
+// alpha = ink. Exposed for tests.
+std::vector<uint8_t> build_font_atlas() {
+  int32_t width = FONT_ATLAS_COLS * FONT_CELL_W;
+  int32_t height = FONT_ATLAS_ROWS * FONT_CELL_H;
+  mut std::vector<uint8_t> px = std::vector<uint8_t>(uint64_t(width * height * 4));
+  std::string_view rows = font_rows();
+  for (mut int32_t glyph = 0; glyph < 95; glyph++) {
+    int32_t cx = (glyph % FONT_ATLAS_COLS) * FONT_CELL_W;
+    int32_t cy = (glyph / FONT_ATLAS_COLS) * FONT_CELL_H;
+    for (mut int32_t row = 0; row < FONT_GLYPH_H; row++) {
+      int32_t bits = font_digit(rows[uint64_t(glyph * FONT_GLYPH_H + row)]);
+      for (mut int32_t col = 0; col < FONT_GLYPH_W; col++) {
+        if ((bits & (16 >> col)) != 0) {
+          uint64_t o = (uint64_t(cy + row) * uint64_t(width) + uint64_t(cx + col)) * uint64_t(4);
+          px[o] = uint8_t(255);
+          px[o + uint64_t(1)] = uint8_t(255);
+          px[o + uint64_t(2)] = uint8_t(255);
+          px[o + uint64_t(3)] = uint8_t(255);
+        }
+      }
+    }
+  }
+  return px;
+}
+
+uint32_t hud_coord(float v) {
+  mut float c = v * 4.0;
+  if (c < 0.0) c = 0.0;
+  if (c > 65535.0) c = 65535.0;
+  return uint32_t(c);
+}
+
+uint32_t hud_compile(uint32_t kind, c_string source) {
+  unsafe {
+    uint32_t shader = gl::glCreateShader(kind);
+    mut c_string text = source;
+    gl::glShaderSource(shader, 1, &text, nullptr);
+    gl::glCompileShader(shader);
+    mut int32_t ok = 0;
+    gl::glGetShaderiv(shader, gl::COMPILE_STATUS, &ok);
+    if (ok == 0) {
+      mut std::vector<uint8_t> log = std::vector<uint8_t>(uint64_t(1024));
+      mut int32_t length = 0;
+      gl::glGetShaderInfoLog(shader, 1023, &length, &log[uint64_t(0)]);
+      mut std::string message{};
+      for (mut int32_t i = 0; i < length; i++) message.push_back(char(log[uint64_t(i)]));
+      std::println("hud shader error: {}", message);
+      gl::glDeleteShader(shader);
+      return uint32_t(0);
+    }
+    return shader;
+  }
+}
+
+class Hud {
+  mut uint32_t program_ = uint32_t(0);
+  mut uint32_t vao_ = uint32_t(0);
+  mut uint32_t vbo_ = uint32_t(0);
+  mut uint32_t font_texture_ = uint32_t(0);
+  mut uint32_t block_texture_ = uint32_t(0);
+  mut int32_t screen_loc_ = -1;
+  mut int32_t width_ = 1;
+  mut int32_t height_ = 1;
+  mut float ui_scale_ = 2.0;
+  mut std::vector<uint32_t> verts_{};
+
+  void vertex(float x, float y, uint32_t u, uint32_t v, uint32_t layer, uint32_t mode,
+              uint32_t rgba) mut {
+    this.verts_.push_back(hud_coord(x) | (hud_coord(y) << uint32_t(16)));
+    this.verts_.push_back(u | (v << uint32_t(16)));
+    this.verts_.push_back(layer | (mode << uint32_t(16)));
+    this.verts_.push_back(rgba);
+  }
+
+  void quad(float x, float y, float w, float h, uint32_t u0, uint32_t v0, uint32_t u1,
+            uint32_t v1, uint32_t layer, uint32_t mode, uint32_t rgba) mut {
+    this.vertex(x, y, u0, v0, layer, mode, rgba);
+    this.vertex(x, y + h, u0, v1, layer, mode, rgba);
+    this.vertex(x + w, y + h, u1, v1, layer, mode, rgba);
+    this.vertex(x, y, u0, v0, layer, mode, rgba);
+    this.vertex(x + w, y + h, u1, v1, layer, mode, rgba);
+    this.vertex(x + w, y, u1, v0, layer, mode, rgba);
+  }
+
+public:
+  Hud() {}
+
+  bool initialize() mut {
+    uint32_t vs = hud_compile(gl::VERTEX_SHADER,
+        "#version 410 core\nlayout(location=0) in uvec4 a;\nuniform vec4 u_screen;\nout vec2 v_uv;\nflat out uint v_mode;\nflat out float v_layer;\nout vec4 v_color;\nvoid main(){\n  vec2 p = vec2(float(a.x & 0xFFFFu), float(a.x >> 16)) * 0.25;\n  vec2 uv = vec2(float(a.y & 0xFFFFu), float(a.y >> 16));\n  v_mode = a.z >> 16;\n  v_layer = float(a.z & 0xFFFFu);\n  v_uv = v_mode == 1u ? uv / u_screen.zw : uv / 16.0;\n  v_color = vec4(uvec4((a.w >> 24) & 255u, (a.w >> 16) & 255u, (a.w >> 8) & 255u, a.w & 255u)) / 255.0;\n  gl_Position = vec4(p.x / u_screen.x * 2.0 - 1.0, 1.0 - p.y / u_screen.y * 2.0, 0.0, 1.0);\n}\n");
+    uint32_t fs = hud_compile(gl::FRAGMENT_SHADER,
+        "#version 410 core\nin vec2 v_uv;\nflat in uint v_mode;\nflat in float v_layer;\nin vec4 v_color;\nuniform sampler2D u_font;\nuniform sampler2DArray u_blocks;\nout vec4 o;\nvoid main(){\n  vec4 c = v_color;\n  if (v_mode == 1u) {\n    c.a *= texture(u_font, v_uv).a;\n  } else if (v_mode == 2u) {\n    vec4 t = textureLod(u_blocks, vec3(v_uv, v_layer), 0.0);\n    if (t.a < 0.1) discard;\n    c = vec4(t.rgb * v_color.rgb, v_color.a * max(t.a, 0.6));\n  }\n  if (c.a <= 0.0) discard;\n  o = c;\n}\n");
+    if (vs == uint32_t(0) or fs == uint32_t(0)) return false;
+    unsafe {
+      this.program_ = gl::glCreateProgram();
+      gl::glAttachShader(this.program_, vs);
+      gl::glAttachShader(this.program_, fs);
+      gl::glLinkProgram(this.program_);
+      mut int32_t linked = 0;
+      gl::glGetProgramiv(this.program_, gl::LINK_STATUS, &linked);
+      gl::glDeleteShader(vs);
+      gl::glDeleteShader(fs);
+      if (linked == 0) {
+        std::println("hud program link failed");
+        return false;
+      }
+      this.screen_loc_ = gl::glGetUniformLocation(this.program_, "u_screen");
+      gl::glUseProgram(this.program_);
+      gl::glUniform1i(gl::glGetUniformLocation(this.program_, "u_font"), 0);
+      gl::glUniform1i(gl::glGetUniformLocation(this.program_, "u_blocks"), 1);
+      gl::glUseProgram(uint32_t(0));
+
+      mut uint32_t vao = uint32_t(0);
+      mut uint32_t vbo = uint32_t(0);
+      gl::glGenVertexArrays(1, &vao);
+      gl::glGenBuffers(1, &vbo);
+      this.vao_ = vao;
+      this.vbo_ = vbo;
+      gl::glBindVertexArray(vao);
+      gl::glBindBuffer(gl::ARRAY_BUFFER, vbo);
+      gl::glVertexAttribIPointer(uint32_t(0), 4, gl::UNSIGNED_INT, 16, uint64_t(0));
+      gl::glEnableVertexAttribArray(uint32_t(0));
+      gl::glBindVertexArray(uint32_t(0));
+
+      mut std::vector<uint8_t> atlas = build_font_atlas();
+      mut uint32_t tex = uint32_t(0);
+      gl::glGenTextures(1, &tex);
+      this.font_texture_ = tex;
+      gl::glActiveTexture(gl::TEXTURE0);
+      gl::glBindTexture(gl::TEXTURE_2D, tex);
+      gl::glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+      gl::glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+      gl::glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+      gl::glTexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+      gl::glTexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, FONT_ATLAS_COLS * FONT_CELL_W,
+                       FONT_ATLAS_ROWS * FONT_CELL_H, 0, gl::RGBA, gl::UNSIGNED_BYTE,
+                       &atlas[uint64_t(0)]);
+      gl::glBindTexture(gl::TEXTURE_2D, uint32_t(0));
+    }
+    this.verts_.reserve(uint64_t(4 * 6 * 2048));
+    return true;
+  }
+
+  void shutdown() mut {
+    unsafe {
+      if (this.vbo_ != uint32_t(0)) {
+        mut uint32_t id = this.vbo_;
+        gl::glDeleteBuffers(1, &id);
+        this.vbo_ = uint32_t(0);
+      }
+      if (this.vao_ != uint32_t(0)) {
+        mut uint32_t id = this.vao_;
+        gl::glDeleteVertexArrays(1, &id);
+        this.vao_ = uint32_t(0);
+      }
+      if (this.font_texture_ != uint32_t(0)) {
+        mut uint32_t id = this.font_texture_;
+        gl::glDeleteTextures(1, &id);
+        this.font_texture_ = uint32_t(0);
+      }
+      if (this.program_ != uint32_t(0)) {
+        gl::glDeleteProgram(this.program_);
+        this.program_ = uint32_t(0);
+      }
+    }
+  }
+
+  // Starts a frame. The UI scale (texels -> framebuffer pixels for the font
+  // and hotbar) is derived from the framebuffer height: 2 at 720p-ish, 4 on
+  // a 1600-pixel-high Retina framebuffer.
+  void begin(int32_t framebuffer_width, int32_t framebuffer_height) mut {
+    this.width_ = framebuffer_width;
+    this.height_ = framebuffer_height;
+    if (this.width_ < 1) this.width_ = 1;
+    if (this.height_ < 1) this.height_ = 1;
+    mut float s = float(int32_t(float(this.height_) / 400.0 + 0.5));
+    if (s < 1.0) s = 1.0;
+    this.ui_scale_ = s;
+    this.verts_.clear();
+  }
+
+  float ui_scale() { return this.ui_scale_; }
+  int32_t width() { return this.width_; }
+  int32_t height() { return this.height_; }
+  // Quads queued since begin().
+  int64_t quad_count() { return int64_t(this.verts_.size() / uint64_t(24)); }
+
+  void rect(float x, float y, float w, float h, uint32_t rgba) mut {
+    if (w <= 0.0 or h <= 0.0) return;
+    this.quad(x, y, w, h, uint32_t(0), uint32_t(0), uint32_t(0), uint32_t(0), uint32_t(0),
+              uint32_t(0), rgba);
+  }
+
+  // Outline of thickness t inside (x, y, w, h).
+  void frame(float x, float y, float w, float h, float t, uint32_t rgba) mut {
+    this.rect(x, y, w, t, rgba);
+    this.rect(x, y + h - t, w, t, rgba);
+    this.rect(x, y + t, t, h - 2.0 * t, rgba);
+    this.rect(x + w - t, y + t, t, h - 2.0 * t, rgba);
+  }
+
+  // Draws `s` with its top-left at (x, y); each font texel is `scale`
+  // pixels. '\n' starts a new line. Bytes outside 32..126 draw as '?'.
+  void text(float x, float y, float scale, std::string_view s, uint32_t rgba) mut {
+    mut float pen_x = x;
+    mut float pen_y = y;
+    float gw = float(FONT_GLYPH_W) * scale;
+    float gh = float(FONT_GLYPH_H) * scale;
+    for (mut uint64_t i = uint64_t(0); i < s.size(); i++) {
+      mut int32_t code = int32_t(uint8_t(s[i]));
+      if (code == 10) {
+        pen_x = x;
+        pen_y = pen_y + float(FONT_CELL_H) * scale;
+        continue;
+      }
+      if (code < 32 or code > 126) code = 63;
+      if (code != 32) {
+        int32_t glyph = code - 32;
+        uint32_t u0 = uint32_t((glyph % FONT_ATLAS_COLS) * FONT_CELL_W);
+        uint32_t v0 = uint32_t((glyph / FONT_ATLAS_COLS) * FONT_CELL_H);
+        this.quad(pen_x, pen_y, gw, gh, u0, v0, u0 + uint32_t(FONT_GLYPH_W),
+                  v0 + uint32_t(FONT_GLYPH_H), uint32_t(0), uint32_t(1), rgba);
+      }
+      pen_x = pen_x + float(FONT_CELL_W) * scale;
+    }
+  }
+
+  // Text with a 1-texel dark drop shadow, for legibility over terrain.
+  void text_shadowed(float x, float y, float scale, std::string_view s, uint32_t rgba) mut {
+    this.text(x + scale, y + scale, scale, s, uint32_t(0x000000B0));
+    this.text(x, y, scale, s, rgba);
+  }
+
+  // Width in pixels of the longest line of `s`.
+  float text_width(std::string_view s, float scale) {
+    mut int32_t longest = 0;
+    mut int32_t current = 0;
+    for (mut uint64_t i = uint64_t(0); i < s.size(); i++) {
+      if (s[i] == '\n') {
+        current = 0;
+      } else {
+        current++;
+        if (current > longest) longest = current;
+      }
+    }
+    if (longest == 0) return 0.0;
+    // The last glyph has no trailing spacing column.
+    return (float(longest * FONT_CELL_W) - 1.0) * scale;
+  }
+
+  float line_height(float scale) { return float(FONT_CELL_H) * scale; }
+
+  void block_icon(float x, float y, float size, uint32_t tile, uint32_t texture_array) mut {
+    this.block_texture_ = texture_array;
+    this.quad(x, y, size, size, uint32_t(0), uint32_t(0), uint32_t(16), uint32_t(16), tile,
+              uint32_t(2), uint32_t(0xFFFFFFFF));
+  }
+
+  void crosshair() mut {
+    float s = this.ui_scale_;
+    float cx = float(this.width_) * 0.5;
+    float cy = float(this.height_) * 0.5;
+    float arm = 6.0 * s;
+    float t = s;
+    // Dark outline first, then the light cross.
+    uint32_t dark = uint32_t(0x00000090);
+    uint32_t light = uint32_t(0xF0F0F0E0);
+    this.rect(cx - arm - 1.0, cy - t * 0.5 - 1.0, arm * 2.0 + 2.0, t + 2.0, dark);
+    this.rect(cx - t * 0.5 - 1.0, cy - arm - 1.0, t + 2.0, arm * 2.0 + 2.0, dark);
+    this.rect(cx - arm, cy - t * 0.5, arm * 2.0, t, light);
+    this.rect(cx - t * 0.5, cy - arm, t, arm * 2.0, light);
+  }
+
+  // Slot frames centered at the bottom, block icons (side face), the
+  // selected slot highlighted, and slot numbers.
+  void hotbar(std::vector<uint8_t>& blocks, int32_t selected) mut {
+    int32_t count = int32_t(blocks.size());
+    if (count == 0) return;
+    float s = this.ui_scale_;
+    float slot = 22.0 * s;
+    float pad = 2.0 * s;
+    float total = slot * float(count) + pad * 2.0;
+    float x0 = (float(this.width_) - total) * 0.5;
+    float y0 = float(this.height_) - slot - pad * 2.0 - 4.0 * s;
+    this.rect(x0, y0, total, slot + pad * 2.0, uint32_t(0x18181CB0));
+    for (mut int32_t i = 0; i < count; i++) {
+      float sx = x0 + pad + float(i) * slot;
+      float sy = y0 + pad;
+      this.frame(sx, sy, slot, slot, s, uint32_t(0x5A5A64E0));
+      uint8_t id = blocks[uint64_t(i)];
+      if (id != AIR) {
+        float icon = 16.0 * s;
+        float off = (slot - icon) * 0.5;
+        this.block_icon(sx + off, sy + off, icon, tile_for(id, FACE_POS_Z), this.block_texture_);
+      }
+      if (i < 9) {
+        mut std::string label{};
+        label.push_back(char(uint8_t(49 + i)));
+        this.text_shadowed(sx + 2.0 * s, sy + 1.0 * s, s * 0.5 + 0.5, label.view(),
+                           uint32_t(0xE0E0E0D0));
+      }
+    }
+    if (selected >= 0 and selected < count) {
+      float sx = x0 + pad + float(selected) * slot;
+      float sy = y0 + pad;
+      this.frame(sx - s, sy - s, slot + 2.0 * s, slot + 2.0 * s, 2.0 * s,
+                 uint32_t(0xFFFFFFFF));
+    }
+  }
+
+  // Sets the block texture array used by hotbar icons (block_icon also sets
+  // it). The renderer owns the texture.
+  void set_block_texture(uint32_t texture_array) mut { this.block_texture_ = texture_array; }
+
+  void flush() mut {
+    uint64_t words = this.verts_.size();
+    if (words == uint64_t(0) or this.program_ == uint32_t(0)) return;
+    int32_t vertex_count = int32_t(words / uint64_t(4));
+    int64_t bytes = int64_t(words * uint64_t(4));
+    unsafe {
+      bool depth_was = gl::glIsEnabled(gl::DEPTH_TEST) != uint8_t(0);
+      bool blend_was = gl::glIsEnabled(gl::BLEND) != uint8_t(0);
+      bool cull_was = gl::glIsEnabled(gl::CULL_FACE) != uint8_t(0);
+      gl::glDisable(gl::DEPTH_TEST);
+      gl::glDisable(gl::CULL_FACE);
+      gl::glEnable(gl::BLEND);
+      gl::glBlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+      gl::glViewport(0, 0, this.width_, this.height_);
+      gl::glUseProgram(this.program_);
+      gl::glUniform4f(this.screen_loc_, float(this.width_), float(this.height_),
+                      float(FONT_ATLAS_COLS * FONT_CELL_W),
+                      float(FONT_ATLAS_ROWS * FONT_CELL_H));
+      gl::glActiveTexture(gl::TEXTURE0 + uint32_t(1));
+      gl::glBindTexture(gl::TEXTURE_2D_ARRAY, this.block_texture_);
+      gl::glActiveTexture(gl::TEXTURE0);
+      gl::glBindTexture(gl::TEXTURE_2D, this.font_texture_);
+      gl::glBindVertexArray(this.vao_);
+      gl::glBindBuffer(gl::ARRAY_BUFFER, this.vbo_);
+      gl::glBufferData(gl::ARRAY_BUFFER, bytes, &this.verts_[uint64_t(0)], gl::STREAM_DRAW);
+      gl::glDrawArrays(gl::TRIANGLES, 0, vertex_count);
+      gl::glBindVertexArray(uint32_t(0));
+      gl::glBindTexture(gl::TEXTURE_2D, uint32_t(0));
+      if (depth_was) gl::glEnable(gl::DEPTH_TEST);
+      if (!blend_was) gl::glDisable(gl::BLEND);
+      if (cull_was) gl::glEnable(gl::CULL_FACE);
+    }
+    this.verts_.clear();
+  }
+};
+}
