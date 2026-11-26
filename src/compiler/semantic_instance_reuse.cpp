@@ -98,7 +98,7 @@ std::uint64_t SemanticVisitor::Impl::trustedRegistrationFingerprint() const {
     fingerprint.add(symbol->name);
   }
   fingerprint.add(0xca11ab1eULL);
-  for (const auto &callable : catalog.callableDeclarations) {
+  for (const auto &callable : catalog.callables().records) {
     if (callable == nullptr || !trustedUnit(callable->sourceUnit))
       continue;
     fingerprint.add(callable->id);

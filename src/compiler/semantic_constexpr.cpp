@@ -406,15 +406,25 @@ SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
 
 auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables(
     Symbol &symbol) const -> void {
-  for (auto &candidate : symbol.overloads.edit()) {
+  const auto resolve =
+      [&](const CallableCandidate &candidate) -> const CallableDeclaration * {
     if (candidate.declarationRecord == nullptr)
-      continue;
-    const auto found =
-        callableDeclarationsBySyntax.find(candidate.declarationRecord->syntax);
-    if (found == callableDeclarationsBySyntax.end())
+      return candidate.declarationRecord;
+    const auto &index = callables().bySyntax;
+    const auto owned = index.find(candidate.declarationRecord->syntax);
+    if (owned == index.end())
       throw std::logic_error(
           "copied callable candidate lacks an owned declaration");
-    candidate.declarationRecord = found->second;
+    return owned->second;
+  };
+  // A sealed worker usually has the source's very same records. Editing
+  // even one already-bound frozen overload set would copy every signature.
+  if (std::any_of(symbol.overloads.begin(), symbol.overloads.end(),
+                  [&](const auto &candidate) {
+                    return resolve(candidate) != candidate.declarationRecord;
+                  })) {
+    for (auto &candidate : symbol.overloads.edit())
+      candidate.declarationRecord = resolve(candidate);
   }
   if (sealed)
     symbol.overloads.freeze();
@@ -475,74 +485,14 @@ auto SemanticVisitor::Impl::ValueFlowState::rebindCallables(
 
 auto SemanticVisitor::Impl::SemanticCatalog::operator=(
     const SemanticCatalog &other) -> SemanticCatalog & {
-  if (this == &other)
-    return *this;
-  SemanticCatalog copy;
-  copy.compilerTypeClasses = other.compilerTypeClasses;
-  copy.namespaces = other.namespaces;
-  copy.ambiguousPublications = other.ambiguousPublications;
-  copy.namespaceToolingSymbols = other.namespaceToolingSymbols;
-  copy.namespaceAliases = other.namespaceAliases;
-  copy.compilerPrivateNamespaceSymbol = other.compilerPrivateNamespaceSymbol;
-  copy.typeAliasIds = other.typeAliasIds;
-  copy.typeAliases = other.typeAliases;
-  copy.conceptIds = other.conceptIds;
-  copy.concepts = other.concepts;
-  copy.namespaceSymbols = other.namespaceSymbols;
-  copy.internalNamespaceSymbols = other.internalNamespaceSymbols;
-  copy.classIds = other.classIds;
-  copy.enumIds = other.enumIds;
-  copy.visibleNamespaces = other.visibleNamespaces;
-  copy.visibleNamespaceAliases = other.visibleNamespaceAliases;
-  copy.visibleTypeAliasIds = other.visibleTypeAliasIds;
-  copy.visibleConceptIds = other.visibleConceptIds;
-  copy.visibleNamespaceSymbols = other.visibleNamespaceSymbols;
-  copy.visibleClassIds = other.visibleClassIds;
-  copy.visibleEnumIds = other.visibleEnumIds;
-  copy.classDeclIds = other.classDeclIds;
-  copy.conceptDeclIds = other.conceptDeclIds;
-  copy.functionGenericParameters = other.functionGenericParameters;
-  copy.definitionOwnerGenericParameters =
-      other.definitionOwnerGenericParameters;
-  copy.constraintPredicateDeclarations = other.constraintPredicateDeclarations;
-  for (const auto &declaration : other.callableDeclarations) {
-    auto owned = std::make_unique<CallableDeclaration>(*declaration);
-    copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
-                                                       owned.get());
-    if (owned->definition != nullptr)
-      copy.callableDeclarationsBySyntax.insert_or_assign(owned->definition,
-                                                         owned.get());
-    copy.callableDeclarations.emplace_back(std::move(owned));
-  }
-  copy.constructorGenericParameters = other.constructorGenericParameters;
-  copy.rootNativeStorageSymbols = other.rootNativeStorageSymbols;
-  copy.globalBorrowStorage = other.globalBorrowStorage;
-  copy.genericConstraints = other.genericConstraints;
-  copy.genericConstraintConcepts = other.genericConstraintConcepts;
-  copy.compilerTypeClasses = other.compilerTypeClasses;
-  copy.classes = other.classes;
-  copy.exactClassSpecializations = other.exactClassSpecializations;
-  copy.conformances = other.conformances;
-  copy.enums = other.enums;
-  copy.predeclaredVariables = other.predeclaredVariables;
-  copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
-  copy.recursiveLayoutFields = other.recursiveLayoutFields;
-  copy.nextGenericParameterId = other.nextGenericParameterId;
-  copy.nextConstructorId = other.nextConstructorId;
-  copy.nextDefaultArgumentEffectOwner = other.nextDefaultArgumentEffectOwner;
-  copy.nextFunctionId = other.nextFunctionId;
-  copy.sealed = other.sealed;
-  copy.sealedShape = other.sealedShape;
-  copy.rebindCallables();
-  *this = std::move(copy);
+  if (this != &other)
+    *this = other.clone(CallableCopy::Independent);
   return *this;
 }
 
-auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
+auto SemanticVisitor::Impl::SemanticCatalog::clone(CallableCopy mode) const
     -> SemanticCatalog {
-  assertUnchangedSinceSeal();
   SemanticCatalog copy;
-  copy.compilerTypeClasses = compilerTypeClasses;
   copy.namespaces = namespaces;
   copy.ambiguousPublications = ambiguousPublications;
   copy.namespaceToolingSymbols = namespaceToolingSymbols;
@@ -568,8 +518,12 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.functionGenericParameters = functionGenericParameters;
   copy.definitionOwnerGenericParameters = definitionOwnerGenericParameters;
   copy.constraintPredicateDeclarations = constraintPredicateDeclarations;
-  for (const auto &declaration : callableDeclarations) {
-    (void)copy.registerCallable(*declaration);
+  const bool share = mode == CallableCopy::ShareSealed && sealed;
+  if (share) {
+    copy.callableRegistry = callableRegistry;
+  } else {
+    for (const auto &declaration : callables().records)
+      (void)copy.registerCallable(*declaration);
   }
   copy.constructorGenericParameters = constructorGenericParameters;
   copy.rootNativeStorageSymbols = rootNativeStorageSymbols;
@@ -588,9 +542,19 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.nextConstructorId = nextConstructorId;
   copy.nextDefaultArgumentEffectOwner = nextDefaultArgumentEffectOwner;
   copy.nextFunctionId = nextFunctionId;
-  copy.rebindCallables();
-  copy.seal();
-  assert(copy.sealedShape == sealedShape);
+  copy.sealed = sealed;
+  copy.sealedShape = sealedShape;
+  if (!share)
+    copy.rebindCallables();
+  return copy;
+}
+
+auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
+    -> SemanticCatalog {
+  assertUnchangedSinceSeal();
+  SemanticCatalog copy = clone(CallableCopy::ShareSealed);
+  if (!copy.sealed)
+    copy.seal();
   return copy;
 }
 

@@ -1,0 +1,16 @@
+// Staged generic calls retain the selected out-of-line overload across workers.
+struct Scale {
+  constexpr Scale() {}
+  constexpr int apply(int value);
+  constexpr int apply(bool value);
+};
+constexpr int Scale::apply(int value) { return value * 2; }
+constexpr int Scale::apply(bool value) { return value ? 3 : 1; }
+constexpr int evaluate<uint64_t N>() {
+  Scale scale{};
+  if constexpr (N == 0) { return scale.apply(true); }
+  else { return scale.apply(int(N)); }
+}
+static_assert(evaluate<9>() == 18);
+static_assert(evaluate<0>() == 3);
+int main() { return evaluate<2>() == 4 && evaluate<0>() == 3 ? 0 : 1; }

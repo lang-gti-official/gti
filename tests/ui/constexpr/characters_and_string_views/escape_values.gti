@@ -17,4 +17,8 @@ static_assert(unicode.size() == 10 && uint8_t(unicode[0]) == uint8_t(0xc3) &&
               uint8_t(unicode[5]) == uint8_t(0xf0) && uint8_t(unicode[8]) == uint8_t(0x80) &&
               unicode[9] == 'A');
 static_assert(quote.size() == 4 && quote[2] == '\'');
+// An odd run escapes the quote and an even run ends the multiline string.
+static_assert("odd\\\"quote
+even\\\\" == R"(odd\"quote
+even\\)");
 int main() { return 0; }

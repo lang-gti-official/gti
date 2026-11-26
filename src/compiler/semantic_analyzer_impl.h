@@ -7281,9 +7281,18 @@ private:
         definitionOwnerGenericParameters;
     std::unordered_map<std::string, std::vector<ConstraintPredicateDeclaration>>
         constraintPredicateDeclarations;
-    std::unordered_map<const FunctionDecl *, CallableDeclaration *>
-        callableDeclarationsBySyntax;
-    std::vector<std::unique_ptr<CallableDeclaration>> callableDeclarations;
+    struct CallableRegistry {
+      std::unordered_map<const FunctionDecl *, CallableDeclaration *> bySyntax;
+      std::vector<std::unique_ptr<CallableDeclaration>> records;
+    };
+
+    [[nodiscard]] const CallableRegistry &callables() const {
+      return *callableRegistry;
+    }
+    [[nodiscard]] CallableRegistry &writableCallables() {
+      assert(!sealed && callableRegistry.use_count() == 1);
+      return *callableRegistry;
+    }
     std::unordered_map<const ConstructorDecl *,
                        std::vector<GenericParameterInfo>>
         constructorGenericParameters;
@@ -7316,8 +7325,8 @@ private:
     SemanticCatalog() = default;
     SemanticCatalog(SemanticCatalog &&) noexcept = default;
     SemanticCatalog &operator=(SemanticCatalog &&) noexcept = default;
-    // A copy owns its callable records and rebinds every candidate/index to
-    // those records. Syntax pointers refer to shared immutable AST ownership.
+    // A regular copy can reopen registration and owns independent callable
+    // records. Instance snapshots keep the sealed registry alive instead.
     SemanticCatalog(const SemanticCatalog &other);
     SemanticCatalog &operator=(const SemanticCatalog &other);
     void rebindCallables(Symbol &symbol) const;
@@ -7339,30 +7348,32 @@ private:
       auto owned =
           std::make_unique<CallableDeclaration>(std::move(declaration));
       CallableDeclaration &result = *owned;
-      callableDeclarationsBySyntax.insert_or_assign(result.syntax, &result);
+      auto &registry = writableCallables();
+      registry.bySyntax.insert_or_assign(result.syntax, &result);
       if (result.definition != nullptr)
-        callableDeclarationsBySyntax.insert_or_assign(result.definition,
-                                                      &result);
-      callableDeclarations.emplace_back(std::move(owned));
+        registry.bySyntax.insert_or_assign(result.definition, &result);
+      registry.records.emplace_back(std::move(owned));
       return result;
     }
 
     [[nodiscard]] CallableDeclaration *
     mutableCallable(const FunctionDecl &syntax) {
-      assert(!sealed);
-      const auto found = callableDeclarationsBySyntax.find(&syntax);
-      return found == callableDeclarationsBySyntax.end() ? nullptr
-                                                         : found->second;
+      const auto found = writableCallables().bySyntax.find(&syntax);
+      return found == callables().bySyntax.end() ? nullptr : found->second;
     }
 
     [[nodiscard]] const CallableDeclaration *
     callable(const FunctionDecl &syntax) const {
-      const auto found = callableDeclarationsBySyntax.find(&syntax);
-      return found == callableDeclarationsBySyntax.end() ? nullptr
-                                                         : found->second;
+      const auto found = callables().bySyntax.find(&syntax);
+      return found == callables().bySyntax.end() ? nullptr : found->second;
     }
 
   private:
+    std::shared_ptr<CallableRegistry> callableRegistry =
+        std::make_shared<CallableRegistry>();
+    enum class CallableCopy { Independent, ShareSealed };
+    [[nodiscard]] SemanticCatalog clone(CallableCopy mode) const;
+
     [[nodiscard]] std::vector<std::size_t> shape() const {
       return {compilerTypeClasses.size(),
               namespaces.size(),
@@ -7389,8 +7400,8 @@ private:
               functionGenericParameters.size(),
               definitionOwnerGenericParameters.size(),
               constraintPredicateDeclarations.size(),
-              callableDeclarationsBySyntax.size(),
-              callableDeclarations.size(),
+              callables().bySyntax.size(),
+              callables().records.size(),
               constructorGenericParameters.size(),
               rootNativeStorageSymbols.size(),
               globalBorrowStorage.size(),

@@ -11,6 +11,7 @@
 #include "toml.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -681,32 +682,44 @@ checkoutChecksum(const std::filesystem::path &checkout,
             });
 
   Sha256 hash;
-  const auto framed = [&hash](std::string_view value) {
+  const auto frameLength = [&hash](std::uint64_t length) {
     std::array<char, 8> size{};
-    const std::uint64_t length = value.size();
     for (std::size_t index = 0; index < size.size(); ++index) {
       size[size.size() - index - 1] =
           static_cast<char>((length >> (index * 8U)) & 0xffU);
     }
     hash.update(std::string_view(size.data(), size.size()));
+  };
+  const auto framed = [&](std::string_view value) {
+    frameLength(value.size());
     hash.update(value);
   };
   framed("gti-dependency-tree-v1");
+  std::array<char, 64 * 1024> buffer;
   for (const Entry &entry : entries) {
     framed(entry.path);
     framed(entry.executable ? "x" : "-");
-    std::ifstream input(entry.file, std::ios::binary);
-    if (!input) {
+    std::ifstream input(entry.file, std::ios::binary | std::ios::ate);
+    const std::streamoff size = input.tellg();
+    if (size < 0 || !input.seekg(0)) {
       errorMessage = "cannot read '" + entry.file.string() + "'";
       return std::nullopt;
     }
-    const std::string contents{std::istreambuf_iterator<char>(input),
-                               std::istreambuf_iterator<char>()};
-    if (input.bad()) {
+    frameLength(static_cast<std::uint64_t>(size));
+    std::streamoff remaining = size;
+    while (remaining > 0) {
+      const auto count = std::min<std::streamoff>(remaining, buffer.size());
+      if (!input.read(buffer.data(), count))
+        break;
+      hash.update(
+          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+      remaining -= count;
+    }
+    if (remaining != 0 || input.peek() != std::char_traits<char>::eof() ||
+        input.bad()) {
       errorMessage = "cannot finish reading '" + entry.file.string() + "'";
       return std::nullopt;
     }
-    framed(contents);
   }
   return "sha256:" + hash.finishHex();
 }
