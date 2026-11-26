@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "base": "2f6e0af3aa8ba87ca50e5fe73fb4c5b9fb5c1ee2",
+  "members": [
+    {
+      "pr": 709,
+      "head": "cb402b153e49dbb1bec54cd242e7ca160fb5d68a",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #709: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "failure_metadata",
+          "lsp_protocol"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #709; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "failure_metadata",
+          "lsp_protocol"
+        ]
+      }
+    },
+    {
+      "pr": 708,
+      "head": "bc8514da68d062dbb67de859022d60828d892713",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #708: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "gti_unit_tests",
+          "module_editor_recovery",
+          "module_queries",
+          "module_preamble_identity",
+          "macro_expansion_queries",
+          "frontend_cache_invalidation",
+          "lsp_code_snippets",
+          "lsp_completion_work",
+          "lsp_scalability_benchmark_smoke",
+          "lsp_protocol",
+          "editor_mir_diagnostics_lsp",
+          "source_modules_lsp",
+          "executable_entry_semantics"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #708; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_unit_tests",
+          "module_editor_recovery",
+          "module_queries",
+          "module_preamble_identity",
+          "macro_expansion_queries",
+          "frontend_cache_invalidation",
+          "lsp_code_snippets",
+          "lsp_completion_work",
+          "lsp_scalability_benchmark_smoke",
+          "lsp_protocol",
+          "editor_mir_diagnostics_lsp",
+          "source_modules_lsp",
+          "executable_entry_semantics"
+        ]
+      }
+    }
+  ]
+}
