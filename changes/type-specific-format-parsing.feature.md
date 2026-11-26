@@ -1,0 +1,1 @@
+Add source-defined formatter parsing with checked literal validation and runtime error reporting. Calendar and time-zone types accept chrono directives through std::format, std::println and their recoverable and runtime variants. Existing formatting protocols and common-specification formatters remain supported.

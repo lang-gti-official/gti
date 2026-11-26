@@ -1,0 +1,68 @@
+// Chunk syntax and configured body and framing limits apply across fragmented input.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+
+std::byte_buffer wire(std::string_view text) {
+  mut std::byte_buffer data{};
+  for (mut std::size_t i = 0; i < text.size(); i++) { data.push_back(uint8_t(text[i])); }
+  return std::move(data);
+}
+
+expected<bool, std::http::server_error> check(std::string_view body, std::http::server_limits limits,
+                                             bool valid, std::http::server_errc expected_code) {
+  mut auto codec = ?std::http::server_codec::open(limits);
+  auto header = wire("POST / HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\nConnection: X-Hop\r\n\r\n");
+  auto head = header.as_span();
+  auto req = ?codec.parse_head(head);
+  auto bytes = wire(body);
+  auto input = bytes.as_span();
+  mut std::byte_buffer sink{std::size_t(1)};
+  mut auto dst = sink.as_mutable_span();
+  for (mut std::size_t i = 0; i < input.size(); i++) {
+    auto part = input.subspan(i, std::size_t(1));
+    auto result = codec.parse_body(part, dst);
+    if (!result) {
+      return !valid && result.error().code == expected_code && result.error().can_send_error &&
+             result.error().phase == std::http::server_phase::body;
+    }
+    auto& progress = result.value();
+    if (progress.consumed != std::size_t(1)) { return false; }
+    if (progress.state == std::http::body_state::body_end) {
+      return valid && i + std::size_t(1) == input.size();
+    }
+  }
+  auto eof = codec.end_input();
+  return !valid && !eof && eof.error().code == expected_code && !eof.error().can_send_error &&
+         !codec.begin_error(uint16_t(400));
+}
+
+using E = std::http::server_errc;
+int main() {
+  mut std::http::server_limits limits{};
+  if (!check("1;q=\"a;b\"\r\nx\r\n0\r\nX-End: ok\r\n\r\n", limits, true, E::malformed).expect("valid")) { return 1; }
+  if (!check("0\r\nHost: a\r\n\r\n", limits, false, E::malformed).expect("forbidden")) { return 2; }
+  if (!check("0\r\nx-hop: a\r\n\r\n", limits, false, E::malformed).expect("hop by hop")) { return 3; }
+  if (!check("1\r\nx\r", limits, false, E::truncated).expect("truncated")) { return 4; }
+  if (!check("1;tag=\"bad\r\n", limits, false, E::malformed).expect("bad extension")) { return 5; }
+  if (!check("fffffffffffffffff\r\n", limits, false, E::body_limit).expect("overflow")) { return 6; }
+  if (!check("0\r\nRetry-After: 1\r\n\r\n", limits, false, E::malformed).expect("response control")) { return 14; }
+  limits.decoded_body = 1;
+  if (!check("1\r\nx\r\n1\r\n", limits, false, E::body_limit).expect("decoded budget")) { return 7; }
+  limits.chunk_line = 3;
+  limits.trailer_bytes = 2;
+  limits.chunk_framing = 10;
+  if (!check("1\r\nx\r\n0\r\n\r\n", limits, true, E::malformed).expect("exact budgets")) { return 8; }
+  limits.chunk_framing = 9;
+  if (!check("1\r\nx\r\n0\r\n\r\n", limits, false, E::framing_limit).expect("framing budget")) { return 9; }
+  if (!check("00\r\n", limits, false, E::chunk_line_limit).expect("line budget")) { return 10; }
+  if (!check("0\r\nX: y\r\n\r\n", limits, false, E::trailer_limit).expect("trailer bytes")) { return 11; }
+  limits.chunk_framing = 64;
+  limits.trailer_bytes = 32;
+  limits.trailer_fields = 0;
+  if (!check("0\r\nX: y\r\n\r\n", limits, false, E::trailer_limit).expect("field count")) { return 12; }
+  if (!check("0\r\nX", limits, false, E::trailer_limit).expect("field count at first byte")) { return 13; }
+  return 0;
+}

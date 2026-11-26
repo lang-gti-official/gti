@@ -1,0 +1,33 @@
+// Hold idle or backpressured connections while a separate connection processes a GET.
+import "exchange.gti";
+import std.http;
+import std.io;
+import std.string;
+import std.vector;
+int main() {
+  auto count = std::size_t(probe::probe_option(1));
+  bool stalled = probe::probe_option(3) != 0;
+  mut std::byte_buffer bytes{};
+  std::string_view wire = "GET /monitors HTTP/1.1\r\nHost: a\r\n\r\n";
+  for (mut std::size_t i = 0; i < wire.size(); i++) { bytes.push_back(uint8_t(wire[i])); }
+  auto input = bytes.as_span();
+  auto reply = std::http::response_head::create(uint16_t(200)).expect("reply");
+  std::http::server_limits limits{};
+  probe::probe_start();
+  {
+    mut std::vector<std::http::server_codec> pending{};
+    pending.reserve(count);
+    for (mut std::size_t i = 0; i < count; i++) {
+      mut auto codec = std::http::server_codec::open(limits).expect("codec");
+      if (stalled) {
+        auto step = codec.parse_head(input).expect("request");
+        codec.begin_response(reply, std::size_t(67108864), std::http::connection_policy::automatic).expect("response");
+        codec.advance_output(std::size_t(1)).expect("prefix");
+      }
+      pending.push_back(std::move(codec));
+    }
+    probe::run(probe::traffic(0, std::size_t(0)), std::size_t(1), 0, false);
+  }
+  probe::probe_finish(probe::digest, probe::reads, probe::writes, probe::flushes);
+  return 0;
+}

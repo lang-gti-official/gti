@@ -6371,7 +6371,8 @@ private:
   // The reference a lowered stored-reference payload extraction selects,
   // from its MIR instruction.
   [[nodiscard]] std::optional<MirReferenceSelection>
-  extractionSelection(HirValueId extraction) const {
+  extractionSelection(HirValueId extraction,
+                      bool borrowedPayload = false) const {
     const auto *value = findValue(extraction);
     const auto found = loweredValues.find(extraction);
     const auto *resolved = found == loweredValues.end()
@@ -6394,7 +6395,10 @@ private:
         producer->operands.size() != 1 ||
         output.findPlace(producer->operands.front().place) == nullptr ||
         !producer->payloadExtractionKind ||
-        !isStoredReferenceExtraction(*producer->payloadExtractionKind))
+        (borrowedPayload
+             ? *producer->payloadExtractionKind !=
+                   PayloadExtractionKind::BorrowValue
+             : !isStoredReferenceExtraction(*producer->payloadExtractionKind)))
       return std::nullopt;
     auto selected =
         selectedPayloadReference(*producer, value->operands.front());
@@ -9699,6 +9703,42 @@ private:
           loan->designatedFields.empty() &&
           loan->additionalDependencies.empty())
         return loan->source;
+      // A pattern binding borrows the payload field's shell. A method on
+      // that field can in turn borrow a referent inside it. Select the
+      // external owner only when the executed extraction, its variant guard
+      // and the complete field path all designate this group's one owner.
+      if (loan && loan->kind == MirLoanKind::Local && loan->storedDependency &&
+          mapping.origin == BorrowOriginKind::Receiver &&
+          mapping.sourceConditions.empty()) {
+        const auto *group = output.findLoan(loan->storedDependency);
+        if (group && !group->entry && group->kind == MirLoanKind::Stored &&
+            group->additionalDependencies.empty() &&
+            group->access == AccessMode::ReadOnly) {
+          const auto selected = extractionSelection(loan->producedBy, true);
+          const auto *input = sourceValue ? findValue(*sourceValue) : nullptr;
+          const auto binding =
+              input ? localSymbols.find(input->symbol) : localSymbols.end();
+          if (binding != localSymbols.end() &&
+              std::find(loan->carriers.begin(), loan->carriers.end(),
+                        binding->second) != loan->carriers.end() &&
+              selected && selected->conditions.size() == 1 &&
+              selected->fields.size() == 1 &&
+              input->info.type == selected->reference) {
+            for (const auto &guard : group->conditions) {
+              if (guard.enumeration !=
+                      selected->conditions.front().enumeration ||
+                  guard.variant != selected->conditions.front().variant)
+                continue;
+              auto path = guard.subobject;
+              path.push_back(selected->fields.front());
+              path.insert(path.end(), mapping.sourceFields.begin(),
+                          mapping.sourceFields.end());
+              if (path == group->designatedFields)
+                return group->source;
+            }
+          }
+        }
+      }
       if (loan != nullptr && loan->kind != MirLoanKind::Stored &&
           loan->storedDependency != 0)
         loan = output.findLoan(loan->storedDependency);

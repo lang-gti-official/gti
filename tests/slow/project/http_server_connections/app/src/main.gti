@@ -1,0 +1,54 @@
+import web.session;
+import std.tcp;
+import std.cstdio;
+import std.http;
+import std.string;
+import std.vector;
+import std.format;
+import std.io;
+
+void marker(std::string_view text) { std::println(text); std::try_flush_stdout().expect("flush"); }
+void finish(mut dashboard::peer& session) {
+  while (true) {
+    auto wait = session.pump();
+    if (wait == dashboard::wait_for::complete) { return; }
+    if (wait == dashboard::wait_for::readable) { session.await_readable(); }
+    else { session.await_writable(); }
+  }
+}
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) {
+    mut auto client = std::http::client::create().expect("HTTP client");
+    mut std::http::request req{std::http::method::get, argv[std::size_t(1)].view()};
+    req.set_timeout_ms(uint64_t(5000));
+    return client.send(req).expect("interoperate").status() == uint32_t(200) ? 0 : 1;
+  }
+  mut auto listener = std::tcp::listen("127.0.0.1", uint16_t(0)).expect("listen");
+  auto address = listener.local_address().expect("address");
+  std::println("{}", address.port());
+  std::try_flush_stdout().expect("flush");
+  mut auto slow = dashboard::accept_peer(listener);
+  slow.await_readable();
+  if (slow.pump() != dashboard::wait_for::readable) { return 2; }
+  marker("partial head");
+  mut auto fast = dashboard::accept_peer(listener);
+  finish(fast);
+  marker("fast GET complete");
+  slow.await_readable();
+  if (slow.pump() != dashboard::wait_for::writable) { return 3; }
+  marker("slow socket backpressured");
+  finish(fast);
+  marker("fast POST complete");
+  finish(slow);
+  finish(fast);
+  mut auto socket = listener.accept().expect("client connection");
+  std::http::server_limits limits{};
+  mut auto blocking = std::http::open_server_connection(std::move(socket), limits).expect("blocking");
+  auto request = blocking.read_head().expect("client request");
+  if (!request || request.value().raw_target() != "/monitors") { return 4; }
+  auto reply = std::http::response_head::create(uint16_t(200)).expect("ok");
+  std::byte_buffer empty{};
+  auto body = empty.as_span();
+  if (blocking.send(reply, body, std::http::connection_policy::close).expect("send") != std::http::disposition::close) { return 5; }
+  return 0;
+}

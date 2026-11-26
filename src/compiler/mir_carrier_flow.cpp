@@ -108,6 +108,7 @@ using Aliases = std::optional<std::vector<Root>>;
 struct AnalysisContext {
   const MirProgram *program = nullptr;
   bool includeBlockEntries = false;
+  std::unordered_map<const SemanticType *, bool> scalarLayouts;
   // Constructor recursion cannot certify itself as having no outward stores.
   std::set<HirConstructorInstanceId> activeConstructors;
   std::set<HirDestructorInstanceId> activeDestructors;
@@ -892,6 +893,67 @@ bool passiveObject(const MirProgram &program, const SemanticType &type) {
       type.kind == SemanticType::TypePack)
     return false;
   return semanticTraits(type).drop == DropKind::Trivial;
+}
+
+// A value made entirely of inline scalar data cannot carry the checked
+// borrow used to read it. Opaque, indirect or unresolved layouts retain
+// conservative carrier flow. Cache by exact concrete layout for this program.
+bool hasScalarLayout(AnalysisContext &context, const SemanticType &type) {
+  const auto &program = *context.program;
+  const auto inspect = [&](const SemanticType &concrete, auto members) {
+    auto [entry, fresh] = context.scalarLayouts.try_emplace(&concrete, false);
+    if (!fresh)
+      return entry->second;
+    // A recursive by-value layout has no finite proof. Leave its provisional
+    // result false, and reacquire the entry after nested insertions.
+    const bool scalar = members();
+    context.scalarLayouts.at(&concrete) = scalar;
+    return scalar;
+  };
+  if (type.kind == SemanticType::Array)
+    return type.arguments.size() == 1 && type.arrayLength != 0 &&
+           !type.arrayLengthParameterId &&
+           hasScalarLayout(context, type.arguments.front());
+  if (type.kind == SemanticType::Enum) {
+    if (program.findIntegralEnum(type))
+      return true;
+    const auto *record = program.findPayloadEnum(type);
+    return record && inspect(record->type, [&] {
+             return !record->traits.containsBorrowedState &&
+                    !record->requiresActiveCleanup &&
+                    std::all_of(record->variants.begin(),
+                                record->variants.end(),
+                                [&](const auto &variant) {
+                                  return std::all_of(
+                                      variant.payloadTypes.begin(),
+                                      variant.payloadTypes.end(),
+                                      [&](const auto &field) {
+                                        return hasScalarLayout(context, field);
+                                      });
+                                });
+           });
+  }
+  if (type.kind != SemanticType::Class)
+    return constantIntegerDomain(type).has_value() ||
+           semanticFloatFormat(type).has_value() ||
+           type.kind == SemanticType::Bool || type.kind == SemanticType::Char;
+  for (const auto &record : program.classInstances()) {
+    if (record.type != type)
+      continue;
+    return inspect(record.type, [&] {
+      return record.compilerCapability == CompilerCapabilityTypeKind::None &&
+             !record.cOpaqueHandle && !record.unionLayout &&
+             !record.polymorphic && !record.lifecycleBoundBorrowCarrier &&
+             !record.requiresActiveCleanup &&
+             !record.traits.containsBorrowedState && record.bases.empty() &&
+             record.structuralBases.empty() && !record.declaredFields.empty() &&
+             std::all_of(record.declaredFields.begin(),
+                         record.declaredFields.end(), [&](const auto &field) {
+                           return hasScalarLayout(context, field.type);
+                         });
+    });
+  }
+  return false;
 }
 
 MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
@@ -2248,6 +2310,19 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       if (instruction.result && !instruction.loan &&
           !mirTypeMayHoldDependencies(instruction.info.type,
                                       instruction.info.traits))
+        produced = empty();
+      // Symbolic summaries track which input values flow into results and
+      // stores, including plain records. Only concrete loan flow discards
+      // the temporary access used to read an independent scalar layout.
+      if (!symbolicSummary && program && produced && !produced->empty() &&
+          instruction.result && !instruction.loan &&
+          instruction.info.category == ValueCategory::Value &&
+          (instruction.kind == MirInstructionKind::Load ||
+           instruction.kind == MirInstructionKind::Move ||
+           instruction.kind == MirInstructionKind::Compute ||
+           instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Construct) &&
+          hasScalarLayout(context, instruction.info.type))
         produced = empty();
       if (produced && produced->empty())
         expiredProduced = empty();

@@ -1,0 +1,6 @@
+manifest-version = 1
+[package]
+name = "web"
+version = "0.1.0"
+[modules]
+session = "src/session.gti"

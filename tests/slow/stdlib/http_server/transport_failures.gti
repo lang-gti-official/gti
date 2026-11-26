@@ -1,0 +1,74 @@
+// Fatal reads, short writes and flush failures terminate the adapter and drop its transport once.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+
+using E = std::io_errc;
+mut int drops = 0;
+mut int calls = 0;
+enum class failure { read, write, zero, flush };
+class Probe {
+  failure mode;
+  std::size_t before;
+  mut std::size_t cursor = 0;
+  mut std::size_t sent = 0;
+public:
+  Probe(failure mode, std::size_t before) : mode(mode), before(before) {}
+  Probe(Probe& other) = delete;
+  Probe(Probe&& other) = default;
+  ~Probe() { drops++; }
+  expected<std::size_t, E> read_some(mut std::mutable_span<uint8_t>& dst) mut {
+    calls++;
+    std::string_view head = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+    if (this.mode == failure::read && this.cursor == this.before) { return unexpected(E::read_failed); }
+    if (this.cursor == head.size()) { return std::size_t(0); }
+    dst[0] = uint8_t(head[this.cursor]);
+    this.cursor++;
+    return std::size_t(1);
+  }
+  expected<std::size_t, E> write_some(std::span<uint8_t>& bytes) mut {
+    calls++;
+    if (this.sent == this.before && this.mode == failure::write) { return unexpected(E::write_failed); }
+    if (this.sent == this.before && this.mode == failure::zero) { return std::size_t(0); }
+    this.sent++;
+    return std::size_t(1);
+  }
+  expected<void, E> flush() mut {
+    calls++;
+    if (this.mode == failure::flush) { return unexpected(E::flush_failed); }
+    return;
+  }
+};
+bool check(failure mode, std::size_t before) {
+  std::http::server_limits limits{};
+  mut auto connection = std::http::open_server_connection(Probe(mode, before), limits).expect("open");
+  auto request = connection.read_head();
+  if (mode == failure::read) {
+    if (request || request.error().transport_error().value() != E::read_failed) { return false; }
+  } else {
+    if (!request || !request.value().has_value()) { return false; }
+    std::byte_buffer bytes{std::size_t(1)};
+    auto body = bytes.as_span();
+    auto head = std::http::response_head::create(uint16_t(200)).expect("status");
+    auto sent = connection.send(head, body, std::http::connection_policy::automatic);
+    if (sent || sent.error().can_send_error || sent.error().phase != std::http::server_phase::output ||
+        sent.error().transport_error().value() != (mode == failure::flush ? E::flush_failed : E::write_failed)) { return false; }
+  }
+  int count = calls;
+  return !connection.read_head() && !connection.send_error(uint16_t(500)) && calls == count;
+}
+int main() {
+  if (!check(failure::read, std::size_t(0)) || !check(failure::read, std::size_t(4))) { return 1; }
+  if (!check(failure::write, std::size_t(0)) || !check(failure::write, std::size_t(8))) { return 2; }
+  if (!check(failure::zero, std::size_t(1)) || !check(failure::flush, std::size_t(0))) { return 3; }
+  if (drops != 6) { return 4; }
+  mut std::http::server_limits limits{};
+  limits.response_fields = 1;
+  int count = calls;
+  auto invalid = std::http::open_server_connection(Probe(failure::read, std::size_t(0)), limits);
+  return !invalid && drops == 7 && calls == count ? 0 : 5;
+}

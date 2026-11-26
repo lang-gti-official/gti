@@ -1,0 +1,18 @@
+// Propagating an owned error from a fallible local borrow preserves both outcomes.
+//@ run-pass
+struct Code { int n; Code(int n) : n(n) {} };
+struct Error { Code code; Error(int n) : code(Code(n)) {} };
+struct Box {
+  Box() {}
+  int n = 4;
+  expected<int&, Error> get(bool ok) {
+    if (!ok) { return unexpected(Error(7)); }
+    return this.n;
+  }
+};
+expected<int, Error> read(bool ok) {
+  Box box{};
+  auto& n = ?box.get(ok);
+  return int(n);
+}
+int main() { return read(false).error().code.n == 7 && read(true).value() == 4 ? 0 : 1; }

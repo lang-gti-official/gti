@@ -1,0 +1,85 @@
+// Decode split HTTP requests and resume each output prefix without duplicating wire bytes.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+
+std::byte_buffer octets(std::string_view text) {
+  mut std::byte_buffer bytes{};
+  for (mut std::size_t i = 0; i < text.size(); i++) { bytes.push_back(uint8_t(text[i])); }
+  return std::move(bytes);
+}
+
+// A would-block write (including a flush) leaves the same operation pending.
+bool drain(mut std::http::server_codec& codec, std::string_view expected, std::size_t body_size) {
+  mut std::size_t wire = 0;
+  mut std::size_t body = 0;
+  while (true) {
+    mut bool flush = false;
+    for (mut int attempt = 0; attempt < 2; attempt++) {
+      auto pending = codec.next_output();
+      if (!pending) { return false; }
+      auto& step = pending.value();
+      switch (step) {
+      case std::http::output_step<_>::framing(auto& bytes):
+        if (wire >= expected.size() || bytes.size() != expected.size() - wire ||
+            bytes[0] != uint8_t(expected[wire])) { return false; }
+        break;
+      case std::http::output_step<_>::body(remaining):
+        if (wire != expected.size() || body >= body_size || remaining != body_size - body) { return false; }
+        break;
+      case std::http::output_step<_>::flush:
+        if (wire != expected.size() || body != body_size) { return false; }
+        flush = true;
+        break;
+      }
+    }
+    if (flush) { return true; }
+    if (!codec.advance_output(std::size_t(1))) { return false; }
+    if (wire < expected.size()) { wire++; } else { body++; }
+  }
+}
+
+expected<int, std::http::server_error> exercise() {
+  std::http::server_limits limits{};
+  mut auto codec = ?std::http::server_codec::open(limits);
+  auto first = octets("POST /monitors HTTP/1.1\r\nHo");
+  auto a = first.as_span();
+  auto partial = ?codec.parse_head(a);
+  if (partial.head.has_value() || partial.consumed != a.size()) { return 1; }
+  auto second = octets("st: localhost\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n");
+  auto b = second.as_span();
+  auto parsed = ?codec.parse_head(b);
+  if (!parsed.head || parsed.head.value().method_text() != "POST" ||
+      parsed.head.value().effective_authority() != "localhost") { return 2; }
+  ?codec.begin_continue();
+  if (!drain(codec, "HTTP/1.1 100 Continue\r\n\r\n", std::size_t(0)) ||
+      ?codec.finish_flush() != std::http::disposition::continue_sent) { return 4; }
+  auto upload = octets("2;tag=yes\r\nab\r\n0\r\nX-End: yes\r\n\r\nGET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  auto u = upload.as_span();
+  mut auto backing = octets("?");
+  mut std::string decoded{};
+  mut std::size_t consumed = 0;
+  while (consumed < u.size()) {
+    auto one = u.subspan(consumed, std::size_t(1));
+    mut auto dst = backing.as_mutable_span();
+    auto empty = one.first(std::size_t(0));
+    auto wait = ?codec.parse_body(empty, dst);
+    if (wait.written != 0 || wait.consumed != 0 || wait.state != std::http::body_state::need_input) { return 10; }
+    auto body = ?codec.parse_body(one, dst);
+    if (body.consumed != std::size_t(1)) { return 5; }
+    consumed += body.consumed;
+    if (body.written > 0) { decoded.push_back(char(dst[0])); }
+    if (body.state == std::http::body_state::body_end) { break; }
+  }
+  if (decoded.view() != "ab") { return 6; }
+  auto head = ?std::http::response_head::create(uint16_t(200));
+  ?codec.begin_response(head, std::size_t(2), std::http::connection_policy::automatic);
+  if (!drain(codec, "HTTP/1.1 200 \r\nContent-Length: 2\r\n\r\n", std::size_t(2))) { return 7; }
+  if (?codec.finish_flush() != std::http::disposition::reusable) { return 8; }
+  auto pipeline = u.subspan(consumed, u.size() - consumed);
+  auto next = ?codec.parse_head(pipeline);
+  return next.head.has_value() && next.head.value().raw_target() == "/" ? 0 : 9;
+}
+int main() { return exercise().expect("valid exchange"); }

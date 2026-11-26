@@ -1,0 +1,56 @@
+// A blocking adapter over a short-writing byte stream preserves pipelined input and exact response order.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.span;
+import std.cstdio;
+import std.string;
+class Script {
+  std::string input;
+  std::string expected_wire;
+  mut std::size_t received = 0;
+  mut std::size_t sent = 0;
+public:
+  Script(std::string_view input, std::string_view wire) : input(std::string(input)), expected_wire(std::string(wire)) {}
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& destination) mut {
+    mut std::size_t n = 0;
+    while (this.received < this.input.size() && n < destination.size()) {
+      destination[n] = uint8_t(this.input[this.received]); n++; this.received++;
+    }
+    return n;
+  }
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& bytes) mut {
+    if (this.sent == this.expected_wire.size() || bytes.empty() || char(bytes[0]) != this.expected_wire[this.sent]) {
+      return unexpected(std::io_errc::write_failed);
+    }
+    this.sent++;
+    return std::size_t(1);
+  }
+  expected<void, std::io_errc> flush() mut { return; }
+};
+expected<int, std::http::server_error> exercise() {
+  Script stream{"POST /monitors HTTP/1.1\r\nHost: a\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n{}GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+                    "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 \r\nContent-Length: 2\r\n\r\n{}HTTP/1.1 204 \r\n\r\n"};
+  std::http::server_limits limits{};
+  mut auto conn = ?std::http::open_server_connection(std::move(stream), limits);
+  auto first = ?conn.read_head();
+  if (!first || !first.value().expects_continue()) { return 1; }
+  ?conn.send_continue();
+  mut std::byte_buffer scratch{std::size_t(2)};
+  {
+    mut auto dst = scratch.as_mutable_span();
+    if (?conn.read_body(dst) != std::size_t(2) || ?conn.read_body(dst) != std::size_t(0)) { return 2; }
+  }
+  auto reply = ?std::http::response_head::create(uint16_t(201));
+  auto bytes = scratch.as_span();
+  if (?conn.send(reply, bytes, std::http::connection_policy::automatic) != std::http::disposition::reusable) { return 3; }
+  auto second = ?conn.read_head();
+  if (!second || second.value().method_text() != "GET") { return 4; }
+  auto no_content = ?std::http::response_head::create(uint16_t(204));
+  auto empty = bytes.first(std::size_t(0));
+  auto sent = ?conn.send(no_content, empty, std::http::connection_policy::automatic);
+  auto eof = ?conn.read_head();
+  return eof.has_value() ? 5 : 0;
+}
+int main() { return exercise().expect("blocking exchange"); }

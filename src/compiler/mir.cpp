@@ -4287,12 +4287,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           if ((write || input.access == AccessMode::Mutable) &&
               canonicalPlacesOverlap(
                   place,
-                  canonicalPlace(body, input.source, bindingLoans, active)))
-            return failure(body, owner,
-                           "persistent call input is invalidated before its "
-                           "invocation completes in " +
-                               std::string(context),
-                           block.id, instruction);
+                  canonicalPlace(body, input.source, bindingLoans, active))) {
+            auto rejected =
+                failure(body, owner,
+                        "persistent call input is invalidated before its "
+                        "invocation completes in " +
+                            std::string(context),
+                        block.id, instruction);
+            if (place.root == MirPlaceRootKind::Symbol && !place.capture)
+              rejected.errors.back().conflictingStorage = place.symbol;
+            return rejected;
+          }
         }
       if (direct && place.root == MirPlaceRootKind::Symbol &&
           place.capture == 0 && place.symbol != 0 &&
@@ -4531,6 +4536,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                          .loanAccess = loan.access,
                                          .loan = loan.id,
                                          .instruction = rejectedKind};
+        if (place.root == MirPlaceRootKind::Symbol && !place.capture)
+          rejected.errors.back().conflictingStorage = place.symbol;
         return rejected;
       }
       return std::nullopt;

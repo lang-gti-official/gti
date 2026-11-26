@@ -1,0 +1,6 @@
+// A third-party socket driver makes progress on a second client during partial HTTP reads and writes.
+slow
+$ cd app
+$ gti build
+$ python3 ../exercise.py
+stdout: resumed partial HTTP reads and writes

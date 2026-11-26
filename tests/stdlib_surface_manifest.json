@@ -4061,7 +4061,11 @@
         "std::chrono::months",
         "std::chrono::time_of_day",
         "std::chrono::timestamp",
-        "std::chrono::years"
+        "std::chrono::years",
+        "std::formatter<std::chrono::date>",
+        "std::formatter<std::chrono::local_datetime>",
+        "std::formatter<std::chrono::time_of_day>",
+        "std::formatter<std::chrono::timestamp>"
       ],
       "case_ids": [
         "chrono"
@@ -4072,7 +4076,8 @@
       "evidence": [
         "tests/ui/chrono/calendar_cycle.gti",
         "tests/ui/chrono/calendar_duration_arithmetic.gti",
-        "tests/ui/chrono/calendar_bounds.gti"
+        "tests/ui/chrono/calendar_bounds.gti",
+        "tests/ui/stdlib/format/chrono_parse.gti"
       ]
     },
     {
@@ -4179,7 +4184,6 @@
       "operations": [
         "std::chrono::error",
         "std::chrono::format",
-        "std::chrono::format_error",
         "std::chrono::format_to",
         "std::chrono::prepare_time_pattern",
         "std::chrono::prepared_time_pattern",
@@ -4200,7 +4204,28 @@
       ],
       "evidence": [
         "tests/ui/chrono/formatting.gti",
-        "tests/slow/chrono/format_runtime.gti"
+        "tests/slow/chrono/format_runtime.gti",
+        "tests/ui/stdlib/format/chrono_parse.gti"
+      ]
+    },
+    {
+      "id": "chrono.format-support",
+      "source": "stdlib/std/detail/chrono_format_support.gti",
+      "status": "executable",
+      "operations": [
+        "shared temporal tokenizer and formatter adapter",
+        "std::chrono::errc",
+        "std::chrono::format_error"
+      ],
+      "case_ids": [
+        "chrono"
+      ],
+      "required_instantiations": [
+        "Calendar and zone formatters use the same tokenizer as standalone and prepared chrono patterns."
+      ],
+      "evidence": [
+        "tests/ui/stdlib/format/chrono_parse.gti",
+        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     },
     {
@@ -4240,7 +4265,8 @@
       "evidence": [
         "tests/slow/stdlib/chrono_calendar/zones_named.gti",
         "tests/ui/stdlib/chrono_calendar/zones_name_escape.gti",
-        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti"
+        "tests/ui/stdlib/chrono_calendar/zones_capabilities.gti",
+        "tests/slow/stdlib/format/chrono_zoned_parse.gti"
       ]
     },
     {
@@ -5003,15 +5029,18 @@
         "std::cerr",
         "std::cout",
         "std::format",
+        "std::format_parse_context",
         "std::format_pattern<Args...>",
         "std::format_spec",
         "std::format_to",
         "std::formattable<T>",
         "std::formatter<T>",
+        "std::formatter<T>::parse(format_parse_context&)",
         "std::formatter<T>::validate(format_spec&)",
         "std::formatting<T>",
         "std::formatting<T>::format",
         "std::output_target",
+        "std::parse_format_spec",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
         "std::println(target,text)",
@@ -5063,7 +5092,9 @@
         "tests/fixtures/checked_literal_arguments.gti",
         "tests/ui/stdlib/contracts",
         "tests/ui/stdlib/format/output_targets.gti",
-        "tests/ui/stdlib/format/output_target_error.gti"
+        "tests/ui/stdlib/format/output_target_error.gti",
+        "tests/ui/stdlib/format/custom_parse.gti",
+        "tests/slow/stdlib/format/custom_parse_invalid.gti"
       ]
     },
     {
@@ -5492,10 +5523,15 @@
         "std::http::client::put",
         "std::http::client::send",
         "std::http::client::send_stream",
+        "std::http::field_block::find_next",
+        "std::http::field_block::name_at",
+        "std::http::field_block::size",
+        "std::http::field_block::value_at",
         "std::http::header::header",
         "std::http::header::name",
         "std::http::header::replace_value",
         "std::http::header::value",
+        "std::http::open_server_connection",
         "std::http::request::add_header",
         "std::http::request::body",
         "std::http::request::ca_bundle",
@@ -5520,10 +5556,39 @@
         "std::http::request::timeout_ms",
         "std::http::request::url",
         "std::http::request::verb",
+        "std::http::request_head::chunked",
+        "std::http::request_head::content_length",
+        "std::http::request_head::effective_authority",
+        "std::http::request_head::expects_continue",
+        "std::http::request_head::headers",
+        "std::http::request_head::method_text",
+        "std::http::request_head::raw_target",
+        "std::http::request_head::requests_close",
+        "std::http::request_head::target_form",
         "std::http::response::body",
         "std::http::response::headers",
         "std::http::response::response",
         "std::http::response::status",
+        "std::http::response_head::add_header",
+        "std::http::response_head::create",
+        "std::http::response_head::headers",
+        "std::http::response_head::status",
+        "std::http::server_codec::advance_output",
+        "std::http::server_codec::begin_continue",
+        "std::http::server_codec::begin_error",
+        "std::http::server_codec::begin_response",
+        "std::http::server_codec::end_input",
+        "std::http::server_codec::finish_flush",
+        "std::http::server_codec::next_output",
+        "std::http::server_codec::open",
+        "std::http::server_codec::parse_body",
+        "std::http::server_codec::parse_head",
+        "std::http::server_connection::read_body",
+        "std::http::server_connection::read_head",
+        "std::http::server_connection::send",
+        "std::http::server_connection::send_continue",
+        "std::http::server_connection::send_error",
+        "std::http::server_error::transport_error",
         "std::http::streaming_response::bytes_read",
         "std::http::streaming_response::cancel",
         "std::http::streaming_response::effective_url",
@@ -5567,7 +5632,9 @@
         "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
         "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
         "infallible request builders whose refused headers or CA paths surface from send before any connection",
-        "checked URL JSON string serialization and nested validation with a payload enum in the same monitoring configuration"
+        "checked URL JSON string serialization and nested validation with a payload enum in the same monitoring configuration",
+        "one HTTP/1.1 codec per event-loop connection with resumable input and output",
+        "blocking duplex ownership with std::tcp::stream and a source-defined short-writing transport"
       ],
       "evidence": [
         "docs/language/http.md",
@@ -5576,8 +5643,11 @@
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
         "tests/http_url_operators_test.py",
+        "tests/slow/project/http_server_connections/test.transcript",
+        "tests/slow/stdlib/http_server",
         "tests/slow/stdlib/json/http_url_codec.gti",
-        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti",
+        "tests/ui/stdlib/http_server"
       ]
     },
     {

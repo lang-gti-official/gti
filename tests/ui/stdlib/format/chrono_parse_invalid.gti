@@ -1,0 +1,8 @@
+// A date cannot satisfy a time directive, even through the recoverable API.
+import std.chrono;
+import std.format;
+int main() {
+  auto date = std::chrono::date::create(2026, 11, 22);
+  auto text = std::try_format("{:%H}", date); //~ ERROR GTI-S2057
+  return 0;
+}

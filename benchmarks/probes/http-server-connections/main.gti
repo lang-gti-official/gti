@@ -1,0 +1,14 @@
+import "exchange.gti";
+int main() {
+  auto mode = int(probe::probe_option(0));
+  auto rounds = std::size_t(probe::probe_option(1));
+  auto size = std::size_t(probe::probe_option(2));
+  auto blocking = probe::probe_option(3) != 0;
+  probe::probe_start();
+  std::size_t connections = mode == 4 ? rounds : std::size_t(1);
+  for (mut std::size_t i = 0; i < connections; i++) {
+    probe::run(probe::traffic(mode, size), rounds / connections, mode, blocking);
+  }
+  probe::probe_finish(probe::digest, probe::reads, probe::writes, probe::flushes);
+  return 0;
+}

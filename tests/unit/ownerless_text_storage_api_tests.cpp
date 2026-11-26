@@ -3883,3 +3883,30 @@ GTI_UNIT_TEST(ownerless_growable_borrowed_retention) {
   testGrowableBorrowedRetention();
   return failures == 0 ? 0 : 1;
 }
+
+GTI_UNIT_TEST(persistent_storage_audit_preserves_structural_errors) {
+  const auto result = analyzeText(R"gti(
+mut int first = 1;
+mut int second = 2;
+int main() {
+  int& a = first;
+  int& b = second;
+  return a + b;
+}
+)gti");
+  const auto *main = namedFunction(result, "main");
+  expect(result.canGenerateCode() && main && main->body.loans.size() == 2,
+         "the fixture has two independent global reference loans");
+  if (!main || main->body.loans.size() != 2)
+    return 1;
+  auto changed = result.mir;
+  auto &body = const_cast<lang::MirFunctionInstance *>(
+                   changed.findFunctionInstance(main->id))
+                   ->body;
+  body.loans.back().parent = body.loans.front().id;
+  expect(!lang::verifyMirProgram(changed).valid(),
+         "a reborrow of unrelated storage fails MIR verification");
+  expect(lang::auditMirPersistentStorageBorrows(changed).empty(),
+         "a malformed loan does not diagnose a source-level global conflict");
+  return failures == 0 ? 0 : 1;
+}
