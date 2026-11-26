@@ -1,0 +1,25 @@
+// Erasing and restoring a checked derived-class reference preserves its address, authority and mutation.
+//@ run-pass
+import std.memory;
+class Base {
+protected:
+  int& delta;
+public:
+  Base(int& step) : delta(step) {}
+};
+class Counter : public Base {
+  mut int total = 0;
+public:
+  Counter(int& step) : Base(step) {}
+  int add() mut { this.total += this.delta; return this.total; }
+};
+int main() {
+  int delta = 3;
+  mut Counter counter{delta};
+  mut std::erased_object& object = std::erase_mut(counter);
+  unsafe {
+    mut Counter& original = std::restore_mut<Counter>(object);
+    if (original.add() != 3) { return 1; }
+  }
+  return counter.add() == 6 ? 0 : 2;
+}

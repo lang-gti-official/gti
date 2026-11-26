@@ -1,0 +1,30 @@
+// Trusted generic class methods can infer a local from their buffer's concrete result.
+//@ run-pass
+//@ stdlib-overlay: std/prefix_reader.gti
+// --- main.gti
+import std.prefix_reader;
+struct Channel {
+  Channel() {}
+  int next() { return 7; }
+};
+int main() {
+  mut std::Reader<Channel> input{Channel()};
+  return input.read() - 7;
+}
+// --- std/prefix_reader.gti
+export module prefix_reader;
+export namespace std {
+class Reader<B> {
+  mut B buffer;
+public:
+  Reader(B value) : buffer(std::move(value)) {}
+  int read() mut requires requires(B& b) { { b.next() }; } {
+    auto count = this.buffer.next();
+    return count;
+  }
+  void unused() {
+    int scalar = 1;
+    auto invalid = scalar.next();
+  }
+};
+}

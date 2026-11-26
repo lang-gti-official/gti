@@ -1,0 +1,26 @@
+// Exclusive creation preserves existing data, ate seeks once, and app forces every write to EOF.
+//@ slow
+//@ run-pass
+//@ args: modes.bin
+import std.fstream;
+import std.string;
+import std.vector;
+
+int run(std::string_view path) {
+  mut std::ofstream first{path, std::ios::noreplace};
+  if (!first || !first.rdbuf().sputc('A') || !first.close()) { return 1; }
+  auto collision = first.try_open(path, std::ios::noreplace);
+  if (collision || first || first.error() != std::io_errc::open_failed) { return 2; }
+  mut std::fstream stream{path, std::ios::in | std::ios::out | std::ios::ate};
+  if (!stream || stream.rdbuf().tell().value() != 1 || !stream.rdbuf().pubseekpos(int64_t(0))) { return 3; }
+  if (!stream.rdbuf().sputc('B') || !stream.close()) { return 4; }
+  if (!stream.try_open(path, std::ios::app | std::ios::in | std::ios::binary)) { return 5; }
+  if (!stream.rdbuf().pubseekpos(int64_t(0)) || !stream.rdbuf().sputc('C')) { return 6; }
+  if (stream.rdbuf().tell().value() != 2 || !stream.rdbuf().pubseekpos(int64_t(0))) { return 7; }
+  if (stream.rdbuf().sbumpc().value() != 66 || stream.rdbuf().sgetc().value() != 67) { return 8; }
+  if (!stream.close()) { return 9; }
+  auto invalid = stream.try_open(path, std::ios::trunc | std::ios::app);
+  return !invalid && invalid.error() == std::io_errc::unsupported_mode ? 0 : 10;
+}
+
+int main(int argc, std::vector<std::string> argv) { return run(argv[1].view()); }

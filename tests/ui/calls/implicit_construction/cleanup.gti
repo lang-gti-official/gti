@@ -1,0 +1,20 @@
+// Implicit argument temporaries are constructed left-to-right and cleaned exactly once.
+//@ run-pass
+mut int trace = 0;
+mut int drops = 0;
+struct Box {
+  int value;
+  implicit Box(int n) : value(n) { trace = trace * 10 + n; }
+  Box(Box& other) = delete;
+  Box(Box&& other) = default;
+  ~Box() { drops += 1; }
+};
+int read(Box& a, Box& b) { return trace; }
+int take(Box a) { return a.value; }
+int main() {
+  auto seen = read(1, 2);
+  if (seen != 12 || drops != 2) { return 1; }
+  auto owned = take(3);
+  if (owned != 3 || drops != 3) { return 2; }
+  return 0;
+}

@@ -1669,6 +1669,68 @@ int main() { mut int first = 7; mut int second = 9;
          "projected entry mutations exercise a distinct receiver field");
 }
 
+void checkForwardedBasePublication() {
+  const auto control = analyze("forwarded-base-publication", R"gti(
+struct Reader {
+  int& source;
+  Reader(int& source) : source(source) {}
+};
+struct Storage<B> {
+  B buffer;
+  Storage(B value) : buffer(std::move(value)) {}
+};
+struct Input<B> : public Storage<B> {
+  Input(B value) : Storage<B>(std::move(value)) {}
+};
+int main() {
+  int owner = 7;
+  Input<Reader> input{Reader(owner)};
+  return input.buffer.source - 7;
+}
+)gti");
+  if (!control)
+    return;
+  unsigned publications = 0;
+  for (const auto &constructor : control->constructorInstances()) {
+    const BodyKey key{lang::MirBodyKind::Constructor, constructor.id};
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &step : block.instructions) {
+        const auto *loan =
+            step.loan ? constructor.body.findLoan(*step.loan) : nullptr;
+        if (step.kind != lang::MirInstructionKind::Borrow || !loan ||
+            loan->kind != lang::MirLoanKind::Stored || !loan->escapes ||
+            loan->storedField != 0 || step.operands.size() != 1 ||
+            step.operands.front().kind != lang::MirOperandKind::Loan ||
+            !step.operands.front().value)
+          continue;
+        ++publications;
+        auto missingValue = *control;
+        instruction(body(missingValue, key), step.id)->operands.front().value =
+            0;
+        rejected(missingValue,
+                 "base publication needs its exact forwarded value");
+
+        auto earlyEnd = *control;
+        auto &changed = body(earlyEnd, key);
+        for (auto &exitBlock : changed.blocks) {
+          if (exitBlock.terminator.kind != lang::MirTerminatorKind::Return)
+            continue;
+          exitBlock.instructions.push_back(
+              {.id = freshInstructionId(changed),
+               .kind = lang::MirInstructionKind::EndBorrow,
+               .hirValue = loan->producedBy,
+               .loan = loan->id});
+          break;
+        }
+        rejected(earlyEnd,
+                 "a base cannot release its external owner on success",
+                 "constructor field dependency cannot retire");
+      }
+    }
+  }
+  expect(publications == 1, "input publishes its one forwarded base carrier");
+}
+
 void checkForwardedExternalFieldRetention() {
   const auto control = analyze("forwarded external field retention", R"gti(
 struct Pair {
@@ -1800,6 +1862,7 @@ int main() {
   checkSharedOriginFieldIdentities();
   checkProjectedEntryConstruction();
   checkForwardedExternalFieldRetention();
+  checkForwardedBasePublication();
   if (failures == 0)
     std::cout << mutations << " cleanup-bound proof mutations rejected\n";
   return failures == 0 ? 0 : 1;

@@ -1,0 +1,7 @@
+// A live mutable unordered_map projection blocks advancing its cursor while its mapped value is borrowed.
+import std.unordered_map;
+
+int main() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut int& mapped = cursor->mapped(); ++cursor; return mapped;  //~ ERROR GTI-S2017
+}

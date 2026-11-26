@@ -1,4 +1,4 @@
-// Native identity: rejected with GTI-S2003.
+// Ordinary implicit constructors initialize by-value function arguments.
 class Celsius {
   int degrees;
 public:
@@ -6,4 +6,4 @@ public:
   int read() { return this.degrees; }
 };
 void take(Celsius value) {}
-int main() { take(21); return 0; }  //~ ERROR GTI-S2003
+int main() { take(21); return 0; }

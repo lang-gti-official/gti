@@ -1,0 +1,30 @@
+// Test subprocess setup captures exact argv and separate streams while leaving the parent cwd unchanged.
+//@ run-pass
+//@ slow
+import std.testing;
+import std.testing.resources;
+import std.filesystem;
+import std.string;
+int main() {
+  auto directory = std::testing::temporary_directory::create().expect("create cwd");
+  auto before = std::filesystem::current_path().expect("parent cwd");
+  mut auto command = std::testing::subprocess("/bin/sh");
+  command.arg("-c");
+  command.arg("printf '%s|%s|%s' \"$1\" \"$2\" \"$3\"; printf error >&2; exit 23");
+  command.arg("fixture");
+  command.arg("two words");
+  command.arg("");
+  command.arg("$(false)");
+  command.working_directory(directory.path());
+  auto result = command.run().expect("run child");
+  std::testing::check(!result.success());
+  std::testing::check_eq!(result.status().exit_code(), int32_t(23));
+  std::testing::check_string_eq(result.stdout_text(), "two words||$(false)");
+  std::testing::check_string_eq(result.stderr_text(), "error");
+  auto after = std::filesystem::current_path().expect("parent cwd after child");
+  std::testing::check(before == after);
+  mut auto invalid = std::testing::subprocess("/bin/echo");
+  invalid.arg("invalid\0argument");
+  std::testing::check(!invalid.run());
+  return 0;
+}

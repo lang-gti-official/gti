@@ -144,6 +144,15 @@ compilation remains manifest-independent and receives a direct source owner.
 Exact local dotted names take precedence only when there is no competing direct
 alias prefix; a collision is diagnosed rather than guessed.
 
+Resolved package descriptors also carry the manifest version. Together with
+the owner's manifest name this supplies `std.package`. The source loader creates
+one private generated module per package and resolves that contextual import to
+ordinary `constexpr std::string_view` declarations. Their declaration owners
+keep identically spelled constants separate across dependencies. Generated text
+is authoritative over disk/overlay bytes, participates in source hashing, and
+name/version join the owner resolution identity for semantic cache invalidation.
+No backend or LSP-specific metadata lookup is involved.
+
 The configured standard owner exposes the reserved implicit alias `std`. Its
 installed `module-map.json` contains a `modules` name-to-relative-path object and
 a `default` module name for `import std;`. Invalid names, absolute paths, and
@@ -502,7 +511,8 @@ phases; `FrontendOptions::analyzeRecoveredProgram` lets the LSP semantically
 analyze the safe recovered subset while keeping code generation disabled.
 A recovered program stops after HIR: semantics reports nothing about recovered
 nodes, so their bodies can be incomplete, and MIR runs only on a program that
-parsed.
+parsed. If both the item parse and synchronization stop at the same initial
+token, the collector consumes it before retrying.
 Recovery nested inside a compile-time branch propagates an unconsumed
 `#elif`, `#else`, or `#endif` boundary to the nearest conditional parser. A
 continuation directive with no open conditional is instead advanced as invalid

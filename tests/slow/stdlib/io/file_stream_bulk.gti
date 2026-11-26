@@ -1,0 +1,34 @@
+// Large transfers flush pending bytes and preserve the last byte for unget after EOF.
+//@ slow
+//@ run-pass
+import std.fstream;
+import std.io;
+import std.cstdio;
+import std.vector;
+
+int main() {
+  std::string_view name = "stream-bulk-test.bin";
+  mut std::byte_buffer block{std::size_t(8192)};
+  for (mut std::size_t i = 0; i < block.size(); i++) { block[i] = uint8_t(i % 251); }
+  {
+    mut std::ofstream out{name};
+    auto bytes = block.as_span();
+    out.put('H').write(bytes).put('T');
+    if (!out || !out.close()) { return 1; }
+  }
+  mut std::ifstream input{name};
+  mut std::byte_buffer copy{std::size_t(8200)};
+  {
+    mut auto bytes = copy.as_mutable_span();
+    input.read(bytes);
+  }
+  if (input.gcount() != 8194 || !input.eof() || !input.fail()) { return 2; }
+  if (copy[0] != uint8_t('H') || copy[8193] != uint8_t('T')) { return 3; }
+  for (mut std::size_t i = 0; i < block.size(); i++) {
+    if (copy[i + 1] != block[i]) { return 4; }
+  }
+  input.clear();
+  input.unget();
+  if (input.get() != int32_t(uint8_t('T')) || !input.close()) { return 5; }
+  return 0;
+}

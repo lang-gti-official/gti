@@ -1148,11 +1148,14 @@ public:
     // and never moves out of it.
     const bool programSource = place->root == MirPlaceRootKind::Symbol &&
                                result.kind == ConstructorKind::Copy;
+    const bool returnedValue = result.kind == ConstructorKind::Move &&
+                               ownedCallResult(*place, producer);
     if (unreference(place->type) != owner.type || place->foreignStorage ||
         place->capture ||
         (place->root != MirPlaceRootKind::Binding &&
          place->root != MirPlaceRootKind::This &&
-         place->root != MirPlaceRootKind::Loan && !programSource) ||
+         place->root != MirPlaceRootKind::Loan && !programSource &&
+         !returnedValue) ||
         (!packElement(*place) &&
          std::any_of(place->projections.begin(), place->projections.end(),
                      [&](const auto &projection) {
@@ -1376,13 +1379,14 @@ public:
         }();
     if (result.kind == ConstructorKind::Move) {
       // A by-value parameter is an owned binding of this body too.
-      if (!wholeBinding(*place) || place->type != owner.type || source.loan ||
-          !place->key || !producer.ownership ||
-          producer.ownership->kind != OwnershipEventKind::Move ||
-          producer.ownership->place != *place->key ||
-          producer.ownership->before != OwnershipStateSet::Available ||
-          producer.ownership->after != OwnershipStateSet::Moved ||
-          !producer.ownership->reachable)
+      if (!returnedValue &&
+          (!wholeBinding(*place) || place->type != owner.type || source.loan ||
+           !place->key || !producer.ownership ||
+           producer.ownership->kind != OwnershipEventKind::Move ||
+           producer.ownership->place != *place->key ||
+           producer.ownership->before != OwnershipStateSet::Available ||
+           producer.ownership->after != OwnershipStateSet::Moved ||
+           !producer.ownership->reachable))
         unsupported(
             "LLVM move requires its exact whole-binding ownership event");
       if (!producer.lifecycle.empty()) {
@@ -1397,7 +1401,8 @@ public:
         const auto &from = drop(result.sourceDrop, owner, parameter(*place));
         const auto &to = drop(result.valueDrop, owner);
         const auto *temporary = body.findPlace(to.place);
-        if (from.kind != MirDropObligationKind::Binding ||
+        if (from.kind != (returnedValue ? MirDropObligationKind::Value
+                                        : MirDropObligationKind::Binding) ||
             from.place != place->id || from.binding != place->binding ||
             to.kind != MirDropObligationKind::Value || !temporary ||
             (receiverTemporary ? temporary != receiverTemporary
@@ -2254,6 +2259,34 @@ private:
     return target && target->owner && !target->staticMember &&
            target->receiverMutability == ReceiverMutability::Consuming;
   }
+  // An owning call result can be inspected and then consumed, for example
+  // by the success arm of `?factory()`. Its value place has a drop obligation
+  // rather than a binding ownership event. The call must publish that exact
+  // obligation and the move must take it from the complete result.
+  bool ownedCallResult(const MirPlace &place,
+                       const MirInstruction &move) const {
+    if (place.root != MirPlaceRootKind::Value || place.initiallyAvailable ||
+        !place.projections.empty() || place.key || move.ownership ||
+        move.lifecycle.size() != 1 || move.operands.front().loan)
+      return false;
+    const auto &event = move.lifecycle.front();
+    if (event.kind != MirLifecycleEventKind::Move || !event.source)
+      return false;
+    const auto *value = body.findValue(place.value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!block || value->info.type != place.type)
+      return false;
+    return std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [&](const MirInstruction &call) {
+                         return !call.tombstone &&
+                                call.id == value->definition &&
+                                call.kind == MirInstructionKind::Call &&
+                                call.result == place.value &&
+                                call.successResultDrop == event.source;
+                       });
+  }
+
   bool parameter(const MirPlace &place) const {
     const std::vector<HirBindingId> *formal = nullptr;
     if (identity.kind == MirBodyKind::Function)
@@ -2644,26 +2677,41 @@ bool carrierLoanDependency(
   }
   if (loan.kind != MirLoanKind::Return || !loan.escapes)
     return false;
-  const MirLoan *relayed = nullptr;
+  const MirOperand *operand = nullptr;
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
       if (!stage.tombstone && stage.kind == MirInstructionKind::Borrow &&
           stage.loan == loan.id) {
-        if (relayed || stage.operands.size() != 1 ||
-            stage.operands.front().kind != MirOperandKind::Loan)
+        if (operand || stage.operands.size() != 1)
           return false;
-        relayed = body.findLoan(stage.operands.front().loan);
-        if (!relayed)
-          return false;
+        operand = &stage.operands.front();
       }
-  return relayed && relayed->id != loan.id &&
-         relayed->storedDependency == loan.storedDependency &&
-         relayed->source == loan.source && supported(*relayed) &&
-         std::any_of(body.blocks.begin(), body.blocks.end(),
-                     [&](const auto &block) {
-                       return block.terminator.returnLoan == loan.id &&
-                              referenceReturn(block.terminator);
-                     });
+  if (!operand || !std::any_of(body.blocks.begin(), body.blocks.end(),
+                               [&](const auto &block) {
+                                 return block.terminator.returnLoan ==
+                                            loan.id &&
+                                        referenceReturn(block.terminator);
+                               }))
+    return false;
+  if (operand->kind == MirOperandKind::Loan) {
+    const auto *relayed = body.findLoan(operand->loan);
+    return relayed && relayed->id != loan.id &&
+           relayed->storedDependency == loan.storedDependency &&
+           relayed->source == loan.source && supported(*relayed);
+  }
+  // Returning the receiver itself passes its existing address. Its entry
+  // Stored loan tracks the fields' external owners; it supplies no address.
+  const auto *receiver = body.findPlace(loan.source);
+  const auto *entry = body.findPlace(stored->source);
+  return operand->kind == (loan.access == AccessMode::Mutable
+                               ? MirOperandKind::BorrowWrite
+                               : MirOperandKind::BorrowRead) &&
+         operand->place == loan.source && receiver && entry &&
+         receiver->root == MirPlaceRootKind::This &&
+         receiver->projections.empty() && stored->entry &&
+         stored->kind == MirLoanKind::Stored &&
+         entry->root == MirPlaceRootKind::This && entry->projections.empty() &&
+         entry->type == receiver->type;
 }
 
 } // namespace lang::native_llvm

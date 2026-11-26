@@ -241,6 +241,10 @@ struct CompletionInput {
   // See FrontendOptions::deferPreambleBuild. Completion never builds a
   // missing preamble; the editor's analysis schedules that build.
   bool deferPreambleBuild = false;
+  // Match the diagnostic snapshot's semantic policy so its preamble can be
+  // adopted. Entry and test contracts participate in semantic cache identity.
+  ProgramRequest program;
+  bool requireEntryPoint = false;
 };
 
 class LanguageQueries {

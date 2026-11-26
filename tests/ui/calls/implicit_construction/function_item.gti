@@ -1,0 +1,5 @@
+// A selected function item uses the same by-value argument construction.
+//@ run-pass
+struct Box { int value; implicit Box(int n) : value(n) {} };
+int take(Box b) { return b.value; }
+int main() { auto f = take; return f(42) - 42; }

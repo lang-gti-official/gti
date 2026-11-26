@@ -1620,7 +1620,8 @@ private:
                                 : std::nullopt,
            .binding = binding,
            .initializer = initializer,
-           .statement = statement});
+           .statement = statement,
+           .dataConstant = step.dataConstant});
     }
     if (output.program.programInitialization.steps.size() !=
         semanticPlan.steps.size()) {
@@ -2681,6 +2682,10 @@ private:
     const BlockStmt *block = editedDeclaration == bodyDeclaration
                                  ? replacementBody
                                  : bodyDeclaration->body().get();
+    if (auto reflected = model->reflectedBody(*bodyDeclaration)) {
+      block = reflected.get();
+      output.program.sourceStatementOwners_.push_back(std::move(reflected));
+    }
     if (constantExpression &&
         snapshot.declaration == constantExpressionFunction) {
       // The compiler-owned staged entry has one return. The expression has
@@ -4540,6 +4545,9 @@ private:
                              body);
     }
     if (const auto *variable = stmtAs<VariableDecl>(statement)) {
+      // The module plan owns this initializer and its lifetime.
+      if (variable->isStatic() && !variable->isThreadLocal())
+        return std::nullopt;
       return appendStatement(
           {.kind = HirStatementKind::Variable,
            .source = statement,
@@ -8016,8 +8024,15 @@ private:
           receiver->info.traits.containsBorrowedState;
       const bool temporaryArguments =
           resolved != nullptr && !resolved->ephemeralBorrowArguments.empty();
+      // A chained mutable shift reborrows its left operand exactly as a
+      // mutable method call would. Stage the receiver before the RHS.
+      const bool mutableShift =
+          resolved &&
+          resolved->receiverMutability == ReceiverMutability::Mutable &&
+          (resolved->kind == OverloadedOperator::ShiftLeft ||
+           resolved->kind == OverloadedOperator::ShiftRight);
       if ((freshReceiver || borrowedValueReceiver || explicitConversion ||
-           temporaryArguments) &&
+           temporaryArguments || mutableShift) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(

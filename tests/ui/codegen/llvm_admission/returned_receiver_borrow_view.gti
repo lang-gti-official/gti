@@ -1,0 +1,27 @@
+// Returning a view of a derived receiver preserves the base field's original borrow.
+//@ run-pass
+class Base {
+protected:
+  int& data;
+public:
+  Base(int& n) : data(n) {}
+};
+struct View<T> {
+  mut T& source;
+  View(mut T& owner) : source(owner) {}
+  int read() mut requires requires(T& owner) { { owner.value() } -> int; } {
+    return source.value();
+  }
+};
+class Channel : public Base {
+public:
+  Channel(int& n) : Base(n) {}
+  int value() { return this.data; }
+  View<Channel> as_view() mut { return View<Channel>(this); }
+};
+int main() {
+  int n = 42;
+  mut Channel channel{n};
+  mut auto view = channel.as_view();
+  return view.read() - 42;
+}

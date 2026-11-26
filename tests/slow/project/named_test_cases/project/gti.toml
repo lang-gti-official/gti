@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "named-cases"
+version = "0.1.0"
+[targets.rows]
+kind = "test"
+root = "cases.gti"

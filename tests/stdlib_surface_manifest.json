@@ -589,6 +589,20 @@
       }
     },
     {
+      "id": "closed-filebuf",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/closed_filebuf.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
@@ -923,6 +937,20 @@
       }
     },
     {
+      "id": "cstdio-exclusive-create",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/exclusive_create.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "cthread",
       "mode": "run",
       "source": "tests/fixtures/cthread_yield.gti",
@@ -1211,6 +1239,76 @@
       "id": "expression-text",
       "mode": "run",
       "source": "tests/fixtures/expression_text.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-bulk",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_bulk.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-format",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_format.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-open",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_open.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-swap",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_swap.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "file-stream-views",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/file_stream_views.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -1599,6 +1697,20 @@
       }
     },
     {
+      "id": "ios-state",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/ios_state.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
@@ -1868,6 +1980,62 @@
       "id": "memory-layout",
       "mode": "run",
       "source": "examples/119-runtime-object-layout.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-duplex",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_duplex_cursor.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-extraction",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_input_extraction.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-input-view",
+      "mode": "run",
+      "source": "tests/slow/stdlib/io/borrowed_memory_input.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "memory-stream-output-view",
+      "mode": "run",
+      "source": "tests/ui/stdlib/io/memory_output_view.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -3807,6 +3975,8 @@
         "std::build::context::output_dir",
         "std::build::context::output_file",
         "std::build::context::package_dir",
+        "std::build::context::package_name",
+        "std::build::context::package_version",
         "std::build::context::profile",
         "std::build::context::target",
         "std::build::context::target_os",
@@ -3826,13 +3996,16 @@
       ],
       "required_instantiations": [
         "exact host argv and nonzero exit status",
-        "all structured native output categories"
+        "all structured native output categories",
+        "package metadata agrees with std.package in build programs"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_build.gti",
         "tests/project_cli_smoke_test.py",
         "stdlib/std/build.gti",
-        "runtime/src/process.cpp"
+        "runtime/src/process.cpp",
+        "tests/project/package_metadata/test.transcript",
+        "tests/ui/stdlib/build_context_metadata.gti"
       ]
     },
     {
@@ -4134,6 +4307,21 @@
         "tests/cmath_runtime_test.py",
         "tests/project/standard_library_bundle/src/main.gti",
         "runtime/src/math.cpp"
+      ]
+    },
+    {
+      "id": "cstdio.exclusive-create",
+      "source": "stdlib/std/cstdio.gti",
+      "status": "executable",
+      "operations": [
+        "std::file_mode::read_write_exclusive",
+        "std::file_mode::write_exclusive"
+      ],
+      "case_ids": [
+        "cstdio-exclusive-create"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/exclusive_create.gti"
       ]
     },
     {
@@ -4749,6 +4937,7 @@
         "std::filesystem::create_directory_symlink",
         "std::filesystem::create_hard_link",
         "std::filesystem::create_symlink",
+        "std::filesystem::create_temp_directory",
         "std::filesystem::current_path",
         "std::filesystem::directory_entries",
         "std::filesystem::directory_iterator::entry_path",
@@ -4783,7 +4972,11 @@
       "evidence": [
         "tests/ui/stdlib/filesystem/operations.gti",
         "tests/unit/runtime_filesystem_tests.cpp",
-        "docs/language/filesystem.md"
+        "docs/language/filesystem.md",
+        "tests/unit/runtime_capture.cpp"
+      ],
+      "test_paths": [
+        "tests/slow/testing/temporary_files.gti"
       ]
     },
     {
@@ -4797,7 +4990,7 @@
         "filesystem-operations"
       ],
       "required_instantiations": [
-        "Shared immutable native result owner; directory and path operations preserve cleanup."
+        "Shared immutable native result owner; directory, temporary-directory and path operations preserve cleanup."
       ],
       "evidence": [
         "tests/ui/chrono/discovery.gti",
@@ -4902,6 +5095,20 @@
         "tests/ui/stdlib/format/output_target_error.gti",
         "tests/ui/stdlib/format/custom_parse.gti",
         "tests/slow/stdlib/format/custom_parse_invalid.gti"
+      ]
+    },
+    {
+      "id": "format.stream-insertion",
+      "source": "stdlib/std/detail/stream_format.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_render"
+      ],
+      "case_ids": [
+        "file-stream-format"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti"
       ]
     },
     {
@@ -5044,6 +5251,40 @@
         "tests/fixtures/removal_algorithms.gti",
         "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
+      "id": "fstream.stream-state",
+      "source": "stdlib/std/fstream.gti",
+      "status": "executable",
+      "operations": [
+        "std::filebuf::available",
+        "std::filebuf::close",
+        "std::filebuf::is_open",
+        "std::fstream::close",
+        "std::fstream::open",
+        "std::fstream::swap",
+        "std::ifstream::close",
+        "std::ifstream::is_open",
+        "std::ifstream::open",
+        "std::ifstream::swap",
+        "std::ifstream::try_open",
+        "std::ofstream::close",
+        "std::ofstream::is_open",
+        "std::ofstream::open",
+        "std::ofstream::swap"
+      ],
+      "case_ids": [
+        "closed-filebuf",
+        "file-stream-format",
+        "file-stream-open",
+        "file-stream-swap"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/slow/stdlib/io/file_stream_swap.gti",
+        "tests/ui/stdlib/io/closed_filebuf.gti"
       ]
     },
     {
@@ -5356,7 +5597,8 @@
         "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
         "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
         "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
-        "infallible request builders whose refused headers or CA paths surface from send before any connection"
+        "infallible request builders whose refused headers or CA paths surface from send before any connection",
+        "checked URL JSON string serialization and nested validation with a payload enum in the same monitoring configuration"
       ],
       "evidence": [
         "docs/language/http.md",
@@ -5364,7 +5606,9 @@
         "tests/fixtures/http_url_components.gti",
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
-        "tests/http_url_operators_test.py"
+        "tests/http_url_operators_test.py",
+        "tests/slow/stdlib/json/http_url_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
       ]
     },
     {
@@ -5428,6 +5672,83 @@
       "evidence": [
         "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
+      ]
+    },
+    {
+      "id": "ios.stream-state",
+      "source": "stdlib/std/ios.gti",
+      "status": "executable",
+      "operations": [
+        "std::ios_base::clear",
+        "std::ios_base::eof",
+        "std::ios_base::good",
+        "std::ios_base::operator bool",
+        "std::ios_base::setstate"
+      ],
+      "case_ids": [
+        "ios-state"
+      ],
+      "evidence": [
+        "tests/ui/stdlib/io/ios_state.gti"
+      ]
+    },
+    {
+      "id": "iostream.bidirectional",
+      "source": "stdlib/std/iostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_iostream::operator<<",
+        "std::basic_iostream::put",
+        "std::basic_iostream::tellp"
+      ],
+      "case_ids": [
+        "file-stream-open",
+        "memory-stream-duplex"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_duplex_cursor.gti"
+      ]
+    },
+    {
+      "id": "istream.borrowed-input",
+      "source": "stdlib/std/detail/istream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::istream::operator>>"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti"
+      ]
+    },
+    {
+      "id": "istream.unformatted",
+      "source": "stdlib/std/istream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_istream::gcount",
+        "std::basic_istream::get",
+        "std::basic_istream::operator>>",
+        "std::basic_istream::peek",
+        "std::basic_istream::read",
+        "std::basic_istream::unget"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open",
+        "memory-stream-extraction"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti",
+        "tests/ui/stdlib/io/memory_input_extraction.gti"
       ]
     },
     {
@@ -5596,7 +5917,8 @@
         "every errc through decode failures with offsets, JSON Pointer paths and line/column",
         "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
         "pretty printing and decode limits",
-        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs"
+        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs",
+        "payload enums with unit and named-field cases, nested checked URLs, custom codec precedence and absolute error paths"
       ],
       "evidence": [
         "docs/language/json.md",
@@ -5609,7 +5931,11 @@
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
         "tests/slow/stdlib/json/dynamic",
-        "tests/ui/reflection/runtime"
+        "tests/ui/reflection/runtime",
+        "tests/slow/stdlib/json/http_url_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_codec.gti",
+        "tests/slow/stdlib/json/payload_enum_errors.gti",
+        "tests/slow/stdlib/json/payload_enum_round_trip.gti"
       ]
     },
     {
@@ -6419,6 +6745,7 @@
         "std::meta::constructors_of",
         "std::meta::enumerator::index",
         "std::meta::enumerator::line",
+        "std::meta::enumerator::make",
         "std::meta::enumerator::name",
         "std::meta::enumerator::payload_count",
         "std::meta::enumerator::payload_fields",
@@ -6472,6 +6799,7 @@
         "std::meta::is_unsigned_integral",
         "std::meta::lookup_methods_of",
         "std::meta::lookup_operators_of",
+        "std::meta::make_alternative",
         "std::meta::method::index",
         "std::meta::method::invoke",
         "std::meta::method::is_constexpr",
@@ -6556,7 +6884,11 @@
         "std::meta::type::name",
         "std::meta::type::operators",
         "std::meta::type::primary_name",
-        "std::meta::type_of"
+        "std::meta::type::visit",
+        "std::meta::type::visit_fields",
+        "std::meta::type_of",
+        "std::meta::visit",
+        "std::meta::visit_fields"
       ],
       "case_ids": [
         "meta",
@@ -6593,7 +6925,9 @@
         "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
-        "examples/185-reflected-method-dispatch.gti"
+        "examples/185-reflected-method-dispatch.gti",
+        "tests/ui/reflection/payload_visit.gti",
+        "tests/ui/reflection/payload_make.gti"
       ]
     },
     {
@@ -6829,6 +7163,67 @@
         "tests/ui/stdlib/optional/compiler",
         "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
+      ]
+    },
+    {
+      "id": "ostream.borrowed-output",
+      "source": "stdlib/std/detail/ostream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::ostream::operator<<"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
+      ]
+    },
+    {
+      "id": "ostream.insertion",
+      "source": "stdlib/std/ostream.gti",
+      "status": "executable",
+      "operations": [
+        "std::basic_ostream::operator<<",
+        "std::basic_ostream::put",
+        "std::basic_ostream::write"
+      ],
+      "case_ids": [
+        "file-stream-bulk",
+        "file-stream-format",
+        "file-stream-open"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/file_stream_bulk.gti",
+        "tests/slow/stdlib/io/file_stream_format.gti",
+        "tests/slow/stdlib/io/file_stream_open.gti"
+      ]
+    },
+    {
+      "id": "package.generated",
+      "source": "stdlib/std/package.gti",
+      "status": "executable",
+      "operations": [
+        "std::package::name",
+        "std::package::version"
+      ],
+      "case_ids": [
+        "build"
+      ],
+      "required_instantiations": [
+        "project-owned constexpr name and version materialized as ordinary source",
+        "dependency metadata isolation and manifest-only cache invalidation"
+      ],
+      "evidence": [
+        "src/compiler/source_loader.cpp",
+        "tests/project/package_metadata/test.transcript",
+        "tests/ui/modules/package_without_manifest.gti",
+        "tests/lsp/modules/package_metadata.gti",
+        "tests/slow/lsp/modules/package_metadata_completion.gti",
+        "tests/project/package_metadata_compiled/test.transcript",
+        "tests/lsp/modules/package_metadata_reload.jsonl"
       ]
     },
     {
@@ -7167,6 +7562,7 @@
         "std::process::command::arg",
         "std::process::command::argument_count",
         "std::process::command::command",
+        "std::process::command::output",
         "std::process::command::run",
         "std::process::command::valid",
         "std::process::errc",
@@ -7175,7 +7571,14 @@
         "std::process::exit_status::exited",
         "std::process::exit_status::signaled",
         "std::process::exit_status::success",
-        "std::process::exit_status::terminating_signal"
+        "std::process::exit_status::terminating_signal",
+        "std::process::output::output_limited",
+        "std::process::output::status",
+        "std::process::output::stderr_text",
+        "std::process::output::stdout_text",
+        "std::process::output::success",
+        "std::process::output::timed_out",
+        "std::process::output_options"
       ],
       "case_ids": [
         "process"
@@ -7191,7 +7594,12 @@
         "stdlib/std/process.gti",
         "tests/fixtures/stdlib_surface_process.gti",
         "tests/process_runtime_test.py",
-        "tests/unit/runtime_process_tests.cpp"
+        "tests/unit/runtime_process_tests.cpp",
+        "tests/unit/runtime_capture.cpp"
+      ],
+      "test_paths": [
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti"
       ]
     },
     {
@@ -7853,7 +8261,7 @@
       "source": "stdlib/std.gti",
       "status": "executable",
       "operations": [
-        "std module portable aggregate re-exports"
+        "std module portable aggregate re-exports, including std.fstream, std.ios, std.iostream, std.istream and std.ostream"
       ],
       "case_ids": [
         "std-aggregate"
@@ -7864,6 +8272,25 @@
       ],
       "required_instantiations": [
         "portable modules through one import, including std.charconv and std.regex"
+      ]
+    },
+    {
+      "id": "streams.borrowed-state",
+      "source": "stdlib/std/detail/stream_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::stream_view_state::apply",
+        "std::detail::stream_view_state::rdstate"
+      ],
+      "case_ids": [
+        "file-stream-views",
+        "memory-stream-input-view",
+        "memory-stream-output-view"
+      ],
+      "evidence": [
+        "tests/slow/stdlib/io/borrowed_memory_input.gti",
+        "tests/slow/stdlib/io/file_stream_views.gti",
+        "tests/ui/stdlib/io/memory_output_view.gti"
       ]
     },
     {
@@ -8385,6 +8812,45 @@
         "tests/slow/stdlib/testing/assertions.gti",
         "tests/fixtures/protocol_testing_assertions.gti",
         "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
+      ]
+    },
+    {
+      "id": "testing.resources",
+      "source": "stdlib/std/testing/resources.gti",
+      "status": "executable",
+      "operations": [
+        "std::testing::file_error",
+        "std::testing::read_file",
+        "std::testing::subprocess::arg",
+        "std::testing::subprocess::output_limit",
+        "std::testing::subprocess::run",
+        "std::testing::subprocess::subprocess",
+        "std::testing::subprocess::timeout_ms",
+        "std::testing::subprocess::working_directory",
+        "std::testing::temporary_directory::create",
+        "std::testing::temporary_directory::path",
+        "std::testing::temporary_directory::remove",
+        "std::testing::temporary_directory::~temporary_directory",
+        "std::testing::write_file"
+      ],
+      "case_ids": [],
+      "test_paths": [
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti",
+        "tests/slow/testing/temporary_files.gti"
+      ],
+      "required_instantiations": [
+        "move-only temporary directory ownership and deterministic cleanup",
+        "exact binary file contents and bounded reads",
+        "exact argv, separate output streams, child working directory, timeout and output limits"
+      ],
+      "evidence": [
+        "docs/language/standard-library.md",
+        "tests/slow/testing/subprocess_capture.gti",
+        "tests/slow/testing/subprocess_limits.gti",
+        "tests/slow/testing/temporary_files.gti",
+        "tests/project/testing_resource_cleanup/test.transcript",
+        "tests/unit/runtime_capture.cpp"
       ]
     },
     {

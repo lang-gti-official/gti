@@ -1,12 +1,17 @@
 #include "gti/filesystem.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <new>
 #include <string>
 #include <system_error>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace {
 namespace fs = std::filesystem;
@@ -269,6 +274,31 @@ extern "C" uint32_t gti_rt_fs_path_v1(uint32_t operation,
     owned->text = encode(resolved);
     *output = handle(owned.release());
     return GTI_FS_OK_V1;
+  });
+}
+
+extern "C" uint32_t gti_rt_fs_temp_directory_v1(gti_c_string_view input,
+                                                int64_t *output) {
+  return contain([&]() -> uint32_t {
+    fs::path parent;
+    if (!output || !decode(input, parent))
+      return GTI_FS_INVALID_ARGUMENT_V1;
+#if defined(_WIN32)
+    return GTI_FS_UNSUPPORTED_V1;
+#else
+    std::error_code code;
+    parent = fs::absolute(parent, code);
+    if (code)
+      return error(code);
+    auto owned = std::make_unique<Result>();
+    // Allocate every byte before creating the directory: no throwing operation
+    // may leak a newly created directory between mkdtemp and publication.
+    owned->text = encode(parent / "gti-XXXXXX");
+    if (!mkdtemp(owned->text.data()))
+      return error(std::error_code(errno, std::generic_category()));
+    *output = handle(owned.release());
+    return GTI_FS_OK_V1;
+#endif
   });
 }
 

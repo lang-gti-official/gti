@@ -1,5 +1,15 @@
 # 7. Standard Library
 
+`import std.package;` exposes immutable `constexpr std::string_view` constants
+`std::package::name` and `std::package::version` from the source package's
+resolved manifest. Dependencies observe their own package, and build programs
+observe the package whose script is running. The spelling is preserved exactly;
+these are strings, not semantic-version comparison objects. The import requires
+a project/package compilation (`GTI-I0012` otherwise) and remains explicit
+rather than joining the portable `std` aggregate. Build scripts additionally
+have `std::build::context::package_name()` and `package_version()` accessors.
+
+
 Status: Partial normative draft
 
 ## 7.1 Library Boundary
@@ -157,8 +167,9 @@ source ownership and public module names confer no compiler privilege.
 `import std;` imports the portable public standard library in one declaration.
 It is an ordinary source interface in `stdlib/std.gti`, re-exporting the named
 standard modules. It excludes the currently POSIX-only `std.environment`,
-`std.process`, and `std.tcp`, which require explicit imports on supported targets,
-and it excludes experimental facilities. Individual imports remain useful for
+`std.process`, `std.tcp`, and `std.testing.resources`, which require explicit
+imports on supported targets. Package-context metadata (`std.package`) also
+requires an explicit import, and experimental facilities remain excluded. Individual imports remain useful for
 documenting dependencies and reducing source-loading/registration work.
 
 Imports use the ordinary compilation pipeline; an import does not
@@ -309,7 +320,22 @@ The current implemented foundation includes:
   `container.as_span()` results to locals first. These checks neither consume
   borrowed operands nor format successful comparisons. Manifest test suites
   discover `[[test]] void` functions and run each in its own process; see
-  [annotated test suites](programs-and-targets.md#annotated-test-suites); and
+  [annotated test suites](programs-and-targets.md#annotated-test-suites).
+  The separate `std.testing.resources` module (macOS and Linux) provides
+  `std::testing::temporary_directory::create()`, returning a uniquely owned
+  private directory; `path()` borrows its path, moves transfer cleanup, and
+  normal destruction removes its tree without following symlink entries.
+  Destructor cleanup is best effort; `remove()` explicitly reports errors.
+  Forced termination does not promise cleanup. `read_file(path, limit)` preserves
+  exact bytes and fails with `file_error::limit_exceeded` rather than truncating;
+  `write_file(path, contents)` replaces a file and reports write/close errors.
+  These helpers follow ordinary filesystem semantics, not security containment.
+  `subprocess(executable)` supplies `arg`, `working_directory`, `timeout_ms`,
+  `output_limit` and `run` over the general bounded
+  [process capture](process.md#bounded-captured-execution) capability. Its result
+  separates stdout/stderr, ordinary exit, signal, timeout and output overflow.
+  No implicit shell is used, stdin is `/dev/null`, the environment is inherited,
+  and child-only cwd selection leaves the parent unchanged; and
 - `std.build` host-side package build-program support through
   `std::build::context`, exact-argv `std::build::command`, and structured
   `std::build::outputs`. This unit is intended for consumer-approved
@@ -672,9 +698,11 @@ The current implemented foundation includes:
   scalar decoding, validation, encoding, append and a borrowed decoder cursor
   with byte-offset errors, without changing byte-oriented string semantics;
   see [Text and binary encoding](encoding.md); and
-- `std.chrono` exact signed `std::chrono::nanoseconds`, distinct monotonic and
-  Unix-wall-clock time points, recoverable clock reads, checked elapsed
-  subtraction, and normalized pre-epoch Unix second/subsecond decomposition;
+- `std.chrono` signed duration units from nanoseconds through days, constexpr
+  `try_cast`/`cast`, same-unit comparisons and checked arithmetic, duration
+  formatting, distinct monotonic and Unix-wall-clock time points, recoverable
+  clock reads, checked elapsed subtraction, and normalized pre-epoch Unix
+  second/subsecond decomposition;
   see [Clocks And Durations](chrono.md); and
 - `std.process` reusable exact-argv `std::process::command` values with no
   shell expansion, synchronous execution inheriting the current environment,
@@ -1601,6 +1629,14 @@ See [ranges](ranges.md) for the exact lifetime and operation contract.
 reader/writer contracts, exact transfer/copy/line helpers, memory and native
 stream adapters, and explicit-flush buffering. See [I/O](io.md) for partial
 progress and error semantics.
+
+`std.istream`, `std.ostream`, and `std.iostream` provide formatted extraction
+and insertion over a buffer type, including memory readers and writers.
+`std.fstream` supplies the file buffer and the `ifstream`, `ofstream`, and
+`fstream` classes. A bidirectional stream uses one cursor and one set of
+formatting flags and error bits for both directions. See
+[opening a file stream](io.md#opening-a-file-stream) and
+[reading, writing and positioning](io.md#reading-writing-and-positioning).
 
 `std.paired_span` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element

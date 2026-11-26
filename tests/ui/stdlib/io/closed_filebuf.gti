@@ -1,0 +1,11 @@
+// A closed file buffer exposes no input and returns its specific error on close.
+//@ run-pass
+import std.fstream;
+
+int main() {
+  mut std::filebuf buffer{};
+  if (buffer.is_open() || buffer.available() != std::size_t(0)) { return 1; }
+  auto result = buffer.close();
+  if (result || result.error() != std::io_errc::invalid_stream) { return 2; }
+  return 0;
+}

@@ -689,6 +689,7 @@ struct ProgramInitializationStep {
   FunctionId ownerFunction = 0;
   DefinedFailureOperation ensureFailure;
   SourceSpan declarationSpan;
+  std::optional<ConstantValue> dataConstant;
 
   friend bool operator==(const ProgramInitializationStep &left,
                          const ProgramInitializationStep &right) {
@@ -702,6 +703,7 @@ struct ProgramInitializationStep {
            left.threadLocal == right.threadLocal &&
            left.ownerFunction == right.ownerFunction &&
            left.ensureFailure == right.ensureFailure &&
+           left.dataConstant == right.dataConstant &&
            left.declarationSpan.source == right.declarationSpan.source &&
            left.declarationSpan.start == right.declarationSpan.start &&
            left.declarationSpan.end == right.declarationSpan.end &&
@@ -2780,6 +2782,15 @@ public:
 
   // Primary body facts are required before concrete HIR discovery may use a
   // function definition. Invalid primary analysis never reaches HIR.
+  void recordReflectedBody(const FunctionDecl &function,
+                           std::shared_ptr<BlockStmt> body) {
+    reflectedBodies.insert_or_assign(&function, std::move(body));
+  }
+  [[nodiscard]] std::shared_ptr<BlockStmt>
+  reflectedBody(const FunctionDecl &function) const {
+    const auto found = reflectedBodies.find(&function);
+    return found == reflectedBodies.end() ? nullptr : found->second;
+  }
   void recordAnalyzedFunctionBody(const FunctionDecl &body) {
     analyzedFunctionBodies.insert(&body);
   }
@@ -2787,6 +2798,11 @@ public:
     return analyzedFunctionBodies.contains(&body) ||
            (base != nullptr && base->hasAnalyzedFunctionBody(body));
   }
+  // An unreachable trusted body may have been checked speculatively while
+  // constructing a preamble. Keep its recovery symbols for tooling; only a
+  // successfully demanded body may publish them into executable lowering.
+  void recordPreambleRecoveryLocal(SymbolId id, const FunctionDecl &body);
+  [[nodiscard]] bool isUnreachedPreambleRecoveryLocal(SymbolId id) const;
   // A late demand that could not stay equivalent to in-pass analysis
   // withdraws its bodies, so concrete discovery requests them instead.
   void forgetAnalyzedFunctionBody(const FunctionDecl &body) {
@@ -3400,6 +3416,9 @@ private:
   std::unordered_map<const ConstexprForStmt *,
                      std::optional<ConstexprForExpansion>>
       constexprForExpansions;
+  // Each concrete function instance owns its checked, specialized body.
+  std::unordered_map<const FunctionDecl *, std::shared_ptr<BlockStmt>>
+      reflectedBodies;
   std::unordered_map<const ExpressionStmt *, StmtPtr> macroExpansions;
   std::unordered_map<const Call *, StmtPtr> macroValueExpansions;
   std::unordered_map<const Call *, const FunctionDecl *> macroValueDeclarations;
@@ -3503,6 +3522,7 @@ private:
   // Instance-delta base; see beginInstanceDelta.
   const SemanticModel *base = nullptr;
   std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
+  std::unordered_map<SymbolId, const FunctionDecl *> preambleRecoveryLocals;
   mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
   std::unordered_set<const Call *> *callJournal = nullptr;
   struct InstanceReuseJournal {

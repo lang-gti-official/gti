@@ -1,0 +1,17 @@
+import std.testing;
+import std.testing.resources;
+import std.filesystem;
+import std.panic;
+int main() {
+  auto parent = std::filesystem::path("scratch");
+  auto created = std::filesystem::create_directories(parent).expect("create parent");
+  auto outside = std::filesystem::path("outside");
+  auto made = std::filesystem::create_directories(outside).expect("create outside");
+  auto sentinel = outside / "sentinel";
+  std::testing::write_file(sentinel, "keep").expect("write sentinel");
+  auto absolute = std::filesystem::absolute(outside).expect("absolute target");
+  auto directory = std::testing::temporary_directory::create(parent).expect("temporary directory");
+  auto link = directory.path() / "link";
+  std::filesystem::create_symlink(absolute, link).expect("symlink");
+  std::panic("expected cleanup probe");
+}

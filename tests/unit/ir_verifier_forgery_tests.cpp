@@ -51,6 +51,22 @@ int failures = 0;
   }
 }
 
+// A forgery proves the rule it names only when that rule is the verifier's
+// first reason: an unrelated consistency check failing first would leave the
+// rule untested while the forgery still reads as rejected.
+[[maybe_unused]] void
+expectRejectedFor(const lang::MirVerificationResult &result,
+                  std::string_view reason, const std::string &message) {
+  const bool matched = !result.valid() && result.errors.front().message.find(
+                                              reason) != std::string::npos;
+  if (!matched) {
+    std::cerr << "  expected first reason: " << reason << '\n';
+    for (const auto &error : result.errors)
+      std::cerr << "  actual: " << error.message << '\n';
+  }
+  expect(matched, message);
+}
+
 [[maybe_unused]] bool containsMangledFunction(std::string_view text,
                                               std::string_view prefix,
                                               std::string_view sourceName,
@@ -3792,21 +3808,24 @@ int main() {
   if (!both || !one || !withLocal)
     return;
   const auto rejects = [&](const lang::MirFunctionInstance &target, auto change,
-                           const char *message) {
+                           std::string_view reason, const char *message) {
     auto malformed = frontend.mir;
     auto *instance = const_cast<lang::MirFunctionInstance *>(
         malformed.findFunctionInstance(target.id));
     change(*instance);
-    expect(!lang::verifyMirProgram(malformed).valid(), message);
+    expectRejectedFor(lang::verifyMirProgram(malformed), reason, message);
   };
   // `both` returns either argument; a contract naming only `keep` must not
-  // admit the call's `other`.
+  // admit the call's `other`. Forging the contract alone first contradicts
+  // the complete result summary, which still names both formals; with that
+  // summary forged too, the callers' call-site summary check rejects it.
   rejects(
       *both,
       [](lang::MirFunctionInstance &instance) {
         instance.returnBorrowParameters.clear();
         instance.returnBorrowParameter = 0;
       },
+      "complete result dependency summary lacks independent evidence",
       "MIR must reject a returned call argument outside a one-formal "
       "contract");
   // A further read-only formal dependency forged onto `one`'s return.
@@ -3828,6 +3847,8 @@ int main() {
             loan.additionalDependencies.push_back(
                 {.source = other.id, .access = lang::AccessMode::ReadOnly});
       },
+      "argument-dependent return borrows a call argument outside its "
+      "summarized formal parameter",
       "MIR must reject a returned loan's further formal outside the "
       "contract");
   // A further dependency on a local this body destroys.
@@ -3846,6 +3867,7 @@ int main() {
             loan.additionalDependencies.push_back(
                 {.source = local, .access = lang::AccessMode::ReadOnly});
       },
+      "depends on body-owned storage",
       "MIR must reject a returned loan that depends on body-owned storage");
   // A by-value formal is the body's own object too: it dies at return.
   const auto *withValue = find([&](const lang::MirFunctionInstance &function) {
@@ -3923,12 +3945,17 @@ int main() {
   expect(relay != nullptr, "the relaying function is found");
   if (relay == nullptr)
     return;
-  const auto rejects = [&](auto change, const char *message) {
+  // The relay exemption is part of the derived-loan rule: a call result
+  // that no exemption admits is not produced through its declared parent.
+  constexpr std::string_view relayRule =
+      "must be produced through its declared parent loan";
+  const auto rejects = [&](auto change, std::string_view reason,
+                           const char *message) {
     auto malformed = frontend.mir;
     auto *instance = const_cast<lang::MirFunctionInstance *>(
         malformed.findFunctionInstance(relay->id));
     change(instance->body, *instance);
-    expect(!lang::verifyMirProgram(malformed).valid(), message);
+    expectRejectedFor(lang::verifyMirProgram(malformed), reason, message);
   };
   const auto callResult = [](lang::MirBody &body) -> lang::MirLoan * {
     for (auto &loan : body.loans)
@@ -3961,22 +3988,25 @@ int main() {
               lang::AccessMode::Mutable;
         });
       },
-      "MIR must reject a relayed lane forged to mutable access");
+      relayRule, "MIR must reject a relayed lane forged to mutable access");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &) {
+        // Copied first: forgeLanes then rewrites that very loan's lanes.
         const auto source = callResult(body)->source;
         forgeLanes(body, [&](lang::MirLoan &loan) {
           loan.additionalDependencies.front().source = source;
         });
       },
+      relayRule,
       "MIR must reject a lane naming the carrier group's own source");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &) {
         forgeLanes(body, [](lang::MirLoan &loan) {
-          loan.additionalDependencies.push_back(
-              loan.additionalDependencies.front());
+          const auto lane = loan.additionalDependencies.front();
+          loan.additionalDependencies.push_back(lane);
         });
       },
+      relayRule,
       "MIR must reject a relayed result whose lanes outnumber its mappings");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &) {
@@ -3986,7 +4016,7 @@ int main() {
         extra.access = lang::AccessMode::Mutable;
         call->borrowFields.push_back(extra);
       },
-      "MIR must reject a relay with a mutable argument mapping");
+      relayRule, "MIR must reject a relay with a mutable argument mapping");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &) {
         auto *call = relayCall(body);
@@ -3995,29 +4025,42 @@ int main() {
         extra.parameter = 0;
         call->borrowFields.push_back(extra);
       },
+      relayRule,
       "MIR must reject a relay mapping an argument it does not borrow");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &instance) {
         // The lane formal is in fact `mut int&`: its referent is not
         // shareable caller storage the body may depend on without a loan.
+        // The formal's place then contradicts the signature's parameter
+        // roles, which is checked first; forging the signature too makes the
+        // callers' arguments contradict it instead.
         const auto lane = instance.parameterBindings[1];
         for (auto &place : body.places)
           if (place.root == lang::MirPlaceRootKind::Binding &&
               place.binding == lane && place.projections.empty())
             place.type.referenceAccess = lang::AccessMode::Mutable;
       },
+      "source formal bindings do not match its parameter roles",
       "MIR must reject a call result's read-only dependency on a mutable "
       "formal without a loan");
   rejects(
       [&](lang::MirBody &body, lang::MirFunctionInstance &) {
         // A mutable child of the caller's exclusive authority is live at
         // the relay: the shared result may not join the group's readers.
-        lang::MirLoan *entry = nullptr;
-        for (auto &loan : body.loans)
+        // The ordinary sibling rule rejects that child at its own borrow,
+        // before the relay, since the shared stored group is already live.
+        // Every fact is copied out before body.loans and the block's
+        // instructions grow: a pointer into either dangles once it
+        // reallocates (sanitizer run 45163973652, heap-use-after-free).
+        const lang::MirLoan *entry = nullptr;
+        for (const auto &loan : body.loans)
           if (loan.entry && loan.access == lang::AccessMode::Mutable)
             entry = &loan;
-        auto *call = relayCall(body);
+        const auto *call = relayCall(body);
+        if (entry == nullptr || call == nullptr)
+          return;
         lang::MirLoan child = *entry;
+        const lang::MirInstructionId callId = call->id;
         child.id = body.loans.size() + 1;
         child.kind = lang::MirLoanKind::Local;
         child.entry = false;
@@ -4025,35 +4068,42 @@ int main() {
         child.carriers.clear();
         child.escapes = false;
         child.access = lang::AccessMode::Mutable;
+        const auto *childSource = body.findPlace(child.source);
+        if (childSource == nullptr)
+          return;
+        const auto sourceType = childSource->type;
+        lang::MirInstruction borrow{};
+        lang::MirInstructionId next = 0;
+        for (const auto &other : body.blocks)
+          for (const auto &candidate : other.instructions) {
+            if (candidate.kind == lang::MirInstructionKind::Borrow)
+              borrow = candidate;
+            next = std::max(next, candidate.id);
+          }
+        borrow.id = next + 1;
+        borrow.kind = lang::MirInstructionKind::Borrow;
+        borrow.result.reset();
+        borrow.destination.reset();
+        borrow.receiver.reset();
+        borrow.loan = child.id;
+        borrow.operands = {{.kind = lang::MirOperandKind::Loan,
+                            .loan = child.parent,
+                            .type = sourceType}};
+        borrow.info.access = lang::AccessMode::Mutable;
         body.loans.push_back(child);
-        for (auto &block : body.blocks)
-          for (std::size_t index = 0; index < block.instructions.size();
-               ++index)
-            if (&block.instructions[index] == call) {
-              lang::MirInstruction borrow{};
-              for (const auto &other : body.blocks)
-                for (const auto &candidate : other.instructions)
-                  if (candidate.kind == lang::MirInstructionKind::Borrow)
-                    borrow = candidate;
-              lang::MirInstructionId next = 0;
-              for (const auto &other : body.blocks)
-                for (const auto &candidate : other.instructions)
-                  next = std::max(next, candidate.id);
-              borrow.id = next + 1;
-              borrow.kind = lang::MirInstructionKind::Borrow;
-              borrow.result.reset();
-              borrow.destination.reset();
-              borrow.receiver.reset();
-              borrow.loan = child.id;
-              borrow.operands = {{.kind = lang::MirOperandKind::Loan,
-                                  .loan = entry->id,
-                                  .type = body.findPlace(child.source)->type}};
-              borrow.info.access = lang::AccessMode::Mutable;
-              block.instructions.insert(block.instructions.begin() + index,
-                                        borrow);
-              return;
-            }
+        for (auto &block : body.blocks) {
+          const auto at =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const lang::MirInstruction &instruction) {
+                             return instruction.id == callId;
+                           });
+          if (at != block.instructions.end()) {
+            block.instructions.insert(at, borrow);
+            return;
+          }
+        }
       },
+      "conflicts with active sibling loan",
       "MIR must reject a relay while a mutable child of its parent lives");
 }
 

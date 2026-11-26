@@ -84,6 +84,11 @@ affect process-wide relative path resolution.
 `current_path()` returns an owned absolute working-directory path;
 `current_path(path)` changes it. `temp_directory_path()` reports the host's
 temporary-directory location without creating a private temporary directory.
+`create_temp_directory(parent)` atomically creates a uniquely named private
+(mode 0700) directory under an existing parent on macOS and Linux and returns
+its absolute owned path. The caller owns removal; `std::testing::temporary_directory`
+adds deterministic cleanup. Native allocation occurs before creation, so allocation
+failure cannot leak an unpublished directory. Windows returns `unsupported`.
 `absolute(path)` resolves against the current directory without requiring the
 path to exist. `canonical(path)` requires existence and resolves symbolic links
 and dot components. `weakly_canonical(path)` resolves the existing prefix and

@@ -1,0 +1,6 @@
+// An unsupported associated type in a struct recovers to the following member.
+//@ parse-fail
+struct Broken {
+  typename  //~ ERROR GTI-P0001
+  int next;
+};

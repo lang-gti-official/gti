@@ -1093,7 +1093,11 @@ each platform also runs the native smoke, and the first Linux shard checks
 deterministic docgen. The system-LLVM `fast` checks also run in full
 integration; their Linux job retains the installed-library and process-resource
 consumer checks against system LLVM. Production packages independently run
-their installed-consumer checks against bundled LLVM. Each shard uploads a report
+their installed-consumer checks against bundled LLVM. On Linux, the shard step
+and the package's installed-toolchain step run `scripts/runner_monitor.sh`
+beside their work, logging memory, swap, free disk, the largest processes and
+the running CTest entries every minute (30 s in the package), because a
+runner that exhausts its memory loses the shard log. Each shard uploads a report
 of its head, tree, inventory and executed tests. The gate merges them and fails
 unless, for each required platform, the shards are complete, disjoint, agree
 on source and inventory, ran every registered test exactly once and include the

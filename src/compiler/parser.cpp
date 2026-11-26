@@ -578,7 +578,7 @@ private:
               "An extern \"C\" block may contain only function or variable "
               "declarations.");
         } else {
-          declaration = typedDeclaration(true, std::nullopt, false, false, true,
+          declaration = typedDeclaration(true, std::nullopt, false, false,
                                          LanguageLinkage::C);
         }
         stampExtent(declaration, declarationStart);
@@ -706,6 +706,7 @@ private:
     body.leftBrace =
         consume(TokenKind::LEFT_BRACE, "Expect '{' before concept body.");
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       const Token start = peek();
       try {
         if (match({TokenKind::TYPENAME})) {
@@ -741,7 +742,7 @@ private:
         stampExtent(operation, start);
         body.operations.push_back(std::move(operation));
       } catch (const ParseError &) {
-        synchronize(true, false, false, true);
+        synchronizeItem(itemStart, true, false, false, true);
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after concept body.");
@@ -1203,7 +1204,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1246,7 +1247,7 @@ private:
                .message = "Replace obsolete '[[unsafe]]' with 'unsafe'"});
         }
         diagnostics.emplace_back(std::move(diagnostic));
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::nullopt, std::nullopt, std::move(keyword),
                                 std::move(functionAttributes));
       }
@@ -1305,7 +1306,7 @@ private:
           throw error(peek(), "A native function attribute must annotate a "
                               "function declaration.");
         }
-        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+        return typedDeclaration(true, std::nullopt, false, false, linkage,
                                 std::move(nativeCArray),
                                 std::move(nativeLinkName), std::nullopt,
                                 std::move(functionAttributes));
@@ -1342,16 +1343,23 @@ private:
           }
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability condition.");
+        } else if (attribute.name.lexeme == "test" &&
+                   match({TokenKind::LEFT_PAREN})) {
+          attribute.argument = consume(
+              TokenKind::STRING_LITERAL,
+              "Expect a quoted case name in '[[test(name, arguments...)]]'.");
+          while (match({TokenKind::COMMA}))
+            attribute.testArguments.emplace_back(check(TokenKind::LEFT_BRACE)
+                                                     ? arrayInitializer()
+                                                     : assignment());
+          attribute.testClose = consume(
+              TokenKind::RIGHT_PAREN, "Expect ')' after test case arguments.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           if (attribute.name.lexeme == "inline" ||
               attribute.name.lexeme == "noinline" ||
               attribute.name.lexeme == "cold") {
             throw error(attribute.name, "[[" + attribute.name.lexeme +
                                             "]] takes no arguments.");
-          }
-          if (attribute.name.lexeme == "test") {
-            throw error(attribute.name, "[[test]] takes no arguments; annotate "
-                                        "a zero-argument void function.");
           }
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");
@@ -1453,7 +1461,7 @@ private:
         }
         return attachDeclaredAttributes(
             typedDeclaration(true, std::nullopt, currentClassName.has_value(),
-                             currentClassName.has_value(), true, linkage,
+                             currentClassName.has_value(), linkage,
                              std::move(nativeCArray), std::move(nativeLinkName),
                              std::nullopt, std::move(functionAttributes)),
             std::move(declared));
@@ -1547,10 +1555,11 @@ private:
     currentClassKind = kind;
     try {
       while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+        const auto itemStart = current;
         try {
           members.emplace_back(item(ItemContext::ClassMember));
         } catch (const ParseError &) {
-          synchronize(true, false, false, true);
+          synchronizeItem(itemStart, true, false, false, true);
         }
       }
 
@@ -1618,7 +1627,7 @@ private:
       bool allowFunction,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false, bool allowOperators = false,
-      bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
+      LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
@@ -1658,12 +1667,6 @@ private:
         throw redundantTokenError(previous(),
                                   "A storage specifier cannot be repeated.");
       keyword = previous();
-    }
-    if (staticKeyword && !allowStatic && !threadLocalKeyword) {
-      throw error(
-          *staticKeyword,
-          "Block-scope static declarations are not supported yet; declare "
-          "static storage at namespace or class scope.");
     }
     if (staticKeyword && runtimeBinding) {
       throw error(*staticKeyword,
@@ -2784,10 +2787,11 @@ private:
 
     StmtList members;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         members.emplace_back(item(ItemContext::MutableFieldGroup));
       } catch (const ParseError &) {
-        synchronize(true, false, false, false, false, false);
+        synchronizeItem(itemStart, true, false, false, false, false, false);
       }
     }
     Token rightBrace = consume(TokenKind::RIGHT_BRACE,
@@ -3343,10 +3347,11 @@ private:
     StmtList statements;
 
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      const auto itemStart = current;
       try {
         statements.emplace_back(item(ItemContext::Block));
       } catch (const ParseError &) {
-        synchronize(true, true, false);
+        synchronizeItem(itemStart, true, true, false);
       }
     }
 
@@ -3510,7 +3515,7 @@ private:
       return structuredBindingDeclaration();
     }
     if (isTypedDeclaration()) {
-      return typedDeclaration(false, std::nullopt, false, false, false);
+      return typedDeclaration(false);
     }
     return statement();
   }
@@ -3609,13 +3614,14 @@ private:
     try {
       while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
              !isConditionalBoundary()) {
+        const auto itemStart = current;
         try {
           statements.emplace_back(item(context));
         } catch (const ParseError &) {
-          synchronize(context != ItemContext::Declaration,
-                      context == ItemContext::Block,
-                      context == ItemContext::Declaration,
-                      context == ItemContext::ClassMember);
+          synchronizeItem(itemStart, context != ItemContext::Declaration,
+                          context == ItemContext::Block,
+                          context == ItemContext::Declaration,
+                          context == ItemContext::ClassMember);
         }
       }
     } catch (const ConditionalBoundary &) {
@@ -3913,7 +3919,7 @@ private:
       }
       result = structuredBindingDeclaration();
     } else if (isTypedDeclaration()) {
-      result = typedDeclaration(false, std::nullopt, false, false, false);
+      result = typedDeclaration(false);
     } else {
       result = expressionStatement();
     }
@@ -4123,10 +4129,11 @@ private:
         StmtList statements;
         while (!check(TokenKind::CASE) && !check(TokenKind::DEFAULT) &&
                !check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          const auto itemStart = current;
           try {
             statements.emplace_back(item(ItemContext::Block));
           } catch (const ParseError &) {
-            synchronize(true, true, false, false, true);
+            synchronizeItem(itemStart, true, true, false, false, true);
           }
         }
         arms.push_back({std::move(labels), std::move(statements)});
@@ -5791,6 +5798,26 @@ private:
       return "->";
     default:
       return std::nullopt;
+    }
+  }
+
+  // A token that starts an item elsewhere can be invalid in this context.
+  // Preserve normal recovery when it advances; otherwise skip the rejected
+  // token and synchronize the rest of that item up to the next valid starter.
+  void synchronizeItem(std::size_t itemStart, bool stopAtRightBrace,
+                       bool allowStatements, bool allowClasses,
+                       bool allowAccessSpecifiers = false,
+                       bool stopAtSwitchLabel = false,
+                       bool stopAtTypedDeclaration = true) {
+    const auto recover = [&] {
+      synchronize(stopAtRightBrace, allowStatements, allowClasses,
+                  allowAccessSpecifiers, stopAtSwitchLabel,
+                  stopAtTypedDeclaration);
+    };
+    recover();
+    if (current == itemStart && !isAtEnd()) {
+      advance();
+      recover();
     }
   }
 

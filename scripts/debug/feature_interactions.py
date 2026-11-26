@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Generate, execute, replay and shrink bounded GTI feature interactions."""
+"""Generate, execute, replay and shrink bounded GTI feature interactions.
+
+Every case is compiled by GTI's LLVM backend, the only tested backend, at the
+LLVM levels in CAMPAIGN_LEVELS, for both metamorphic variants, and its native
+executable is compared with the model's oracle. `--cxx` only names the native
+link driver forwarded to `gti --cxx`; no C++ is generated, compiled or used
+as an oracle. Triage measures the LLVM-era stage boundaries: verified MIR,
+LLVM IR emission, native object emission and linking, then execution.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +25,9 @@ from typing import Any
 
 # The same compiler invocation/resource contract as the existing typed audit.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# The repository's single definition of LLVM execution modes and their flags.
+sys.path.append(str(Path(__file__).resolve().parents[2] / "tests"))
+from backend_modes import llvm_modes, optimization_level
 from local_language_audit import INTERNAL_FAILURE_MARKERS, resolve_tool
 from debug.feature_interaction_model import (
     FACTORS, InteractionCase, admissible, coverage, covering_array, make_case,
@@ -24,9 +35,25 @@ from debug.feature_interaction_model import (
 )
 
 
-# (optimization, backend). Every case runs on the shipped LLVM backend.
-CONFIGURATIONS = (("O0", "llvm"), ("O3", "llvm"))
+# The campaign names its levels rather than following GTI_TEST_LLVM_LEVELS:
+# optimisation is part of its subject. O0 is the unoptimised pipeline; O3 runs
+# every GTI-registered LLVM pass that O2 does (checked offsets and ranges,
+# private atomics, SLP vectorisation) plus LLVM's most aggressive inlining and
+# loop transforms. That is the slow tier's O0+O3 pair; adding O2 would cost
+# half as many outcomes again for little distinct coverage.
+CAMPAIGN_LEVELS = ("O0", "O3")
+ALL_LEVELS = ("O0", "O1", "O2", "O3")
+MODES = {(optimization_level(flags), "llvm"): flags
+         for _, flags, _ in llvm_modes(levels=ALL_LEVELS)}
+# (optimization, backend), as failure records spell it. `run --levels` narrows
+# or widens the levels a run probes; replay accepts any of them.
+CONFIGURATIONS = tuple(key for key in MODES if key[0] in CAMPAIGN_LEVELS)
 VARIANTS = ("original", "renamed")
+# Failure records written before the LLVM port named a C++ standard. The case
+# and its oracle are backend-independent, so such a record replays at the same
+# level on LLVM; the migration is recorded and announced, never implicit.
+LEGACY_CPP_CONFIGURATIONS = {(level, standard): (level, "llvm")
+                             for level in CAMPAIGN_LEVELS for standard in ("c++20", "c++23")}
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -130,7 +157,25 @@ def disagreement(expected: tuple[int, str, str], observed: Observation) -> dict[
     return {"kind": "oracle-mismatch", "stage": "run", "channels": channels} if channels else None
 
 
-def probe(case: InteractionCase, gti: str, cxx: str, root: Path, *,
+def build_command(gti: str, cxx: str | None, source: Path, output: Path,
+                  configuration: tuple[str, str], *emit: str) -> list[str]:
+    """The direct LLVM compile; `emit` selects an emission stage instead of a link.
+
+    The driver rejects `--backend` beside an explicit emission mode: verified
+    MIR is backend-independent and `--emit-llvm` is the LLVM backend's own
+    output, so an emission keeps only the level.
+    """
+    if emit:
+        return [gti, str(source), f"-{configuration[0]}", *emit, "--verbose", "-o", str(output)]
+    command = [gti, str(source), *MODES[configuration]]
+    if cxx:
+        command += ["--cxx", cxx]  # the native link driver, nothing else
+    # Developer evidence must retain the real backend reason/tool output,
+    # rather than classifying every neutral backend summary as the same bug.
+    return command + ["--verbose", "-o", str(output)]
+
+
+def probe(case: InteractionCase, gti: str, cxx: str | None, root: Path, *,
           variant: str, configuration: tuple[str, str], timeout: int,
           repeat: int = 2) -> dict[str, Any] | None:
     root.mkdir(parents=True)
@@ -138,12 +183,7 @@ def probe(case: InteractionCase, gti: str, cxx: str, root: Path, *,
     source = root / f"{variant}.gti"
     source.write_text(case.emit(variant), encoding="utf-8")
     executable = root / ("program.exe" if sys.platform == "win32" else "program")
-    optimization, backend = configuration
-    command = [gti, str(source), f"-{optimization}", "--backend", backend,
-               "--cxx", cxx, "-o", str(executable)]
-    # Developer evidence must retain the real backend reason/tool output,
-    # rather than classifying every neutral backend summary as the same bug.
-    command.append("--verbose")
+    command = build_command(gti, cxx, source, executable, configuration)
     records: list[Observation] = []
     built = execute(command, "build", timeout, root, records)
     signature = compiler_failure(built)
@@ -215,7 +255,8 @@ def fresh_output(requested: str | None) -> Path:
 
 def tool_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gti", help="optimized GTI compiler (Release/RelWithDebInfo/MinSizeRel)")
-    parser.add_argument("--cxx", default="c++")
+    parser.add_argument("--cxx", help="native link driver forwarded to `gti --cxx` "
+                        "(default: the compiler's own discovery); no C++ is compiled")
     parser.add_argument("--timeout", type=int, default=60, help="per build/run timeout in seconds")
     parser.add_argument("--out", help="new output directory; never overwrite an existing run")
 
@@ -232,6 +273,10 @@ def parser() -> argparse.ArgumentParser:
         if name == "run":
             tool_arguments(command)
             command.add_argument("--keep-going", action="store_true")
+            command.add_argument("--levels", default=",".join(CAMPAIGN_LEVELS),
+                                 help="comma-separated LLVM levels to probe "
+                                      f"(subset of {','.join(ALL_LEVELS)}; default "
+                                      f"{','.join(CAMPAIGN_LEVELS)})")
             command.add_argument("--repeat", type=int, default=2)
         else:
             command.add_argument("--out", required=True)
@@ -247,9 +292,18 @@ def parser() -> argparse.ArgumentParser:
 def read_failure(path: Path) -> tuple[InteractionCase, dict[str, Any]]:
     record = json.loads(path.read_text(encoding="utf-8"))
     if (record.get("schema") != "gti-feature-interaction-failure-v1"
-            or record["variant"] not in VARIANTS
-            or tuple(record["configuration"]) not in CONFIGURATIONS):
+            or record.get("variant") not in VARIANTS):
         raise ValueError("unsupported interaction failure")
+    configuration = tuple(record.get("configuration", ()))
+    if configuration in LEGACY_CPP_CONFIGURATIONS:
+        record["migrated_configuration"] = {
+            "from": list(configuration),
+            "to": list(LEGACY_CPP_CONFIGURATIONS[configuration]),
+            "reason": "the C++ backend is frozen and untested; replayed on LLVM at the same level"}
+        record["configuration"] = list(LEGACY_CPP_CONFIGURATIONS[configuration])
+    elif configuration not in MODES:
+        raise ValueError(f"unsupported interaction configuration {list(configuration)}; "
+                         f"this runner replays {[list(item) for item in MODES]}")
     case = InteractionCase.from_record(record["case"])
     if record["expected"] != list(case.oracle()):
         raise ValueError("failure oracle disagrees with case")
@@ -273,9 +327,16 @@ def grouped_findings(failures: list[tuple[str, dict[str, Any]]]) -> list[dict[st
     return list(groups.values())
 
 
+# The direct driver's LLVM-era stage boundaries, in pipeline order. Semantic
+# analysis has no direct-file emission of its own (`gti check` is project-only),
+# so it is read from the verified-MIR probe's diagnostic family instead.
+TRIAGE_STAGES = (("mir", "--emit-mir", ".mir"), ("llvm-ir", "--emit-llvm", ".ll"))
+FRONTEND_CODE = re.compile(r"GTI-[ILPS][0-9]{4}")
+
+
 def triage_failure(case: InteractionCase, original: dict[str, Any], root: Path,
-                   gti: str, cxx: str, timeout: int) -> bool:
-    """Reproduce first, then measure admission without guessing from an ICE."""
+                   gti: str, cxx: str | None, timeout: int) -> bool:
+    """Reproduce first, then measure each stage without guessing from an ICE."""
     variant = original["variant"]
     configuration = tuple(original["configuration"])
     repeated = probe(case, gti, cxx, root / "replay", variant=variant,
@@ -288,30 +349,45 @@ def triage_failure(case: InteractionCase, original: dict[str, Any], root: Path,
     records: list[Observation] = []
     execute([gti, "--version"], "version", timeout, root, records)
     phases: dict[str, Any] = {}
-    for stage, option, suffix in (("mir", "--emit-mir", ".mir"),):
+    for stage, option, suffix in TRIAGE_STAGES:
         artifact = root / ("program" + suffix)
-        command = [gti, str(source), f"-{configuration[0]}", option, "-o", str(artifact)]
-        observed = execute(command, stage, timeout, root, records)
+        observed = execute(build_command(gti, cxx, source, artifact, configuration, option),
+                           stage, timeout, root, records)
         signature = compiler_failure(observed)
         phases[stage] = {"accepted": signature is None and artifact.is_file(),
                          "artifact": str(artifact) if artifact.is_file() else None,
                          "signature": signature}
+    # Object emission and linking have no separate driver output; the replay's
+    # full build is that probe, and its executable the run probe.
+    current = repeated["signature"] if repeated else None
+    linked = current is None or current["stage"] == "run"
+    phases["native-link"] = {"accepted": linked, "evidence": str(root / "replay"),
+                             "signature": None if linked else current}
+    phases["run"] = {"accepted": current is None, "evidence": str(root / "replay"),
+                     "signature": current if linked else None}
+    mir = phases["mir"]
     if status != "reproduced":
         boundary = "not-reproduced"
-    elif not phases["mir"]["accepted"]:
-        boundary = "before-verified-mir"
+    elif not mir["accepted"]:
+        frontend = (mir["signature"] and mir["signature"]["kind"] == "rejected-valid"
+                    and FRONTEND_CODE.fullmatch(mir["signature"].get("code") or ""))
+        boundary = "semantic-admission" if frontend else "before-verified-mir"
+    elif not phases["llvm-ir"]["accepted"]:
+        boundary = "llvm-ir-emission"
     elif original["signature"]["stage"] == "build":
-        boundary = "native-build-or-driver"
+        boundary = "native-object-or-link"
     else:
         boundary = "native-execution"
-    result = {"schema": "gti-feature-interaction-triage-v1", "status": status,
+    result = {"schema": "gti-feature-interaction-triage-v2", "status": status,
               "observed_boundary": boundary, "original_signature": original["signature"],
-              "current_signature": repeated["signature"] if repeated else None,
+              "current_signature": current, "configuration": list(configuration),
               "phases": phases,
               "resource_environment": {name: os.environ[name] for name in (
                   "GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY")
                   if name in os.environ},
-              "scope": "measured admission boundary; not proof of the root cause"}
+              "scope": "measured stage boundary; not proof of the root cause"}
+    if "migrated_configuration" in original:
+        result["migrated_configuration"] = original["migrated_configuration"]
     write_json(root / "triage.json", result)
     print(f"{status}: {boundary}; evidence: {root / 'triage.json'}", flush=True)
     return status == "reproduced"
@@ -334,7 +410,7 @@ def reduction_candidates(case: InteractionCase) -> list[InteractionCase]:
 
 
 def reduce_failure(case: InteractionCase, original: dict[str, Any], root: Path,
-                   gti: str, cxx: str, timeout: int, max_probes: int) -> bool:
+                   gti: str, cxx: str | None, timeout: int, max_probes: int) -> bool:
     options = {"variant": original["variant"],
                "configuration": tuple(original["configuration"]), "timeout": timeout}
     initial = probe(case, gti, cxx, root / "probe-000", **options)
@@ -374,6 +450,9 @@ def reduce_failure(case: InteractionCase, original: dict[str, Any], root: Path,
         "reduced_bytes": len(best.emit(original["variant"]).encode()),
         "predicate": original["signature"],
         "scope": "feature removal and bounded data shrinking; not token minimality",
+        "configuration": list(options["configuration"]),
+        **({"migrated_configuration": original["migrated_configuration"]}
+           if "migrated_configuration" in original else {}),
     })
     print(f"reduced in {probes} probes; replayable failure: {root / 'failure.json'}", flush=True)
     return True
@@ -386,15 +465,25 @@ def main(arguments: list[str] | None = None) -> int:
         cli.error("extra-cases must be nonnegative and repeat must be positive")
     if getattr(args, "timeout", 1) < 1 or getattr(args, "max_probes", 1) < 1:
         cli.error("timeout and max-probes must be positive")
+    if getattr(args, "levels", None) is not None:
+        levels = [level.strip() for level in args.levels.split(",") if level.strip()]
+        if not levels or any(level not in ALL_LEVELS for level in levels):
+            cli.error(f"--levels must be a comma-separated subset of {','.join(ALL_LEVELS)}")
+        global CONFIGURATIONS
+        CONFIGURATIONS = tuple(key for key in MODES if key[0] in levels)
     # Validate supplied evidence before creating outputs or executing tools.
     prior = read_failure(args.failure) if args.command in ("replay", "reduce", "triage") else None
     if args.command != "generate":
         gti = resolve_tool(args.gti, "gti", "GTI compiler")
-        cxx = resolve_tool(args.cxx, "c++", "C++ compiler")
+        cxx = resolve_tool(args.cxx, "c++", "native link driver") if args.cxx else None
     root = fresh_output(args.out)
     print(f"evidence: {root}", flush=True)
     if prior:
         case, record = prior
+        if "migrated_configuration" in record:
+            migration = record["migrated_configuration"]
+            print(f"note: C++-era configuration {migration['from']} replays as {migration['to']}",
+                  flush=True)
         if args.command == "reduce":
             return 0 if reduce_failure(case, record, root, gti, cxx, args.timeout, args.max_probes) else 1
         if args.command == "triage":
@@ -403,13 +492,17 @@ def main(arguments: list[str] | None = None) -> int:
                          configuration=tuple(record["configuration"]), timeout=args.timeout)
         status = ("disappeared" if observed is None else "reproduced"
                   if observed["signature"] == record["signature"] else "replaced")
-        write_json(root / "replay.json", {"status": status})
+        write_json(root / "replay.json", {
+            "status": status, "configuration": record["configuration"],
+            **({"migrated_configuration": record["migrated_configuration"]}
+               if "migrated_configuration" in record else {})})
         print(status, flush=True)
         return 0 if status == "reproduced" else 1
 
     cases = suite_cases(args.seed, args.strength, args.smoke, args.extra_cases)
     plan = {
         "schema": "gti-feature-interaction-suite-v1", "seed": args.seed,
+        "configurations": [list(item) for item in CONFIGURATIONS], "variants": list(VARIANTS),
         "cases": [case.record() for case in cases],
         "planned_coverage": coverage([case.selection for case in cases], args.strength),
     }
@@ -455,6 +548,7 @@ def main(arguments: list[str] | None = None) -> int:
             print(f"PASS case {case.index} ({', '.join(name for name in FACTORS if case.enabled(name)) or 'control'})", flush=True)
         report = {
             "schema": "gti-feature-interaction-report-v1", "seed": args.seed,
+            "configurations": [list(item) for item in CONFIGURATIONS],
             "planned_cases": len(cases), "verified_cases": len(verified),
             "native_outcomes": outcomes, "negative_controls": controls,
             "failures": failures,

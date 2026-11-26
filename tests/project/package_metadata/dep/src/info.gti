@@ -1,0 +1,7 @@
+export module info;
+import std.package;
+import std.string;
+static_assert(std::package::name == "metadata-dep");
+export std::string_view dep_name() { return std::package::name; }
+export std::string_view dep_version() { return std::package::version; }
+export bool dep_has_metadata<T>() { return std::package::name == "metadata-dep" && !std::package::version.empty(); }

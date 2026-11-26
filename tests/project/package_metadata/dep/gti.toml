@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "metadata-dep"
+version = "4.5.6"
+[modules]
+info = "src/info.gti"
+[package.build-script]
+command = ["python3", "build.py"]
+inputs = ["build.py"]

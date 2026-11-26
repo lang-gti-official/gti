@@ -28,3 +28,53 @@ namespace application {
         (identifier)
         (parameter_clause)
         (block)))))
+
+==================
+Named data-driven rows
+==================
+
+[[test("empty", "", "")]]
+[[test("value", make_value(7), -3)]]
+void values(int input, int expected) {}
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute
+      (string_literal)
+      (initializer_expression
+        (comma_expression
+          (primary_expression
+            (literal
+              (string_literal)))
+          (primary_expression
+            (literal
+              (string_literal))))))
+    (function_contract_attribute
+      (string_literal)
+      (initializer_expression
+        (comma_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (unary_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block)))

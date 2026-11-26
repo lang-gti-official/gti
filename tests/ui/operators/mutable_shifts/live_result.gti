@@ -1,0 +1,13 @@
+// A retained shift result excludes writes to the original receiver until its last use.
+struct Output {
+  Output() {}
+  mut int n = 0;
+  mut Output& operator<<(int v) mut { this.n = v; return this; }
+};
+
+int main() {
+  mut Output output{};
+  mut Output& held = output << 1 << 2;
+  output.n = 9; //~ ERROR GTI-S2017 overlapping borrow
+  return held.n;
+}

@@ -1,0 +1,19 @@
+// Free string getline consumes its delimiter, handles a final line without one, and preserves gcount.
+//@ run-pass
+import std.istream;
+import std.io;
+import std.cstdio;
+import std.string;
+import std.span;
+int main() {
+  uint8_t bytes[7] = {uint8_t(48), uint8_t(49), uint8_t(32), uint8_t(97), uint8_t(58), uint8_t(98), uint8_t(99)};
+  mut auto memory = std::io::memory_reader(bytes.as_span());
+  mut std::basic_istream<std::io::memory_reader> input{std::move(memory)};
+  input.ignore(std::size_t(3));
+  mut std::string line{};
+  std::getline(input, line, ':');
+  if (line != "a" || input.gcount() != 3 || !input.good()) { return 1; }
+  if (!std::getline(input, line) || line != "bc" || !input.eof() || input.gcount() != 3) { return 2; }
+  if (std::getline(input, line) || !input.fail()) { return 3; }
+  return 0;
+}

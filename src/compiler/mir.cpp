@@ -666,7 +666,10 @@ materializationAmong(const MirBody &body, const MirPlace &place,
                (isPassiveScalarValueType(instruction.info.type) ||
                 instruction.info.type.kind == SemanticType::Enum ||
                 (instruction.info.type.kind == SemanticType::StringView &&
-                 instruction.operation == MirOperation::Literal))) ||
+                 instruction.operation == MirOperation::Literal) ||
+                (instruction.info.type.kind == SemanticType::Class &&
+                 instruction.operation == MirOperation::Literal &&
+                 instruction.programConstantSubstitution))) ||
               (instruction.kind == MirInstructionKind::Compute &&
                ((instruction.operation == MirOperation::Closure &&
                  instruction.info.type.kind == SemanticType::Lambda) ||
@@ -3175,6 +3178,61 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
   return authority;
 }
 
+// A base publication uses field zero. Its source is the very value handed
+// to the base constructor, and the publication follows the constructor's
+// successful completion. A reference borrowed from the shell itself cannot
+// supply this proof.
+[[nodiscard]] bool
+publishesForwardedBaseCarrier(const MirBody &body, const MirBlock &block,
+                              const MirInstruction &publish) {
+  if (body.kind != MirBodyKind::Constructor ||
+      publish.kind != MirInstructionKind::Borrow || !publish.loan ||
+      publish.operands.size() != 1)
+    return false;
+  const auto *loan = body.findLoan(*publish.loan);
+  const auto &source = publish.operands.front();
+  if (!loan || !loan->escapes || loan->kind != MirLoanKind::Stored ||
+      loan->storedField || source.kind != MirOperandKind::Loan ||
+      !source.value || !publish.hirValue ||
+      loan->producedBy != publish.hirValue)
+    return false;
+  const auto matches = [&](const MirInstruction &stage) {
+    if (stage.kind != MirInstructionKind::InitializeBase)
+      return false;
+    return std::any_of(
+        stage.operands.begin(), stage.operands.end(),
+        [&](const MirOperand &arg) {
+          const auto *input = arg.kind == MirOperandKind::Value
+                                  ? mir_detail::definitionFor(body, arg.value)
+                                  : nullptr;
+          return input && input->kind == MirInstructionKind::CallInput &&
+                 input->constructorInitializer ==
+                     stage.constructorInitializer &&
+                 input->callInputKind == HirCallInputKind::MoveValue &&
+                 input->hirValue == publish.hirValue &&
+                 input->operands.size() == 1 &&
+                 input->operands.front().kind == MirOperandKind::Value &&
+                 input->operands.front().value == source.value;
+        });
+  };
+  for (const auto &stage : block.instructions) {
+    if (&stage == &publish)
+      break;
+    if (stage.definedFailure.empty() && matches(stage))
+      return true;
+  }
+  const auto predecessors = blockPredecessors(body);
+  const auto found = predecessors.find(block.id);
+  if (found == predecessors.end() || found->second.size() != 1)
+    return false;
+  const auto &site = *found->second.front();
+  const auto &term = site.terminator;
+  return term.kind == MirTerminatorKind::Invoke && term.target == block.id &&
+         term.elseTarget != block.id && !site.instructions.empty() &&
+         term.invokeInstruction == site.instructions.back().id &&
+         matches(site.instructions.back());
+}
+
 [[nodiscard]] MirVerificationResult
 verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   std::span<const MirPersistentStorageAccess> hidden = {},
@@ -3185,6 +3243,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   const MirProgram *program = nullptr,
                   MirCarrierAnalysis *analysis = nullptr) {
   const mir_detail::MirBodyReadScope readScope(body);
+  std::unordered_set<MirLoanId> baseCarrierLoans;
+  if (body.kind == MirBodyKind::Constructor)
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (publishesForwardedBaseCarrier(body, block, instruction))
+          baseCarrierLoans.insert(*instruction.loan);
   // Reconstruct replacement uses from actual stores, not MirLoan::carriers.
   // The carrier list is a lowering aid and must not let an early EndBorrow
   // hide a later read of the value that was stored. Unknown flow adds no
@@ -4086,7 +4150,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const bool externalCarrierTransfer =
             loan.kind == MirLoanKind::Return ||
             (body.kind == MirBodyKind::Constructor &&
-             loan.kind == MirLoanKind::Stored && loan.storedField != 0);
+             loan.kind == MirLoanKind::Stored &&
+             (loan.storedField != 0 || baseCarrierLoans.contains(loan.id)));
         const MirPlace *returnSource =
             write && externalCarrierTransfer && loan.escapes
                 ? body.findPlace(loan.source)
@@ -4792,17 +4857,28 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const auto appendLoanSources = [&](const MirLoan &loan,
                                            bool mutableInput) {
           const auto appendSources = [&](const MirLoan &record, bool write) {
-            const auto append = [&](MirPlaceId source, AccessMode permission) {
+            const bool abstractEntry = abstractStoredEntry(body, record);
+            const auto append = [&](MirPlaceId source, AccessMode permission,
+                                    const std::vector<SymbolId> &fields) {
               if (source == 0)
                 return;
+              auto place = canonicalPlace(body, source, bindingLoans, active);
+              // An abstract entry names the enclosing formal and records the
+              // path to each borrowed field separately. Its unrelated fields
+              // remain usable alongside a borrow returned by a nested method.
+              if (abstractEntry && source == record.source)
+                for (const SymbolId field : fields)
+                  place.projections.push_back(
+                      {.kind = MirProjectionKind::Field, .field = field});
               borrows.push_back(
-                  {.place = canonicalPlace(body, source, bindingLoans, active),
+                  {.place = std::move(place),
                    .write = write && permission == AccessMode::Mutable,
                    .input = inputIndex});
             };
-            append(record.source, record.access);
+            append(record.source, record.access, record.designatedFields);
             for (const auto &dependency : record.additionalDependencies)
-              append(dependency.source, dependency.access);
+              append(dependency.source, dependency.access,
+                     dependency.designatedFields);
           };
           bool writable = mutableInput;
           const MirLoan *record = &loan;
@@ -5132,7 +5208,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const MirLoanId loan = *instruction.loan;
         const auto &record = body.loans[loan - 1];
         if (body.kind == MirBodyKind::Constructor && record.escapes &&
-            record.kind == MirLoanKind::Stored && record.storedField != 0 &&
+            record.kind == MirLoanKind::Stored &&
+            (record.storedField != 0 || baseCarrierLoans.contains(loan)) &&
             block.activeFailure == 0) {
           return failure(body, owner,
                          "constructor field dependency cannot retire on a "
@@ -6533,11 +6610,16 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                }) == 1 &&
                  std::any_of(binding->second.begin(), binding->second.end(),
                              inheritedParent));
-            if (movedCarrier && exactAncestry &&
-                instruction.kind == MirInstructionKind::Call &&
-                instruction.functionTarget &&
-                instruction.borrowOrigin == BorrowOriginKind::Argument &&
-                body.loans[loan - 1].kind == MirLoanKind::CallResult) {
+            const auto resultKind = body.loans[loan - 1].kind;
+            const bool transfersBorrow =
+                (instruction.kind == MirInstructionKind::Call &&
+                 instruction.functionTarget &&
+                 resultKind == MirLoanKind::CallResult) ||
+                (instruction.kind == MirInstructionKind::Construct &&
+                 instruction.constructorTarget &&
+                 resultKind == MirLoanKind::Stored);
+            if (movedCarrier && exactAncestry && transfersBorrow &&
+                instruction.borrowOrigin == BorrowOriginKind::Argument) {
               const auto *stage = callInputDefinition(operand);
               const auto &result = body.loans[loan - 1];
               const auto uses = stage && stage->result
@@ -11592,9 +11674,11 @@ static MirVerificationResult verifyBaseInitializations(const MirBody &body,
             event.kind == MirLifecycleEventKind::TransferOut &&
             event.source == rollback->id && event.target == 0 &&
             !event.conditional && !event.failureCleanup;
+        // Prepared-argument transfers may precede the single final
+        // activation. The InitializeBase shape verifies that prefix.
         const bool activation =
             stage && instruction.definedFailure.empty() &&
-            instruction.lifecycle.size() == 1 &&
+            &event == &instruction.lifecycle.back() &&
             event.kind == MirLifecycleEventKind::Initialize &&
             event.source == 0 && event.target == rollback->id &&
             !event.conditional && !event.failureCleanup;
@@ -13540,6 +13624,15 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             producer->operation == MirOperation::FunctionItem &&
             producer->functionTarget && !producer->lambdaTarget &&
             !producer->constructorTarget));
+      // An immediate class result is materialized from its checked aggregate
+      // constant. Literal verification independently requires the exact
+      // published constant and type; the ordinary loan/drop proof still
+      // applies.
+      const bool constantConstruction =
+          producer && producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::Literal &&
+          producer->programConstantSubstitution &&
+          referent.kind == SemanticType::Class;
       const bool scalarComputation =
           producer && producer->kind == MirInstructionKind::Compute &&
           (isPassiveScalarValueType(referent) ||
@@ -13613,7 +13706,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
            !scalarComputation && !scalarCallResult && !payloadConstruction &&
-           !callableConstruction && !joinedTemporary &&
+           !constantConstruction && !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }
@@ -15382,6 +15475,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             }
             return initialized;
           };
+      const bool baseCarrierPublication =
+          publishesForwardedBaseCarrier(body, block, instruction);
       const bool invalidLoanValueEvidence = std::any_of(
           instruction.operands.begin(), instruction.operands.end(),
           [&](const MirOperand &operand) {
@@ -15432,7 +15527,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                    (published->kind != MirLoanKind::Return &&
                     !(body.kind == MirBodyKind::Constructor &&
                       published->kind == MirLoanKind::Stored &&
-                      published->storedField != 0 &&
+                      (published->storedField != 0 || baseCarrierPublication) &&
                       (storedCarrier || constructedField))) ||
                    (!storedCarrier && !dynamicTextCarrier &&
                     !constructedField &&
@@ -15759,9 +15854,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                          block.id, instruction.id);
         }
         const bool storedCarrierReturnTransfer = [&] {
-          const bool fieldPublication = body.kind == MirBodyKind::Constructor &&
-                                        produced.kind == MirLoanKind::Stored &&
-                                        produced.storedField != 0;
+          const bool fieldPublication =
+              body.kind == MirBodyKind::Constructor &&
+              produced.kind == MirLoanKind::Stored &&
+              (produced.storedField != 0 || baseCarrierPublication);
           if ((produced.kind != MirLoanKind::Return && !fieldPublication) ||
               produced.entry || !produced.escapes || produced.parent != 0 ||
               source.kind != MirOperandKind::Loan ||
@@ -17334,14 +17430,29 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.kind != MirInstructionKind::CallInput ||
             instruction.programConstantSubstitution || !instruction.result ||
-            instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != MirOperandKind::Value) {
+            instruction.operands.size() != 1) {
           continue;
+        }
+        const auto &operand = instruction.operands.front();
+        MirValueId materialized =
+            operand.kind == MirOperandKind::Value ? operand.value : 0;
+        if (instruction.callInputRole == MirCallInputRole::Argument &&
+            instruction.callInputKind ==
+                HirCallInputKind::ReadTemporaryBorrow &&
+            operand.kind == MirOperandKind::BorrowRead) {
+          const auto *place = body.findPlace(operand.place);
+          // Call-input verification independently proves the exact live
+          // temporary, loan and cleanup. This stage borrows the one constant
+          // materialization; it does not evaluate another constant value.
+          if (place && place->root == MirPlaceRootKind::Value &&
+              place->projections.empty() &&
+              place->sourceValue == instruction.hirValue)
+            materialized = place->value;
         }
         const auto schedule =
             programConstantScheduleValues.find(instruction.hirValue);
         if (schedule == programConstantScheduleValues.end() ||
-            !schedule->second.contains(instruction.operands.front().value)) {
+            !schedule->second.contains(materialized)) {
           continue;
         }
         const MirValue *staged = body.findValue(*instruction.result);

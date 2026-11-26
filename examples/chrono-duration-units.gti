@@ -1,0 +1,22 @@
+// Named units, recoverable conversion and convenience casts share one checked implementation.
+import std.chrono;
+import std.format;
+
+namespace chrono = std::chrono;
+
+expected<chrono::milliseconds, chrono::duration_errc> retry_delay(chrono::seconds& base) {
+  return base.try_cast<chrono::milliseconds>();
+}
+
+int main() {
+  chrono::seconds base{2};
+  auto checked = retry_delay(base);
+  if (!checked) return 1;
+  auto delay = checked.value();
+  auto seconds = delay.cast<chrono::seconds>();
+  std::println("Retry after {} ({} whole seconds)", delay, seconds.count());
+
+  chrono::milliseconds negative{-1500};
+  auto truncated = negative.cast<chrono::seconds>();
+  return truncated.count() == -1i64 ? 0 : 2;
+}

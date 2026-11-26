@@ -206,7 +206,10 @@ unless `GTI_TEST_TIME_SCALE` is set. `GTI_TEST_INSTRUMENTATION=address,undefined
 (or `address`, `undefined`, `thread`) also builds every program with the
 driver's LLVM sanitizer instrumentation, which needs an upstream Clang
 (`GTI_CXX`, `GTI_CC`); tests with `native-args` and `--isolate` builds stay
-uninstrumented.
+uninstrumented. The runner's self-test in `tests/runner/check.py` multiplies the
+scales its limit fixtures set by the ambient `GTI_TEST_TIME_SCALE`, so a case
+that must finish keeps its margin under an instrumented runner; only work the
+runner does not instrument (a shell loop) keeps an absolute scale.
 
 `--bless` seeds a check-fail, parse-fail or analyze-fail test that has no
 `//~ ERROR` yet (otherwise an invalid test). It refuses under `CI`, never

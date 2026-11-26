@@ -1,0 +1,9 @@
+// Constructing an out-of-range alternative is rejected before any producer call.
+import std.meta;
+enum E { value(int v) };
+struct P { P() = default; };
+int main() {
+ mut P p{};
+ auto v = std::meta::make_alternative<E,int,P,4>(p);  //~ ERROR GTI-S2111
+ return 0;
+}

@@ -1,3 +1,10 @@
-// Presence and no argument schedules: a dynamic Module plan must have one exact CallBody startup stage.
-//@ check-pass
-mut int32_t base = 1; mut int32_t value = base; int main() { return value; }
+// A later global reads the value published by an earlier mutable global.
+//@ run-pass
+//@ opt: O3
+//@ reason: Scalar promotion must preserve the module storage initialization.
+mut int32_t base = 1;
+mut int32_t value = base;
+int main() {
+  base = 2;
+  return value == 1 && base == 2 ? 0 : 1;
+}

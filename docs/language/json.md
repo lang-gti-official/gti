@@ -60,6 +60,18 @@ Types, at the top level and as fields:
   pairs) and the shortest normal escapes written; `std::string_view` encodes
   only.
 - Integral enums, by enumerator name (`invalid_enumerator` otherwise).
+- Payload enums use the active case name. A case without fields encodes as a
+  JSON string, such as `"idle"`. A case with fields encodes as a single-key
+  object, for example `Heartbeat::seconds(60)` with a field named `count`
+  encodes as `{"seconds":{"count":60}}`. Field keys use their declared names
+  even when the case has a single field. Decoding accepts payload fields in
+  any order. It validates extra fields, rejects duplicates and requires every
+  declared field except optionals. An unknown case reports
+  `invalid_enumerator`; errors inside a case include its name in their JSON
+  Pointer path. A `codec<T>` specialization takes precedence when a protocol
+  requires a different representation.
+- `std::http::url` uses a JSON string with the URL module imported. Decoding
+  validates the string with `std::http::url::parse`.
 - `std::optional<T>`: `null` or an absent member decodes as empty, and an
   empty optional encodes as `null`.
 - `std::vector<E>`; `std::map<std::string, V>` and

@@ -20,9 +20,10 @@ namespace gti_fuzz {
 // truncated, so libFuzzer learns the bound instead of exploring past it.
 inline constexpr std::size_t kMaxInputBytes = 64 * 1024;
 
-// The whole-pipeline target runs semantic analysis, the optimizer, the
-// lowered-program builder, and both backends per iteration; it needs a much
-// smaller bound to keep iteration cost sane.
+// The whole-pipeline target runs semantic analysis, the MIR optimizer, the
+// lowered-program builder, MIR serialization, and LLVM textual-IR and object
+// emission twice per iteration; it needs a much smaller bound to keep
+// iteration cost sane. The source-loader target shares the bound.
 inline constexpr std::size_t kMaxPipelineInputBytes = 8 * 1024;
 
 // Deterministic injected failure so the smoke test can prove that a harness

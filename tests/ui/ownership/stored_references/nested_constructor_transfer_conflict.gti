@@ -1,0 +1,24 @@
+// A returned nested carrier keeps the original owner exclusively borrowed.
+struct State {
+  mut int& object;
+  State(mut int& x) : object(x) {}
+  mut int& owner() mut { return this.object; }
+};
+struct View {
+  mut State state;
+  int tag;
+  View(State s, int tag) : state(std::move(s)), tag(tag) {}
+};
+View make(mut int& x) {
+  State s{x};
+  return View(std::move(s), 4);
+}
+int main() {
+  mut int v = 1;
+  {
+    mut View view = make(v);
+    v = 2; //~ ERROR GTI-S2017
+    view.state.owner() = 6;
+  }
+  return v - 6;
+}

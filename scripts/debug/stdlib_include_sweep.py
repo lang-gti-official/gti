@@ -2,8 +2,8 @@
 
 """Compile every standard-library module on its own and report what breaks.
 
-The weakest possible claim about a module is that importing it reaches C++
-emission, and the stdlib surface manifest does not exercise this exact shape:
+The weakest possible claim about a module is that importing it reaches verified
+MIR, and the stdlib surface manifest does not exercise this exact shape:
 its cases use the module they cover. This sweep protects the import-without-
 use path. The script keeps its historical filename for tool compatibility.
 
@@ -75,10 +75,22 @@ def classify(gti: Path, directory: Path, module: str, spelling: str) -> tuple[st
     source = directory / f"import-{module}.gti"
     source.write_text(f"import {spelling};\n\nint main() {{\n  return 0;\n}}\n",
                       encoding="utf-8")
-    run = subprocess.run(
-        [str(gti), str(source), "-O0", "--emit-mir",
-         "-o", str(directory / f"{module}.mir")],
-        capture_output=True, text=True, timeout=600)
+    command = [str(gti), str(source), "-O0", "--emit-mir",
+               "-o", str(directory / f"{module}.mir")]
+    cwd = None
+    if spelling == "std.package":
+        # This module describes the importing package. Exercise its real
+        # project context instead of exempting it from the sweep.
+        cwd = directory / "package-context"
+        cwd.mkdir()
+        (cwd / "gti.toml").write_text(
+            'manifest-version = 1\n[package]\nname = "sweep"\nversion = "1.0.0"\n'
+            '[targets.sweep]\nkind = "executable"\nroot = "main.gti"\n',
+            encoding="utf-8")
+        (cwd / "main.gti").write_text(source.read_text(), encoding="utf-8")
+        command = [str(gti), "check", "--offline"]
+    run = subprocess.run(command, cwd=cwd,
+                         capture_output=True, text=True, timeout=600)
     if run.returncode == 0:
         return "ok", ""
     output = run.stderr + run.stdout

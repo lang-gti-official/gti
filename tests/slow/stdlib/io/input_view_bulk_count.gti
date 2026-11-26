@@ -1,0 +1,23 @@
+// A bulk read invokes the source's read operation. Only an explicit count query asks for gcount.
+//@ slow
+//@ run-pass
+import std.fstream;
+import std.vector;
+
+struct Reader : public std::ifstream {
+  Reader() : std::ifstream() {}
+  mut int mutable_queries = 0;
+  std::size_t gcount() mut { this.mutable_queries++; return std::size_t(1); }
+};
+
+int main() {
+  mut Reader source{};
+  mut std::vector<uint8_t> buffer{std::size_t(1)};
+  {
+    mut auto view = std::istream::from(source);
+    mut auto bytes = buffer.as_mutable_span();
+    view.read(bytes);
+    if (view.gcount() != std::size_t(0)) { return 1; }
+  }
+  return source.mutable_queries;
+}

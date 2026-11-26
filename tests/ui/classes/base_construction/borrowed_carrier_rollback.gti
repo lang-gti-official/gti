@@ -1,0 +1,36 @@
+// A base that takes a borrowed carrier by value is destroyed only if base construction completed.
+//@ run-pass
+//@ revisions: ok base derived
+//@[ok] stdout: base
+//@[base] run-fail
+//@[base] args: base
+//@[base] exit-code: 70
+//@[base] stderr-contains: main.gti:10: runtime error[GTI-R0002]
+//@[derived] run-fail
+//@[derived] args: derived failure
+//@[derived] exit-code: 70
+//@[derived] stdout: base
+//@[derived] stderr-contains: main.gti:16: runtime error[GTI-R0002]
+// --- main.gti
+import std.vector;
+import std.string;
+struct Reader {
+  int& source;
+  Reader(int& source) : source(source) {}
+};
+struct Storage<B> {
+  B buffer;
+  int base_result;
+  Storage(B value, int divisor) : buffer(std::move(value)), base_result(12 / divisor) {}
+  ~Storage() { std::println("base"); }
+};
+struct Input<B> : public Storage<B> {
+  int derived_result;
+  Input(B value, int base_divisor, int derived_divisor)
+      : Storage<B>(std::move(value), base_divisor), derived_result(24 / derived_divisor) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  int owner = 7;
+  Input<Reader> input{Reader(owner), argc == 2 ? 0 : 1, argc == 3 ? 0 : 1};
+  return input.buffer.source - 7;
+}

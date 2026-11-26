@@ -9,11 +9,12 @@ import sys
 import tempfile
 
 from backend_modes import native_modes
+from sanitizer_support import scaled_timeout
 
 
 def run(arguments, environment, cwd=None):
     result = subprocess.run([str(argument) for argument in arguments], env=environment,
-                            cwd=cwd, capture_output=True, text=True, timeout=180)
+                            cwd=cwd, capture_output=True, text=True, timeout=scaled_timeout(180))
     if result.returncode:
         raise AssertionError(f"{arguments}:\n{result.stdout}\n{result.stderr}")
     return result.stdout
@@ -21,7 +22,7 @@ def run(arguments, environment, cwd=None):
 
 def run_program(executable, expected_output, environment, cwd):
     result = subprocess.run([str(executable)], env=environment, cwd=cwd,
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, timeout=scaled_timeout(30))
     assert (result.returncode, result.stdout, result.stderr) == (0, expected_output, ""), (
         executable, result.returncode, result.stdout, result.stderr)
 

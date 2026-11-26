@@ -1,0 +1,10 @@
+// Constant-initialized local statics cannot retain cleanup-bearing objects.
+class Cleanup {
+public:
+  Cleanup() = default;
+  ~Cleanup() {}
+};
+int main() {
+  static Cleanup value = Cleanup();  //~ ERROR GTI-S2061
+  return 0;
+}

@@ -1,0 +1,6 @@
+// A local static cannot be moved out of across function calls.
+import std.utility;
+int main() {
+  static mut int count = 0;
+  return std::move(count);  //~ ERROR GTI-S2018
+}

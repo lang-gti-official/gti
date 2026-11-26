@@ -1,0 +1,5 @@
+// A converting generic destination is inferred elsewhere or supplied explicitly.
+//@ run-pass
+struct Box<T> { T value; implicit Box(T n) : value(n) {} };
+T take<T>(Box<T>& b, T other) { return b.value; }
+int main() { return take(42, 42) - 42 + take<int>(12, 12) - 12; }

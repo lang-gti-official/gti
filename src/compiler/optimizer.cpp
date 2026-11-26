@@ -282,6 +282,21 @@ namespace {
   return found == block->instructions.end() ? nullptr : &*found;
 }
 
+// Removing an edge changes the set of reaching payload alternatives even for
+// payloads whose fields contain no loans.
+[[nodiscard]] bool canFoldBranches(const MirBody &body) {
+  return body.loans.empty() && body.dropObligations.empty() &&
+         body.cleanupBoundaries.empty() && body.failureRecords.empty() &&
+         std::none_of(body.values.begin(), body.values.end(),
+                      [](const MirValue &value) {
+                        return value.borrowDependencies.has_value();
+                      }) &&
+         std::none_of(body.blocks.begin(), body.blocks.end(),
+                      [](const MirBlock &block) {
+                        return block.programInitializationStep != 0;
+                      });
+}
+
 [[nodiscard]] bool foldableScalarLiteral(const Literal &literal) {
   return std::holds_alternative<std::nullptr_t>(literal) ||
          std::holds_alternative<std::uint64_t>(literal) ||
@@ -478,14 +493,8 @@ foldLiteralIdentities(MirProgram &program,
       // obligations, cleanup boundaries, failure records, or frozen
       // program-initialization steps. Wider bodies wait for the fold to
       // learn those schedules rather than silently invalidating them.
-      const bool pathSensitiveSchedules =
-          !body->loans.empty() || !body->dropObligations.empty() ||
-          !body->cleanupBoundaries.empty() || !body->failureRecords.empty() ||
-          std::any_of(body->blocks.begin(), body->blocks.end(),
-                      [](const MirBlock &block) {
-                        return block.programInitializationStep != 0;
-                      });
-      if (pathSensitiveSchedules || bodyAddress.kind != MirBodyKind::Function) {
+      if (bodyAddress.kind != MirBodyKind::Function ||
+          !canFoldBranches(*body)) {
         continue;
       }
       const auto folded = foldedBooleans.find(bodyKeyOf(bodyAddress));
@@ -865,14 +874,7 @@ public:
         }
       }
 
-      const bool pathSensitiveSchedules =
-          !body->loans.empty() || !body->dropObligations.empty() ||
-          !body->cleanupBoundaries.empty() || !body->failureRecords.empty() ||
-          std::any_of(body->blocks.begin(), body->blocks.end(),
-                      [](const MirBlock &block) {
-                        return block.programInitializationStep != 0;
-                      });
-      if (pathSensitiveSchedules || address.kind != MirBodyKind::Function) {
+      if (address.kind != MirBodyKind::Function || !canFoldBranches(*body)) {
         continue;
       }
       for (const MirSccpBranchFact &branch : sccp->branches) {

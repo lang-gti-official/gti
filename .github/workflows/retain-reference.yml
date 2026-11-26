@@ -1,0 +1,47 @@
+name: Retain a reference toolchain
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full main commit currently published on tip to retain for the website
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: retain-reference-${{ inputs.revision }}
+jobs:
+  retain:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      REVISION: ${{ inputs.revision }}
+    steps:
+      - name: Retain the verified pair under a commit-specific release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          tag="reference-$REVISION"
+          mkdir assets
+          # An existing published pin is immutable. Verify it again on retries.
+          source=tip
+          if gh release view "$tag" >/dev/null 2>&1; then source="$tag"; fi
+          gh release download "$source" -D assets -p BUILD_ID -p gti-tip-reference.json \
+            -p gti-tip-documentation-index.json -p gti-tip-linux-x64.tar.gz
+          cd assets
+          test "$(cat BUILD_ID)" = "$REVISION"
+          jq -e --arg sha "$REVISION" --arg repo "$GH_REPO" \
+            '.schema == 1 and .sha == $sha and .repository == $repo and .platform == "linux-x64"' \
+            gti-tip-reference.json
+          for entry in 'archive_sha256 gti-tip-linux-x64.tar.gz' 'index_sha256 gti-tip-documentation-index.json'; do
+            read -r key file <<< "$entry"
+            hash=$(jq -er --arg key "$key" '.[$key] | select(test("^[0-9a-f]{64}$"))' gti-tip-reference.json)
+            echo "$hash  $file" | sha256sum --check -
+          done
+          if [[ "$source" == tip ]]; then
+            gh release create "$tag" --target "$REVISION" --prerelease --latest=false \
+              --title "Reference toolchain $REVISION" --notes "Pinned Linux example compiler and verified API index for the GTI reference." ./*
+          fi

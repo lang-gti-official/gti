@@ -1,0 +1,28 @@
+// File output respects numeric presentation flags and resets width after one insertion.
+//@ slow
+//@ run-pass
+import std.fstream;
+int main() {
+  mut std::ofstream out{"stream-output.txt"};
+  if (!out) { return 1; }
+  out.setf(std::ios::hex, std::ios::basefield);
+  out.setf(std::ios::showbase | std::ios::uppercase | std::ios::internal);
+  out.fill('_');
+  out.width(9);
+  out << int16_t(-42) << "|" << 0 << '|';
+  out.setf(std::ios::boolalpha);
+  out << true << "|";
+  out.setf(std::ios::fixed, std::ios::floatfield);
+  out.precision(2);
+  out << 3.125 << "|";
+  out.setf(std::ios::floatfield);
+  out << -1.5 << '\n';
+  if (!out || !out.close()) { return 2; }
+  mut std::ifstream input{"stream-output.txt"};
+  if (!input) { return 3; }
+  std::string_view expected_text = "0X___FFD6|0|true|3.12|-0X1.8P+0\n";
+  for (mut std::size_t i = 0; i < expected_text.size(); i++) {
+    if (input.get() != int32_t(uint8_t(expected_text[i]))) { return 4; }
+  }
+  return input.get() == -1 && input.eof() ? 0 : 5;
+}

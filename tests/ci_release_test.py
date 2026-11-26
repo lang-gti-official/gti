@@ -227,6 +227,21 @@ def tip_contract(artifacts, sha, repository):
         root = pathlib.Path(temporary)
         packages(root / "nightly")
         artifacts.tip_assets(root / "nightly", root / "tip", sha, 7, 2, repository)
+        reference = root / "reference"
+        reference.mkdir()
+        index = reference / "gti-tip-documentation-index.json"
+        index.write_text('{"symbols": []}\n')
+        artifacts.reference_assets(root / "nightly", reference, environment)
+        pair = json.loads((reference / "gti-tip-reference.json").read_text())
+        assert pair["sha"] == sha and pair["run_id"] == 7 and pair["attempt"] == 2
+        assert pair["index_sha256"] == artifacts.digest(index)
+        assert pair["archive_sha256"] == artifacts.digest(root / "tip/gti-tip-linux-x64.tar.gz")
+        try:
+            artifacts.reference_assets(root / "nightly", reference, dict(environment, GITHUB_RUN_ATTEMPT="3"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted reference index from another package attempt")
         expected = {"BUILD_ID"}
         for platform in artifacts.PLATFORMS:
             name = f"gti-tip-{platform}.tar.gz"
@@ -526,6 +541,15 @@ def nightly_contract(root):
         assert rows and sorted(index for _, index in rows) == list(range(rows[0][0])), platform
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
+    # A runner that runs out of memory loses its files; the step logs say what it held.
+    assert 'bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/' in suite
+    assert package.index("bash scripts/runner_monitor.sh 30 &") < package.index("lsp_smoke_test.py")
+    # Under `bash -e` a failing command in the EXIT trap fails a passing step.
+    # On macOS the monitor has already exited, so `pkill -P` finds no child
+    # (every macOS job of run 45585067850 failed this way).
+    cleanup = """trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT"""
+    assert suite.count(cleanup) == 1 and package.count(cleanup) == 1
+    assert "pkill -P" not in suite.replace(cleanup, "") + package.replace(cleanup, "")
     gate = jobs(ci)["gate"]
     assert "fast, fast-ui, source-stdlib, lsp]" in gate and "package" not in gate
     assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
@@ -659,8 +683,8 @@ def sanitizer_contract(root):
     assert not re.search(r"secrets\.[A-Za-z]", text) and text.count("issues: write") == 1
     assert "--force" not in text and "git push" not in text
     sections = jobs(text)
-    assert list(sections) == ["source", "sanitizers", "llvm-sanitizers", "tsan", "runtime-identity",
-                              "verdict", "report"], list(sections)
+    assert list(sections) == ["source", "sanitizers", "gti-test-instrumented", "llvm-sanitizers", "tsan",
+                              "runtime-identity", "verdict", "report"], list(sections)
     for name, body in sections.items():
         writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
         assert writes == (["issues"] if name == "report" else []), (name, writes)
@@ -671,7 +695,7 @@ def sanitizer_contract(root):
     assert text.count("${{ inputs.") == 1 and "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["source"]
     assert "release_train.py sanitizer-source" in sections["source"]
     assert "if: github.repository == 'lang-gti-official/gti'" in sections["source"]
-    for name in ("sanitizers", "llvm-sanitizers", "tsan", "runtime-identity"):
+    for name in ("sanitizers", "gti-test-instrumented", "llvm-sanitizers", "tsan", "runtime-identity"):
         body = sections[name]
         assert "needs: [source]\n" in body and "if: needs.source.outputs.sanitize == 'true'" in body, name
         assert "ref: ${{ needs.source.outputs.sha }}" in body and "persist-credentials: false" in body, name
@@ -699,7 +723,8 @@ def sanitizer_contract(root):
     verdict = sections["verdict"]
     assert "name: Sanitizer verdict (${{ needs.source.outputs.sha }})" in verdict, \
         "the release train identifies sanitizer evidence by the commit the verdict names"
-    assert "needs: [source, sanitizers, llvm-sanitizers, tsan, runtime-identity]" in verdict
+    assert "needs: [source, sanitizers, gti-test-instrumented, llvm-sanitizers, tsan, runtime-identity]" \
+        in verdict, "the verdict requires every instrumented gti-test shard"
     identity = sections["runtime-identity"]
     assert '-DGTI_LLVM_RUNTIME_TEST_COMPILER="/usr/bin/clang++-${llvm_major}"' in identity, \
         "the runtime identity tests pair the system LLVM with its own Clang"
@@ -975,6 +1000,13 @@ def gti_test_tiers_contract(root):
     assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
     assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    # Hosted runners need a 4x limit scale (GTI_TEST_TIMEOUT_SCALE=2 doubles
+    # the 2x default). The shard jobs re-configure the same tree and must
+    # agree, and the budget step keeps added and changed cases at 2x.
+    scale = "-DGTI_TEST_TIMEOUT_SCALE=2\n"
+    assert fast.count(scale) == 1 and jobs(ci)["fast-ui"].count(scale) == 1
+    assert 'GTI_TEST_TIME_SCALE: "2"' in fast.split(
+        "name: Hold new and modified gti-test cases to half their limit", 1)[1].split("- name:", 1)[0]
     ordered(fast, ["name: Run fast feedback", "name: Select this commit's gti-test entries",
                    "name: Run the runner, project, editor, example and unit baselines",
                    "name: Hold new and modified gti-test cases to half their limit",
@@ -1034,19 +1066,36 @@ def gti_test_tiers_contract(root):
     slow = jobs((workflows / "slow.yml").read_text())["shards"]
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/shard/gti-test"' in slow
     assert "${{ runner.temp }}/shard/gti-test/*.xml" in slow
-    # The sanitizer verdict covers an instrumented gti_test_ui run.
-    compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
-    step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
+    # The sanitizer verdict covers an instrumented gti_test_ui run: the
+    # library partition checks the runner and tidies the roots once, and the
+    # cases run in shards.
+    sanitizers = jobs((workflows / "sanitizers.yml").read_text())
+    compiler = sanitizers["sanitizers"]
+    step = compiler.split("name: Check the gti-test runner and tidy the test roots", 1)[1].split("- name:", 1)[0]
     # Runs after a failed library test too: its findings are independent.
-    assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step and "timeout-minutes: 120" in step
-    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert "if: ${{ !cancelled() && matrix.kind == 'libraries' }}" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "50"' in step
     assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
-    assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
+    assert 'python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" --without-cases' in step
     assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
     # The compiler-API checks that left the aggregate for tests/unit keep a
     # sanitized run in the library subset.
     assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
-    assert "${{ runner.temp }}/sanitizers-gti-test.xml" in compiler
+    shards = sanitizers["gti-test-instrumented"]
+    assert "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]" in shards and "fail-fast: false" in shards
+    assert "runs-on: ubuntu-24.04\n" in shards, "the shards use the standard hosted runner"
+    assert "--regex '^gti_test_ui$'" in shards, "a shard builds only what gti_test_ui runs"
+    assert "GTI_MEMORY_PER_TEST_MIB: 7168" in shards, "two workers on a 16 GiB runner"
+    step = shards.split("name: Run this shard of the gti-test cases with instrumented programs", 1)[1]
+    step = step.split("- name:", 1)[0]
+    assert "timeout-minutes: 180" in step and "ulimit -s 65520" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "50"' in step
+    assert "allocator_may_return_null=1" in step and "MemAvailable" in step
+    assert "GTI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}" in step
+    assert '--shard "${GTI_TEST_SHARD}" --junit "${RUNNER_TEMP}/gti-test-cases.xml"' in step
+    assert "if: always()" in shards.split("name: Preserve this shard's evidence", 1)[1].split("- name:", 1)[0]
+    assert "sanitizers-gti-test-${{ matrix.shard }}" in shards
+    assert "${{ runner.temp }}/gti-test-cases.jsonl" in shards
 
 
 def ordered(body, items, message):
@@ -1239,7 +1288,7 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "auto-revert.yml", "backport.yml", "beta.yml", "cache.yml", "ci.yml", "codeql.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "retain-reference.yml", "rollback.yml", "rollup.yml",
         "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml", "validation-retry.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):

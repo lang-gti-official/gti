@@ -2272,6 +2272,11 @@ consistent renaming of the identities registered above the prefix.
 `gti-test --isolate` compares the runner's verdicts with fresh `gti`
 processes. Include-fix trials of such a compilation run without the cache.
 
+An inferred local whose initializer failed in a deferred body retains its
+symbol and the identity of its declaring function for editor queries. While
+that body is unreached, executable lowering omits the unresolved recovery
+symbol. Reaching the function replays its original diagnostic before lowering.
+
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
   the program's declaration list. For bounded editor analysis the prefix can
@@ -2437,9 +2442,9 @@ snapshot, and every request still flows through the same provider calls.
   function, constructor or generic-parameter identities is not stored.
 - **Consulted facts.** The functions whose facts the analysis read (the late
   demand probe) are stored with the entry and must denote the same
-  declarations; any still pending in the current snapshot are late-demanded
-  before reuse, exactly as the fresh analysis would have done before analysing
-  again. A stored delta never consulted a non-trusted function.
+  declarations. If any are pending, the compiler runs the ordinary analysis
+  attempt and its late demand before retrying reuse. This preserves the order
+  in which the attempt, deferred bodies and final delta allocate identities. A stored delta never consulted a non-trusted function.
 - **Results.** Only diagnostic-free analyses are stored, so a reuse reports
   nothing a fresh analysis would have reported. Entries are published to the
   cache only once HIR is final; an analysis that is repeated with required
@@ -2479,9 +2484,9 @@ built-in operation. HIR accepts a generic-primary range plan only as a shape
 proof; every emitted concrete plan still contains exact protocol identities,
 loan shape, and checked fixed-array operations.
 
-A generic primary may contain an inferred local whose symbolic initializer is
-valid under the active requirements but has no one declaration-wide concrete
-type. The canonical example is `auto value = *first` under
+An inferred local in a generic function or a method of a generic class can
+have an initializer that is valid under the active requirements and acquires
+its concrete type at instantiation. The canonical example is `auto value = *first` under
 `std::input_iterator<Iterator>` when no `std::dereferences_to` requirement
 names the element type. The shared `SymbolRecord` remains `Unknown` and carries
 `instanceDependentType`; each concrete HIR instance owns the exact inferred
@@ -3084,7 +3089,12 @@ declaration catalog. Body analysis never edits a sealed catalog, so a worker's
 copy is still identical to its creator's when the query ends: it returns to a
 small idle pool on the creating analyzer, and the next query's worker takes it
 instead of copying the catalog again. The creator's catalog is only moved
-aside, never copied, while the rest of the session is copied. This changes no
+aside, never copied, while the rest of the session is copied. The trusted facts
+a query retains for the type parameters in its arguments are the caller's
+proofs, not declarations, so they go to the worker session's
+`queryArgumentConstraints`, which `constraintOf` reads beside the catalog's
+declared constraints and nested workers inherit; writing them into the catalog
+would carry one caller's proofs into the next query that took the copy. This changes no
 query input, and every query is still evaluated: requirement results are not
 cached, because distinct queries dominate (an unused `import std.json` forks
 about 40 workers, none of them repeated). `FrontendWorkMetrics` reports
@@ -3553,7 +3563,9 @@ same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
 the ordinary loan-conflict analysis and lower to exact HIR/MIR symbol places.
 Function borrow-summary resolution uses a separate declaration registry for
-namespace storage because summaries precede lexical body analysis. It reuses
+namespace storage because summaries precede lexical body analysis. It resolves
+each storage type using the names visible from the declaring source unit,
+including the element type of a namespace-scope array. It reuses
 the eventual tooling `SymbolId` without publishing the variable into ordinary
 lookup, so this support does not make namespace variables forward-declarable.
 When every return in a free/static function resolves to one identical global
@@ -4595,16 +4607,28 @@ schemas and staged query work in [ADR 032](../decisions/032-compiled-library-bun
 See the [scalar driver profile](build-and-driver.md#executable-scalar-separate-compilation-profile)
 for linkage, compatibility and the runnable source-absent example.
 
-### Checked immediate call arguments
+### Implicit call argument construction
 
 Ordinary call resolution completes its exact and temporary-reference pass before
-probing implicit immediate construction. The final pass skips inference through
-a mismatched checked class parameter, resolves other arguments, and selects one
-function and constructor without conversion ranking. Semantics records the
-contextual construction on the original argument and the resulting constant
-through the existing immediate publication path. The operand retains its source
-type and identity; HIR/MIR consume the proved destination constant. Operator
-resolution does not opt into this tier.
+probing one-step implicit construction. The final pass skips inference through
+a mismatched converting class parameter (including a read-only reference), resolves
+other arguments, and selects one function and constructor without conversion
+ranking. Semantics records contextual construction on the original argument,
+which retains its source type and identity. Runtime constructions use the same
+synthetic HIR direct initializer, selected constructor, argument stages, effects
+and MIR cleanup as declaration construction. Consteval constructors retain the
+existing immediate constant publication path. Operator resolution does not opt
+into this tier.
+
+A converted reference argument must pass the existing temporary read-borrow
+assessment and the selected function's escape contract. Its index is published
+in `ephemeralBorrowArguments`; lowering materializes and borrows the constructed
+value, never the original operand. Complete stored-field dependencies accompany
+borrow-carrying contextual constructions, including unconditional region carriers.
+No protocol-side conversion decision or temporary lifetime extension is added.
+A published immediate class constant is also a materialized temporary: MIR's
+literal verifier checks its exact constant and type, while the ordinary
+call-input loan and drop proofs govern a read-only borrow of that value.
 
 `ResolvedCallInfo::checkedArguments` retains the selected construction and argument
 index for hover. The original occurrence remains the source identifier; adding

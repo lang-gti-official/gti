@@ -362,7 +362,9 @@ derivation, and transactional edits. The implementation mirrors those
 contracts: body-local verification remains beside the model primitives in
 `mir.cpp`, while cross-body/program verification, defined-failure derivation,
 optimization-proof replay, and shared private verification queries are
-compiled independently. Deterministic printing remains in `mir_printer.cpp`.
+compiled independently. A scalar comma computation contributes no failure of
+its own. Each operand contributes its ordinary effects before the computation
+selects the right-hand value. Deterministic printing remains in `mir_printer.cpp`.
 
 Lowering has three lifetimes. `mir_body_lowering.cpp` owns body-local IDs,
 scopes, loans, drops, CFG, and ordered source lowering;
@@ -3626,7 +3628,15 @@ unrelated inputs and unknown result provenance are rejected. This publication
 exports external referents, not the callee's physical array storage, and does
 not choose one arbitrary origin from the set. The call result retains its checked
 suppliers as a stored value dependency. The same explicit region relation applies
-to a scalar text view selected from a by-value text array. At a call boundary,
+to a scalar text view selected from a by-value text array. For a scalar result,
+only a declared supplier that stores text views can select this array proof.
+When a character array owns text made from its address, MIR checks the borrow
+of that array's storage. When an opaque call makes the body's retaining effects
+incomplete, MIR can still prove that an immutable local array contains only
+literal text. It checks the initializer and every use of the array's address.
+Value copies and local read-only element borrows preserve that proof. An address
+passed to a call or a view initialized from a live owner requires the usual
+dependency evidence. At a call boundary,
 inline text values retain the union of all declared inputs' actual read-only,
 parentless stored groups. An ownerless primary input does not erase a borrowed
 secondary input, and an array input does not collapse several owners to its
@@ -3764,7 +3774,10 @@ verification then reconstructs the callee effects and checks the rebuilt callers
 subsequent failure-effect refinement uses that verified provisional program when
 deriving loan ends.
 Static helper summaries compose through the same analysis and are cached within
-one immutable-program analysis session. Body verification and program-contract
+one immutable-program analysis session. A nested constructor or destructor
+summary is reusable when its computation encountered no recursive cutoff and
+the function summaries it read are still current. An enclosing summary also
+observes cutoffs from its nested analyses. Body verification and program-contract
 verification share that session. Detached bodies submitted while lowering are
 always analyzed afresh; cached summaries belong only to the immutable callee
 program. Input permutations are substituted at every boundary.

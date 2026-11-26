@@ -454,6 +454,19 @@ int main() {{
 OWNED_BASE_CPP_LIMITATION = "outside the complete C++ text vocabulary"
 
 OWNED_BASE_SOURCES = {
+    "owned-base-passive-move": """struct Counter {
+  int count;
+  Counter(int count) : count(count) {}
+};
+struct Holder<T> {
+  T value;
+  Holder(T value) : value(std::move(value)) {}
+};
+struct Derived<T> : public Holder<T> {
+  Derived(T value) : Holder<T>(std::move(value)) {}
+};
+int main() { Derived<Counter> held{Counter(42)}; return held.value.count - 42; }
+""",
     "owned-base-text": owned_base(
         "import std.string;\n", "std::string", 'std::string("ann")',
         'value.held.size() == std::size_t(3) && value.held.starts_with("ann")'),

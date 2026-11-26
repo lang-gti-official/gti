@@ -58,7 +58,12 @@ examples instead belong to the exact page that teaches them.
 `include/gti/documentation.h`, projects a valid `FrontendResult` into schema
 `gti.documentation-index` version 1. The build-only `gti_docgen` executable
 loads every shipped `std/*.gti` unit through the ordinary source loader and
-semantic analyzer, then serializes that projection.
+semantic analyzer, then serializes that projection. Its synthetic importing
+consumer has an explicit package owner and fixture version, so `std.package`
+uses the same contextual loading as a project. The consumer's generated package
+constants are not toolchain declarations and do not enter the index; the
+project-specific metadata contract remains authored documentation. No package
+metadata is inferred from the ambient working directory.
 
 The compiler remains authoritative for:
 
@@ -246,3 +251,18 @@ another class into detailed routes: bind the compiler-owned type/member
 groups, author one canonical route per presented member, identify
 declaration-only operations explicitly, and verify every displayed callable
 example with the real toolchain.
+
+### Published Linux reference inputs
+
+Full validation generates the API index twice on the Linux release packaging
+runner and compares the bytes. The tip release carries the JSON index and
+`gti-tip-reference.json` beside the Linux compiler. The manifest identifies
+the source commit, producer run and attempt, and both SHA-256 digests.
+The rolling BUILD_ID is uploaded last. Generation runs once per package build.
+
+When adopting a tip revision for the website, run
+`gh workflow run retain-reference.yml -f revision=<full-commit>` on the GTI
+repository while tip still names that commit. This retains the same verified
+assets under `reference-<full-commit>` for future cold website builds.
+Only selected documentation pins need an additional release. A retry checks
+the existing release without overwriting it.

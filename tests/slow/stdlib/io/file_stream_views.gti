@@ -1,0 +1,39 @@
+// Both directions borrow one file, including its format flags, cursor and error state.
+//@ slow
+//@ run-pass
+import std.fstream;
+
+void write_log(mut std::ostream out) {
+  out << std::hex << 255 << ' ';
+}
+
+void write_more(mut std::ostream& out) {
+  out << 16;
+}
+
+int read_number(mut std::istream input) {
+  mut int value = 0;
+  input >> value;
+  return input.fail() ? -1 : value;
+}
+
+int main() {
+  mut std::fstream file{"view-roundtrip.txt", std::ios::in | std::ios::out | std::ios::trunc};
+  if (!file) { return 1; }
+  write_log(file.as_ostream());
+  {
+    mut auto output = file.as_ostream();
+    write_more(output);
+  }
+  if (file.tellp() != 5 || (file.flags() & std::ios::basefield) != std::ios::hex) { return 2; }
+  file.seekg(0);
+  if (read_number(file.as_istream()) != 255) { return 3; }
+  if (read_number(file.as_istream()) != 16) { return 4; }
+  if (!file.eof() || file.fail()) { return 5; }
+  int exhausted = read_number(file.as_istream());
+  if (exhausted != -1 || !file.fail()) { return 6; }
+  file.clear();
+  file.seekg(0);
+  if (file.get() != int32_t(uint8_t('f'))) { return 7; }
+  return file.close() ? 0 : 8;
+}

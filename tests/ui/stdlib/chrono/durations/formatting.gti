@@ -1,0 +1,11 @@
+// Duration formatting composes through the generic formatting protocol.
+//@ run-pass
+//@ stdout: 1ns 2us -3ms 4s 5min 6h
+import std.chrono;
+import std.format;
+int main() {
+  std::println("{} {} {} {} {} {}", std::chrono::nanoseconds(1i64),
+      std::chrono::microseconds(2i64), std::chrono::milliseconds(-3i64),
+      std::chrono::seconds(4i64), std::chrono::minutes(5i64), std::chrono::hours(6i64));
+  return 0;
+}

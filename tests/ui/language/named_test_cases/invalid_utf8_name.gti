@@ -1,0 +1,4 @@
+// Named row identities must remain valid UTF-8 in structured runner output.
+[[test("\xff")]] //~ ERROR GTI-S2099 case name
+void values() {}
+int main() { return 0; }

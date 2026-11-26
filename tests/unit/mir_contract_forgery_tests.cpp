@@ -1089,14 +1089,6 @@ void testVerifierMutations() {
 
 namespace persistent_storage {
 namespace {
-bool passed = true;
-void expect(bool condition, std::string_view message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    passed = false;
-  }
-}
-
 lang::MirInstruction *findInstruction(lang::MirBody &body,
                                       lang::MirInstructionId id) {
   for (auto &block : body.blocks)

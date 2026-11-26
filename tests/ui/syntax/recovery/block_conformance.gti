@@ -1,0 +1,6 @@
+// A misplaced conformance declaration in a block recovers to a later statement.
+//@ parse-fail
+void probe() {
+  for concept  //~ ERROR GTI-P0001
+  return;
+}

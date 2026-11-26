@@ -1,0 +1,21 @@
+// Formatting manipulators adjust persistent state and consume width on the next insertion.
+//@ run-pass
+import std.ostream;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.vector;
+int main() {
+  mut std::byte_buffer bytes{std::size_t(9)};
+  bytes[std::size_t(7)] = uint8_t(85);
+  {
+    mut auto memory = std::io::memory_stream(bytes.as_mutable_span());
+    mut std::basic_ostream<std::io::memory_stream> out{std::move(memory)};
+    out << std::hex << std::uppercase << std::showbase << std::setfill('_') << std::right
+        << std::setw(5) << 31 << std::noshowbase << 15 << std::endl << std::ends << std::flush;
+    if (out.fail() || out.tellp() != 8 || out.width() != 0) { return 1; }
+  }
+  if (bytes[0] != 95 || bytes[1] != 48 || bytes[2] != 88 || bytes[3] != 49 || bytes[4] != 70) { return 2; }
+  if (bytes[5] != 70 || bytes[6] != 10 || bytes[7] != 0) { return 3; }
+  return 0;
+}

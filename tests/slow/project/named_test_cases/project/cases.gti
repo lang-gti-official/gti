@@ -1,0 +1,27 @@
+import std.testing;
+import "private.gti";
+namespace data {
+  mut int constructions = 0;
+  struct Value {
+    int number;
+    Value(int n) : number(n) { constructions++; }
+    Value(Value&) = delete;
+  };
+  [[test("zero", Value(0), 0)]]
+  [[test("positive", Value(7), 7)]]
+  [[test("negative", Value(-9), -9)]]
+  void numbers(Value value, int expected) {
+    std::testing::check_eq!(value.number, expected);
+    std::testing::check_eq!(constructions, 1);
+  }
+  [[test("empty", "", "")]]
+  [[test("quoted \"name\"", "café", "café")]]
+  void text(std::string_view actual, std::string_view expected) {
+    std::testing::check_string_eq(actual, expected);
+  }
+  [[test("café")]]
+  void default_input(int value = 17) { std::testing::check_eq!(value, 17); }
+  [[test("fails", false)]]
+  [[test("survives", true)]]
+  void failure(bool pass) { std::testing::check(pass); }
+}

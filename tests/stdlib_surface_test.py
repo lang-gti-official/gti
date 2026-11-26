@@ -231,6 +231,35 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
             f"{entry_id} references an unknown case",
         )
         referenced_cases.update(references)
+        # New execution coverage is discovered by gti-test, not registered in
+        # this frozen legacy runner. These paths classify the public surface
+        # without scheduling a duplicate compile/run here.
+        test_paths = entry.get("test_paths", [])
+        require(
+            isinstance(test_paths, list)
+            and all(isinstance(item, str) and item for item in test_paths),
+            f"{entry_id} test_paths must be a list of paths",
+        )
+        require(len(test_paths) == len(set(test_paths)),
+                f"{entry_id} test_paths must be unique")
+        for test_path in test_paths:
+            path = repository_path(repository, test_path,
+                                   f"{entry_id} test_paths")
+            relative = path.relative_to(repository)
+            require(
+                relative.as_posix() == test_path
+                and relative.parts[:2] in {("tests", "ui"), ("tests", "slow")}
+                and relative.suffix == ".gti",
+                f"{entry_id} test_paths must name canonical tests/ui or tests/slow GTI files",
+            )
+            directives = {
+                line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip().startswith("//@")
+            }
+            require(
+                len(directives.intersection({"//@ run-pass", "//@ run-fail"})) == 1,
+                f"{entry_id} test_paths requires an execution directive: {test_path}",
+            )
         evidence = entry.get("evidence", [])
         require(
             isinstance(evidence, list)
@@ -245,13 +274,16 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
             f"{entry_id} required_instantiations must be a list",
         )
         if status == "executable":
-            require(references, f"executable entry {entry_id} has no run case")
+            require(references or test_paths,
+                    f"executable entry {entry_id} has no run case or discovered execution test")
             require(
                 all(case_by_id[case_id]["mode"] == "run" for case_id in references),
                 f"executable entry {entry_id} references a non-run case",
             )
             require("reason" not in entry, f"executable entry {entry_id} has a reason")
         else:
+            require(not test_paths,
+                    f"{status} entry {entry_id} cannot cite executable test_paths")
             require(
                 isinstance(entry.get("reason"), str) and entry["reason"],
                 f"{status} entry {entry_id} needs a reason",
@@ -321,6 +353,10 @@ def case_plan(
     steps = []
     for optimization in optimizations:
         executable = case_root / f"program-{optimization}"
+        # Each optimization level runs in its own directory seeded with the
+        # case's files: a program that creates files must observe the same
+        # initial state at every level, not what an earlier level left behind.
+        run_root = case_root / f"run-{optimization}"
         command = [
             str(compiler),
             str(source),
@@ -343,7 +379,8 @@ def case_plan(
                 "check": False,
             },
             "run_command": [str(executable)],
-            "run_options": {"cwd": case_root, "input": case.get("stdin", ""),
+            "run_root": run_root,
+            "run_options": {"cwd": run_root, "input": case.get("stdin", ""),
                             "text": True, "capture_output": True, "timeout": 120, "check": False},
         })
     return {
@@ -433,10 +470,12 @@ def run_case(
         private_library(repository, plan["case_root"] / "stdlib", case["private_modules"])
         source = repository / case["source"]
         private_source(source, plan["case_root"] / source.name, case["private_modules"])
-    for name, contents in plan["files"].items():
-        (plan["case_root"] / name).write_bytes(contents)
     for step in plan["steps"]:
         optimization = step["optimization"]
+        if plan["mode"] == "run":
+            step["run_root"].mkdir()
+            for name, contents in plan["files"].items():
+                (step["run_root"] / name).write_bytes(contents)
         built = build_fixture(step["command"], step["executable"], **step["build_options"])
         expected = plan["expected"]
         if plan["mode"] == "diagnostic":

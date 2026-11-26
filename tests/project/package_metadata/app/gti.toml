@@ -1,0 +1,13 @@
+manifest-version = 1
+[package]
+name = "metadata-app"
+version = "1.2.3-beta.4+build.7"
+[dependencies]
+dep = { path = "../dep" }
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+[package.build-script]
+source = "build.gti"
+[build]
+allow-build-scripts = ["metadata-dep@4.5.6", "metadata-dep@4.5.7"]
