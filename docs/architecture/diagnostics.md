@@ -1313,8 +1313,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   analyses runs first. An assertion whose substituted arguments are still
   symbolic, as in an instance formed while analyzing an invalid one, stays
   deferred rather than reporting `GTI-S2057`. Inside a trusted library the
-  failure is re-anchored at the requesting use, like any other
-  library-internal error.
+  failure is re-anchored at the application call into the library, even
+  when another application method made that call reachable. For installed
+  template modules the driver restores reported source excerpts when the
+  installed file matches the authenticated recipe source identity.
 - `GTI-S2080` owns a static-assertion condition whose resolved type is not exact
   `bool`. Point at the condition and report the actual type without applying
   integer truthiness or contextual conversion. Unsupported constant execution
