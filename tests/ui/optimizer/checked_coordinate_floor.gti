@@ -1,0 +1,67 @@
+//@ run-pass
+//@ opt: O3
+//@ reason: binary32 coordinate bounds and floor lowering preserve checked conversions and failure cleanup
+//@ revisions: fractions high nan infinity double_min
+//@[fractions] stdout: cleanup
+//@[high] args: high
+//@[high] run-fail
+//@[high] exit-code: 70
+//@[high] stderr-contains: runtime error[GTI-R0006]
+//@[high] stdout: cleanup
+//@[nan] args: nan x
+//@[nan] run-fail
+//@[nan] exit-code: 70
+//@[nan] stderr-contains: runtime error[GTI-R0006]
+//@[nan] stdout: cleanup
+//@[infinity] args: inf x x
+//@[infinity] run-fail
+//@[infinity] exit-code: 70
+//@[infinity] stderr-contains: runtime error[GTI-R0006]
+//@[infinity] stdout: cleanup
+//@[double_min] args: wide x x x
+//@[double_min] run-fail
+//@[double_min] exit-code: 70
+//@[double_min] stderr-contains: runtime error[GTI-R0001]
+//@[double_min] stdout: cleanup
+
+import std.io;
+import std.string;
+import std.vector;
+
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { std::println("cleanup"); }
+};
+
+int32_t floor_cell(float x, mut int32_t& fractions) {
+  int32_t whole = int32_t(x);
+  if (x < float(whole)) {
+    fractions++;
+    return whole - 1;
+  }
+  return whole;
+}
+
+int32_t floor_wide(double x) {
+  int32_t whole = int32_t(x);
+  if (x < double(whole)) return whole - 1;
+  return whole;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Cleanup cleanup{};
+  mut int32_t fractions = 0;
+  float zero = float(argc - int(argv.size()));
+  if (argc == 2) return floor_cell(2147483648.0 + zero, fractions);
+  if (argc == 3) return floor_cell(zero / zero, fractions);
+  if (argc == 4) return floor_cell(1.0 / zero, fractions);
+  // Conversion of this binary64 value succeeds before the decrement fails.
+  if (argc == 5) return floor_wide(-2147483648.5f64 + double(zero));
+  if (floor_cell(zero - 0.125, fractions) != -1 or floor_cell(zero + 0.125, fractions) != 0) return 1;
+  if (floor_cell(zero - 2147483648.0, fractions) != -2147483647 - 1) return 2;
+  if (floor_cell(zero + 2147483520.0, fractions) + 1 != 2147483521) return 3;
+  if (floor_cell(-zero, fractions) != 0 or fractions != 1) return 4;
+  if (floor_wide(2147483647.0f64 + double(zero)) != 2147483647) return 5;
+  return 0;
+}
