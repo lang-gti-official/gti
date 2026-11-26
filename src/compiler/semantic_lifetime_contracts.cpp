@@ -2574,19 +2574,13 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
         (!directReference && access == AccessMode::Mutable && suppliers > 1))
       return std::nullopt;
   }
-  // A result borrowed whole from one supplier, in every stored path and with
-  // no conditional alternative, is exactly its base origin; a complete
-  // contract would only restate it.
+  // One unconditional result path can use the compact whole-owner origin.
+  // With multiple paths, a consumer can reborrow each stored field even
+  // when the same whole owner supplies all of them. Retain their identities.
   const auto &first = summary.dependencies.front();
-  if (summary.possibleAlternatives.empty() &&
-      std::all_of(summary.dependencies.begin(), summary.dependencies.end(),
-                  [&](const BorrowedFieldOrigin &dependency) {
-                    return dependency.origin == first.origin &&
-                           dependency.parameter == first.parameter &&
-                           dependency.sourceFields.empty() &&
-                           dependency.sourceConditions.empty() &&
-                           dependency.resultConditions.empty();
-                  }))
+  if (summary.possibleAlternatives.empty() && summary.dependencies.size() == 1 &&
+      first.sourceFields.empty() && first.sourceConditions.empty() &&
+      first.resultConditions.empty())
     return std::nullopt;
   return summary;
 }

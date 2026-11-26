@@ -5137,6 +5137,36 @@ private:
     return borrowedFieldType(type, field);
   }
 
+  // Mirror retainedCarrierInput in complete-set verification. A reference
+  // into a live local carrier borrows its stored group while that binding
+  // still holds precisely the executable value being projected.
+  void retainBorrowedCarrierGroup(MirPlaceId id, MirBorrowDependencySet &input) {
+    const auto *place = output.findPlace(id);
+    if (!place || place->root != MirPlaceRootKind::Binding ||
+        !place->projections.empty())
+      return;
+    const auto found = bindingLoans.find(place->binding);
+    if (found == bindingLoans.end())
+      return;
+    const auto *group = output.findLoan(found->second.exact());
+    if (!group || group->kind != MirLoanKind::Stored || group->entry ||
+        group->escapes ||
+        input.dependencies.size() != 1 + group->additionalDependencies.size())
+      return;
+    const MirLoanDependency primary{.source = group->source,
+                                    .parent = group->parent,
+                                    .designatedFields = group->designatedFields,
+                                    .access = group->access,
+                                    .conditions = group->conditions};
+    if (input.dependencies.front() != primary ||
+        !std::equal(group->additionalDependencies.begin(),
+                    group->additionalDependencies.end(),
+                    std::next(input.dependencies.begin())))
+      return;
+    for (auto &dependency : input.dependencies)
+      dependency.parent = group->id;
+  }
+
   // Instantiates a call's complete result summary over its inputs' complete
   // sets: each supplier the summary names is available, impossible under
   // the input's alternatives, or unknown; the restricted result domain
@@ -5289,7 +5319,9 @@ private:
       }
       if (ambiguous || (!physical && !externalPrefix))
         continue;
-      const auto input = completeSet(*argument, depth + 1);
+      auto input = completeSet(*argument, depth + 1);
+      if (externalPrefix && physical && input)
+        retainBorrowedCarrierGroup(placeForValue(*argument), *input);
       const auto &inputGuard =
           externalPrefix ? externalConditions : mapping.sourceConditions;
       if (input && !inputGuard.empty() &&
