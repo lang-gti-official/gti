@@ -68,6 +68,8 @@ struct MirVerificationError {
   MirInstructionId instruction = 0;
   std::string message;
   MirBorrowRejection borrow;
+  // Exact global or thread-local symbol addressed by a rejected access.
+  SymbolId conflictingStorage = 0;
 };
 
 struct MirVerificationResult {

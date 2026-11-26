@@ -1,0 +1,50 @@
+// Request and response limits count terminators and generated fields, and admit exact fits.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+
+using E = std::http::server_errc;
+bool request(std::http::server_limits limits, std::string_view wire, bool valid, E expected) {
+  mut std::byte_buffer owned{};
+  for (mut std::size_t i = 0; i < wire.size(); i++) { owned.push_back(uint8_t(wire[i])); }
+  auto input = owned.as_span();
+  mut auto codec = std::http::server_codec::open(limits).expect("valid limits");
+  auto result = codec.parse_head(input);
+  if (valid) { return result && result.value().head.has_value(); }
+  return !result && result.error().code == expected;
+}
+int main() {
+  std::string_view text = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+  mut std::http::server_limits limits{};
+  limits.request_line = 16;
+  limits.request_head = text.size();
+  limits.request_fields = 1;
+  if (!request(limits, text, true, E::malformed)) { return 1; }
+  limits.request_line = 15;
+  if (!request(limits, text, false, E::line_limit)) { return 2; }
+  limits.request_line = 16;
+  limits.request_head = text.size() - std::size_t(1);
+  if (!request(limits, text, false, E::head_limit)) { return 3; }
+  limits.request_head = 128;
+  if (!request(limits, "GET / HTTP/1.1\r\nHost: a\r\nX", false, E::field_limit)) { return 4; }
+  std::string_view minimal = "HTTP/1.1 400 \r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+  limits.response_head = minimal.size() - std::size_t(1);
+  if (std::http::server_codec::open(limits)) { return 5; }
+  limits.response_head = minimal.size();
+  limits.response_fields = 2;
+  mut auto codec = std::http::server_codec::open(limits).expect("exact minimum");
+  mut std::byte_buffer owned{};
+  for (mut std::size_t i = 0; i < text.size(); i++) { owned.push_back(uint8_t(text[i])); }
+  auto input = owned.as_span();
+  auto head = codec.parse_head(input).expect("request");
+  mut auto reply = std::http::response_head::create(uint16_t(200)).expect("reply");
+  reply.add_header("X-Test", "exceeds-the-remaining-head-budget").expect("add");
+  auto oversize = codec.begin_response(reply, std::size_t(0), std::http::connection_policy::automatic);
+  if (oversize || oversize.error().code != E::head_limit || codec.next_output()) { return 6; }
+  auto fields = codec.begin_response(reply, std::size_t(0), std::http::connection_policy::close);
+  if (fields || fields.error().code != E::field_limit || codec.next_output()) { return 7; }
+  auto clean = std::http::response_head::create(uint16_t(400)).expect("minimal");
+  return codec.begin_response(clean, std::size_t(0), std::http::connection_policy::close) ? 0 : 8;
+}

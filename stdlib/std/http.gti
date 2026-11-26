@@ -3,6 +3,7 @@ export module http;
 import std.string;
 import std.vector;
 import std.io;
+import std.tcp;
 import std.span;
 import std.cstdio;
 import std.optional;
@@ -1639,3 +1640,897 @@ public:
     return std::move(url).value();
   }
 };
+
+namespace std {
+namespace http {
+export enum class server_errc {
+  invalid_argument, wrong_state, malformed, unsupported_version, unsupported_coding,
+  unsupported_expectation, line_limit, head_limit, field_limit, body_limit,
+  chunk_line_limit, framing_limit, trailer_limit, truncated, transport
+};
+export enum class server_phase { configuration, head, body, output };
+export struct server_error {
+  server_errc code;
+  server_phase phase;
+  bool can_send_error;
+private:
+  io_errc cause;
+public:
+  server_error(server_errc code, server_phase phase, bool reply = false)
+      : code(code), phase(phase), can_send_error(reply), cause(io_errc::invalid_stream) {}
+  server_error(io_errc cause, server_phase phase)
+      : code(server_errc::transport), phase(phase), can_send_error(false), cause(cause) {}
+  optional<io_errc> transport_error() {
+    if (this.code == server_errc::transport) { return optional<io_errc>(this.cause); }
+    return optional<io_errc>();
+  }
+};
+export struct server_limits {
+  mut size_t request_line = 8192;
+  mut size_t request_head = 32768;
+  mut size_t request_fields = 100;
+  mut size_t decoded_body = 1048576;
+  mut size_t chunk_line = 1024;
+  mut size_t trailer_bytes = 8192;
+  mut size_t trailer_fields = 32;
+  mut size_t chunk_framing = 65536;
+  mut size_t response_head = 32768;
+  mut size_t response_fields = 100;
+  server_limits() {}
+};
+export enum class target_form { origin, absolute, authority, asterisk };
+export enum class connection_policy { automatic, close };
+export enum class disposition { continue_sent, reusable, close };
+
+namespace server_detail {
+// These construction tags stay private to the HTTP module.
+enum class field_insertion { validated };
+enum class connection_adoption { validated };
+bool wire_field(string_view name, string_view value) {
+  if (!gti_internal::http_detail::valid_header(name, value)) { return false; }
+  for (mut size_t i = 0; i < value.size(); i++) {
+    uint8_t c = uint8_t(value[i]);
+    if ((c < uint8_t(32) && c != uint8_t(9)) || c == uint8_t(127)) { return false; }
+  }
+  return true;
+}
+bool reserved_field(string_view name) {
+  return gti_internal::http_detail::equal_header_name(name, "Content-Length") ||
+         gti_internal::http_detail::equal_header_name(name, "Transfer-Encoding") ||
+         gti_internal::http_detail::equal_header_name(name, "Connection") ||
+         gti_internal::http_detail::equal_header_name(name, "Trailer") ||
+         gti_internal::http_detail::equal_header_name(name, "Upgrade");
+}
+}
+
+/// Ordered fields. Names and values borrow the owning block until it changes.
+export class field_block {
+  mut vector<header> fields{};
+public:
+  field_block() {}
+  field_block(field_block& other) = delete;
+  field_block(field_block&& other) = default;
+  size_t size() { return this.fields.size(); }
+  string_view name_at(size_t index) { return this.fields[index].name().view(); }
+  string_view value_at(size_t index) { return this.fields[index].value().view(); }
+  optional<size_t> find_next(string_view name, size_t start) {
+    for (mut size_t i = start; i < this.fields.size(); i++) {
+      if (gti_internal::http_detail::equal_header_name(this.name_at(i), name)) {
+        return optional<size_t>(i);
+      }
+    }
+    return optional<size_t>();
+  }
+  void append(server_detail::field_insertion token, string_view name, string_view value) mut {
+    this.fields.push_back(header(name, value));
+  }
+};
+
+export class response_head {
+  uint16_t status_code;
+  mut field_block fields{};
+  response_head(uint16_t status) : status_code(status) {}
+public:
+  response_head(response_head& other) = delete;
+  response_head(response_head&& other) = default;
+  static expected<response_head, server_error> create(uint16_t status) {
+    if (status < uint16_t(200) || status > uint16_t(599)) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
+    }
+    return response_head(status);
+  }
+  uint16_t status() { return this.status_code; }
+  field_block& headers() { return this.fields; }
+  expected<void, server_error> add_header(string_view name, string_view value) mut {
+    if (server_detail::reserved_field(name) || !server_detail::wire_field(name, value)) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
+    }
+    this.fields.append(server_detail::field_insertion::validated, name, value);
+    return;
+  }
+};
+
+namespace server_detail {
+size_t until(string_view text, size_t from, char delimiter) {
+  mut size_t i = from;
+  while (i < text.size() && text[i] != delimiter) { i++; }
+  return i;
+}
+bool token(string_view text) {
+  if (text.empty()) { return false; }
+  for (mut size_t i = 0; i < text.size(); i++) {
+    if (!gti_internal::http_detail::valid_header_name_character(text[i])) { return false; }
+  }
+  return true;
+}
+// RFC 3986 pchar, slash and query delimiters. Percent escapes stay encoded.
+bool target_suffix(string_view text, size_t from) {
+  string_view punctuation = "!$&'()*+,;=:@/?";
+  for (mut size_t i = from; i < text.size(); i++) {
+    char c = text[i];
+    if (gti_internal::http_detail::url_unreserved(c) || until(punctuation, size_t(0), c) < punctuation.size()) { continue; }
+    if (c != '%' || text.size() - i < size_t(3) ||
+        gti_internal::http_detail::hex_digit_value(text[i + size_t(1)]) < 0 ||
+        gti_internal::http_detail::hex_digit_value(text[i + size_t(2)]) < 0) { return false; }
+    i += size_t(2);
+  }
+  return true;
+}
+bool ows(char c) { return c == ' ' || c == '\t'; }
+bool named(string_view a, string_view b) { return gti_internal::http_detail::equal_header_name(a, b); }
+
+server_error peer(server_errc code) { return server_error(code, server_phase::head, true); }
+
+expected<size_t, server_error> decimal_length(string_view text, size_t maximum) {
+  if (text.empty()) { return unexpected(peer(server_errc::malformed)); }
+  mut size_t value = 0;
+  for (mut size_t i = 0; i < text.size(); i++) {
+    int digit = gti_internal::http_detail::hex_digit_value(text[i]);
+    if (digit < 0 || digit > 9) { return unexpected(peer(server_errc::malformed)); }
+    if (size_t(digit) > maximum || value > (maximum - size_t(digit)) / size_t(10)) {
+      return unexpected(peer(server_errc::body_limit));
+    }
+    value = value * size_t(10) + size_t(digit);
+  }
+  return value;
+}
+// A compact trie indexes the peer's hop-by-hop names without retaining views
+// into the head. A level has at most the distinct ASCII token characters.
+struct option_node {
+  uint8_t character;
+  mut size_t child = 0;
+  mut size_t sibling = 0;
+  mut bool terminal = false;
+  option_node(uint8_t character) : character(character) {}
+};
+class connection_options {
+  mut vector<option_node> nodes{};
+  size_t child(size_t parent, uint8_t character) {
+    mut size_t index = this.nodes[parent].child;
+    while (index != 0 && this.nodes[index].character != character) { index = this.nodes[index].sibling; }
+    return index;
+  }
+public:
+  connection_options() {}
+  void clear() mut { this.nodes.clear(); }
+  void add(string_view name) mut {
+    if (this.nodes.empty()) { this.nodes.push_back(option_node(uint8_t(0))); }
+    mut size_t parent = 0;
+    for (mut size_t i = 0; i < name.size(); i++) {
+      uint8_t c = gti_internal::http_detail::normalized_header_character(name[i]);
+      mut size_t index = this.child(parent, c);
+      if (index == 0) {
+        index = this.nodes.size();
+        mut option_node node{c};
+        node.sibling = this.nodes[parent].child;
+        this.nodes.push_back(std::move(node));
+        this.nodes[parent].child = index;
+      }
+      parent = index;
+    }
+    this.nodes[parent].terminal = true;
+  }
+  bool contains(string_view name) {
+    if (this.nodes.empty()) { return false; }
+    mut size_t parent = 0;
+    for (mut size_t i = 0; i < name.size(); i++) {
+      parent = this.child(parent, gti_internal::http_detail::normalized_header_character(name[i]));
+      if (parent == 0) { return false; }
+    }
+    return this.nodes[parent].terminal;
+  }
+};
+expected<bool, server_error> connection_close(string_view text, mut connection_options& options) {
+  mut bool close = false;
+  mut size_t first = 0;
+  while (first < text.size()) {
+    size_t comma = until(text, first, ',');
+    mut size_t end = comma;
+    while (first < end && ows(text[first])) { first++; }
+    while (end > first && ows(text[end - size_t(1)])) { end--; }
+    if (end > first) {
+      auto option = text.substr(first, end - first);
+      if (!token(option)) { return unexpected(peer(server_errc::malformed)); }
+      if (named(option, "close")) { close = true; }
+      options.add(option);
+    }
+    if (comma == text.size()) { break; }
+    first = comma + size_t(1);
+  }
+  return close;
+}
+}
+
+export class request_head {
+  string verb;
+  string target;
+  string authority;
+  http::target_form form;
+  field_block fields;
+  optional<size_t> length;
+  bool chunk_coded;
+  bool expect;
+  bool closing;
+public:
+  request_head(string_view verb, string_view target, string_view authority, http::target_form form,
+               field_block fields, optional<size_t> length, bool chunked, bool expect, bool closing)
+      : verb(string(verb)), target(string(target)), authority(string(authority)), form(form),
+        fields(std::move(fields)), length(std::move(length)), chunk_coded(chunked), expect(expect), closing(closing) {}
+  request_head(request_head& other) = delete;
+  request_head(request_head&& other) = default;
+  string_view method_text() { return this.verb.view(); }
+  string_view raw_target() { return this.target.view(); }
+  string_view effective_authority() { return this.authority.view(); }
+  http::target_form target_form() { return this.form; }
+  field_block& headers() { return this.fields; }
+  optional<size_t> content_length() {
+    if (this.length.has_value()) { return optional<size_t>(this.length.value()); }
+    return optional<size_t>();
+  }
+  bool expects_continue() { return this.expect; }
+  bool chunked() { return this.chunk_coded; }
+  bool requests_close() { return this.closing; }
+};
+
+namespace server_detail {
+// URL syntax identifies the bracketed host. Validate the complete numeric
+// address with the same source parser used by socket addresses.
+bool valid_literal(string_view authority) {
+  if (authority.empty() || authority[0] != '[') { return true; }
+  size_t close = until(authority, size_t(1), ']');
+  return close < authority.size() && bool(std::tcp::ipv6_address::parse_range(authority, size_t(1), close));
+}
+expected<request_head, server_error> decode_head(string_view wire, server_limits& limits, mut connection_options& options) {
+  size_t line = until(wire, size_t(0), '\r');
+  size_t space = until(wire, size_t(0), ' ');
+  if (space >= line) { return unexpected(peer(server_errc::malformed)); }
+  size_t second = until(wire, space + size_t(1), ' ');
+  if (second >= line || second == space + size_t(1)) { return unexpected(peer(server_errc::malformed)); }
+  auto method = wire.substr(size_t(0), space);
+  if (!token(method)) { return unexpected(peer(server_errc::malformed)); }
+  auto version = wire.substr(second + size_t(1), line - second - size_t(1));
+  if (version != "HTTP/1.1") {
+    if (version.size() == size_t(8) && version.substr(size_t(0), size_t(5)) == "HTTP/" &&
+        uint8_t(version[5]) >= uint8_t('0') && uint8_t(version[5]) <= uint8_t('9') && version[6] == '.' && uint8_t(version[7]) >= uint8_t('0') && uint8_t(version[7]) <= uint8_t('9')) {
+      return unexpected(peer(server_errc::unsupported_version));
+    }
+    return unexpected(peer(server_errc::malformed));
+  }
+  auto target = wire.substr(space + size_t(1), second - space - size_t(1));
+  mut field_block fields{};
+  mut string authority{};
+  mut optional<size_t> length{};
+  mut bool chunked = false;
+  mut bool expects = false;
+  mut bool close = false;
+  mut size_t pos = line + size_t(2);
+  while (pos < wire.size() && wire[pos] != '\r') {
+    size_t end = until(wire, pos, '\r');
+    auto pair = wire.substr(pos, end - pos);
+    size_t colon = until(pair, size_t(0), ':');
+    if (colon == pair.size()) { return unexpected(peer(server_errc::malformed)); }
+    auto name = pair.substr(size_t(0), colon);
+    mut size_t begin = colon + size_t(1);
+    mut size_t last = pair.size();
+    while (begin < last && ows(pair[begin])) { begin++; }
+    while (last > begin && ows(pair[last - size_t(1)])) { last--; }
+    auto value = pair.substr(begin, last - begin);
+    if (fields.size() >= limits.request_fields) { return unexpected(peer(server_errc::field_limit)); }
+    if (!wire_field(name, value)) { return unexpected(peer(server_errc::malformed)); }
+    fields.append(field_insertion::validated, name, value);
+    if (named(name, "Host")) {
+      if (!authority.empty() || !url::https(value) || !valid_literal(value)) { return unexpected(peer(server_errc::malformed)); }
+      authority.append(value);
+    } else if (named(name, "Content-Length")) {
+      if (length.has_value() || chunked) { return unexpected(peer(server_errc::malformed)); }
+      auto count = ?decimal_length(value, limits.decoded_body);
+      length = optional<size_t>(count);
+    } else if (named(name, "Transfer-Encoding")) {
+      if (chunked || length.has_value()) { return unexpected(peer(server_errc::malformed)); }
+      if (!named(value, "chunked")) { return unexpected(peer(server_errc::unsupported_coding)); }
+      chunked = true;
+    } else if (named(name, "Expect")) {
+      if (!named(value, "100-continue")) { return unexpected(peer(server_errc::unsupported_expectation)); }
+      expects = true;
+    } else if (named(name, "Connection")) {
+      bool value_closes = ?connection_close(value, options);
+      close = close || value_closes;
+    }
+    pos = end + size_t(2);
+  }
+  if (authority.empty()) { return unexpected(peer(server_errc::malformed)); }
+  mut auto form = http::target_form::origin;
+  if (method == "CONNECT") {
+    auto endpoint = url::https(target);
+    if (!endpoint || !endpoint.value().has_explicit_port() || !valid_literal(target)) { return unexpected(peer(server_errc::malformed)); }
+    authority = string(target);
+    form = http::target_form::authority;
+  } else if (target == "*") {
+    if (method != "OPTIONS") { return unexpected(peer(server_errc::malformed)); }
+    form = http::target_form::asterisk;
+  } else if (target[0] == '/') {
+    if (!target_suffix(target, size_t(0))) { return unexpected(peer(server_errc::malformed)); }
+  } else {
+    auto parsed = gti_internal::http_detail::analyze_url(target);
+    if (!parsed) { return unexpected(peer(server_errc::malformed)); }
+    auto& parts = parsed.value();
+    if (!target_suffix(target, parts.authority_end)) { return unexpected(peer(server_errc::malformed)); }
+    auto selected = target.substr(parts.host_begin, parts.authority_end - parts.host_begin);
+    if (!valid_literal(selected)) { return unexpected(peer(server_errc::malformed)); }
+    authority = string(selected);
+    form = http::target_form::absolute;
+  }
+  bool has_body = chunked || (length.has_value() && length.value() > size_t(0));
+  return request_head(method, target, authority.view(), form, std::move(fields), std::move(length),
+                      chunked, expects && has_body, close);
+}
+}
+
+export struct head_progress {
+  size_t consumed;
+  mut optional<request_head> head;
+  head_progress(size_t count) : consumed(count), head(optional<request_head>()) {}
+  head_progress(size_t count, request_head message) : consumed(count), head(optional<request_head>(std::move(message))) {}
+};
+export enum class body_state { need_input, need_space, body_end };
+export struct body_progress {
+  size_t consumed;
+  size_t written;
+  body_state state;
+  body_progress(size_t consumed, size_t written, body_state state)
+      : consumed(consumed), written(written), state(state) {}
+};
+export enum class output_step<lifetime owner> {
+  framing(span<uint8_t, owner> bytes),
+  body(size_t remaining),
+  flush
+};
+
+namespace server_detail {
+enum class exchange_state { between, active, output, rejected, ended };
+enum class body_frame { fixed, chunk_size, chunk_data, chunk_cr, chunk_lf, trailers, done };
+bool extensions(string_view line, size_t from) {
+  mut size_t i = from;
+  while (i < line.size()) {
+    while (i < line.size() && ows(line[i])) { i++; }
+    if (i == line.size() || line[i] != ';') { return false; }
+    i++;
+    while (i < line.size() && ows(line[i])) { i++; }
+    size_t name = i;
+    while (i < line.size() && gti_internal::http_detail::valid_header_name_character(line[i])) { i++; }
+    if (i == name) { return false; }
+    size_t before_space = i;
+    while (i < line.size() && ows(line[i])) { i++; }
+    if (i == line.size() || line[i] != '=') { i = before_space; continue; }
+    i++;
+    while (i < line.size() && ows(line[i])) { i++; }
+    if (i == line.size()) { return false; }
+    if (line[i] == '"') {
+      i++;
+      mut bool closed = false;
+      while (i < line.size()) {
+        mut char c = line[i];
+        i++;
+        if (c == '"') { closed = true; break; }
+        if (c == '\\') {
+          if (i == line.size()) { return false; }
+          c = line[i];
+          i++;
+        }
+        if ((uint8_t(c) < uint8_t(32) && c != '\t') || uint8_t(c) == uint8_t(127)) { return false; }
+      }
+      if (!closed) { return false; }
+    } else {
+      size_t value = i;
+      while (i < line.size() && gti_internal::http_detail::valid_header_name_character(line[i])) { i++; }
+      if (i == value) { return false; }
+    }
+  }
+  return true;
+}
+expected<size_t, server_error> chunk_size(string_view line, size_t budget) {
+  mut size_t count = 0;
+  mut size_t i = 0;
+  while (i < line.size()) {
+    int digit = gti_internal::http_detail::hex_digit_value(line[i]);
+    if (digit < 0) { break; }
+    if (size_t(digit) > budget || count > (budget - size_t(digit)) / size_t(16)) {
+      return unexpected(server_error(server_errc::body_limit, server_phase::body, true));
+    }
+    count = count * size_t(16) + size_t(digit);
+    i++;
+  }
+  if (i == 0 || !extensions(line, i)) {
+    return unexpected(server_error(server_errc::malformed, server_phase::body, true));
+  }
+  return count;
+}
+bool valid_trailer(string_view line, connection_options& options) {
+  size_t colon = until(line, size_t(0), ':');
+  if (colon == line.size()) { return false; }
+  auto name = line.substr(size_t(0), colon);
+  if (!wire_field(name, line.substr(colon + size_t(1)))) { return false; }
+  if (options.contains(name)) { return false; }
+  if (name.size() > size_t(3) && named(name.substr(size_t(0), size_t(3)), "If-")) { return false; }
+  return !reserved_field(name) && !named(name, "Host") && !named(name, "Content-Encoding") &&
+         !named(name, "Content-Type") && !named(name, "Content-Range") &&
+         !named(name, "Authorization") && !named(name, "Proxy-Authorization") &&
+         !named(name, "Cookie") && !named(name, "Expect") && !named(name, "TE") &&
+         !named(name, "Cache-Control") && !named(name, "Max-Forwards") && !named(name, "Range") &&
+         !named(name, "Keep-Alive") && !named(name, "Proxy-Connection") &&
+         !named(name, "Set-Cookie") && !named(name, "WWW-Authenticate") && !named(name, "Proxy-Authenticate") &&
+         !named(name, "Location") && !named(name, "Retry-After") && !named(name, "Vary") &&
+         !named(name, "Content-Language") && !named(name, "Content-Location");
+}
+}
+
+/// Incremental HTTP/1.1 framing for one connection. The package drives transport readiness.
+export class server_codec {
+  server_limits limits;
+  mut server_detail::exchange_state exchange = server_detail::exchange_state::between;
+  mut server_detail::body_frame frame = server_detail::body_frame::done;
+  mut string input{};
+  mut server_detail::connection_options options{};
+  mut size_t line_size = 0;
+  mut size_t lines = 0;
+  mut bool cr = false;
+  mut size_t remaining = 0;
+  mut size_t body_budget = 0;
+  mut size_t framing_bytes = 0;
+  mut size_t trailer_bytes = 0;
+  mut size_t trailers = 0;
+  mut bool wants_continue = false;
+  mut bool head_method = false;
+  mut bool connect_method = false;
+  mut bool close_after = false;
+  mut byte_buffer output{};
+  mut size_t sent = 0;
+  mut size_t payload_left = 0;
+  mut disposition after = disposition::close;
+
+  server_codec(server_limits limits) : limits(limits) {}
+  server_error reject(server_errc code, server_phase phase) mut {
+    this.exchange = server_detail::exchange_state::rejected;
+    return server_error(code, phase, true);
+  }
+  bool append_output(string_view text) mut {
+    if (text.size() > this.limits.response_head - this.output.size()) { return false; }
+    for (mut size_t i = 0; i < text.size(); i++) { this.output.push_back(uint8_t(text[i])); }
+    return true;
+  }
+  span<uint8_t, this> pending_framing() {
+    auto all = this.output.as_span();
+    return all.subspan(this.sent, all.size() - this.sent);
+  }
+public:
+  server_codec(server_codec& other) = delete;
+  server_codec(server_codec&& other) = default;
+  static expected<server_codec, server_error> open(server_limits limits) {
+    // A closing error reply needs its status line, two fields and an empty line.
+    string_view minimal_error = "HTTP/1.1 400 \r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    if (limits.request_line < size_t(2) || limits.request_line > limits.request_head ||
+        limits.response_head < minimal_error.size() || limits.response_fields < size_t(2) ||
+        limits.chunk_line < size_t(3) ||
+        limits.chunk_line > limits.chunk_framing || limits.trailer_bytes < size_t(2) ||
+        limits.trailer_bytes > limits.chunk_framing) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::configuration));
+    }
+    return server_codec(limits);
+  }
+  /// Consume at most one head, leaving the suffix in caller-owned storage.
+  expected<head_progress, server_error> parse_head(span<uint8_t>& bytes) mut {
+    if (this.exchange != server_detail::exchange_state::between) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::head));
+    }
+    for (mut size_t i = 0; i < bytes.size(); i++) {
+      if (this.input.size() == this.limits.request_head) { return unexpected(this.reject(server_errc::head_limit, server_phase::head)); }
+      if (this.lines == 0 && this.line_size == this.limits.request_line) { return unexpected(this.reject(server_errc::line_limit, server_phase::head)); }
+      char c = char(bytes[i]);
+      if (this.lines > this.limits.request_fields && this.line_size == 0 && c != '\r') {
+        return unexpected(this.reject(server_errc::field_limit, server_phase::head));
+      }
+      if (this.cr != (c == '\n')) { return unexpected(this.reject(server_errc::malformed, server_phase::head)); }
+      this.input.push_back(c);
+      this.line_size++;
+      this.cr = c == '\r';
+      if (c == '\n') {
+        if (this.line_size == size_t(2)) {
+          if (this.lines == 0) { return unexpected(this.reject(server_errc::malformed, server_phase::head)); }
+          this.options.clear();
+          mut auto parsed = server_detail::decode_head(this.input.view(), this.limits, this.options);
+          if (!parsed) { return unexpected(this.reject(parsed.error().code, server_phase::head)); }
+          mut auto head = std::move(parsed).value();
+          this.input.clear();
+          this.lines = 0;
+          this.line_size = 0;
+          this.exchange = server_detail::exchange_state::active;
+          auto length = head.content_length();
+          this.remaining = length.has_value() ? length.value() : size_t(0);
+          this.frame = head.chunked() ? server_detail::body_frame::chunk_size :
+                       this.remaining > 0 ? server_detail::body_frame::fixed : server_detail::body_frame::done;
+          this.body_budget = this.limits.decoded_body;
+          this.framing_bytes = 0;
+          this.trailer_bytes = 0;
+          this.trailers = 0;
+          this.wants_continue = head.expects_continue();
+          this.close_after = head.requests_close();
+          this.head_method = head.method_text() == "HEAD";
+          this.connect_method = head.method_text() == "CONNECT";
+          return head_progress(i + size_t(1), std::move(head));
+        }
+        this.lines++;
+        this.line_size = 0;
+      }
+    }
+    return head_progress(bytes.size());
+  }
+  /// Decode into nonempty caller storage, including across split chunk or trailer lines.
+  expected<body_progress, server_error> parse_body(span<uint8_t>& bytes, mut mutable_span<uint8_t>& dst) mut {
+    if (this.exchange != server_detail::exchange_state::active || this.wants_continue) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::body));
+    }
+    if (dst.empty()) { return unexpected(server_error(server_errc::invalid_argument, server_phase::body)); }
+    mut size_t i = 0;
+    mut size_t written = 0;
+    while (this.frame != server_detail::body_frame::done) {
+      if (i == bytes.size()) { return body_progress(i, written, body_state::need_input); }
+      if (this.frame == server_detail::body_frame::fixed || this.frame == server_detail::body_frame::chunk_data) {
+        if (written == dst.size()) { return body_progress(i, written, body_state::need_space); }
+        mut size_t count = this.remaining;
+        if (count > dst.size() - written) { count = dst.size() - written; }
+        if (count > bytes.size() - i) { count = bytes.size() - i; }
+        for (mut size_t j = 0; j < count; j++) { dst[written + j] = bytes[i + j]; }
+        this.remaining -= count;
+        i += count;
+        written += count;
+        if (this.remaining == 0) {
+          this.frame = this.frame == server_detail::body_frame::fixed ? server_detail::body_frame::done : server_detail::body_frame::chunk_cr;
+        }
+        continue;
+      }
+      if (this.framing_bytes == this.limits.chunk_framing) { return unexpected(this.reject(server_errc::framing_limit, server_phase::body)); }
+      this.framing_bytes++;
+      char c = char(bytes[i]);
+      i++;
+      if (this.frame == server_detail::body_frame::chunk_cr || this.frame == server_detail::body_frame::chunk_lf) {
+        if (this.frame == server_detail::body_frame::chunk_cr && c == '\r') {
+          this.frame = server_detail::body_frame::chunk_lf;
+        } else if (this.frame == server_detail::body_frame::chunk_lf && c == '\n') {
+          this.frame = server_detail::body_frame::chunk_size;
+        } else { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
+        continue;
+      }
+      if (this.frame == server_detail::body_frame::trailers) {
+        if (this.trailer_bytes == this.limits.trailer_bytes) { return unexpected(this.reject(server_errc::trailer_limit, server_phase::body)); }
+        this.trailer_bytes++;
+        if (this.trailers == this.limits.trailer_fields && this.line_size == 0 && c != '\r') {
+          return unexpected(this.reject(server_errc::trailer_limit, server_phase::body));
+        }
+      } else if (this.line_size == this.limits.chunk_line) {
+        return unexpected(this.reject(server_errc::chunk_line_limit, server_phase::body));
+      }
+      this.line_size++;
+      if (this.cr != (c == '\n')) { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
+      this.cr = c == '\r';
+      if (c == '\r') { continue; }
+      if (c != '\n') { this.input.push_back(c); continue; }
+      if (this.frame == server_detail::body_frame::chunk_size) {
+        auto parsed = server_detail::chunk_size(this.input.view(), this.body_budget);
+        if (!parsed) { return unexpected(this.reject(parsed.error().code, server_phase::body)); }
+        this.remaining = parsed.value();
+        this.body_budget -= this.remaining;
+        this.frame = this.remaining == 0 ? server_detail::body_frame::trailers : server_detail::body_frame::chunk_data;
+      } else if (this.input.empty()) {
+        this.frame = server_detail::body_frame::done;
+      } else {
+        if (!server_detail::valid_trailer(this.input.view(), this.options)) { return unexpected(this.reject(server_errc::malformed, server_phase::body)); }
+        this.trailers++;
+      }
+      this.input.clear();
+      this.line_size = 0;
+    }
+    return body_progress(i, written, body_state::body_end);
+  }
+
+  expected<void, server_error> end_input() mut {
+    if (this.exchange == server_detail::exchange_state::between && this.input.empty()) {
+      this.exchange = server_detail::exchange_state::ended;
+      return;
+    }
+    if (this.exchange == server_detail::exchange_state::output && this.after != disposition::continue_sent) {
+      this.after = disposition::close;
+      return;
+    }
+    if (this.exchange == server_detail::exchange_state::active && this.frame == server_detail::body_frame::done) {
+      this.close_after = true;
+      return;
+    }
+    if (this.exchange == server_detail::exchange_state::between || this.exchange == server_detail::exchange_state::active ||
+        (this.exchange == server_detail::exchange_state::output && this.after == disposition::continue_sent)) {
+      auto phase = this.exchange == server_detail::exchange_state::between ? server_phase::head : server_phase::body;
+      this.exchange = server_detail::exchange_state::ended;
+      return unexpected(server_error(server_errc::truncated, phase));
+    }
+    return unexpected(server_error(server_errc::wrong_state, server_phase::head));
+  }
+  expected<void, server_error> begin_continue() mut {
+    if (this.exchange != server_detail::exchange_state::active || !this.wants_continue) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    this.output.clear();
+    if (!this.append_output("HTTP/1.1 100 Continue\r\n\r\n")) {
+      return unexpected(server_error(server_errc::head_limit, server_phase::output));
+    }
+    this.sent = 0;
+    this.payload_left = 0;
+    this.after = disposition::continue_sent;
+    this.exchange = server_detail::exchange_state::output;
+    return;
+  }
+  expected<void, server_error> begin_response(response_head& head, size_t representation_length, connection_policy policy) mut {
+    if (this.exchange != server_detail::exchange_state::active) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    uint16_t status = head.status();
+    bool omit_length = status == uint16_t(204) || status == uint16_t(304);
+    if (((omit_length || status == uint16_t(205)) && representation_length != size_t(0)) ||
+        (this.connect_method && status < uint16_t(300))) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
+    }
+    bool close = this.close_after || policy == connection_policy::close || this.frame != server_detail::body_frame::done;
+    auto& fields = head.headers();
+    size_t generated = (close ? size_t(1) : size_t(0)) + (omit_length ? size_t(0) : size_t(1));
+    if (generated > this.limits.response_fields || fields.size() > this.limits.response_fields - generated) {
+      return unexpected(server_error(server_errc::field_limit, server_phase::output));
+    }
+    this.output.clear();
+    auto status_text = std::to_string(status);
+    if (!this.append_output("HTTP/1.1 ") || !this.append_output(status_text.view()) || !this.append_output(" \r\n")) {
+      return unexpected(server_error(server_errc::head_limit, server_phase::output));
+    }
+    for (mut size_t i = 0; i < fields.size(); i++) {
+      if (!this.append_output(fields.name_at(i)) || !this.append_output(": ") ||
+          !this.append_output(fields.value_at(i)) || !this.append_output("\r\n")) {
+        return unexpected(server_error(server_errc::head_limit, server_phase::output));
+      }
+    }
+    if (!omit_length) {
+      auto length_text = std::to_string(representation_length);
+      if (!this.append_output("Content-Length: ") || !this.append_output(length_text.view()) || !this.append_output("\r\n")) {
+        return unexpected(server_error(server_errc::head_limit, server_phase::output));
+      }
+    }
+    if ((close && !this.append_output("Connection: close\r\n")) || !this.append_output("\r\n")) {
+      return unexpected(server_error(server_errc::head_limit, server_phase::output));
+    }
+    this.payload_left = this.head_method ? size_t(0) : representation_length;
+    this.sent = 0;
+    this.after = close ? disposition::close : disposition::reusable;
+    this.exchange = server_detail::exchange_state::output;
+    return;
+  }
+  expected<void, server_error> begin_error(uint16_t status) mut {
+    if (this.exchange != server_detail::exchange_state::rejected) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    if (status < uint16_t(400) || status > uint16_t(599)) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
+    }
+    auto head = ?response_head::create(status);
+    this.exchange = server_detail::exchange_state::active;
+    auto result = this.begin_response(head, size_t(0), connection_policy::close);
+    if (!result) {
+      this.exchange = server_detail::exchange_state::rejected;
+      return unexpected(result.error());
+    }
+    return;
+  }
+  /// Only the framing alternative retains a read-only view of this codec.
+  expected<output_step<this>, server_error> next_output() {
+    if (this.exchange != server_detail::exchange_state::output) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    if (this.sent < this.output.size()) { return output_step<this>::framing(this.pending_framing()); }
+    if (this.payload_left > 0) { return output_step<this>::body(this.payload_left); }
+    return output_step<this>::flush;
+  }
+  expected<void, server_error> advance_output(size_t n) mut {
+    if (this.exchange != server_detail::exchange_state::output) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    size_t framing = this.output.size() - this.sent;
+    if (n == 0 || n > (framing > 0 ? framing : this.payload_left)) {
+      return unexpected(server_error(server_errc::invalid_argument, server_phase::output));
+    }
+    if (framing > 0) { this.sent += n; } else { this.payload_left -= n; }
+    return;
+  }
+  expected<disposition, server_error> finish_flush() mut {
+    if (this.exchange != server_detail::exchange_state::output ||
+        this.sent != this.output.size() || this.payload_left != 0) {
+      return unexpected(server_error(server_errc::wrong_state, server_phase::output));
+    }
+    auto result = this.after;
+    this.output.clear();
+    if (result == disposition::continue_sent) {
+      this.wants_continue = false;
+      this.exchange = server_detail::exchange_state::active;
+    } else if (result == disposition::close) {
+      this.exchange = server_detail::exchange_state::ended;
+    } else {
+      this.exchange = server_detail::exchange_state::between;
+    }
+    return result;
+  }
+};
+
+namespace server_detail {
+expected<size_t, server_error> write_prefix<S>(mut S& transport, span<uint8_t>& data, mut bool& terminal)
+    requires io::writer<S> {
+  size_t size = data.size();
+  auto result = transport.write_some(data);
+  if (!result) {
+    terminal = true;
+    return unexpected(server_error(result.error(), server_phase::output));
+  }
+  size_t count = result.value();
+  if (count == 0 || count > size) {
+    terminal = true;
+    return unexpected(server_error(io_errc::write_failed, server_phase::output));
+  }
+  return count;
+}
+}
+/// A blocking driver over the same wire codec. Owns a single duplex stream and
+/// keeps the unread suffix of every transport read until the codec consumes it.
+export class server_connection<S> {
+  mut S transport;
+  mut server_codec codec;
+  mut byte_buffer window;
+  mut size_t first = 0;
+  mut size_t last = 0;
+  mut bool terminal = false;
+
+  expected<bool, server_error> refill(server_phase phase) mut requires io::reader<S> {
+    size_t capacity = this.window.size();
+    mut auto dst = this.window.as_mutable_span();
+    auto result = this.transport.read_some(dst);
+    if (!result) {
+      this.terminal = true;
+      return unexpected(server_error(result.error(), phase));
+    }
+    size_t count = result.value();
+    if (count > capacity) {
+      this.terminal = true;
+      return unexpected(server_error(io_errc::read_failed, phase));
+    }
+    this.first = 0;
+    this.last = count;
+    if (count == 0) {
+      this.terminal = true;
+      ?this.codec.end_input();
+      return false;
+    }
+    return true;
+  }
+  expected<disposition, server_error> write_pending(span<uint8_t>& body) mut requires io::writer<S> {
+    mut size_t offset = 0;
+    while (true) {
+      mut size_t count = 0;
+      mut bool flush = false;
+      {
+        auto pending = this.codec.next_output();
+        if (!pending) { return unexpected(pending.error()); }
+        switch (pending.value()) {
+        case output_step<_>::framing(auto& bytes):
+          count = ?server_detail::write_prefix(this.transport, bytes, this.terminal);
+          break;
+        case output_step<_>::body(remaining):
+          auto data = body.subspan(offset, remaining);
+          count = ?server_detail::write_prefix(this.transport, data, this.terminal);
+          offset += count;
+          break;
+        case output_step<_>::flush: flush = true; break;
+        }
+      }
+      if (flush) {
+        auto flushed = this.transport.flush();
+        if (!flushed) {
+          this.terminal = true;
+          return unexpected(server_error(flushed.error(), server_phase::output));
+        }
+        auto result = ?this.codec.finish_flush();
+        this.terminal = result == disposition::close;
+        return result;
+      }
+      ?this.codec.advance_output(count);
+    }
+  }
+public:
+  server_connection(server_detail::connection_adoption token, S stream, server_codec codec)
+      : transport(std::move(stream)), codec(std::move(codec)), window(byte_buffer(size_t(4096))) {}
+  server_connection(server_connection<S>& other) = delete;
+  server_connection(server_connection<S>&& other) = default;
+  expected<optional<request_head>, server_error> read_head() mut requires io::reader<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::head)); }
+    while (true) {
+      {
+        auto all = this.window.as_span();
+        auto input = all.subspan(this.first, this.last - this.first);
+        mut auto parsed = this.codec.parse_head(input);
+        if (!parsed) { return unexpected(parsed.error()); }
+        this.first += parsed.value().consumed;
+        if (parsed.value().head.has_value()) {
+          mut auto step = std::move(parsed).value();
+          return std::move(step.head);
+        }
+      }
+      bool available = ?this.refill(server_phase::head);
+      if (!available) { return optional<request_head>(); }
+    }
+  }
+  expected<size_t, server_error> read_body(mut mutable_span<uint8_t>& dst) mut requires io::reader<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::body)); }
+    while (true) {
+      {
+        auto all = this.window.as_span();
+        auto input = all.subspan(this.first, this.last - this.first);
+        auto step = ?this.codec.parse_body(input, dst);
+        this.first += step.consumed;
+        if (step.written > 0 || step.state == body_state::body_end) { return step.written; }
+      }
+      bool available = ?this.refill(server_phase::body);
+      if (!available) { return unexpected(server_error(server_errc::truncated, server_phase::body)); }
+    }
+  }
+  expected<void, server_error> send_continue() mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_continue();
+    byte_buffer storage{};
+    auto empty = storage.as_span();
+    auto completed = ?this.write_pending(empty);
+    return;
+  }
+  expected<disposition, server_error> send(response_head& head, span<uint8_t>& body, connection_policy policy) mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_response(head, body.size(), policy);
+    return this.write_pending(body);
+  }
+  expected<void, server_error> send_error(uint16_t status) mut requires io::writer<S> {
+    if (this.terminal) { return unexpected(server_error(server_errc::wrong_state, server_phase::output)); }
+    ?this.codec.begin_error(status);
+    byte_buffer storage{};
+    auto empty = storage.as_span();
+    auto completed = ?this.write_pending(empty);
+    return;
+  }
+};
+
+/// Validate limits and transfer the blocking duplex owner without performing I/O.
+export expected<server_connection<S>, server_error> open_server_connection<S>(S stream, server_limits limits)
+    requires io::reader<S> && io::writer<S> {
+  mut auto codec = ?server_codec::open(limits);
+  return server_connection<S>(server_detail::connection_adoption::validated, std::move(stream), std::move(codec));
+}
+}
+}

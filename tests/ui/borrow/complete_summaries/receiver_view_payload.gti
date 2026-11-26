@@ -1,0 +1,35 @@
+// A returned payload view retains its receiver and reads that receiver's bytes through expected.
+//@ run-pass
+import std.io;
+import std.span;
+
+enum class Step<lifetime a> { data(std::span<uint8_t, a> bytes), count(int n), idle };
+struct Source {
+  Source() {}
+  mut std::byte_buffer buffer{};
+  std::span<uint8_t, this> view() { return this.buffer.as_span(); }
+  expected<Step<this>, int> read(int mode) {
+    if (mode < 0) { return unexpected(9); }
+    if (mode == 0) { return Step<this>::data(this.view()); }
+    if (mode == 1) { return Step<this>::count(13); }
+    return Step<this>::idle;
+  }
+};
+
+int inspect(Source& source, int mode) {
+  auto result = source.read(mode);
+  if (!result) { return result.error(); }
+  switch (result.value()) {
+  case Step<_>::data(auto& bytes): return int(bytes[0]);
+  case Step<_>::count(n): return n;
+  case Step<_>::idle: return 17;
+  }
+}
+int main() {
+  mut Source a{};
+  mut Source b{};
+  a.buffer.push_back(uint8_t(31));
+  b.buffer.push_back(uint8_t(73));
+  if (inspect(a, 0) != 31 || inspect(b, 0) != 73) { return 1; }
+  return inspect(a, 1) == 13 && inspect(a, 2) == 17 && inspect(b, -1) == 9 ? 0 : 2;
+}

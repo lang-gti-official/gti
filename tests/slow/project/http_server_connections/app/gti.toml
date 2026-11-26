@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "dashboard"
+version = "0.1.0"
+[dependencies]
+web = { path = "../web" }
+[targets.dashboard]
+kind = "executable"
+root = "src/main.gti"

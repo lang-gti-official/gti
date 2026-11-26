@@ -1,0 +1,76 @@
+// Reject ambiguous framing and enforce close-only recovery, request-target forms and limits.
+//@ slow
+//@ run-pass
+import std.http;
+import std.io;
+import std.string;
+std::byte_buffer encoded(std::string_view text) {
+  mut std::byte_buffer bytes{};
+  for (mut std::size_t i = 0; i < text.size(); i++) { bytes.push_back(uint8_t(text[i])); }
+  return std::move(bytes);
+}
+bool rejected(std::string_view text, std::http::server_errc code) {
+  std::http::server_limits limits{};
+  mut auto codec = std::http::server_codec::open(limits).expect("codec");
+  auto bytes = encoded(text);
+  auto span = bytes.as_span();
+  auto result = codec.parse_head(span);
+  if (result || result.error().code != code || !result.error().can_send_error) { return false; }
+  if (codec.parse_head(span) || codec.begin_error(uint16_t(200)) || !codec.begin_error(uint16_t(400))) { return false; }
+  mut std::string wire{};
+  while (true) {
+    mut std::size_t n = 0;
+    {
+      auto pending = codec.next_output();
+      switch (pending.value()) {
+      case std::http::output_step<_>::framing(auto& bytes):
+        for (mut std::size_t i = 0; i < bytes.size(); i++) { wire.push_back(char(bytes[i])); }
+        n = bytes.size();
+        break;
+      case std::http::output_step<_>::flush: break;
+      case std::http::output_step<_>::body(_): return false;
+      }
+    }
+    if (n == 0) { break; }
+    if (!codec.advance_output(n)) { return false; }
+  }
+  return wire.view() == "HTTP/1.1 400 \r\nContent-Length: 0\r\nConnection: close\r\n\r\n" &&
+         codec.finish_flush().expect("close") == std::http::disposition::close && !codec.parse_head(span);
+}
+bool form(std::string_view name, std::string_view target, std::http::target_form expected_form, std::string_view authority) {
+  std::http::server_limits limits{};
+  mut auto codec = std::http::server_codec::open(limits).expect("codec");
+  mut std::string text = std::string(name);
+  text.append(" "); text.append(target); text.append(" HTTP/1.1\r\nHost: other\r\n\r\n");
+  auto bytes = encoded(text.view());
+  auto input = bytes.as_span();
+  auto result = codec.parse_head(input);
+  if (!result || !result.value().head) { return false; }
+  auto& head = result.value().head.value();
+  return head.raw_target() == target && head.method_text() == name &&
+         head.target_form() == expected_form && head.effective_authority() == authority;
+}
+int main() {
+  if (!rejected("GET / HTTP/1.1\r\n\r\n", std::http::server_errc::malformed)) { return 1; }
+  if (!rejected("GET / HTTP/1.0\r\n\r\n", std::http::server_errc::unsupported_version)) { return 2; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n", std::http::server_errc::malformed)) { return 3; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999999999999999999999\r\n\r\n", std::http::server_errc::body_limit)) { return 4; }
+  if (!rejected("GET / HTTP/1.1\n", std::http::server_errc::malformed)) { return 5; }
+  if (!rejected("GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n", std::http::server_errc::malformed)) { return 6; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nExpect: other\r\n\r\n", std::http::server_errc::unsupported_expectation)) { return 7; }
+  if (!form("OPTIONS", "*", std::http::target_form::asterisk, "other")) { return 8; }
+  if (!form("CONNECT", "example.org:443", std::http::target_form::authority, "example.org:443")) { return 9; }
+  if (!form("CUSTOM", "http://example.org:8000/a?q=%2F", std::http::target_form::absolute, "example.org:8000")) { return 10; }
+  if (!form("GET", "/path?q=%2F", std::http::target_form::origin, "other")) { return 11; }
+  if (!rejected("GET /a{b HTTP/1.1\r\nHost: a\r\n\r\n", std::http::server_errc::malformed)) { return 12; }
+  if (!rejected("GET http://a/%zz HTTP/1.1\r\nHost: a\r\n\r\n", std::http::server_errc::malformed)) { return 13; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0, 0\r\n\r\n", std::http::server_errc::malformed)) { return 14; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n", std::http::server_errc::malformed)) { return 15; }
+  if (!rejected("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", std::http::server_errc::unsupported_coding)) { return 16; }
+  if (!rejected("GET http://target/ HTTP/1.1\r\nHost: bad/authority\r\n\r\n", std::http::server_errc::malformed)) { return 17; }
+  if (!rejected("GET / HTTP/1.1\r\nHost : a\r\n\r\n", std::http::server_errc::malformed)) { return 18; }
+  if (!rejected("GET / HTTP/1.1\r\nHost: a\r\n continued\r\n\r\n", std::http::server_errc::malformed)) { return 19; }
+  if (!rejected("GET / HTTP/1.1\r\nHost: [::::]\r\n\r\n", std::http::server_errc::malformed)) { return 20; }
+  if (!form("CONNECT", "[::1]:443", std::http::target_form::authority, "[::1]:443")) { return 21; }
+  return 0;
+}

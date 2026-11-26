@@ -17198,6 +17198,55 @@ completeBorrowSourcePath(const MirProgram &program,
       passiveFieldRetirements.emplace(fields[index]->id,
                                       index + 1 == fields.size());
   }
+  // A whole-receiver lifetime can protect a single reference inside a view
+  // even when the accessor has no field-by-field dependency summary. Recover
+  // its external owner from the actual read-only receiver stage. The ordinary
+  // callee return-loan proof checks the whole-receiver contract separately.
+  const auto receiverView = [&](const State &state, const MirInstruction &call,
+                                const MirFunctionInstance &target) -> Fact {
+    if (target.definitionKind != MirDefinitionKind::Source ||
+        target.completeReturnBorrow || !target.returnBorrowFields.empty() ||
+        !target.returnBorrowParameters.empty() ||
+        target.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+        target.returnBorrowAccess != AccessMode::ReadOnly ||
+        target.returnType != call.info.type ||
+        target.parameterTypes != call.parameterTypes ||
+        target.returnType.kind != SemanticType::Class ||
+        call.borrowOrigin != BorrowOriginKind::Receiver || !call.loan ||
+        !call.receiver || call.receiver->kind != MirOperandKind::Value ||
+        !call.receiver->value || call.receiver->value > definitions.size())
+      return std::nullopt;
+    const auto *stage = definitions[call.receiver->value - 1];
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->callInputRole != MirCallInputRole::Receiver ||
+        stage->callSite != call.callSite || stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::BorrowRead ||
+        stage->info.traits.containsBorrowedState)
+      return std::nullopt;
+    const auto *published = body.findLoan(*call.loan);
+    if (!published || published->kind != MirLoanKind::Stored ||
+        published->entry || published->escapes || published->parent ||
+        published->storedDependency ||
+        !published->additionalDependencies.empty() ||
+        !published->conditions.empty() ||
+        published->source != stage->operands.front().place ||
+        published->access != AccessMode::ReadOnly ||
+        published->producedBy != call.hirValue)
+      return std::nullopt;
+    const auto paths =
+        findStoredCarrierReferenceInventory(program, target.returnType);
+    if (!paths || paths->size() != 1 || !paths->front().conditions.empty() ||
+        paths->front().reference.referenceAccess != AccessMode::ReadOnly)
+      return std::nullopt;
+    auto origin = fromOperand(state, stage->operands.front());
+    if (!origin || origin->dependencies.size() != 1 ||
+        !origin->dependencies.front().designatedFields.empty())
+      return std::nullopt;
+    origin->dependencies.front().designatedFields = paths->front().fields;
+    return completeBorrowSetHasTypedShape(program, target.returnType, *origin)
+               ? origin
+               : std::nullopt;
+  };
   const auto execute = [&](State &state, const MirInstruction &instruction) {
     Fact result;
     const bool payload =
@@ -17339,6 +17388,8 @@ completeBorrowSourcePath(const MirProgram &program,
               : nullptr;
       if (summary)
         result = callResult(state, instruction, *target, *summary);
+      else if (target)
+        result = receiverView(state, instruction, *target);
     } else if (instruction.kind == MirInstructionKind::CallInput &&
                instruction.callInputRole == MirCallInputRole::Receiver &&
                (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
