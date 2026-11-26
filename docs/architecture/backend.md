@@ -4922,6 +4922,21 @@ or pass manager is shared between programs. The initial targets are native
 macOS arm64 and Linux x86_64. Foreign targets and unimplemented debug metadata
 are rejected, not silently approximated.
 
+At O2 and O3 the backend recognizes a checked binary32-to-i32 truncation
+followed by the negative-fraction correction. On the two dominated branches,
+both results equal conversion of the floating floor. Binary32 has no
+fractional values just below the i32 minimum. The conversion failure and any
+other effects on either branch retain their ordering. A defined binary32-to-i32
+conversion also cannot produce INT32_MAX: the greatest representable input
+below 2^31 is 2147483520. Binary64 does not share those endpoint properties.
+
+A finite magnitude proof can discharge the float conversion range comparison
+for a coordinate derived from a 32-bit integer and scaled by an exact binary
+power of two. Parameter bounds require every use of the local function to be
+a direct call with a proven operand. Unknown, escaped, or external calling
+contexts keep the check. The proof is bounded in its traversal of expressions
+and call edges.
+
 The machine selects generic CPU features and PIC relocations, verifies the
 sealed scalar allocation sizes, ABI/preferred alignment, pointer width and
 endianness, then supplies the module's triple/data layout. Later verification

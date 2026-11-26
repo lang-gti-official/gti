@@ -1,5 +1,6 @@
 #include "session.h"
 #include "abi.h"
+#include "checked_float.h"
 #include "checked_offsets.h"
 #include "checked_ranges.h"
 #include "checked_reductions.h"
@@ -1236,6 +1237,7 @@ BackendArtifact Session::emitObject() {
   registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
   registerCheckedRangePass(builder);
+  registerFloatIntegerRangePass(builder);
   registerCheckedInvariantAddPass(builder);
   builder.registerModuleAnalyses(modules);
   builder.registerCGSCCAnalyses(cgscc);
@@ -1283,8 +1285,10 @@ BackendArtifact Session::emitObject() {
       // invariants before one final ordinary cleanup round; do not retry to a
       // fixed point.
       const bool folded = [&] {
-        const PhaseTimeScope timing("llvm-module-transforms", "pointer loops");
-        return foldInductivePointerLoops(module_);
+        const PhaseTimeScope timing("llvm-module-transforms",
+                                    "pointer loops and checked floors");
+        const bool floors = simplifyCheckedFloors(module_);
+        return foldInductivePointerLoops(module_) || floors;
       }();
       if (folded) {
         modules.invalidate(module_, llvm::PreservedAnalyses::none());

@@ -772,6 +772,7 @@ add_library(
   "src/compiler/llvm/session.cpp"
   "src/compiler/llvm/loop_invariants.cpp"
   "src/compiler/llvm/checked_reductions.cpp"
+  "src/compiler/llvm/checked_float.cpp"
   "src/compiler/llvm/checked_ranges.cpp"
   "src/compiler/llvm/checked_offsets.cpp"
   "src/compiler/llvm/private_atomics.cpp"
