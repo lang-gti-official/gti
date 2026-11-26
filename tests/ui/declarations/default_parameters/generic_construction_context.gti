@@ -1,0 +1,33 @@
+// Caller-expanded defaults construct components in the selected declaration's
+// context, even inside another default or in a generic caller using a different T.
+//@ run-pass
+struct Token<T> {
+  Token() = default;
+  int width() { return int(sizeof(T)); }
+};
+
+int width<T>(Token<T> value = Token<T>()) { return value.width(); }
+int both<T>(int total = width<T>(Token<T>()) + width<int64_t>()) { return total; }
+
+struct Factory<T> {
+  Factory() = default;
+  int read(Token<T> value = Token<T>()) { return value.width(); }
+};
+
+struct Measured<T> {
+  int size;
+  Measured(Token<T> value = Token<T>()) : size(value.width()) {}
+  int width() { return this.size; }
+};
+
+struct Keys<Ts...> { Keys() = default; };
+int count<Ts...>(Keys<Ts...> keys = Keys<Ts...>()) { return 1; }
+
+int main() {
+  Factory<int16_t> factory{};
+  if (factory.read() != 2 or width<int32_t>() != 4) return 1;
+  if (both<int16_t>() != 10 or both<int32_t>() != 12) return 2;
+  Measured<int64_t> measured{};
+  if (measured.width() != 8) return 3;
+  return count<int32_t, int64_t>() - 1;
+}
