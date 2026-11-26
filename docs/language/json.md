@@ -70,11 +70,27 @@ Types, at the top level and as fields:
   `invalid_enumerator`; errors inside a case include its name in their JSON
   Pointer path. A `codec<T>` specialization takes precedence when a protocol
   requires a different representation.
+- `std::filesystem::path` uses a UTF-8 JSON string. It preserves the exact
+  spelling, including empty paths, repeated separators and dot components.
+  Decoding constructs an owning path and performs no filesystem operations.
+- `std::tcp::ipv4_address`, `ipv6_address` and `socket_address` use their
+  numeric text forms. A socket address includes the port and, for scoped
+  IPv6, the numeric scope ID (for example `"[fe80::1%4]:443"`). Decoding
+  uses the address parser without DNS or socket I/O. Encoding uses the
+  address's canonical spelling. The platform requirements of `std.tcp` apply.
+- `std::chrono::duration<Unit>`, `calendar_days`, `months` and `years`
+  use signed 64-bit JSON integers in the field's declared unit. For example,
+  `"timeout_ms": 1500` means 1.5 seconds for a `milliseconds` field. Changing
+  the declared unit changes the schema. A calendar month retains its month
+  count through a round trip.
 - `std::http::url` uses a JSON string with the URL module imported. Decoding
   validates the string with `std::http::url::parse`.
 - `std::optional<T>`: `null` or an absent member decodes as empty, and an
   empty optional encodes as `null`.
-- `std::vector<E>`; `std::map<std::string, V>` and
+- `std::vector<E>`, `std::deque<E>`, `std::list<E>` and `std::forward_list<E>`
+  use JSON arrays in iteration order. Empty arrays and repeated elements are
+  preserved. Element failures carry their input index.
+- `std::map<std::string, V>` and
   `std::unordered_map<std::string, V>` as objects with dynamic keys.
 - `std::json::value` and `std::json::object`, including as fields inside
   reflected structs or elements of ordinary containers.
@@ -113,6 +129,24 @@ Types, at the top level and as fields:
   methods), so no registration is needed.
 
 Any other type is a compile-time error at its use.
+
+### Choosing fields for a persisted record
+
+For a monitoring configuration, use an owning `std::string` for the name,
+`std::http::url` for the target, and a duration with a documented unit for the
+interval. All three can be decoded as fields of a reflectively constructible
+record. An application class with its own construction invariants can supply
+a `codec<T>` or build itself from that record.
+
+| Stdlib family | JSON support or schema decision |
+| --- | --- |
+| Public records and enums | A reflectable record uses its eligible fields recursively. Ordinary and payload enums already carry their names through JSON. Existing domain codecs such as URL take precedence over reflection. |
+| Fixed arrays, sets, key types other than strings | Further candidates for collection support. A fixed-array decoder must enforce its extent and construct every element. A set codec needs a duplicate policy, and a non-string map key needs a reversible representation. |
+| System-clock readings, calendar dates and timestamps, zoned local times | Applications choose a timestamp schema specifying epoch, precision and zone behavior. A duration count describes an interval. Reconstituting named zones also depends on the zone database. |
+| Steady-clock readings | The origin is process-local. Persist the configured interval and obtain a fresh reading when monitoring resumes. |
+| Views, spans, iterators and regex match results | These depend on backing storage. Persist owned text or a sequence of owned elements. `string_view` already supports encoding. |
+| Compiled patterns and distributions | Store the source pattern and flags, or the algorithm's public parameters, when the application defines how to reconstruct them. |
+| HTTP clients, socket and stream handles, processes, threads, synchronization and callbacks | Persist the configuration used to create them. Deserializing an address or path yields a value; opening a connection or file remains an explicit application action. |
 
 The grammar is strict JSON: valid UTF-8 (overlong forms, encoded surrogates
 and values above U+10FFFF rejected), no raw control characters in strings,
