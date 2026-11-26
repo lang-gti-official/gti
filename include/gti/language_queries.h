@@ -207,6 +207,15 @@ struct CompletionCandidate {
 struct CompletionResult {
   std::vector<CompletionCandidate> candidates;
   bool isIncomplete = false;
+  // A complete, directly authored qualified-name or member list can be
+  // narrowed while the user extends the same identifier.
+  std::optional<SourceSpan> qualifiedPrefix;
+  // Checked matches beyond the visible protocol limit. Retention is bounded;
+  // if all matches cannot be kept, qualifiedPrefix is absent.
+  std::vector<CompletionCandidate> remainingQualifiedCandidates;
+  // Embedded inputs use saved bytes even when an editor overlay is open.
+  // Keep the compiler's captured bytes for exact checks on prefix reuse.
+  std::vector<EmbeddedFile> embeddedInputs;
   // Exact loaded inputs let asynchronous adapters reject results when a
   // dependency changes before publication, including newly discovered imports.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
@@ -221,6 +230,7 @@ struct CompletionInput {
   // Static templates are opt-in so plain symbol clients retain their complete
   // candidate budget and ranking, not a filtered/truncated snippet list.
   bool includeSnippets = false;
+  bool retainQualifiedCandidates = false;
   TargetInfo target = TargetInfo::host();
   ConfigurationFlags configurationFlags;
   ConfigurationFlags declaredConfigurationFlags;
@@ -283,6 +293,16 @@ public:
   signatureHelp(const FrontendResult &snapshot, SourceUnitId sourceUnit,
                 std::size_t byteOffset) const;
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const;
+  // A scheduling hint for an in-flight marker. Only a compiler-produced
+  // qualifiedPrefix can authorize actual reuse of semantic candidates.
+  [[nodiscard]] static std::optional<std::size_t>
+  extendedQualifiedCompletionOffset(std::string_view oldSource,
+                                    std::size_t oldOffset,
+                                    std::string_view source);
+  // The caller must establish unchanged project and dependency inputs.
+  [[nodiscard]] static std::optional<CompletionResult>
+  narrowCompletion(const CompletionResult &previous, std::string_view oldSource,
+                   std::string_view source, std::size_t byteOffset);
 };
 
 } // namespace lang

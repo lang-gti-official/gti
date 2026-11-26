@@ -156,6 +156,11 @@ runs outside the compiler crash guard and checks both the document generation
 and the inputs read by the parser. Parser, semantic and isolated body diagnostics carry their compiler repairs
 as soon as the producing stage publishes them. Each partial publication binds
 its repairs to the root generation and the dependencies that stage checked.
+Within a compiler diagnostic batch, primary spans, related locations and fixes
+share one immutable copy of each referenced source. The adapter builds a line
+index once per source, records UTF-16 ranges, and reuses those ranges for
+publication and code actions. The analysis trace reports the number of retained
+diagnostic source buffers as `diagnosticSourceBuffers`.
 Exact undo rebinds verified repairs to the restored document version.
 Definition and reference lookups use the completed snapshot.
 
@@ -202,6 +207,17 @@ resolved signature, declaration documentation and exact name range. They can
 arrive before the first type-check diagnostics. A generic callable can acquire
 contracts from its body, and separate declarations and definitions can share
 documentation. Those hovers wait for the existing semantic checkpoints.
+
+A completion inside a named import uses the source loader’s module registry
+and authored spans as soon as the source graph is available. It skips parsing
+and checking the loaded function bodies for that request.
+
+A completed snapshot indexes the raw editor text on its first hover. Further
+hovers on that generation share the immutable bytes and line starts for both
+the cursor and response range. An edit retires that index along with its
+snapshot. Completion lists and document outlines also share a UTF-16 position
+index across their items; candidates with the same replacement span share its
+converted range.
 
 At a successful primary type check the worker publishes the full set of
 declaration hovers while MIR verification continues. A hover over a use and
@@ -962,7 +978,10 @@ answered last after a shared-dependency edit.
 An edit-triggered analysis (the edited document's own, and each dependant's)
 does not start at once. It waits for the document's median recent analysis
 time, bounded to 50-150 ms, and every further edit restarts the wait, so a
-typing burst is analysed once from its final text. A semantic request waiting
+typing burst is analysed once from its final text. When the edit exactly
+applies a compiler fix to the bytes on which it was issued, the edited
+root can be checked immediately. Its dependants retain their normal debounce,
+and diagnostic removal still waits for current compiler evidence. A semantic request waiting
 on the document, opening a document, and project invalidation
 (manifest, lockfile, profile) run immediately. This is clangd's
 update-debounce policy, adopted after measuring that every keystroke re-runs
@@ -1029,7 +1048,20 @@ identity. Current entry text still receives completion-marker analysis, and
 changed dependency contents invalidate reuse. Like analysis, it never
 builds a missing preamble itself. Its request-owned
 cancellation flag reaches the same compiler safe points as diagnostic analysis.
-An edit, close/reopen, newer completion on the same document, explicit
+For a directly authored member or qualified name, the completion worker retains
+one complete compiler result. Extending its identifier with all surrounding
+source bytes unchanged reuses the same candidates, applies the compiler's
+prefix ranking again, and updates the replacement range. An identical
+retrigger can share the same computation. The protocol publishes at most 100
+items. The worker can retain the complete matching set up to 1,024 candidates
+and 2 MiB of candidate data, so narrowing can surface an item outside the
+first 100. Larger sets, other source edits, changed saved embedded bytes,
+and changed project inputs require a fresh query. Retained lookups can
+revalidate up to 64 embedded inputs totalling at most 4 MiB per request. While a
+marker is still running, successive identifier extensions can share that
+computation. Its original request still receives the stale-version error and
+only the latest matching request receives candidates. Editing the receiver,
+close/reopen, a different completion on the same document, explicit
 `$/cancelRequest`, or shutdown stops obsolete work. Other documents' requests
 do not supersede it. Explicit cancellation returns `-32800`; a changed document
 or loaded dependency returns `-32801`; a newer completion on unchanged text

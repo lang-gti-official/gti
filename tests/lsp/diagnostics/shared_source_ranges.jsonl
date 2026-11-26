@@ -1,0 +1,15 @@
+// Warnings and their fixes share source storage, preserve UTF-16 ranges and clear together after an edit.
+{"send": {"jsonrpc": "2.0", "method": "initialize", "id": 1, "params": {"capabilities": {"textDocument": {"publishDiagnostics": {"dataSupport": true}}}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int main() { /*🌱*/ mut int x = 1; mut int y = 2; return x + y; }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int main() { /*🌱*/ mut int x = 1; mut int y = 2; return x + y; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": {"$contains": [{"code": "GTI-S2096", "range": {"start": {"line": 0, "character": 20}, "end": {"line": 0, "character": 23}}, "data": {"fixes": [{"range": {"start": {"line": 0, "character": 20}, "end": {"line": 0, "character": 23}}, "replacement": ""}]}}, {"code": "GTI-S2096", "range": {"start": {"line": 0, "character": 35}, "end": {"line": 0, "character": 38}}, "data": {"fixes": [{"range": {"start": {"line": 0, "character": 35}, "end": {"line": 0, "character": 38}}, "replacement": ""}]}}]}}}}
+{"analysisTrace": {"kind": "analysis", "generation": 1, "diagnosticSourceBuffers": 1}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int main() { /*🌱*/ int x = 1; int y = 2; return x + y; }\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"analysisTrace": {"kind": "analysis", "generation": 2, "diagnosticSourceBuffers": 0}}
+{"send": {"jsonrpc": "2.0", "method": "shutdown", "id": 90}}
+{"expect": {"id": 90, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

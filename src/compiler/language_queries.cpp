@@ -6,8 +6,10 @@
 #include "semantic_spelling.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <optional>
@@ -976,18 +978,57 @@ std::optional<ModuleQueryLocation> moduleAt(const FrontendResult &snapshot,
   return std::nullopt;
 }
 
+// Compare at most this much saved data on the completion worker per keystroke.
+// Larger assets keep the ordinary compiler lookup and its input accounting.
+std::optional<std::vector<EmbeddedFile>>
+retainedCompletionEmbeds(const SourceGraph &graph) {
+  constexpr std::size_t byteLimit = 4 * 1024 * 1024;
+  constexpr std::size_t fileLimit = 64;
+  std::vector<EmbeddedFile> inputs;
+  std::size_t bytes = 0;
+  for (const auto &unit : graph.sourceUnits()) {
+    for (const auto &file : unit.embeddedFiles) {
+      if (!file.bytes || file.lookupPath.empty() || file.path.empty() ||
+          inputs.size() >= fileLimit || file.bytes->size() > byteLimit - bytes)
+        return std::nullopt;
+      inputs.push_back(file);
+      bytes += file.bytes->size();
+    }
+  }
+  return inputs;
+}
+
+bool embeddedInputCurrent(const EmbeddedFile &file) {
+  std::error_code error;
+  if (!file.bytes || file.lookupPath.empty() ||
+      std::filesystem::canonical(file.lookupPath, error) != file.path ||
+      error || !std::filesystem::is_regular_file(file.path, error) || error ||
+      std::filesystem::file_size(file.path, error) != file.bytes->size() ||
+      error)
+    return false;
+  // A modified payload can keep its size and timestamp. Compare against the
+  // bounded source-loader snapshot, including an EOF check for concurrent
+  // growth.
+  std::ifstream stream(file.path, std::ios::binary);
+  if (!stream)
+    return false;
+  std::array<char, 16384> buffer;
+  std::string_view rest(*file.bytes);
+  while (!rest.empty()) {
+    const auto count = std::min(rest.size(), buffer.size());
+    if (!stream.read(buffer.data(), static_cast<std::streamsize>(count)) ||
+        std::string_view(buffer.data(), count) != rest.substr(0, count))
+      return false;
+    rest.remove_prefix(count);
+  }
+  return stream.peek() == std::char_traits<char>::eof() && !stream.bad();
+}
+
 std::optional<CompletionResult>
 completeModuleImport(const FrontendResult &snapshot,
                      const CompletionInput &input) {
-  const SourceImport *request = nullptr;
-  for (const auto &import : snapshot.sourceGraph.imports()) {
-    if (import.requester == snapshot.sourceGraph.entryUnit() &&
-        !import.quoted && import.name.start <= input.byteOffset &&
-        input.byteOffset <= import.name.end) {
-      request = &import;
-      break;
-    }
-  }
+  const SourceImport *request = snapshot.sourceGraph.namedImportAt(
+      snapshot.sourceGraph.entryUnit(), input.byteOffset);
   if (!request)
     return std::nullopt;
   CompletionResult result;
@@ -2035,8 +2076,15 @@ public:
         input.packageSourceRoots);
     if (snapshot.cancelled)
       return result;
-    for (const SourceUnit &unit : snapshot.sourceGraph.sourceUnits())
+    for (const SourceUnit &unit : snapshot.sourceGraph.sourceUnits()) {
       result.sourceDigests.emplace(unit.path.string(), unit.sourceDigest);
+      for (const auto &file : unit.embeddedFiles) {
+        if (!file.path.empty())
+          result.sourceLookupPaths.push_back(file.path);
+        if (!file.lookupPath.empty())
+          result.sourceLookupPaths.push_back(file.lookupPath);
+      }
+    }
     for (const auto &import : snapshot.sourceGraph.imports()) {
       if (import.lookupPath)
         result.sourceLookupPaths.push_back(*import.lookupPath);
@@ -2071,17 +2119,30 @@ public:
       return result;
     }
 
+    // Only direct qualified contexts have one receiver/scope and no lexical
+    // distance distinctions. A parser snippet or synthesized macro token may
+    // have another replacement range or different filtering rules.
+    if (input.retainQualifiedCandidates && completionUnit &&
+        context->sourceUnit == completionUnit->id &&
+        context->replacementRange.source == completionUnit->path.string() &&
+        context->replacementRange.end == input.byteOffset &&
+        context->replacementRange.start <= input.byteOffset &&
+        std::string_view(input.source)
+                .substr(context->replacementRange.start,
+                        input.byteOffset - context->replacementRange.start) ==
+            context->prefix &&
+        context->kind != SemanticCompletionKind::Unqualified &&
+        result.candidates.empty() &&
+        std::ranges::all_of(context->candidates, [](const auto &candidate) {
+          return candidate.scopeDistance == 0;
+        })) {
+      result.qualifiedPrefix = context->replacementRange;
+    }
     const SemanticModel &semantics = snapshot.semantics;
     const SignaturePrinter signatures(semantics);
     const SemanticTypePrinter types(semantics);
-    struct RankedCandidate {
-      CompletionCandidate candidate;
-      std::size_t score = 0;
-    };
-    std::vector<RankedCandidate> ranked;
-    for (CompletionCandidate &candidate : result.candidates)
-      ranked.push_back({.candidate = std::move(candidate), .score = 99999});
-    result.candidates.clear();
+    std::vector<CompletionCandidate> ranked;
+    ranked.swap(result.candidates);
     std::unordered_set<std::string> seen;
     for (const SemanticCompletionCandidateRecord &record :
          context->candidates) {
@@ -2149,32 +2210,57 @@ public:
       if (!seen.insert(duplicateKey).second) {
         continue;
       }
-      const std::size_t score =
-          *prefixRank * 100000 +
-          std::min(record.scopeDistance, std::size_t{99}) * 1000 +
-          completionKindRank(candidate.kind) * 10;
-      candidate.sortText = completionSortText(score, candidate.label);
-      ranked.push_back({.candidate = std::move(candidate), .score = score});
+      rankCompletion(candidate, *prefixRank, record.scopeDistance);
+      ranked.push_back(std::move(candidate));
     }
+    finishCompletionList(result, std::move(ranked));
+    if (result.qualifiedPrefix) {
+      if (auto embeds = retainedCompletionEmbeds(snapshot.sourceGraph)) {
+        result.embeddedInputs = std::move(*embeds);
+      } else {
+        result.qualifiedPrefix.reset();
+        result.remainingQualifiedCandidates.clear();
+      }
+    }
+    return result;
+  }
 
-    std::stable_sort(
-        ranked.begin(), ranked.end(),
-        [](const RankedCandidate &left, const RankedCandidate &right) {
-          if (left.score != right.score) {
-            return left.score < right.score;
-          }
-          if (left.candidate.label != right.candidate.label) {
-            return left.candidate.label < right.candidate.label;
-          }
-          return left.candidate.detail < right.candidate.detail;
-        });
-    constexpr std::size_t candidateLimit = 100;
-    result.isIncomplete = ranked.size() > candidateLimit;
-    const std::size_t count = std::min(ranked.size(), candidateLimit);
-    result.candidates.reserve(count);
-    for (std::size_t index = 0; index < count; ++index) {
-      result.candidates.push_back(std::move(ranked[index].candidate));
-    }
+  static std::optional<CompletionResult>
+  narrowCompletion(const CompletionResult &previous, std::string_view oldSource,
+                   std::string_view source, std::size_t byteOffset) {
+    if (!previous.qualifiedPrefix)
+      return std::nullopt;
+    const SourceSpan &prefix = *previous.qualifiedPrefix;
+    if (prefix.start > prefix.end ||
+        LanguageQueries::extendedQualifiedCompletionOffset(
+            oldSource, prefix.end, source) != byteOffset ||
+        !std::ranges::all_of(previous.embeddedInputs, embeddedInputCurrent))
+      return std::nullopt;
+    if (prefix.end == byteOffset)
+      return previous;
+    const auto extended =
+        source.substr(prefix.start, byteOffset - prefix.start);
+    CompletionResult result{.qualifiedPrefix = prefix,
+                            .embeddedInputs = previous.embeddedInputs,
+                            .sourceDigests = previous.sourceDigests,
+                            .sourceLookupPaths = previous.sourceLookupPaths};
+    result.qualifiedPrefix->end = byteOffset;
+    result.sourceDigests.insert_or_assign(prefix.source,
+                                          sourceTextDigest(source));
+    std::vector<CompletionCandidate> ranked;
+    const auto narrow = [&](const auto &candidates) {
+      for (const CompletionCandidate &candidate : candidates) {
+        const auto rank = completionPrefixRank(candidate.label, extended);
+        if (!rank)
+          continue;
+        auto &item = ranked.emplace_back(candidate);
+        item.replacementRange.end = byteOffset;
+        rankCompletion(item, *rank, 0);
+      }
+    };
+    narrow(previous.candidates);
+    narrow(previous.remainingQualifiedCandidates);
+    finishCompletionList(result, std::move(ranked));
     return result;
   }
 
@@ -3054,6 +3140,55 @@ private:
     return result;
   }
 
+  static void rankCompletion(CompletionCandidate &candidate,
+                             std::size_t prefixRank,
+                             std::size_t scopeDistance) {
+    const auto score = prefixRank * 100000 +
+                       std::min(scopeDistance, std::size_t{99}) * 1000 +
+                       completionKindRank(candidate.kind) * 10;
+    candidate.sortText = completionSortText(score, candidate.label);
+  }
+
+  static void finishCompletionList(CompletionResult &result,
+                                   std::vector<CompletionCandidate> ranked) {
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const auto &a, const auto &b) {
+                       return std::tie(a.sortText, a.detail) <
+                              std::tie(b.sortText, b.detail);
+                     });
+    constexpr std::size_t visibleLimit = 100;
+    constexpr std::size_t retainedLimit = 1024;
+    constexpr std::size_t retainedByteLimit = 2 * 1024 * 1024;
+    if (ranked.empty() || ranked.size() > retainedLimit)
+      result.qualifiedPrefix.reset();
+    if (result.qualifiedPrefix) {
+      std::size_t bytes = 0;
+      for (const auto &item : ranked) {
+        bytes +=
+            sizeof(item) + item.label.capacity() + item.detail.capacity() +
+            item.insertion.capacity() + item.sortText.capacity() +
+            item.replacementRange.source.capacity() +
+            (item.snippet ? item.snippet->capacity() : 0) +
+            (item.documentationMarkdown ? item.documentationMarkdown->capacity()
+                                        : 0);
+        if (bytes > retainedByteLimit) {
+          result.qualifiedPrefix.reset();
+          break;
+        }
+      }
+    }
+    result.isIncomplete = ranked.size() > visibleLimit;
+    const auto visible = std::min(ranked.size(), visibleLimit);
+    result.candidates.reserve(visible);
+    for (std::size_t i = 0; i != visible; ++i)
+      result.candidates.push_back(std::move(ranked[i]));
+    if (result.qualifiedPrefix && result.isIncomplete) {
+      result.remainingQualifiedCandidates.reserve(ranked.size() - visible);
+      for (std::size_t i = visible; i < ranked.size(); ++i)
+        result.remainingQualifiedCandidates.push_back(std::move(ranked[i]));
+    }
+  }
+
   [[nodiscard]] static std::string completionSortText(std::size_t score,
                                                       std::string_view label) {
     std::ostringstream stream;
@@ -3271,6 +3406,43 @@ LanguageQueries::signatureHelp(const FrontendResult &snapshot,
                                SourceUnitId sourceUnit,
                                std::size_t byteOffset) const {
   return LanguageQueriesImpl().signatureHelp(snapshot, sourceUnit, byteOffset);
+}
+
+std::optional<std::size_t>
+LanguageQueries::extendedQualifiedCompletionOffset(std::string_view oldSource,
+                                                   std::size_t oldOffset,
+                                                   std::string_view source) {
+  if (oldOffset > oldSource.size() || source.size() < oldSource.size())
+    return std::nullopt;
+  const auto offset = source.size() - (oldSource.size() - oldOffset);
+  if (source.substr(0, oldOffset) != oldSource.substr(0, oldOffset) ||
+      source.substr(offset) != oldSource.substr(oldOffset))
+    return std::nullopt;
+  const auto identifierStart = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+  };
+  const auto identifierPart = [&](char c) {
+    return identifierStart(c) || (c >= '0' && c <= '9');
+  };
+  std::size_t start = oldOffset;
+  while (start && identifierPart(source[start - 1]))
+    --start;
+  const auto qualifier = source.substr(0, start);
+  if ((!qualifier.ends_with('.') && !qualifier.ends_with("::") &&
+       !qualifier.ends_with("->")) ||
+      (offset > start && !identifierStart(source[start])) ||
+      !std::ranges::all_of(source.substr(oldOffset, offset - oldOffset),
+                           identifierPart) ||
+      source.substr(offset).starts_with('"'))
+    return std::nullopt;
+  return offset;
+}
+
+std::optional<CompletionResult> LanguageQueries::narrowCompletion(
+    const CompletionResult &previous, std::string_view oldSource,
+    std::string_view source, std::size_t byteOffset) {
+  return LanguageQueriesImpl::narrowCompletion(previous, oldSource, source,
+                                               byteOffset);
 }
 
 CompletionResult LanguageQueries::complete(const CompletionInput &input) const {

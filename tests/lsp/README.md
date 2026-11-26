@@ -128,7 +128,7 @@ waiting for the whole test deadline:
 | `{"file": {"name": "main.gti", "text": "…"}}` | write a file in the test directory |
 | `{"send": {…}}` | send a message |
 | `{"expect": {…}}` | wait for a message that matches: objects by subset, arrays element-wise with equal length, `"$ANY"` matches anything, `{"$contains": […]}` an array with a distinct matching element for each listed one in any order (`[]`: any array), `{"$contains": "text"}` a string containing `text`, `{"$match": "regex"}` a string the regular expression (ECMAScript) is found in. The response to the same `id`, or the notification with the same method, `uri` and `version`, is final: if it differs the test fails at once |
-| `{"analysisTrace": {...}}` | after diagnostics, match fields on the latest main-document analysis in the frontend trace |
+| `{"analysisTrace": {...}}` | after diagnostics, match fields on the latest main-document analysis in the frontend trace; an explicit `kind` selects that work record (for example, `completion` after a completion reply) |
 | `{"exit": N}` | wait for the server to exit with status N |
 
 `$URI` is the URI of `main.gti` in the test directory, `$DIR` its path and

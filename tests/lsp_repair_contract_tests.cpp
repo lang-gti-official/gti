@@ -13,13 +13,16 @@ void require(bool condition, const char *message) {
 
 LspFixIt edit(std::size_t start, std::size_t end, std::string replacement,
               std::string id = "repair") {
+  const auto source = std::make_shared<const std::string>("abcdef");
+  const SourcePositionIndex positions(*source);
   return {.fix = {.span = {"/test.gti", start, end, 1},
                   .replacement = std::move(replacement),
                   .message = "Repair expression",
                   .applicability = lang::RepairApplicability::MachineApplicable,
                   .repairId = std::move(id)},
           .uri = "file:///test.gti",
-          .source = "abcdef",
+          .source = source,
+          .range = {positions.at(start), positions.at(end)},
           .sourceKnown = true};
 }
 } // namespace
@@ -73,7 +76,8 @@ int main() {
   bad[1].uri = "file:///other.gti";
   require(!validRepairGroup(bad), "cross-document group partially accepted");
   bad = groups[0];
-  bad[1].source += "changed";
+  bad[1].source =
+      std::make_shared<const std::string>(*bad[1].source + "changed");
   require(!validRepairGroup(bad), "inconsistent source identity accepted");
   bad = groups[0];
   bad[1].fix.applicability = lang::RepairApplicability::Incomplete;
@@ -85,9 +89,9 @@ int main() {
           "complete explicit-review alternative rejected");
   require(!validRepairGroup({edit(1, 2, "b")}), "no-op repair accepted");
   bad = {edit(1, 1, "x")};
-  bad[0].source = "\xc3\xa9";
+  bad[0].source = std::make_shared<const std::string>("\xc3\xa9");
   require(!validRepairGroup(bad), "UTF-8 scalar split accepted");
-  bad[0].source = "\r\n";
+  bad[0].source = std::make_shared<const std::string>("\r\n");
   require(!validRepairGroup(bad), "CRLF split accepted");
   diagnostic.fixes = {edit(99, 99, "x")};
   require(!hasAvailableRepair(diagnostic), "invalid repair advertised");
