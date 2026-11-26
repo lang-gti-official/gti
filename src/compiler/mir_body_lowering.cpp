@@ -7231,6 +7231,15 @@ private:
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
+    // Reading a grouping or comma whose result is a substituted program
+    // constant reads that constant, exactly as a receiver does. Its place
+    // dependencies keep the wrapper's sequenced effects; the constant is
+    // materialized once and never loaded from program storage.
+    if (const HirValue *substituted = transparentProgramConstant(value);
+        substituted != nullptr && substituted != value) {
+      emitPlaceDependencies(id);
+      return terminated() ? MirOperand{} : valueOperand(substituted->id);
+    }
     // Reading a resolved integral enumerator is an exact constant operation,
     // not a read of runtime global storage. Keep explicit place formation for
     // actual borrowing separate from value materialization.
@@ -8313,6 +8322,23 @@ private:
             .type = stagedType};
   }
 
+  // Grouping and comma are transparent: each denotes its last operand. The
+  // program-constant substitution they wrap, if any, is the value a read of
+  // the wrapper observes. Semantics records the substitution on the name
+  // itself, so every read-only consumer looks through these wrappers.
+  [[nodiscard]] const HirValue *
+  transparentProgramConstant(const HirValue *value) const {
+    while (value != nullptr && !value->programConstantSubstitution &&
+           !value->operands.empty() &&
+           (value->kind == HirValueKind::Grouping ||
+            (value->kind == HirValueKind::Binary &&
+             value->operation == TokenKind::COMMA))) {
+      value = findValue(value->operands.back());
+    }
+    return value != nullptr && value->programConstantSubstitution ? value
+                                                                  : nullptr;
+  }
+
   [[nodiscard]] MirOperand receiverOperand(HirValueId id, AccessMode access) {
     const HirValue *receiver = findValue(id);
     if (receiver == nullptr) {
@@ -8322,16 +8348,7 @@ private:
     // Transparent place wrappers still denote the substituted value. Keep
     // their sequenced effects, but do not turn the SSA value into storage
     // merely to observe it through a receiver.
-    const HirValue *substituted = receiver;
-    while (substituted != nullptr &&
-           !substituted->programConstantSubstitution &&
-           !substituted->operands.empty() &&
-           (substituted->kind == HirValueKind::Grouping ||
-            (substituted->kind == HirValueKind::Binary &&
-             substituted->operation == TokenKind::COMMA))) {
-      substituted = findValue(substituted->operands.back());
-    }
-    if (substituted != nullptr && substituted->programConstantSubstitution) {
+    if (const HirValue *substituted = transparentProgramConstant(receiver)) {
       if (access != AccessMode::ReadOnly) {
         valid = false;
         return {};

@@ -1,0 +1,54 @@
+// A grouped program constant reads as its constant value in every value context and kind of constant.
+//@ run-pass
+enum class Mode { Idle, Busy };
+
+constexpr float SPEED = 2.0;
+constexpr int NEGATIVE = -3;
+constexpr bool ENABLED = true;
+constexpr Mode MODE = Mode::Busy;
+
+namespace tuning {
+constexpr int STEP = 5;
+}
+
+class Limits {
+public:
+  static constexpr int MAX = 9;
+};
+
+class Scaled {
+public:
+  Scaled(int value) : value(value) {}
+  int value;
+  Scaled operator*(int scale) { return Scaled(this.value * scale); }
+  int times(int scale) { return this.value * scale; }
+};
+
+int twice(int value) { return value * 2; }
+int step() { return (tuning::STEP); }
+int local_static() {
+  static constexpr int OFFSET = 7;
+  return 1 + (OFFSET);
+}
+int runtime_one() { return 1; }
+
+int ADJUSTED = 1 + (Limits::MAX);
+
+int main() {
+  float speed = 1.0 * ((SPEED));
+  int negative = 1 + (NEGATIVE);
+  bool enabled = (ENABLED) && runtime_one() > 0;
+  bool busy = (MODE) == Mode::Busy;
+  int doubled = twice((Limits::MAX));
+  int flipped = -(tuning::STEP);
+  double widened = double((NEGATIVE));
+  float chosen = runtime_one() > 0 ? (SPEED) : 1.0;
+  Scaled scaled = Scaled(2) * ((tuning::STEP));
+  int product = Scaled(3).times((Limits::MAX));
+  if (speed != 2.0 || negative != -2 || !enabled || !busy || doubled != 18 ||
+      flipped != -5 || widened != -3.0 || chosen != 2.0 ||
+      scaled.value != 10 || product != 27) {
+    return 1;
+  }
+  return step() == 5 && local_static() == 8 && ADJUSTED == 10 ? 0 : 2;
+}

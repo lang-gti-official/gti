@@ -4620,11 +4620,14 @@ later-storage proof inside the merged executable program-initialization body;
 the initializer consumes the materialized constant rather than loading
 not-yet-initialized program storage.
 
-Receiver lowering honors the same substitution before considering the source
-expression's place category. A direct read-only receiver consumes the constant
-value, including through transparent grouping and comma expressions. Their
-dependency schedule preserves sequenced effects and emits the constant exactly
-once. Actual storage borrows and projections retain the semantic boundary's
+Receiver and value-operand lowering honor the same substitution before
+considering the source expression's place category. A direct read-only
+receiver, and any value read of an operand, initializer, argument or return,
+consumes the constant value, including through transparent grouping and comma
+expressions: semantics records the substitution on the name itself, so MIR
+looks through `(C)`, `((C))` and `(effect, C)` to it rather than loading the
+wrapper's storage place. Their dependency schedule preserves sequenced effects
+and emits the constant exactly once. Actual storage borrows and projections retain the semantic boundary's
 storage access and do not acquire a substitution merely because the binding is
 constant.
 
