@@ -22,6 +22,7 @@ export module filesystem;
 // added to this class, so concat() alone carries that behaviour. Directory
 // joining is available through append()/append_path() and operator/()/operator/=().
 import std.string;
+import std.json;
 import std.vector;
 import "detail/filesystem_result.gti";
 
@@ -969,3 +970,22 @@ export expected<std::vector<path>, errc> directory_entries(path& input) { return
 
 }
 }
+
+/// A path preserves the supplied lexical spelling, including separators and dot components.
+export class std::json::codec<std::filesystem::path> {
+public:
+  codec() = default;
+  expected<void, std::json::error> encode(std::filesystem::path& path, mut std::string& out) {
+    auto spelling = path.view();
+    auto encoded = ?std::json::encode(spelling);
+    out.append(encoded.view());
+    return;
+  }
+
+  expected<std::filesystem::path, std::json::error> decode(std::string_view text) {
+    mut std::json::decode_options limits{};
+    limits.set_max_document_bytes(text.size());
+    auto spelling = ?std::json::decode<std::string>(text, limits);
+    return std::filesystem::path(spelling);
+  }
+};

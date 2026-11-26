@@ -1,0 +1,25 @@
+// Typed calendar counts use their declared unit and forward-list decoding retains input order.
+//@ run-pass
+//@ slow
+import std.json;
+import std.chrono;
+import std.forward_list;
+
+struct Schedule {
+  std::chrono::calendar_days days;
+  std::chrono::months months;
+  std::chrono::years years;
+  std::forward_list<std::chrono::hours> offsets;
+};
+
+int main() {
+  auto schedule = std::json::decode<Schedule>("{\"days\":-2,\"months\":3,\"years\":0,\"offsets\":[3,-1,3,2]}");
+  if (!schedule || schedule.value().days.count() != -2i64 || schedule.value().months.count() != 3i64) { return 1; }
+  auto encoded = std::json::encode(schedule.value());
+  if (!encoded || encoded.value().view() != "{\"days\":-2,\"months\":3,\"years\":0,\"offsets\":[3,-1,3,2]}") { return 2; }
+  auto empty = std::json::decode<std::forward_list<int32_t>>("[]");
+  if (!empty || !empty.value().empty()) { return 3; }
+  auto bad = std::json::decode<std::forward_list<std::chrono::seconds>>("[0,1.5,3]");
+  if (bad || bad.error().path.view() != "/1" || bad.error().code != std::json::errc::type_mismatch) { return 4; }
+  return 0;
+}
