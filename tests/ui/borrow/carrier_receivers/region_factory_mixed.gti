@@ -1,0 +1,49 @@
+// A generic explicit-region factory keeps both suppliers. Its primary field
+// can hold the exclusive borrow, including when that formal comes second.
+//@ run-pass
+class Fields<T, lifetime a> {
+  mut T&<a> target;
+  T&<a> input;
+public:
+  Fields(mut T&<a> target, T&<a> input) : target(target), input(input) {}
+  void assign() mut { this.target = this.input; }
+};
+Fields<T, a> fields<T, lifetime a>(T&<a> input, mut T&<a> target) {
+  return Fields<T, a>(target, input);
+}
+class ReadFirst<lifetime a> {
+  int&<a> input;
+  mut int&<a> target;
+public:
+  ReadFirst(mut int&<a> target, int&<a> input) : input(input), target(target) {}
+  void assign() mut { this.target = this.input + 2; }
+};
+class Owner {
+  mut int target = 0;
+public:
+  Owner() = default;
+  int read() { return this.target; }
+  Fields<int, this> from_owner() mut { return Fields<int, this>(this.target, this.source); }
+  ReadFirst<this> read_first() mut { return ReadFirst<this>(this.target, this.source); }
+  int source = 19;
+};
+int main() {
+  mut int value = 0;
+  int input = 7;
+  {
+    mut auto result = fields(input, value);
+    result.assign();
+  }
+  if (value != 7) return 1;
+  mut Owner owner{};
+  {
+    mut auto result = owner.from_owner();
+    result.assign();
+  }
+  if (owner.read() != 19) return 2;
+  {
+    mut auto result = owner.read_first();
+    result.assign();
+  }
+  return owner.read() - 21;
+}

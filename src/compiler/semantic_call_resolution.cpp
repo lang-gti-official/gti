@@ -8426,6 +8426,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     concreteBorrow.origin = contract.origin;
     concreteBorrow.parameter = contract.parameter;
     concreteBorrow.access = contract.access;
+    concreteBorrow.parameters = contract.parameters;
     genericContract = true;
   }
   const bool declarationOwnsBorrow =

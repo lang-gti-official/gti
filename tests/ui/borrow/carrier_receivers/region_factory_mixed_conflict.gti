@@ -1,0 +1,19 @@
+// Both suppliers stay borrowed across the call to a concrete generic factory.
+class Pair<T, lifetime a> {
+  mut T&<a> target;
+  T&<a> input;
+public:
+  Pair(mut T&<a> target, T&<a> input) : target(target), input(input) {}
+  void assign() mut { this.target = this.input; }
+};
+Pair<T, a> pair<T, lifetime a>(mut T&<a> target, T&<a> input) {
+  return Pair<T, a>(target, input);
+}
+int main() {
+  mut int output = 0;
+  mut int input = 1;
+  mut auto view = pair(output, input);
+  input = 7; //~ ERROR GTI-S2017
+  view.assign();
+  return 0;
+}
