@@ -1042,6 +1042,39 @@ CompiledScalarLibraryResult buildScalarLibrary(
   return result;
 }
 } // namespace
+
+void detail::restoreInstalledDiagnosticSources(FrontendResult &result) {
+  if (result.diagnostics.empty())
+    return;
+  std::set<std::string_view> reported;
+  for (const auto &diagnostic : result.diagnostics) {
+    reported.insert(diagnostic.primary.source);
+    for (const auto &note : diagnostic.related)
+      reported.insert(note.span.source);
+  }
+  for (const auto &unit : result.sourceGraph.sourceUnits()) {
+    if (!unit.compiledTemplate ||
+        unit.role != SourceUnitRole::StandardLibrary ||
+        unit.compiledTemplate->installedSourceDigest.empty() ||
+        !reported.contains(unit.path.string()))
+      continue;
+    // Recipe bodies are whitespace in the declaration facade. Consult only
+    // this installed unit's matching source, after analysis has finished.
+    std::error_code error;
+    if (std::filesystem::canonical(unit.path, error) != unit.path || error)
+      continue;
+    try {
+      auto text = readCompiledLibraryFileBounded(unit.path,
+                                                 compiledTemplateSyntaxLimit);
+      if (moduleSourceIdentity(text, unit) ==
+          unit.compiledTemplate->installedSourceDigest)
+        result.sources.set(unit.path.string(), std::move(text));
+    } catch (const std::invalid_argument &) {
+      // Source is optional for an installed artifact.
+    }
+  }
+}
+
 std::vector<CompiledScalarSignature>
 decodeCompiledLibraryInterface(std::string_view bytes) {
   return readInterface(bytes);
