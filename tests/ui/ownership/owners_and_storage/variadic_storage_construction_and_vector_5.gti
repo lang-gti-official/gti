@@ -39,3 +39,4 @@ int main() {
   hidden.emplace(3);  //~ ERROR GTI-S2007
   return 0;
 }
+//@ diagnostic-note: Application call into this library.

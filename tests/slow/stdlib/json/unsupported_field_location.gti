@@ -32,3 +32,4 @@ int main() {
   m.Run();
   return 0;
 }
+//@ diagnostic-note: First required by this non-generic use.

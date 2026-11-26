@@ -1314,7 +1314,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   symbolic, as in an instance formed while analyzing an invalid one, stays
   deferred rather than reporting `GTI-S2057`. Inside a trusted library the
   failure is re-anchored at the application call into the library, even
-  when another application method made that call reachable. For installed
+  when another application method made that call reachable. Other errors inside
+  a library instance keep the first request as primary so callers of the same
+  generic wrapper remain distinguishable. A distinct application call into
+  the library is retained as a related location. For installed
   template modules the driver restores reported source excerpts when the
   installed file matches the authenticated recipe source identity.
 - `GTI-S2080` owns a static-assertion condition whose resolved type is not exact
