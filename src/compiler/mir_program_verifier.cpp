@@ -11980,6 +11980,22 @@ verifyMirProgramInitialization(const MirProgram &program) {
   std::unordered_map<HirFullExpressionId, std::vector<LocatedInstruction>>
       fullExpressionMarkers;
   std::vector<std::vector<const MirBlock *>> stepBlocks(plan.steps.size());
+  // The only dead block lowering leaves in Module/0 is the join of a
+  // conditional whose arms all never return. It names that conditional and,
+  // like any impossible continuation, holds only lifetime bookkeeping.
+  const auto deadConditionalJoin = [](const MirBlock &block) {
+    return !block.reachable &&
+           block.terminator.kind == MirTerminatorKind::Unreachable &&
+           block.terminator.hirValue != 0 &&
+           std::all_of(
+               block.instructions.begin(), block.instructions.end(),
+               [](const MirInstruction &instruction) {
+                 return instruction.tombstone ||
+                        instruction.kind == MirInstructionKind::Lifecycle ||
+                        instruction.kind == MirInstructionKind::EndBorrow ||
+                        instruction.kind == MirInstructionKind::Drop;
+               });
+  };
   ProgramInitializationStepId previousTag = 0;
   for (const MirBlock &block : module.blocks) {
     if (block.programInitializationStep == 0 ||
@@ -12448,11 +12464,11 @@ verifyMirProgramInitialization(const MirProgram &program) {
         }
       }
     }
-    // Blocks the body's own reachability marks dead, such as the join of a
-    // conditional whose arms all never return, are not part of the schedule.
-    const auto liveStepBlocks = static_cast<std::size_t>(
-        std::count_if(stepBlocks[index].begin(), stepBlocks[index].end(),
-                      [](const MirBlock *block) { return block->reachable; }));
+    // A dead conditional join is not part of the schedule; any other block
+    // must be reachable from the step entry.
+    const auto liveStepBlocks = static_cast<std::size_t>(std::count_if(
+        stepBlocks[index].begin(), stepBlocks[index].end(),
+        [&](const MirBlock *block) { return !deadConditionalJoin(*block); }));
     if (forwardReachable.size() != liveStepBlocks) {
       add("program-initialization step contains a block unreachable from its "
           "entry",
@@ -12651,9 +12667,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
   }
   std::unordered_set<HirValueId> deadConditionalResults;
   for (const MirBlock &block : module.blocks)
-    if (!block.reachable &&
-        block.terminator.kind == MirTerminatorKind::Unreachable &&
-        block.terminator.hirValue != 0)
+    if (deadConditionalJoin(block))
       deadConditionalResults.insert(block.terminator.hirValue);
   const auto placeIsUsed = [&](MirPlaceId id) {
     if (std::any_of(module.loans.begin(), module.loans.end(),
@@ -13137,7 +13151,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
             block.id);
       }
     } else if (block.terminator.kind == MirTerminatorKind::Unreachable) {
-      if (block.reachable && !neverReturningContinuation(block))
+      if (!deadConditionalJoin(block) && !neverReturningContinuation(block))
         add("program-initialization Unreachable does not follow a "
             "never-returning call",
             block.id);
@@ -13162,7 +13176,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     while (changed) {
       changed = false;
       for (const MirBlock *block : stepBlocks[index]) {
-        if (block->activeFailure != 0 || !block->reachable ||
+        if (block->activeFailure != 0 || deadConditionalJoin(*block) ||
             canReachBoundary.contains(block->id)) {
           continue;
         }
@@ -13193,11 +13207,11 @@ verifyMirProgramInitialization(const MirProgram &program) {
         }
       }
     }
-    const std::size_t normalBlocks = static_cast<std::size_t>(
-        std::count_if(stepBlocks[index].begin(), stepBlocks[index].end(),
-                      [](const MirBlock *block) {
-                        return block->activeFailure == 0 && block->reachable;
-                      }));
+    const std::size_t normalBlocks = static_cast<std::size_t>(std::count_if(
+        stepBlocks[index].begin(), stepBlocks[index].end(),
+        [&](const MirBlock *block) {
+          return block->activeFailure == 0 && !deadConditionalJoin(*block);
+        }));
     if (canReachBoundary.size() != normalBlocks) {
       add("program-initialization step has a block that cannot reach its "
           "dense successor, final Exit or a terminal end",
