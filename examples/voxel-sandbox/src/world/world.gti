@@ -1,0 +1,317 @@
+// The loaded world: chunks keyed by chunk coordinate, block access in world
+// coordinates, edit revisions and mesh building.
+export module world;
+
+import "block.gti";
+import "chunk.gti";
+import "worldgen.gti";
+import "mesher.gti";
+import std.vector;
+import std.memory;
+import std.unordered_map;
+import std.thread;
+
+export namespace voxel {
+class ChunkCoord {
+public:
+  int32_t cx;
+  int32_t cz;
+  ChunkCoord(int32_t cx, int32_t cz) : cx(cx), cz(cz) {}
+};
+
+// key = (int64_t(cx) << 32) ^ (int64_t(cz) & 0xFFFFFFFF).
+int64_t chunk_key(int32_t cx, int32_t cz) {
+  return (int64_t(cx) << 32) ^ (int64_t(cz) & 4294967295);
+}
+int32_t key_cx(int64_t key) { return int32_t(key >> 32); }
+// Note: `int32_t(key & 0xFFFFFFFF)` is a CHECKED conversion in GTI and traps
+// for negative cz; sign-extend the low half explicitly instead.
+int32_t key_cz(int64_t key) {
+  int64_t low = key & 4294967295;
+  if (low >= 2147483648) return int32_t(low - 4294967296);
+  return int32_t(low);
+}
+
+// ---- parallel chunk generation ---------------------------------------------
+
+// Worker k generates coords[k], coords[k + stride], ... into its own output.
+class ChunkGenTask {
+  uint32_t seed;
+  std::vector<ChunkCoord>& coords;
+  uint64_t offset;
+  uint64_t stride;
+  mut std::vector<std::unique_ptr<Chunk>>& out;
+
+public:
+  ChunkGenTask(uint32_t seed, std::vector<ChunkCoord>& coords, uint64_t offset,
+               uint64_t stride, mut std::vector<std::unique_ptr<Chunk>>& out)
+      : seed(seed), coords(coords), offset(offset), stride(stride), out(out) {}
+
+  void operator()() mut {
+    for (mut uint64_t i = this.offset; i < this.coords.size(); i += this.stride) {
+      mut auto chunk = std::make_unique<Chunk>(this.coords[i].cx, this.coords[i].cz);
+      generate_chunk(*chunk, this.seed);
+      this.out.push_back(std::move(chunk));
+    }
+  }
+};
+
+// std::parallel_invoke takes a fixed task pack, so the per-worker outputs are
+// fixed fields (disjoint exclusive borrows) and worker counts are 1/2/4/8.
+struct ChunkGenOutputs {
+  mut std::vector<std::unique_ptr<Chunk>> o0{};
+  mut std::vector<std::unique_ptr<Chunk>> o1{};
+  mut std::vector<std::unique_ptr<Chunk>> o2{};
+  mut std::vector<std::unique_ptr<Chunk>> o3{};
+  mut std::vector<std::unique_ptr<Chunk>> o4{};
+  mut std::vector<std::unique_ptr<Chunk>> o5{};
+  mut std::vector<std::unique_ptr<Chunk>> o6{};
+  mut std::vector<std::unique_ptr<Chunk>> o7{};
+public:
+  ChunkGenOutputs() = default;
+};
+
+void append_chunks(mut std::vector<std::unique_ptr<Chunk>>& dst,
+                   mut std::vector<std::unique_ptr<Chunk>>& src) {
+  // Elements cannot be moved out by index; consume a swapped-out local.
+  mut std::vector<std::unique_ptr<Chunk>> local{};
+  local.swap(src);
+  for (mut auto chunk : std::move(local).into_range()) dst.push_back(std::move(chunk));
+}
+
+// Generates every coordinate in `coords` (blocking until all are done) using
+// `threads` workers, rounded down to 1, 2, 4 or 8. Returns the chunks (order
+// unspecified) for World::insert_chunk; an empty result with a non-empty
+// `coords` means a worker could not be started. Output is bit-identical to
+// World::generate_chunk regardless of the thread count.
+std::vector<std::unique_ptr<Chunk>> generate_chunks_parallel(
+    uint32_t seed, std::vector<ChunkCoord>& coords, int32_t threads) {
+  mut std::vector<std::unique_ptr<Chunk>> result{};
+  mut ChunkGenOutputs o{};
+  mut int32_t t = 1;
+  if (threads >= 8) t = 8; else if (threads >= 4) t = 4; else if (threads >= 2) t = 2;
+  if (uint64_t(t) > coords.size()) t = 1;
+  if (t == 1) {
+    mut ChunkGenTask task = ChunkGenTask(seed, coords, uint64_t(0), uint64_t(1), o.o0);
+    task();
+  } else if (t == 2) {
+    if (!std::parallel_invoke(ChunkGenTask(seed, coords, uint64_t(0), uint64_t(2), o.o0),
+                              ChunkGenTask(seed, coords, uint64_t(1), uint64_t(2), o.o1))) {
+      return result;
+    }
+  } else if (t == 4) {
+    if (!std::parallel_invoke(ChunkGenTask(seed, coords, uint64_t(0), uint64_t(4), o.o0),
+                              ChunkGenTask(seed, coords, uint64_t(1), uint64_t(4), o.o1),
+                              ChunkGenTask(seed, coords, uint64_t(2), uint64_t(4), o.o2),
+                              ChunkGenTask(seed, coords, uint64_t(3), uint64_t(4), o.o3))) {
+      return result;
+    }
+  } else {
+    if (!std::parallel_invoke(ChunkGenTask(seed, coords, uint64_t(0), uint64_t(8), o.o0),
+                              ChunkGenTask(seed, coords, uint64_t(1), uint64_t(8), o.o1),
+                              ChunkGenTask(seed, coords, uint64_t(2), uint64_t(8), o.o2),
+                              ChunkGenTask(seed, coords, uint64_t(3), uint64_t(8), o.o3),
+                              ChunkGenTask(seed, coords, uint64_t(4), uint64_t(8), o.o4),
+                              ChunkGenTask(seed, coords, uint64_t(5), uint64_t(8), o.o5),
+                              ChunkGenTask(seed, coords, uint64_t(6), uint64_t(8), o.o6),
+                              ChunkGenTask(seed, coords, uint64_t(7), uint64_t(8), o.o7))) {
+      return result;
+    }
+  }
+  append_chunks(result, o.o0); append_chunks(result, o.o1);
+  append_chunks(result, o.o2); append_chunks(result, o.o3);
+  append_chunks(result, o.o4); append_chunks(result, o.o5);
+  append_chunks(result, o.o6); append_chunks(result, o.o7);
+  return result;
+}
+
+class World {
+  mut std::unordered_map<int64_t, std::unique_ptr<Chunk>> chunks{};
+  mut std::vector<uint8_t> padded{};
+  mut Mesher mesher{};
+
+public:
+  uint32_t seed;
+  // false = plain face culling, true = greedy merging.
+  mut bool greedy = true;
+
+  World(uint32_t seed) : seed(seed) {}
+  World(World& other) = delete;
+  World(World&& other) = default;
+
+  bool has_chunk(int32_t cx, int32_t cz) {
+    return this.chunks.contains(chunk_key(cx, cz));
+  }
+
+  int64_t chunk_count() { return int64_t(this.chunks.size()); }
+
+  void generate_chunk(int32_t cx, int32_t cz) mut {
+    if (this.has_chunk(cx, cz)) return;
+    mut auto chunk = std::make_unique<Chunk>(cx, cz);
+    voxel::generate_chunk(*chunk, this.seed);
+    [[discard]] this.chunks.insert(chunk_key(cx, cz), std::move(chunk));
+  }
+
+  // Inserts an externally generated chunk (e.g. from a worker thread).
+  // Replaces nothing: returns false if the coordinate is already loaded.
+  bool insert_chunk(std::unique_ptr<Chunk> chunk) mut {
+    int64_t key = chunk_key(chunk->cx, chunk->cz);
+    if (this.chunks.contains(key)) return false;
+    [[discard]] this.chunks.insert(key, std::move(chunk));
+    return true;
+  }
+
+  // Generates and inserts the not-yet-loaded chunks among `coords` with up to
+  // `threads` workers (blocking). Returns the number of chunks inserted.
+  int64_t generate_chunks(std::vector<ChunkCoord>& coords, int32_t threads) mut {
+    mut std::vector<ChunkCoord> missing{};
+    for (auto& c : coords) {
+      if (!this.has_chunk(c.cx, c.cz)) missing.push_back(ChunkCoord(c.cx, c.cz));
+    }
+    std::vector<std::unique_ptr<Chunk>> chunks =
+        generate_chunks_parallel(this.seed, missing, threads);
+    mut int64_t inserted = 0;
+    for (mut auto chunk : std::move(chunks).into_range()) {
+      if (this.insert_chunk(std::move(chunk))) inserted++;
+    }
+    return inserted;
+  }
+
+  void remove_chunk(int32_t cx, int32_t cz) mut {
+    [[discard]] this.chunks.erase(chunk_key(cx, cz));
+  }
+
+  // Keys of all loaded chunks (unspecified order); decode with key_cx/key_cz.
+  std::vector<int64_t> loaded_chunk_keys() {
+    mut std::vector<int64_t> result{};
+    for (auto& entry : this.chunks) {
+      result.push_back(entry.first);
+    }
+    return result;
+  }
+
+  // Loaded chunk coordinates (unspecified order).
+  std::vector<ChunkCoord> loaded_chunks() {
+    mut std::vector<ChunkCoord> result{};
+    for (auto& entry : this.chunks) {
+      result.push_back(ChunkCoord(entry.second->cx, entry.second->cz));
+    }
+    return result;
+  }
+
+  uint8_t get_block(int32_t x, int32_t y, int32_t z) {
+    if (y < 0 or y >= CHUNK_HEIGHT) return AIR;
+    int64_t key = chunk_key(chunk_coord(x), chunk_coord(z));
+    if (!this.chunks.contains(key)) return AIR;
+    return this.chunks.at(key)->get(local_coord(x), y, local_coord(z));
+  }
+
+  void bump_revision(int32_t cx, int32_t cz) mut {
+    int64_t key = chunk_key(cx, cz);
+    if (!this.chunks.contains(key)) return;
+    this.chunks.at(key)->revision += uint32_t(1);
+  }
+
+  bool set_block(int32_t x, int32_t y, int32_t z, uint8_t id) mut {
+    if (y < 0 or y >= CHUNK_HEIGHT) return false;
+    int32_t cx = chunk_coord(x);
+    int32_t cz = chunk_coord(z);
+    int64_t key = chunk_key(cx, cz);
+    if (!this.chunks.contains(key)) return false;
+    int32_t lx = local_coord(x);
+    int32_t lz = local_coord(z);
+    this.chunks.at(key)->set(lx, y, lz, id);
+    // Neighbors whose padded border (faces + AO) includes this block.
+    mut int32_t dx = 0;
+    mut int32_t dz = 0;
+    if (lx == 0) dx = -1;
+    if (lx == CHUNK_WIDTH - 1) dx = 1;
+    if (lz == 0) dz = -1;
+    if (lz == CHUNK_DEPTH - 1) dz = 1;
+    if (dx != 0) this.bump_revision(cx + dx, cz);
+    if (dz != 0) this.bump_revision(cx, cz + dz);
+    if (dx != 0 and dz != 0) this.bump_revision(cx + dx, cz + dz);
+    return true;
+  }
+
+  uint32_t chunk_revision(int32_t cx, int32_t cz) {
+    int64_t key = chunk_key(cx, cz);
+    if (!this.chunks.contains(key)) return uint32_t(0);
+    return this.chunks.at(key)->revision;
+  }
+
+  bool neighbors_loaded(int32_t cx, int32_t cz) {
+    for (mut int32_t dz = -1; dz <= 1; dz++) {
+      for (mut int32_t dx = -1; dx <= 1; dx++) {
+        if (dx == 0 and dz == 0) continue;
+        if (!this.has_chunk(cx + dx, cz + dz)) return false;
+      }
+    }
+    return true;
+  }
+
+  int32_t surface_height(int32_t x, int32_t z) {
+    int64_t key = chunk_key(chunk_coord(x), chunk_coord(z));
+    if (!this.chunks.contains(key)) return -1;
+    Chunk& chunk = *this.chunks.at(key);
+    int32_t lx = local_coord(x);
+    int32_t lz = local_coord(z);
+    for (mut int32_t y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+      if (is_solid(chunk.blocks[uint64_t(chunk_index(lx, y, lz))])) return y;
+    }
+    return -1;
+  }
+
+  // Copies the chunk plus a one-block border from its 8 neighbors into the
+  // padded buffer. Requires the chunk and all neighbors to be loaded.
+  void fill_padded(int32_t cx, int32_t cz) mut {
+    if (this.padded.size() != uint64_t(PAD_VOLUME)) {
+      this.padded.clear();
+      this.padded.resize(uint64_t(PAD_VOLUME), AIR);
+    }
+    for (mut int32_t z = -1; z <= CHUNK_DEPTH; z++) {
+      for (mut int32_t x = -1; x <= CHUNK_WIDTH; x++) {
+        this.padded[uint64_t(pad_index(x, -1, z))] = BEDROCK;
+        this.padded[uint64_t(pad_index(x, CHUNK_HEIGHT, z))] = AIR;
+      }
+    }
+    for (mut int32_t dz = -1; dz <= 1; dz++) {
+      for (mut int32_t dx = -1; dx <= 1; dx++) {
+        Chunk& source = *this.chunks.at(chunk_key(cx + dx, cz + dz));
+        // Destination range in chunk-local coordinates of the center chunk.
+        int32_t x0 = dx < 0 ? -1 : (dx == 0 ? 0 : CHUNK_WIDTH);
+        int32_t x1 = dx < 0 ? -1 : (dx == 0 ? CHUNK_WIDTH - 1 : CHUNK_WIDTH);
+        int32_t z0 = dz < 0 ? -1 : (dz == 0 ? 0 : CHUNK_DEPTH);
+        int32_t z1 = dz < 0 ? -1 : (dz == 0 ? CHUNK_DEPTH - 1 : CHUNK_DEPTH);
+        int32_t ox = dx * CHUNK_WIDTH;
+        int32_t oz = dz * CHUNK_DEPTH;
+        for (mut int32_t y = 0; y < CHUNK_HEIGHT; y++) {
+          for (mut int32_t z = z0; z <= z1; z++) {
+            for (mut int32_t x = x0; x <= x1; x++) {
+              this.padded[uint64_t(pad_index(x, y, z))] =
+                  source.blocks[uint64_t(chunk_index(x - ox, y, z - oz))];
+            }
+          }
+        }
+      }
+    }
+  }
+
+  bool build_mesh(int32_t cx, int32_t cz, mut ChunkMesh& out) mut {
+    if (!this.has_chunk(cx, cz) or !this.neighbors_loaded(cx, cz)) return false;
+    this.fill_padded(cx, cz);
+    if (this.greedy) {
+      this.mesher.mesh_greedy(this.padded, out);
+    } else {
+      this.mesher.mesh_plain(this.padded, out);
+    }
+    return true;
+  }
+
+  // Direct read access to a loaded chunk's blocks (checksums, tests).
+  // Precondition: has_chunk(cx, cz).
+  Chunk& chunk_at(int32_t cx, int32_t cz) {
+    return *this.chunks.at(chunk_key(cx, cz));
+  }
+};
+}

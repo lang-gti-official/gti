@@ -1,1 +1,387 @@
-int main() { return 0; }
+// World-side tests: noise/worldgen determinism, chunk edit revisions,
+// mesher culling + AO + winding, vertex packing.
+import "../world/block.gti";
+import "../world/chunk.gti";
+import "../world/noise.gti";
+import "../world/worldgen.gti";
+import "../world/mesher.gti";
+import "../world/world.gti";
+import std.vector;
+import std.format;
+import std.utility;
+import std.atomic;
+
+// The concurrent execution profile forbids mutable globals; use an atomic.
+std::atomic<int32_t> failures{0};
+
+void fail() { [[discard]] failures.fetch_add(1, std::memory_order_relaxed()); }
+
+void check(bool ok, std::string_view what) {
+  if (!ok) {
+    std::println("FAIL: {}", what);
+    fail();
+  }
+}
+
+// ---- determinism ------------------------------------------------------------
+
+bool same_chunk(voxel::Chunk& a, voxel::Chunk& b) {
+  for (mut uint64_t i = uint64_t(0); i < a.blocks.size(); i++) {
+    if (a.blocks[i] != b.blocks[i]) return false;
+  }
+  return true;
+}
+
+int64_t count_id(voxel::Chunk& chunk, uint8_t id) {
+  mut int64_t n = 0;
+  for (mut uint64_t i = uint64_t(0); i < chunk.blocks.size(); i++) {
+    if (chunk.blocks[i] == id) n++;
+  }
+  return n;
+}
+
+void test_determinism() {
+  uint32_t seed = uint32_t(1337);
+  mut voxel::World forward = voxel::World(seed);
+  mut voxel::World backward = voxel::World(seed);
+  for (mut int32_t cz = -1; cz <= 1; cz++) {
+    for (mut int32_t cx = -1; cx <= 1; cx++) forward.generate_chunk(cx, cz);
+  }
+  for (mut int32_t cz = 1; cz >= -1; cz--) {
+    for (mut int32_t cx = 1; cx >= -1; cx--) backward.generate_chunk(cx, cz);
+  }
+  // Parallel batch generation (4 workers) matches serial generation.
+  mut voxel::World parallel = voxel::World(seed);
+  mut std::vector<voxel::ChunkCoord> coords{};
+  for (mut int32_t cz = -1; cz <= 1; cz++) {
+    for (mut int32_t cx = -1; cx <= 1; cx++) coords.push_back(voxel::ChunkCoord(cx, cz));
+  }
+  check(parallel.generate_chunks(coords, 4) == 9, "parallel batch inserts 9 chunks");
+  check(parallel.generate_chunks(coords, 4) == 0, "parallel batch skips loaded chunks");
+  mut int64_t leaves = 0;
+  mut int64_t border_leaves = 0;
+  for (mut int32_t cz = -1; cz <= 1; cz++) {
+    for (mut int32_t cx = -1; cx <= 1; cx++) {
+      // Each chunk alone in a fresh world must match too.
+      mut voxel::Chunk lone = voxel::Chunk(cx, cz);
+      voxel::generate_chunk(lone, seed);
+      check(same_chunk(forward.chunk_at(cx, cz), backward.chunk_at(cx, cz)),
+            "generation order changes blocks");
+      check(same_chunk(forward.chunk_at(cx, cz), lone), "lone chunk differs from region");
+      check(same_chunk(forward.chunk_at(cx, cz), parallel.chunk_at(cx, cz)),
+            "parallel generation differs");
+      leaves += count_id(lone, voxel::LEAVES);
+      for (mut int32_t y = 0; y < voxel::CHUNK_HEIGHT; y++) {
+        for (mut int32_t i = 0; i < 16; i++) {
+          if (lone.get(0, y, i) == voxel::LEAVES or lone.get(15, y, i) == voxel::LEAVES or
+              lone.get(i, y, 0) == voxel::LEAVES or lone.get(i, y, 15) == voxel::LEAVES) {
+            border_leaves++;
+          }
+        }
+      }
+    }
+  }
+  check(leaves > 0, "region has trees");
+  check(border_leaves > 0, "some canopy touches a chunk border");
+
+  // Canopy continuity through world coordinates, including across chunk
+  // borders: the block beside a trunk's top log is canopy (or another log).
+  mut int64_t trunks = 0;
+  for (mut int32_t x = -14; x < 30; x++) {
+    for (mut int32_t z = -14; z < 30; z++) {
+      for (mut int32_t y = voxel::SEA_LEVEL; y < 120; y++) {
+        if (forward.get_block(x, y, z) == voxel::LOG and
+            forward.get_block(x, y + 1, z) == voxel::LEAVES) {
+          trunks++;
+          uint8_t side = forward.get_block(x + 1, y, z);
+          check(side == voxel::LEAVES or side == voxel::LOG, "canopy beside trunk top");
+        }
+      }
+    }
+  }
+  check(trunks > 0, "found trunks");
+
+  // Basic structure: bedrock floor, air at the top.
+  voxel::Chunk& c = forward.chunk_at(0, 0);
+  for (mut int32_t z = 0; z < 16; z++) {
+    for (mut int32_t x = 0; x < 16; x++) {
+      check(c.get(x, 0, z) == voxel::BEDROCK, "bedrock floor");
+      check(c.get(x, 127, z) == voxel::AIR, "air ceiling");
+    }
+  }
+  check(voxel::perlin3(uint32_t(9), 1.25, 2.5, -3.75) ==
+            voxel::perlin3(uint32_t(9), 1.25, 2.5, -3.75), "noise is pure");
+  check(voxel::perlin2(uint32_t(9), 3.0, 4.0) == 0.0, "gradient noise is 0 at lattice points");
+  check(voxel::fast_floor(-0.5) == -1 and voxel::fast_floor(2.0) == 2 and
+            voxel::fast_floor(-3.0) == -3, "fast_floor");
+}
+
+// ---- world API --------------------------------------------------------------
+
+void test_world_api() {
+  mut voxel::World world = voxel::World(uint32_t(7));
+  for (mut int32_t cz = -1; cz <= 1; cz++) {
+    for (mut int32_t cx = -1; cx <= 1; cx++) world.generate_chunk(cx, cz);
+  }
+  world.generate_chunk(0, 0);  // no-op
+  check(world.chunk_count() == 9, "chunk_count");
+  check(world.neighbors_loaded(0, 0) and !world.neighbors_loaded(1, 0), "neighbors_loaded");
+  mut voxel::ChunkMesh mesh{};
+  check(world.build_mesh(0, 0, mesh) and mesh.quad_count() > 0, "build_mesh center");
+  check(!world.build_mesh(1, 1, mesh), "build_mesh needs neighbors");
+  check(world.get_block(0, -1, 0) == voxel::AIR and world.get_block(0, 128, 0) == voxel::AIR,
+        "out of range y is air");
+  check(world.get_block(100, 10, 100) == voxel::AIR, "unloaded is air");
+  check(!world.set_block(100, 10, 100, voxel::STONE), "set_block unloaded");
+  int32_t h = world.surface_height(-5, 3);
+  check(h > 0 and voxel::is_solid(world.get_block(-5, h, 3)) and
+            !voxel::is_solid(world.get_block(-5, h + 1, 3)), "surface_height");
+
+  // Interior edit bumps only its own chunk.
+  uint32_t r00 = world.chunk_revision(0, 0);
+  uint32_t r10 = world.chunk_revision(1, 0);
+  check(world.set_block(5, 100, 5, voxel::GLASS), "set_block");
+  check(world.get_block(5, 100, 5) == voxel::GLASS, "get after set");
+  check(world.chunk_revision(0, 0) == r00 + uint32_t(1) and world.chunk_revision(1, 0) == r10,
+        "interior edit revisions");
+  // Corner (local 0, 0) of chunk (0,0) touches (-1,0), (0,-1), (-1,-1).
+  uint32_t a = world.chunk_revision(-1, 0);
+  uint32_t b = world.chunk_revision(0, -1);
+  uint32_t d = world.chunk_revision(-1, -1);
+  uint32_t e = world.chunk_revision(1, 0);
+  check(world.set_block(0, 100, 0, voxel::STONE), "set corner");
+  check(world.chunk_revision(-1, 0) == a + uint32_t(1) and
+            world.chunk_revision(0, -1) == b + uint32_t(1) and
+            world.chunk_revision(-1, -1) == d + uint32_t(1) and
+            world.chunk_revision(1, 0) == e, "corner edit revisions");
+  // Local x = 15 edge of chunk (-1, 0) (world x = -1) touches (0, 0) only.
+  uint32_t c00 = world.chunk_revision(0, 0);
+  uint32_t cm1 = world.chunk_revision(-1, 1);
+  check(world.set_block(-1, 100, 7, voxel::STONE), "set edge");
+  check(world.chunk_revision(0, 0) == c00 + uint32_t(1) and world.chunk_revision(-1, 1) == cm1,
+        "edge edit revisions");
+  // An edit invalidates the mesh: rebuilding reflects it.
+  check(world.build_mesh(0, 0, mesh), "rebuild after edit");
+
+  // Keys and listing.
+  int64_t key = voxel::chunk_key(-3, -7);
+  check(voxel::key_cx(key) == -3 and voxel::key_cz(key) == -7, "key round trip negative");
+  int64_t key2 = voxel::chunk_key(2147483647, -2147483648);
+  check(voxel::key_cx(key2) == 2147483647 and voxel::key_cz(key2) == -2147483648,
+        "key round trip extremes");
+  std::vector<int64_t> keys = world.loaded_chunk_keys();
+  check(keys.size() == uint64_t(9), "loaded_chunk_keys");
+  check(world.loaded_chunks().size() == uint64_t(9), "loaded_chunks");
+  for (auto k : keys) world.remove_chunk(voxel::key_cx(k), voxel::key_cz(k));
+  check(world.chunk_count() == 0 and !world.has_chunk(0, 0), "remove_chunk");
+
+  // World is movable (game holds it as a member).
+  mut voxel::World first = voxel::World(uint32_t(3));
+  first.generate_chunk(2, -2);
+  voxel::World moved = std::move(first);
+  check(moved.has_chunk(2, -2), "moved world keeps chunks");
+  mut voxel::World assigned = voxel::World(uint32_t(4));
+  assigned = voxel::World(uint32_t(5));
+  check(assigned.seed == uint32_t(5) and assigned.chunk_count() == 0, "world move assignment");
+}
+
+// ---- mesher -----------------------------------------------------------------
+
+class Counts {
+public:
+  mut int64_t opaque = 0;
+  mut int64_t translucent = 0;
+  mut int64_t greedy_opaque = 0;
+  mut int64_t greedy_translucent = 0;
+  Counts() = default;
+};
+
+void mesh_isolated(voxel::Chunk& chunk, mut voxel::ChunkMesh& plain, mut voxel::ChunkMesh& greedy) {
+  mut voxel::Mesher mesher{};
+  mut std::vector<uint8_t> padded{};
+  mesher.pad_isolated(chunk, padded);
+  mesher.mesh_plain(padded, plain);
+  mesher.mesh_greedy(padded, greedy);
+}
+
+Counts count_quads(voxel::Chunk& chunk) {
+  mut voxel::ChunkMesh plain{};
+  mut voxel::ChunkMesh greedy{};
+  mesh_isolated(chunk, plain, greedy);
+  mut Counts c{};
+  c.opaque = plain.opaque_quads();
+  c.translucent = plain.translucent_quads();
+  c.greedy_opaque = greedy.opaque_quads();
+  c.greedy_translucent = greedy.translucent_quads();
+  return c;
+}
+
+void expect_quads(voxel::Chunk& chunk, int64_t opaque, int64_t translucent, std::string_view what) {
+  Counts c = count_quads(chunk);
+  if (c.opaque != opaque or c.translucent != translucent) {
+    std::println("FAIL: {}: got opaque={} translucent={}, want {} {}", what, c.opaque,
+                 c.translucent, opaque, translucent);
+    fail();
+  }
+}
+
+// Cross product of the first two edges must point along the face normal.
+bool quads_wound_ccw(std::vector<uint32_t>& words) {
+  for (mut uint64_t q = uint64_t(0); q + uint64_t(8) <= words.size(); q += uint64_t(8)) {
+    uint32_t w0 = words[q];
+    uint32_t w1 = words[q + uint64_t(2)];
+    uint32_t w2 = words[q + uint64_t(4)];
+    int32_t ax = voxel::word0_x(w1) - voxel::word0_x(w0);
+    int32_t ay = voxel::word0_y(w1) - voxel::word0_y(w0);
+    int32_t az = voxel::word0_z(w1) - voxel::word0_z(w0);
+    int32_t bx = voxel::word0_x(w2) - voxel::word0_x(w0);
+    int32_t by = voxel::word0_y(w2) - voxel::word0_y(w0);
+    int32_t bz = voxel::word0_z(w2) - voxel::word0_z(w0);
+    int32_t nx = ay * bz - az * by;
+    int32_t ny = az * bx - ax * bz;
+    int32_t nz = ax * by - ay * bx;
+    int32_t face = voxel::word0_face(w0);
+    int32_t sign = voxel::face_sign(face);
+    int32_t along = voxel::face_axis(face) == 0 ? nx : (voxel::face_axis(face) == 1 ? ny : nz);
+    if (along * sign <= 0) return false;
+  }
+  return true;
+}
+
+void test_mesher() {
+  {
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    c.set(5, 60, 5, voxel::STONE);
+    expect_quads(c, 6, 0, "single block");
+    c.set(6, 60, 5, voxel::STONE);
+    expect_quads(c, 10, 0, "two adjacent blocks");
+    mut voxel::ChunkMesh plain{};
+    mut voxel::ChunkMesh greedy{};
+    mesh_isolated(c, plain, greedy);
+    check(quads_wound_ccw(plain.opaque), "plain quads CCW from outside");
+    check(quads_wound_ccw(greedy.opaque), "greedy quads CCW from outside");
+    check(greedy.opaque_quads() == 6, "greedy merges two blocks into 6 quads");
+  }
+  {
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    c.set(5, 60, 5, voxel::GLASS);
+    c.set(6, 60, 5, voxel::GLASS);
+    expect_quads(c, 10, 0, "glass-glass culled");
+    c.set(7, 60, 5, voxel::STONE);
+    // Stone face toward glass is drawn; glass face toward stone is not.
+    expect_quads(c, 10 - 1 + 5 + 1, 0, "glass next to stone");
+  }
+  {
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    c.set(5, 60, 5, voxel::LEAVES);
+    c.set(5, 61, 5, voxel::LEAVES);
+    expect_quads(c, 10, 0, "leaves-leaves culled");
+    c.set(5, 62, 5, voxel::GLASS);
+    // Different cutout ids keep both faces.
+    expect_quads(c, 10 + 6, 0, "leaves next to glass");
+  }
+  {
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    c.set(5, 60, 5, voxel::WATER);
+    c.set(6, 60, 5, voxel::WATER);
+    expect_quads(c, 0, 10, "water-water culled");
+    c.set(5, 59, 5, voxel::STONE);
+    // Water bottom against stone is culled; stone top toward water is drawn.
+    expect_quads(c, 6, 9, "water on stone");
+    c.set(5, 61, 5, voxel::WATER);
+    mut voxel::ChunkMesh plain{};
+    mut voxel::ChunkMesh greedy{};
+    mesh_isolated(c, plain, greedy);
+    // Exactly the top faces of (5,61,5) and (6,60,5) carry the surface flag.
+    mut int64_t flagged = 0;
+    for (mut uint64_t i = uint64_t(0); i < plain.translucent.size(); i += uint64_t(2)) {
+      uint32_t w0 = plain.translucent[i];
+      uint32_t w1 = plain.translucent[i + uint64_t(1)];
+      check(voxel::word1_tile(w1) == voxel::T_WATER, "water tile");
+      if (voxel::word1_water_surface(w1)) {
+        flagged++;
+        check(voxel::word0_face(w0) == voxel::FACE_POS_Y, "surface flag only on top faces");
+      }
+    }
+    check(flagged == 8, "two water surface quads flagged");
+    check(quads_wound_ccw(plain.translucent), "water quads CCW");
+    // Water next to glass is drawn (glass is not opaque).
+    mut voxel::Chunk g = voxel::Chunk(0, 0);
+    g.set(5, 60, 5, voxel::WATER);
+    g.set(6, 60, 5, voxel::GLASS);
+    expect_quads(g, 6, 6, "water next to glass");
+  }
+  {
+    // Bottom of the world is never drawn.
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    c.set(3, 0, 3, voxel::STONE);
+    expect_quads(c, 5, 0, "y=0 bottom culled");
+    c.set(3, 127, 3, voxel::STONE);
+    expect_quads(c, 11, 0, "y=127 top drawn");
+  }
+  {
+    // A full 16x16 slab: plain 2*256 + 4*16 quads, greedy 6.
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    for (mut int32_t z = 0; z < 16; z++) {
+      for (mut int32_t x = 0; x < 16; x++) c.set(x, 20, z, voxel::STONE);
+    }
+    Counts counts = count_quads(c);
+    check(counts.opaque == 576, "slab plain quads");
+    check(counts.greedy_opaque == 6, "slab greedy quads");
+  }
+  {
+    // AO: block standing on a floor. Its +X face's bottom corners are
+    // occluded by the floor (side + corner = ao 1), top corners are open.
+    mut voxel::Chunk c = voxel::Chunk(0, 0);
+    for (mut int32_t z = 3; z <= 7; z++) {
+      for (mut int32_t x = 3; x <= 7; x++) c.set(x, 10, z, voxel::STONE);
+    }
+    c.set(5, 11, 5, voxel::STONE);
+    mut voxel::ChunkMesh plain{};
+    mut voxel::ChunkMesh greedy{};
+    mesh_isolated(c, plain, greedy);
+    mut bool found = false;
+    mut int64_t dark_floor = 0;
+    for (mut uint64_t i = uint64_t(0); i < plain.opaque.size(); i += uint64_t(2)) {
+      uint32_t w = plain.opaque[i];
+      int32_t face = voxel::word0_face(w);
+      if (face == voxel::FACE_POS_X and voxel::word0_x(w) == 6 and voxel::word0_z(w) >= 5 and
+          voxel::word0_z(w) <= 6 and (voxel::word0_y(w) == 11 or voxel::word0_y(w) == 12)) {
+        found = true;
+        int32_t expected = voxel::word0_y(w) == 11 ? 1 : 3;
+        check(voxel::word0_ao(w) == expected, "side face AO");
+      }
+      if (face == voxel::FACE_POS_Y and voxel::word0_y(w) == 11 and voxel::word0_ao(w) < 3) {
+        dark_floor++;
+      }
+    }
+    check(found, "found +X face of standing block");
+    // 8 floor tiles around the block: 4 edge tiles x 2 corners + 4 diagonal x 1.
+    check(dark_floor == 12, "floor AO around the block");
+  }
+  {
+    // Packing round trip.
+    uint32_t w0 = voxel::pack_word0(16, 128, 16, 5, 3);
+    check(voxel::word0_x(w0) == 16 and voxel::word0_y(w0) == 128 and voxel::word0_z(w0) == 16 and
+              voxel::word0_face(w0) == 5 and voxel::word0_ao(w0) == 3, "word0 round trip max");
+    check(voxel::pack_word0(0, 0, 0, 0, 0) == uint32_t(0), "word0 zero");
+    uint32_t w1 = voxel::pack_word1(uint32_t(22), true);
+    check(voxel::word1_tile(w1) == uint32_t(22) and voxel::word1_water_surface(w1), "word1 round trip");
+    check(!voxel::word1_water_surface(voxel::pack_word1(uint32_t(5), false)), "word1 no flag");
+    check(w0 == (uint32_t(16) | (uint32_t(128) << 5) | (uint32_t(16) << 13) | (uint32_t(5) << 18) |
+                 (uint32_t(3) << 21)), "word0 bit layout");
+  }
+}
+
+int main() {
+  test_determinism();
+  test_world_api();
+  test_mesher();
+  int32_t failed = failures.load(std::memory_order_relaxed());
+  if (failed != 0) {
+    std::println("{} world test failures", failed);
+    return 1;
+  }
+  std::println("world tests passed");
+  return 0;
+}

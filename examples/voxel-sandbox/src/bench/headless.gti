@@ -1,0 +1,261 @@
+// Headless world benchmark: generation + meshing timings and a checksum.
+//
+//   voxel-bench [--seed N] [--radius R] [--reps K] [--threads T] [--json PATH]
+//
+// bench/reference/voxel_bench.cpp implements the same workload, output and
+// JSON schema in C++20; bench/compare.py runs both.
+export module headless;
+
+import "../world/block.gti";
+import "../world/chunk.gti";
+import "../world/worldgen.gti";
+import "../world/mesher.gti";
+import "../world/world.gti";
+import std.vector;
+import std.string;
+import std.memory;
+import std.format;
+import std.chrono;
+import std.numeric;
+import std.algorithm;
+import std.charconv;
+import std.io;
+import std.cstdio;
+import std.thread;
+
+export namespace voxel {
+int64_t now_ns() {
+  return std::chrono::steady_clock::now().value().time_since_origin().count();
+}
+
+class PhaseStats {
+public:
+  mut int64_t count = 0;
+  mut int64_t total_ns = 0;   // median over reps of the phase total
+  mut int64_t min_ns = 0;
+  mut int64_t median_ns = 0;
+  mut int64_t p95_ns = 0;
+  mut int64_t max_ns = 0;
+  PhaseStats() = default;
+};
+
+// samples: per-chunk times across all reps; totals: one per rep.
+void summarize(mut std::vector<int64_t>& samples, mut std::vector<int64_t>& totals,
+               int64_t per_rep, mut PhaseStats& out) {
+  std::sort(samples);
+  std::sort(totals);
+  uint64_t n = samples.size();
+  out.count = per_rep;
+  if (n == uint64_t(0)) return;
+  out.min_ns = samples[uint64_t(0)];
+  out.median_ns = samples[n / uint64_t(2)];
+  mut uint64_t p95 = (n * uint64_t(95)) / uint64_t(100);
+  if (p95 >= n) p95 = n - uint64_t(1);
+  out.p95_ns = samples[p95];
+  out.max_ns = samples[n - uint64_t(1)];
+  out.total_ns = totals[totals.size() / uint64_t(2)];
+}
+
+uint64_t fnv_byte(uint64_t h, uint64_t byte) {
+  return std::wrapping_mul(h ^ byte, uint64_t(1099511628211));
+}
+
+uint64_t fnv_u64(uint64_t h, uint64_t value) {
+  mut uint64_t r = h;
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(8); i++) {
+    r = fnv_byte(r, (value >> (i * uint64_t(8))) & uint64_t(255));
+  }
+  return r;
+}
+
+std::string phase_json(PhaseStats& s) {
+  return std::format(
+      "{{\"count\": {}, \"total_ns\": {}, \"min_ns\": {}, \"median_ns\": {}, \"p95_ns\": {}, \"max_ns\": {}}}",
+      s.count, s.total_ns, s.min_ns, s.median_ns, s.p95_ns, s.max_ns);
+}
+
+std::string us(int64_t ns) {
+  // Fixed 3-decimal microseconds without float formatting differences.
+  int64_t whole = ns / 1000;
+  int64_t frac = ns % 1000;
+  mut std::string pad = std::string("");
+  if (frac < 100) pad = std::string("0");
+  if (frac < 10) pad = std::string("00");
+  return std::format("{}.{}{}", whole, pad, frac);
+}
+
+void print_phase(std::string_view name, PhaseStats& s) {
+  int64_t per_chunk = s.count > 0 ? s.total_ns / s.count : int64_t(0);
+  int64_t rate = s.total_ns > 0 ? (s.count * 1000000000) / s.total_ns : int64_t(0);
+  std::println("{}: chunks={} total_ms={} us/chunk={} min_us={} median_us={} p95_us={} max_us={} chunks/s={}",
+               name, s.count, us(s.total_ns / 1000), us(per_chunk), us(s.min_ns),
+               us(s.median_ns), us(s.p95_ns), us(s.max_ns), rate);
+}
+
+bool parse_int(std::string& text, mut int64_t& out) {
+  std::from_chars_result r = std::from_chars(text.view(), out);
+  return r.ec == std::parse_errc::none and r.position == text.size();
+}
+
+// Same chunk order as the serial loop: cz outer, cx inner.
+bool generate_parallel(mut World& world, int32_t r, int32_t t) {
+  mut std::vector<ChunkCoord> coords{};
+  for (mut int32_t cz = -r; cz <= r; cz++) {
+    for (mut int32_t cx = -r; cx <= r; cx++) coords.push_back(ChunkCoord(cx, cz));
+  }
+  return world.generate_chunks(coords, t) == int64_t(coords.size());
+}
+
+int32_t run_bench(std::vector<std::string>& args) {
+  mut int64_t seed = 1337;
+  mut int64_t radius = 8;
+  mut int64_t reps = 1;
+  mut int64_t threads = 1;
+  mut std::string json_path = std::string("");
+  mut uint64_t i = uint64_t(1);
+  while (i < args.size()) {
+    std::string& flag = args[i];
+    if (i + uint64_t(1) >= args.size()) {
+      std::println("missing value for {}", flag);
+      return 2;
+    }
+    std::string& value = args[i + uint64_t(1)];
+    mut bool ok = true;
+    if (flag == "--seed") ok = parse_int(value, seed);
+    else if (flag == "--radius") ok = parse_int(value, radius);
+    else if (flag == "--reps") ok = parse_int(value, reps);
+    else if (flag == "--threads") ok = parse_int(value, threads);
+    else if (flag == "--json") json_path = value.clone();
+    else {
+      std::println("unknown flag {}", flag);
+      return 2;
+    }
+    if (!ok or seed < 0 or seed > 4294967295 or radius < 1 or radius > 64 or
+        reps < 1 or !(threads == 1 or threads == 2 or threads == 4 or threads == 8)) {
+      std::println("bad value for {}", flag);
+      return 2;
+    }
+    i += uint64_t(2);
+  }
+  uint32_t world_seed = uint32_t(seed);
+  int32_t r = int32_t(radius);
+  int32_t side = 2 * r + 1;
+  int64_t gen_chunks = int64_t(side) * int64_t(side);
+  int64_t mesh_chunks = int64_t(side - 2) * int64_t(side - 2);
+
+  mut std::vector<int64_t> gen_samples{};
+  mut std::vector<int64_t> gen_totals{};
+  mut std::vector<int64_t> plain_samples{};
+  mut std::vector<int64_t> plain_totals{};
+  mut std::vector<int64_t> greedy_samples{};
+  mut std::vector<int64_t> greedy_totals{};
+  mut uint64_t checksum = uint64_t(14695981039346656037);
+  mut int64_t plain_opaque = 0;
+  mut int64_t plain_translucent = 0;
+  mut int64_t greedy_opaque = 0;
+  mut int64_t greedy_translucent = 0;
+
+  for (mut int64_t rep = 0; rep < reps; rep++) {
+    mut World world = World(world_seed);
+    // Generation.
+    int64_t gen_start = now_ns();
+    if (threads == 1) {
+      for (mut int32_t cz = -r; cz <= r; cz++) {
+        for (mut int32_t cx = -r; cx <= r; cx++) {
+          int64_t t0 = now_ns();
+          world.generate_chunk(cx, cz);
+          gen_samples.push_back(now_ns() - t0);
+        }
+      }
+    } else {
+      // Per-chunk samples are not collected in parallel mode (wall time only).
+      if (!generate_parallel(world, r, int32_t(threads))) {
+        std::println("parallel generation failed");
+        return 3;
+      }
+    }
+    int64_t gen_total = now_ns() - gen_start;
+    gen_totals.push_back(gen_total);
+    if (threads != 1) gen_samples.push_back(gen_total / gen_chunks);
+
+    if (rep == 0) {
+      for (mut int32_t cz = -r; cz <= r; cz++) {
+        for (mut int32_t cx = -r; cx <= r; cx++) {
+          Chunk& chunk = world.chunk_at(cx, cz);
+          for (mut uint64_t b = uint64_t(0); b < chunk.blocks.size(); b++) {
+            checksum = fnv_byte(checksum, uint64_t(chunk.blocks[b]));
+          }
+        }
+      }
+    }
+
+    // Meshing: plain culling, then greedy.
+    mut ChunkMesh mesh{};
+    for (mut int32_t mode = 0; mode < 2; mode++) {
+      world.greedy = mode == 1;
+      mut int64_t opaque = 0;
+      mut int64_t translucent = 0;
+      int64_t phase_start = now_ns();
+      for (mut int32_t cz = -r + 1; cz <= r - 1; cz++) {
+        for (mut int32_t cx = -r + 1; cx <= r - 1; cx++) {
+          int64_t t0 = now_ns();
+          [[discard]] world.build_mesh(cx, cz, mesh);
+          int64_t dt = now_ns() - t0;
+          if (mode == 0) plain_samples.push_back(dt); else greedy_samples.push_back(dt);
+          opaque += mesh.opaque_quads();
+          translucent += mesh.translucent_quads();
+        }
+      }
+      int64_t phase_total = now_ns() - phase_start;
+      if (mode == 0) {
+        plain_totals.push_back(phase_total);
+        plain_opaque = opaque;
+        plain_translucent = translucent;
+      } else {
+        greedy_totals.push_back(phase_total);
+        greedy_opaque = opaque;
+        greedy_translucent = translucent;
+      }
+    }
+  }
+  checksum = fnv_u64(checksum, uint64_t(plain_opaque));
+  checksum = fnv_u64(checksum, uint64_t(plain_translucent));
+  checksum = fnv_u64(checksum, uint64_t(greedy_opaque));
+  checksum = fnv_u64(checksum, uint64_t(greedy_translucent));
+
+  mut PhaseStats gen{};
+  mut PhaseStats plain{};
+  mut PhaseStats greedy{};
+  summarize(gen_samples, gen_totals, gen_chunks, gen);
+  summarize(plain_samples, plain_totals, mesh_chunks, plain);
+  summarize(greedy_samples, greedy_totals, mesh_chunks, greedy);
+
+  std::string checksum_text = std::format("{:016x}", checksum);
+  std::println("voxel-bench lang=gti seed={} radius={} reps={} threads={}", seed, radius, reps, threads);
+  print_phase("generate", gen);
+  print_phase("mesh_plain", plain);
+  print_phase("mesh_greedy", greedy);
+  std::println("quads plain opaque={} translucent={} greedy opaque={} translucent={}",
+               plain_opaque, plain_translucent, greedy_opaque, greedy_translucent);
+  std::println("checksum {}", checksum_text);
+
+  if (json_path.size() != uint64_t(0)) {
+    std::string json = std::format(
+        "{{\n  \"lang\": \"gti\",\n  \"seed\": {},\n  \"radius\": {},\n  \"reps\": {},\n  \"threads\": {},\n  \"generate\": {},\n  \"mesh_plain\": {},\n  \"mesh_greedy\": {},\n  \"quads\": {{\"plain_opaque\": {}, \"plain_translucent\": {}, \"greedy_opaque\": {}, \"greedy_translucent\": {}}},\n  \"checksum\": \"{}\"\n}}\n",
+        seed, radius, reps, threads, phase_json(gen), phase_json(plain), phase_json(greedy),
+        plain_opaque, plain_translucent, greedy_opaque, greedy_translucent, checksum_text);
+    mut auto file = std::fopen(json_path.view(), "w");
+    if (!file) {
+      std::println("cannot open {}", json_path);
+      return 4;
+    }
+    auto written = file.value()->write(json.view());
+    auto closed = file.value()->close();
+    if (!written or !closed) {
+      std::println("cannot write {}", json_path);
+      return 4;
+    }
+  }
+  return 0;
+}
+}

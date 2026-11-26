@@ -1,0 +1,342 @@
+// Chunk meshing: face culling, per-vertex ambient occlusion and optional
+// greedy merging into the packed two-word vertex format.
+//
+// The mesher works on a padded copy of the chunk (PAD_W x PAD_H x PAD_W =
+// 18 x 130 x 18) holding a one-block border from the 8 neighbors. Padded
+// y = 0 is world y = -1 (treated as solid bedrock, so chunk bottoms are never
+// drawn) and padded y = 129 is world y = 128 (AIR).
+//
+// Vertex format (2 x uint32 per vertex, 4 vertices per quad, CCW from
+// outside, drawn with indices 0,1,2 2,3,0):
+//   word0: x 0-4 | y 5-12 | z 13-17 | face 18-20 | ao 21-22
+//   word1: tile 0-7 | water-surface flag bit 8
+export module mesher;
+
+import "block.gti";
+import "chunk.gti";
+import std.vector;
+import std.numeric;
+
+export namespace voxel {
+constexpr int32_t PAD_W = 18;
+constexpr int32_t PAD_H = 130;
+constexpr int32_t PAD_LAYER = PAD_W * PAD_W;
+constexpr int32_t PAD_VOLUME = PAD_LAYER * PAD_H;
+
+int32_t pad_index(int32_t x, int32_t y, int32_t z) {
+  // x, y, z are chunk-local block coordinates in -1..16 / -1..128, so this
+  // cannot overflow. Wrapping ops skip the per-operation overflow checks:
+  // measured ~25% of plain meshing time with checked +/* (see report).
+  return std::wrapping_add(
+      std::wrapping_mul(std::wrapping_add(std::wrapping_mul(std::wrapping_add(y, 1), PAD_W),
+                                          std::wrapping_add(z, 1)),
+                        PAD_W),
+      std::wrapping_add(x, 1));
+}
+
+uint32_t pack_word0(int32_t x, int32_t y, int32_t z, int32_t face, int32_t ao) {
+  return uint32_t(x) | (uint32_t(y) << 5) | (uint32_t(z) << 13) |
+         (uint32_t(face) << 18) | (uint32_t(ao) << 21);
+}
+
+uint32_t pack_word1(uint32_t tile, bool water_surface) {
+  return tile | (water_surface ? uint32_t(256) : uint32_t(0));
+}
+
+int32_t word0_x(uint32_t w) { return int32_t(w & uint32_t(31)); }
+int32_t word0_y(uint32_t w) { return int32_t((w >> 5) & uint32_t(255)); }
+int32_t word0_z(uint32_t w) { return int32_t((w >> 13) & uint32_t(31)); }
+int32_t word0_face(uint32_t w) { return int32_t((w >> 18) & uint32_t(7)); }
+int32_t word0_ao(uint32_t w) { return int32_t((w >> 21) & uint32_t(3)); }
+uint32_t word1_tile(uint32_t w) { return w & uint32_t(255); }
+bool word1_water_surface(uint32_t w) { return (w & uint32_t(256)) != uint32_t(0); }
+
+class ChunkMesh {
+public:
+  mut std::vector<uint32_t> opaque{};
+  mut std::vector<uint32_t> translucent{};
+
+  ChunkMesh() = default;
+  ChunkMesh(ChunkMesh& other) = delete;
+  ChunkMesh(ChunkMesh&& other) = default;
+
+  void clear() mut {
+    this.opaque.clear();
+    this.translucent.clear();
+  }
+  // 8 words per quad.
+  int64_t opaque_quads() { return int64_t(this.opaque.size() / uint64_t(8)); }
+  int64_t translucent_quads() { return int64_t(this.translucent.size() / uint64_t(8)); }
+  int64_t quad_count() { return this.opaque_quads() + this.translucent_quads(); }
+};
+
+// Face geometry. Axis 0 = x, 1 = y, 2 = z.
+int32_t face_axis(int32_t face) { return face / 2; }
+int32_t face_sign(int32_t face) { return (face % 2) == 0 ? 1 : -1; }
+
+// Offset of corner `c` (0..3, CCW from outside) of `face` along `axis`,
+// relative to the block's minimum corner.
+int32_t corner_offset(int32_t face, int32_t c, int32_t axis) {
+  // +X: (1,0,1) (1,0,0) (1,1,0) (1,1,1)
+  // -X: (0,0,0) (0,0,1) (0,1,1) (0,1,0)
+  // +Y: (0,1,1) (1,1,1) (1,1,0) (0,1,0)
+  // -Y: (0,0,0) (1,0,0) (1,0,1) (0,0,1)
+  // +Z: (0,0,1) (1,0,1) (1,1,1) (0,1,1)
+  // -Z: (1,0,0) (0,0,0) (0,1,0) (1,1,0)
+  if (face == FACE_POS_X) {
+    if (axis == 0) return 1;
+    if (axis == 1) return c >= 2 ? 1 : 0;
+    return (c == 0 or c == 3) ? 1 : 0;
+  }
+  if (face == FACE_NEG_X) {
+    if (axis == 0) return 0;
+    if (axis == 1) return c >= 2 ? 1 : 0;
+    return (c == 1 or c == 2) ? 1 : 0;
+  }
+  if (face == FACE_POS_Y) {
+    if (axis == 1) return 1;
+    if (axis == 0) return (c == 1 or c == 2) ? 1 : 0;
+    return c <= 1 ? 1 : 0;
+  }
+  if (face == FACE_NEG_Y) {
+    if (axis == 1) return 0;
+    if (axis == 0) return (c == 1 or c == 2) ? 1 : 0;
+    return c >= 2 ? 1 : 0;
+  }
+  if (face == FACE_POS_Z) {
+    if (axis == 2) return 1;
+    if (axis == 0) return (c == 1 or c == 2) ? 1 : 0;
+    return c >= 2 ? 1 : 0;
+  }
+  // FACE_NEG_Z
+  if (axis == 2) return 0;
+  if (axis == 0) return (c == 0 or c == 3) ? 1 : 0;
+  return c >= 2 ? 1 : 0;
+}
+
+// Unchecked read of the padded buffer. Every index the mesher forms is a
+// pad_index of coordinates in -1..16 / -1..128, i.e. inside PAD_VOLUME.
+uint8_t pget(std::vector<uint8_t>& padded, int32_t index) {
+  unsafe { return padded.get_unchecked(uint64_t(index)); }
+}
+
+bool occludes(uint8_t id) { return is_opaque(id); }
+
+// Whether the face of `id` toward `neighbor` is visible.
+bool face_visible(uint8_t id, uint8_t neighbor) {
+  if (id == WATER) return neighbor != WATER and !is_opaque(neighbor);
+  if (is_opaque(neighbor)) return false;
+  if (is_cutout(id) and neighbor == id) return false;
+  return true;
+}
+
+int32_t ao_value(bool side1, bool side2, bool corner) {
+  if (side1 and side2) return 0;
+  mut int32_t n = 0;
+  if (side1) n++;
+  if (side2) n++;
+  if (corner) n++;
+  return 3 - n;
+}
+
+// Mesher scratch state, reused across chunks.
+class Mesher {
+  mut std::vector<uint32_t> mask{};  // greedy slice mask (face keys)
+
+public:
+  Mesher() = default;
+  Mesher(Mesher& other) = delete;
+  Mesher(Mesher&& other) = default;
+
+  // Fills a padded buffer from a chunk with an empty (AIR) border; y = -1 is
+  // bedrock. Used for isolated meshing (tests, previews).
+  void pad_isolated(Chunk& chunk, mut std::vector<uint8_t>& padded) {
+    padded.clear();
+    padded.resize(uint64_t(PAD_VOLUME), AIR);
+    for (mut int32_t z = -1; z <= CHUNK_DEPTH; z++) {
+      for (mut int32_t x = -1; x <= CHUNK_WIDTH; x++) {
+        padded[uint64_t(pad_index(x, -1, z))] = BEDROCK;
+      }
+    }
+    for (mut int32_t y = 0; y < CHUNK_HEIGHT; y++) {
+      for (mut int32_t z = 0; z < CHUNK_DEPTH; z++) {
+        for (mut int32_t x = 0; x < CHUNK_WIDTH; x++) {
+          padded[uint64_t(pad_index(x, y, z))] =
+              chunk.blocks[uint64_t(chunk_index(x, y, z))];
+        }
+      }
+    }
+  }
+
+  // AO for corner `c` of the face of block (x, y, z).
+  // `front` is the padded index of the block in front of the face.
+  int32_t corner_ao(std::vector<uint8_t>& padded, int32_t front, int32_t face, int32_t c) {
+    int32_t axis = face_axis(face);
+    // Tangent axes u, v, their index strides and the corner's direction.
+    int32_t ua = axis == 0 ? 1 : 0;
+    int32_t va = axis == 2 ? 1 : 2;
+    int32_t ustep = ua == 0 ? 1 : PAD_LAYER;
+    int32_t vstep = va == 1 ? PAD_LAYER : PAD_W;
+    int32_t du = corner_offset(face, c, ua) == 1 ? ustep : -ustep;
+    int32_t dv = corner_offset(face, c, va) == 1 ? vstep : -vstep;
+    bool s1 = occludes(pget(padded, front + du));
+    bool s2 = occludes(pget(padded, front + dv));
+    bool cc = occludes(pget(padded, front + du + dv));
+    return ao_value(s1, s2, cc);
+  }
+
+  // Emits one quad. (x, y, z) is the block's minimum corner; (w, h) extends
+  // the quad along the face's tangent axes (u, v) for greedy merging.
+  void emit_quad(mut std::vector<uint32_t>& out, int32_t x, int32_t y, int32_t z,
+                 int32_t face, int32_t w, int32_t h, int32_t ao0, int32_t ao1,
+                 int32_t ao2, int32_t ao3, uint32_t tile, bool water_surface) {
+    int32_t axis = face_axis(face);
+    int32_t ua = axis == 0 ? 1 : 0;
+    int32_t va = axis == 2 ? 1 : 2;
+    uint32_t word1 = pack_word1(tile, water_surface);
+    int32_t start = (ao0 + ao2 < ao1 + ao3) ? 1 : 0;
+    for (mut int32_t k = 0; k < 4; k++) {
+      int32_t c = (k + start) % 4;
+      mut int32_t vx = x + corner_offset(face, c, 0);
+      mut int32_t vy = y + corner_offset(face, c, 1);
+      mut int32_t vz = z + corner_offset(face, c, 2);
+      // Stretch corners on the positive side of each tangent axis.
+      if (corner_offset(face, c, ua) == 1) {
+        if (ua == 0) vx += w - 1; else vy += w - 1;
+      }
+      if (corner_offset(face, c, va) == 1) {
+        if (va == 1) vy += h - 1; else vz += h - 1;
+      }
+      int32_t ao = c == 0 ? ao0 : (c == 1 ? ao1 : (c == 2 ? ao2 : ao3));
+      out.push_back(pack_word0(vx, vy, vz, face, ao));
+      out.push_back(word1);
+    }
+  }
+
+  // Plain face culling: one quad per visible block face.
+  void mesh_plain(std::vector<uint8_t>& padded, mut ChunkMesh& out) {
+    out.clear();
+    for (mut int32_t y = 0; y < CHUNK_HEIGHT; y++) {
+      for (mut int32_t z = 0; z < CHUNK_DEPTH; z++) {
+        for (mut int32_t x = 0; x < CHUNK_WIDTH; x++) {
+          int32_t index = pad_index(x, y, z);
+          uint8_t id = pget(padded, index);
+          if (id == AIR) continue;
+          for (mut int32_t face = 0; face < 6; face++) {
+            int32_t axis = face_axis(face);
+            int32_t sign = face_sign(face);
+            int32_t step = axis == 0 ? 1 : (axis == 1 ? PAD_LAYER : PAD_W);
+            uint8_t neighbor = pget(padded, index + sign * step);
+            if (!face_visible(id, neighbor)) continue;
+            int32_t ao0 = this.corner_ao(padded, index + sign * step, face, 0);
+            int32_t ao1 = this.corner_ao(padded, index + sign * step, face, 1);
+            int32_t ao2 = this.corner_ao(padded, index + sign * step, face, 2);
+            int32_t ao3 = this.corner_ao(padded, index + sign * step, face, 3);
+            uint32_t tile = tile_for(id, face);
+            if (id == WATER) {
+              bool surface = face == FACE_POS_Y and neighbor != WATER;
+              this.emit_quad(out.translucent, x, y, z, face, 1, 1, ao0, ao1, ao2, ao3, tile, surface);
+            } else {
+              this.emit_quad(out.opaque, x, y, z, face, 1, 1, ao0, ao1, ao2, ao3, tile, false);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Face key for greedy merging: 0 = no face; otherwise
+  // 1 | tile << 1 | ao0..3 << 9.. | surface << 17 | translucent << 18.
+  uint32_t face_key(std::vector<uint8_t>& padded, int32_t x, int32_t y, int32_t z,
+                    int32_t face) {
+    int32_t index = pad_index(x, y, z);
+    uint8_t id = pget(padded, index);
+    if (id == AIR) return uint32_t(0);
+    int32_t axis = face_axis(face);
+    int32_t sign = face_sign(face);
+    int32_t step = axis == 0 ? 1 : (axis == 1 ? PAD_LAYER : PAD_W);
+    uint8_t neighbor = pget(padded, index + sign * step);
+    if (!face_visible(id, neighbor)) return uint32_t(0);
+    uint32_t ao0 = uint32_t(this.corner_ao(padded, index + sign * step, face, 0));
+    uint32_t ao1 = uint32_t(this.corner_ao(padded, index + sign * step, face, 1));
+    uint32_t ao2 = uint32_t(this.corner_ao(padded, index + sign * step, face, 2));
+    uint32_t ao3 = uint32_t(this.corner_ao(padded, index + sign * step, face, 3));
+    bool water = id == WATER;
+    bool surface = water and face == FACE_POS_Y and neighbor != WATER;
+    return uint32_t(1) | (tile_for(id, face) << 1) | (ao0 << 9) | (ao1 << 11) |
+           (ao2 << 13) | (ao3 << 15) | (surface ? uint32_t(1) << 17 : uint32_t(0)) |
+           (water ? uint32_t(1) << 18 : uint32_t(0));
+  }
+
+  // Greedy merging of coplanar faces with identical keys.
+  void mesh_greedy(std::vector<uint8_t>& padded, mut ChunkMesh& out) mut {
+    out.clear();
+    for (mut int32_t face = 0; face < 6; face++) {
+      int32_t axis = face_axis(face);
+      int32_t ua = axis == 0 ? 1 : 0;
+      int32_t va = axis == 2 ? 1 : 2;
+      int32_t depth_n = axis == 1 ? CHUNK_HEIGHT : CHUNK_WIDTH;
+      int32_t u_n = ua == 1 ? CHUNK_HEIGHT : CHUNK_WIDTH;
+      int32_t v_n = va == 1 ? CHUNK_HEIGHT : CHUNK_DEPTH;
+      uint64_t mask_size = uint64_t(u_n * v_n);
+      if (this.mask.size() < mask_size) this.mask.resize(mask_size, uint32_t(0));
+      for (mut int32_t d = 0; d < depth_n; d++) {
+        // Build the slice mask.
+        for (mut int32_t v = 0; v < v_n; v++) {
+          for (mut int32_t u = 0; u < u_n; u++) {
+            mut int32_t x = 0;
+            mut int32_t y = 0;
+            mut int32_t z = 0;
+            if (axis == 0) { x = d; y = u; z = v; }
+            else if (axis == 1) { y = d; x = u; z = v; }
+            else { z = d; x = u; y = v; }
+            this.mask[uint64_t(v * u_n + u)] = this.face_key(padded, x, y, z, face);
+          }
+        }
+        // Merge rectangles.
+        for (mut int32_t v = 0; v < v_n; v++) {
+          mut int32_t u = 0;
+          while (u < u_n) {
+            uint32_t key = this.mask[uint64_t(v * u_n + u)];
+            if (key == uint32_t(0)) { u++; continue; }
+            mut int32_t w = 1;
+            while (u + w < u_n and this.mask[uint64_t(v * u_n + u + w)] == key) w++;
+            mut int32_t h = 1;
+            mut bool grow = true;
+            while (grow and v + h < v_n) {
+              for (mut int32_t k = 0; k < w; k++) {
+                if (this.mask[uint64_t((v + h) * u_n + u + k)] != key) { grow = false; break; }
+              }
+              if (grow) h++;
+            }
+            for (mut int32_t hv = 0; hv < h; hv++) {
+              for (mut int32_t k = 0; k < w; k++) {
+                this.mask[uint64_t((v + hv) * u_n + u + k)] = uint32_t(0);
+              }
+            }
+            mut int32_t x = 0;
+            mut int32_t y = 0;
+            mut int32_t z = 0;
+            if (axis == 0) { x = d; y = u; z = v; }
+            else if (axis == 1) { y = d; x = u; z = v; }
+            else { z = d; x = u; y = v; }
+            uint32_t tile = (key >> 1) & uint32_t(255);
+            int32_t ao0 = int32_t((key >> 9) & uint32_t(3));
+            int32_t ao1 = int32_t((key >> 11) & uint32_t(3));
+            int32_t ao2 = int32_t((key >> 13) & uint32_t(3));
+            int32_t ao3 = int32_t((key >> 15) & uint32_t(3));
+            bool surface = ((key >> 17) & uint32_t(1)) == uint32_t(1);
+            bool water = ((key >> 18) & uint32_t(1)) == uint32_t(1);
+            if (water) {
+              this.emit_quad(out.translucent, x, y, z, face, w, h, ao0, ao1, ao2, ao3, tile, surface);
+            } else {
+              this.emit_quad(out.opaque, x, y, z, face, w, h, ao0, ao1, ao2, ao3, tile, false);
+            }
+            u += w;
+          }
+        }
+      }
+    }
+  }
+};
+}

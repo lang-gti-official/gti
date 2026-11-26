@@ -1,0 +1,139 @@
+// Deterministic seeded noise: integer hashing, 2D/3D gradient noise, fBm.
+//
+// Everything here is bit-reproducible across languages: hashes use explicit
+// wrapping 32-bit arithmetic, gradients are small integer vectors, and the
+// float path uses only +, -, * on binary32 values with a truncating
+// float->int floor (no transcendental functions, no sqrt, no division).
+// bench/reference/voxel_bench.cpp mirrors this file operation for operation.
+export module noise;
+
+import std.numeric;
+
+export namespace voxel {
+// Bit pattern of a signed 32-bit value as unsigned (two's complement).
+uint32_t to_bits(int32_t value) {
+  return uint32_t(int64_t(value) & 4294967295);
+}
+
+// Avalanche finalizer (lowbias32).
+uint32_t mix32(uint32_t value) {
+  mut uint32_t h = value;
+  h = h ^ (h >> 16);
+  h = std::wrapping_mul(h, uint32_t(2146121005));   // 0x7feb352d
+  h = h ^ (h >> 15);
+  h = std::wrapping_mul(h, uint32_t(2221713035));   // 0x846ca68b
+  h = h ^ (h >> 16);
+  return h;
+}
+
+uint32_t hash2(uint32_t seed, int32_t x, int32_t z) {
+  mut uint32_t h = mix32(seed ^ std::wrapping_mul(to_bits(x), uint32_t(2654435761)));
+  h = mix32(h ^ std::wrapping_mul(to_bits(z), uint32_t(2246822519)));
+  return h;
+}
+
+uint32_t hash3(uint32_t seed, int32_t x, int32_t y, int32_t z) {
+  mut uint32_t h = mix32(seed ^ std::wrapping_mul(to_bits(x), uint32_t(2654435761)));
+  h = mix32(h ^ std::wrapping_mul(to_bits(y), uint32_t(3266489917)));
+  h = mix32(h ^ std::wrapping_mul(to_bits(z), uint32_t(668265263)));
+  return h;
+}
+
+uint32_t seed_offset(uint32_t seed, uint32_t salt) {
+  return mix32(std::wrapping_add(seed, std::wrapping_mul(salt, uint32_t(2654435761))));
+}
+
+int32_t fast_floor(float value) {
+  int32_t truncated = int32_t(value);
+  if (value < float(truncated)) return truncated - 1;
+  return truncated;
+}
+
+float fade(float t) {
+  return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+float lerp(float a, float b, float t) {
+  return a + (b - a) * t;
+}
+
+float grad2(uint32_t h, float dx, float dz) {
+  uint32_t k = h & uint32_t(7);
+  if (k == uint32_t(0)) return dx;
+  if (k == uint32_t(1)) return -dx;
+  if (k == uint32_t(2)) return dz;
+  if (k == uint32_t(3)) return -dz;
+  if (k == uint32_t(4)) return dx + dz;
+  if (k == uint32_t(5)) return -dx + dz;
+  if (k == uint32_t(6)) return dx - dz;
+  return -dx - dz;
+}
+
+// Perlin's 12 edge gradients (16-entry table form).
+float grad3(uint32_t h, float dx, float dy, float dz) {
+  uint32_t k = h & uint32_t(15);
+  float u = k < uint32_t(8) ? dx : dy;
+  float v = k < uint32_t(4) ? dy : ((k == uint32_t(12) or k == uint32_t(14)) ? dx : dz);
+  float a = (k & uint32_t(1)) == uint32_t(0) ? u : -u;
+  float b = (k & uint32_t(2)) == uint32_t(0) ? v : -v;
+  return a + b;
+}
+
+// 2D gradient noise, roughly in [-1, 1].
+float perlin2(uint32_t seed, float x, float z) {
+  int32_t x0 = fast_floor(x);
+  int32_t z0 = fast_floor(z);
+  float fx = x - float(x0);
+  float fz = z - float(z0);
+  float u = fade(fx);
+  float v = fade(fz);
+  float n00 = grad2(hash2(seed, x0, z0), fx, fz);
+  float n10 = grad2(hash2(seed, x0 + 1, z0), fx - 1.0, fz);
+  float n01 = grad2(hash2(seed, x0, z0 + 1), fx, fz - 1.0);
+  float n11 = grad2(hash2(seed, x0 + 1, z0 + 1), fx - 1.0, fz - 1.0);
+  return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
+}
+
+// 3D gradient noise, roughly in [-1, 1].
+float perlin3(uint32_t seed, float x, float y, float z) {
+  int32_t x0 = fast_floor(x);
+  int32_t y0 = fast_floor(y);
+  int32_t z0 = fast_floor(z);
+  float fx = x - float(x0);
+  float fy = y - float(y0);
+  float fz = z - float(z0);
+  float u = fade(fx);
+  float v = fade(fy);
+  float w = fade(fz);
+  float n000 = grad3(hash3(seed, x0, y0, z0), fx, fy, fz);
+  float n100 = grad3(hash3(seed, x0 + 1, y0, z0), fx - 1.0, fy, fz);
+  float n010 = grad3(hash3(seed, x0, y0 + 1, z0), fx, fy - 1.0, fz);
+  float n110 = grad3(hash3(seed, x0 + 1, y0 + 1, z0), fx - 1.0, fy - 1.0, fz);
+  float n001 = grad3(hash3(seed, x0, y0, z0 + 1), fx, fy, fz - 1.0);
+  float n101 = grad3(hash3(seed, x0 + 1, y0, z0 + 1), fx - 1.0, fy, fz - 1.0);
+  float n011 = grad3(hash3(seed, x0, y0 + 1, z0 + 1), fx, fy - 1.0, fz - 1.0);
+  float n111 = grad3(hash3(seed, x0 + 1, y0 + 1, z0 + 1), fx - 1.0, fy - 1.0, fz - 1.0);
+  float x00 = lerp(n000, n100, u);
+  float x10 = lerp(n010, n110, u);
+  float x01 = lerp(n001, n101, u);
+  float x11 = lerp(n011, n111, u);
+  return lerp(lerp(x00, x10, v), lerp(x01, x11, v), w);
+}
+
+// Fractal sum of `octaves` perlin2 layers (lacunarity 2, gain 0.5),
+// normalized by the total amplitude.
+float fbm2(uint32_t seed, float x, float z, int32_t octaves) {
+  mut float sum = 0.0;
+  mut float amplitude = 1.0;
+  mut float total = 0.0;
+  mut float frequency = 1.0;
+  for (mut int32_t octave = 0; octave < octaves; octave++) {
+    uint32_t octave_seed = std::wrapping_add(seed, uint32_t(octave) * uint32_t(1013));
+    sum += amplitude * perlin2(octave_seed, x * frequency, z * frequency);
+    total += amplitude;
+    amplitude = amplitude * 0.5;
+    frequency = frequency * 2.0;
+  }
+  return sum * (1.0 / total);
+}
+}

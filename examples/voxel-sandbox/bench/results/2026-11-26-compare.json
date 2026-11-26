@@ -1,0 +1,1828 @@
+{
+  "date": "2026-11-26",
+  "machine": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "gti_version": "gti 0.494.0",
+  "cpp_compiler": "Homebrew clang version 23.1.2",
+  "cpp_flags": [
+    "-O3",
+    "-std=c++20",
+    "-ffp-contract=off"
+  ],
+  "seed": 1337,
+  "radius": 8,
+  "runs": 5,
+  "checksum": "6ecaa3dd21b2260e",
+  "summary": {
+    "gti": {
+      "1": {
+        "generate": {
+          "total_ns": 142701541,
+          "min_ns": 407250,
+          "median_ns": 493083,
+          "p95_ns": 562583,
+          "max_ns": 622666,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 46878750,
+          "min_ns": 149583,
+          "median_ns": 203542,
+          "p95_ns": 261250,
+          "max_ns": 291917,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 119727209,
+          "min_ns": 448458,
+          "median_ns": 525000,
+          "p95_ns": 604500,
+          "max_ns": 666750,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "2": {
+        "generate": {
+          "total_ns": 72546000,
+          "min_ns": 251024,
+          "median_ns": 251024,
+          "p95_ns": 251024,
+          "max_ns": 251024,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 47333625,
+          "min_ns": 147041,
+          "median_ns": 208500,
+          "p95_ns": 261750,
+          "max_ns": 347958,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 118756958,
+          "min_ns": 445167,
+          "median_ns": 523000,
+          "p95_ns": 599958,
+          "max_ns": 684917,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "4": {
+        "generate": {
+          "total_ns": 37137875,
+          "min_ns": 128504,
+          "median_ns": 128504,
+          "p95_ns": 128504,
+          "max_ns": 128504,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 47110125,
+          "min_ns": 154958,
+          "median_ns": 205750,
+          "p95_ns": 260208,
+          "max_ns": 308750,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 119616166,
+          "min_ns": 449625,
+          "median_ns": 522084,
+          "p95_ns": 606083,
+          "max_ns": 671291,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "8": {
+        "generate": {
+          "total_ns": 26421917,
+          "min_ns": 91425,
+          "median_ns": 91425,
+          "p95_ns": 91425,
+          "max_ns": 91425,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 48129250,
+          "min_ns": 154667,
+          "median_ns": 210625,
+          "p95_ns": 264708,
+          "max_ns": 384625,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 121105459,
+          "min_ns": 451334,
+          "median_ns": 533458,
+          "p95_ns": 616209,
+          "max_ns": 649834,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      }
+    },
+    "cpp": {
+      "1": {
+        "generate": {
+          "total_ns": 126663542,
+          "min_ns": 361584,
+          "median_ns": 436792,
+          "p95_ns": 499083,
+          "max_ns": 589333,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 32833625,
+          "min_ns": 106750,
+          "median_ns": 143750,
+          "p95_ns": 179125,
+          "max_ns": 222792,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 94667750,
+          "min_ns": 358833,
+          "median_ns": 417500,
+          "p95_ns": 475084,
+          "max_ns": 523584,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "2": {
+        "generate": {
+          "total_ns": 63224167,
+          "min_ns": 218768,
+          "median_ns": 218768,
+          "p95_ns": 218768,
+          "max_ns": 218768,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 32631291,
+          "min_ns": 105333,
+          "median_ns": 142959,
+          "p95_ns": 181667,
+          "max_ns": 217958,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 94774417,
+          "min_ns": 359750,
+          "median_ns": 416625,
+          "p95_ns": 476000,
+          "max_ns": 514000,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "4": {
+        "generate": {
+          "total_ns": 32409958,
+          "min_ns": 112145,
+          "median_ns": 112145,
+          "p95_ns": 112145,
+          "max_ns": 112145,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 32954709,
+          "min_ns": 106458,
+          "median_ns": 143417,
+          "p95_ns": 183417,
+          "max_ns": 262125,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 94956125,
+          "min_ns": 363334,
+          "median_ns": 416125,
+          "p95_ns": 478208,
+          "max_ns": 539542,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      },
+      "8": {
+        "generate": {
+          "total_ns": 24352125,
+          "min_ns": 84263,
+          "median_ns": 84263,
+          "p95_ns": 84263,
+          "max_ns": 84263,
+          "count": 289
+        },
+        "mesh_plain": {
+          "total_ns": 32084916,
+          "min_ns": 105458,
+          "median_ns": 141375,
+          "p95_ns": 178542,
+          "max_ns": 214208,
+          "count": 225
+        },
+        "mesh_greedy": {
+          "total_ns": 94332916,
+          "min_ns": 359916,
+          "median_ns": 415375,
+          "p95_ns": 471166,
+          "max_ns": 515375,
+          "count": 225
+        },
+        "quads": {
+          "plain_opaque": 331828,
+          "plain_translucent": 0,
+          "greedy_opaque": 228167,
+          "greedy_translucent": 0
+        },
+        "checksum": "6ecaa3dd21b2260e"
+      }
+    }
+  },
+  "raw": {
+    "gti": {
+      "1": [
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 141944167,
+            "min_ns": 411875,
+            "median_ns": 492667,
+            "p95_ns": 561791,
+            "max_ns": 612834
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 46878750,
+            "min_ns": 149125,
+            "median_ns": 203334,
+            "p95_ns": 261250,
+            "max_ns": 309000
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118475459,
+            "min_ns": 452958,
+            "median_ns": 521542,
+            "p95_ns": 604500,
+            "max_ns": 644375
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 142827708,
+            "min_ns": 407084,
+            "median_ns": 493083,
+            "p95_ns": 578791,
+            "max_ns": 628500
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47507500,
+            "min_ns": 155584,
+            "median_ns": 206750,
+            "p95_ns": 264084,
+            "max_ns": 288292
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119975292,
+            "min_ns": 458084,
+            "median_ns": 527500,
+            "p95_ns": 594791,
+            "max_ns": 669958
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 143865125,
+            "min_ns": 402125,
+            "median_ns": 499292,
+            "p95_ns": 575916,
+            "max_ns": 641833
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47880500,
+            "min_ns": 153792,
+            "median_ns": 209000,
+            "p95_ns": 264041,
+            "max_ns": 321000
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 120071541,
+            "min_ns": 448458,
+            "median_ns": 522042,
+            "p95_ns": 629334,
+            "max_ns": 930667
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 142701541,
+            "min_ns": 407250,
+            "median_ns": 494542,
+            "p95_ns": 562583,
+            "max_ns": 622666
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 45629958,
+            "min_ns": 145041,
+            "median_ns": 196750,
+            "p95_ns": 250375,
+            "max_ns": 284917
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119219375,
+            "min_ns": 445458,
+            "median_ns": 525000,
+            "p95_ns": 606208,
+            "max_ns": 666750
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 142543542,
+            "min_ns": 410042,
+            "median_ns": 489458,
+            "p95_ns": 556334,
+            "max_ns": 600209
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 46461125,
+            "min_ns": 149583,
+            "median_ns": 203542,
+            "p95_ns": 256459,
+            "max_ns": 291917
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119727209,
+            "min_ns": 443458,
+            "median_ns": 527750,
+            "p95_ns": 599333,
+            "max_ns": 643959
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "2": [
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 75314625,
+            "min_ns": 260604,
+            "median_ns": 260604,
+            "p95_ns": 260604,
+            "max_ns": 260604
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47333625,
+            "min_ns": 146458,
+            "median_ns": 208500,
+            "p95_ns": 260291,
+            "max_ns": 300500
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119855833,
+            "min_ns": 443625,
+            "median_ns": 526708,
+            "p95_ns": 611542,
+            "max_ns": 700834
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 72709125,
+            "min_ns": 251588,
+            "median_ns": 251588,
+            "p95_ns": 251588,
+            "max_ns": 251588
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47054958,
+            "min_ns": 145541,
+            "median_ns": 201667,
+            "p95_ns": 267375,
+            "max_ns": 347958
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119278000,
+            "min_ns": 445208,
+            "median_ns": 525000,
+            "p95_ns": 599958,
+            "max_ns": 656750
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 72449250,
+            "min_ns": 250689,
+            "median_ns": 250689,
+            "p95_ns": 250689,
+            "max_ns": 250689
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47552750,
+            "min_ns": 148542,
+            "median_ns": 209750,
+            "p95_ns": 268666,
+            "max_ns": 429542
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118041292,
+            "min_ns": 447166,
+            "median_ns": 519458,
+            "p95_ns": 592916,
+            "max_ns": 684917
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 72546000,
+            "min_ns": 251024,
+            "median_ns": 251024,
+            "p95_ns": 251024,
+            "max_ns": 251024
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 46618875,
+            "min_ns": 147041,
+            "median_ns": 200709,
+            "p95_ns": 258791,
+            "max_ns": 334083
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118572875,
+            "min_ns": 445167,
+            "median_ns": 523000,
+            "p95_ns": 592084,
+            "max_ns": 659833
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 72406667,
+            "min_ns": 250542,
+            "median_ns": 250542,
+            "p95_ns": 250542,
+            "max_ns": 250542
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47906375,
+            "min_ns": 161958,
+            "median_ns": 209041,
+            "p95_ns": 261750,
+            "max_ns": 389000
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118756958,
+            "min_ns": 438791,
+            "median_ns": 518916,
+            "p95_ns": 601333,
+            "max_ns": 802625
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "4": [
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 37425584,
+            "min_ns": 129500,
+            "median_ns": 129500,
+            "p95_ns": 129500,
+            "max_ns": 129500
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 46520000,
+            "min_ns": 148916,
+            "median_ns": 205542,
+            "p95_ns": 253625,
+            "max_ns": 299959
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119977375,
+            "min_ns": 440709,
+            "median_ns": 522084,
+            "p95_ns": 648375,
+            "max_ns": 832458
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 37994708,
+            "min_ns": 131469,
+            "median_ns": 131469,
+            "p95_ns": 131469,
+            "max_ns": 131469
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47110125,
+            "min_ns": 145458,
+            "median_ns": 201875,
+            "p95_ns": 265750,
+            "max_ns": 459458
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 119616166,
+            "min_ns": 449625,
+            "median_ns": 525708,
+            "p95_ns": 607792,
+            "max_ns": 633792
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 37137875,
+            "min_ns": 128504,
+            "median_ns": 128504,
+            "p95_ns": 128504,
+            "max_ns": 128504
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 46754917,
+            "min_ns": 154958,
+            "median_ns": 205750,
+            "p95_ns": 250000,
+            "max_ns": 308750
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118997541,
+            "min_ns": 450834,
+            "median_ns": 521042,
+            "p95_ns": 600209,
+            "max_ns": 671291
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 36735666,
+            "min_ns": 127113,
+            "median_ns": 127113,
+            "p95_ns": 127113,
+            "max_ns": 127113
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 51961709,
+            "min_ns": 156750,
+            "median_ns": 211666,
+            "p95_ns": 282625,
+            "max_ns": 2605875
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 120055125,
+            "min_ns": 460334,
+            "median_ns": 526250,
+            "p95_ns": 606083,
+            "max_ns": 682375
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 36790500,
+            "min_ns": 127302,
+            "median_ns": 127302,
+            "p95_ns": 127302,
+            "max_ns": 127302
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47664542,
+            "min_ns": 157709,
+            "median_ns": 207291,
+            "p95_ns": 260208,
+            "max_ns": 287875
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 117878792,
+            "min_ns": 443416,
+            "median_ns": 521209,
+            "p95_ns": 579708,
+            "max_ns": 625833
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "8": [
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 26421917,
+            "min_ns": 91425,
+            "median_ns": 91425,
+            "p95_ns": 91425,
+            "max_ns": 91425
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 48129250,
+            "min_ns": 162291,
+            "median_ns": 210584,
+            "p95_ns": 260167,
+            "max_ns": 313334
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 118809333,
+            "min_ns": 448500,
+            "median_ns": 525083,
+            "p95_ns": 589500,
+            "max_ns": 646375
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 43090459,
+            "min_ns": 149101,
+            "median_ns": 149101,
+            "p95_ns": 149101,
+            "max_ns": 149101
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 53436292,
+            "min_ns": 167166,
+            "median_ns": 226209,
+            "p95_ns": 326000,
+            "max_ns": 422500
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 121105459,
+            "min_ns": 448167,
+            "median_ns": 531417,
+            "p95_ns": 640667,
+            "max_ns": 693125
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 27141375,
+            "min_ns": 93914,
+            "median_ns": 93914,
+            "p95_ns": 93914,
+            "max_ns": 93914
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47884375,
+            "min_ns": 154667,
+            "median_ns": 210708,
+            "p95_ns": 261625,
+            "max_ns": 294416
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 121371250,
+            "min_ns": 457166,
+            "median_ns": 534916,
+            "p95_ns": 621792,
+            "max_ns": 705583
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 25970667,
+            "min_ns": 89863,
+            "median_ns": 89863,
+            "p95_ns": 89863,
+            "max_ns": 89863
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 47715500,
+            "min_ns": 153208,
+            "median_ns": 210625,
+            "p95_ns": 264708,
+            "max_ns": 384625
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 121344000,
+            "min_ns": 452042,
+            "median_ns": 535959,
+            "p95_ns": 616209,
+            "max_ns": 638666
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "gti",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 23569084,
+            "min_ns": 81553,
+            "median_ns": 81553,
+            "p95_ns": 81553,
+            "max_ns": 81553
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 48864916,
+            "min_ns": 154583,
+            "median_ns": 206959,
+            "p95_ns": 289791,
+            "max_ns": 443458
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 120244542,
+            "min_ns": 451334,
+            "median_ns": 533458,
+            "p95_ns": 606542,
+            "max_ns": 649834
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ]
+    },
+    "cpp": {
+      "1": [
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 126715250,
+            "min_ns": 355167,
+            "median_ns": 435250,
+            "p95_ns": 511834,
+            "max_ns": 589333
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32833625,
+            "min_ns": 107708,
+            "median_ns": 143334,
+            "p95_ns": 180458,
+            "max_ns": 222792
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 95057292,
+            "min_ns": 360709,
+            "median_ns": 418292,
+            "p95_ns": 473125,
+            "max_ns": 513583
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 126582750,
+            "min_ns": 361666,
+            "median_ns": 437208,
+            "p95_ns": 498542,
+            "max_ns": 622875
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 33097792,
+            "min_ns": 106750,
+            "median_ns": 143834,
+            "p95_ns": 179125,
+            "max_ns": 237417
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 95186500,
+            "min_ns": 356208,
+            "median_ns": 419625,
+            "p95_ns": 482917,
+            "max_ns": 531542
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 126589875,
+            "min_ns": 357667,
+            "median_ns": 436792,
+            "p95_ns": 499083,
+            "max_ns": 601167
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32904167,
+            "min_ns": 109000,
+            "median_ns": 143750,
+            "p95_ns": 179541,
+            "max_ns": 200500
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94525958,
+            "min_ns": 363750,
+            "median_ns": 417500,
+            "p95_ns": 475084,
+            "max_ns": 495583
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 126663542,
+            "min_ns": 365000,
+            "median_ns": 436416,
+            "p95_ns": 504416,
+            "max_ns": 558292
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32668458,
+            "min_ns": 106459,
+            "median_ns": 144041,
+            "p95_ns": 177000,
+            "max_ns": 251083
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94667750,
+            "min_ns": 358833,
+            "median_ns": 415416,
+            "p95_ns": 475875,
+            "max_ns": 532208
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 1,
+          "generate": {
+            "count": 289,
+            "total_ns": 126887584,
+            "min_ns": 361584,
+            "median_ns": 438208,
+            "p95_ns": 496584,
+            "max_ns": 531166
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32107375,
+            "min_ns": 106375,
+            "median_ns": 139417,
+            "p95_ns": 177833,
+            "max_ns": 219459
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94313875,
+            "min_ns": 357292,
+            "median_ns": 416375,
+            "p95_ns": 470750,
+            "max_ns": 523584
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "2": [
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 63000292,
+            "min_ns": 217994,
+            "median_ns": 217994,
+            "p95_ns": 217994,
+            "max_ns": 217994
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32631291,
+            "min_ns": 105042,
+            "median_ns": 142959,
+            "p95_ns": 181667,
+            "max_ns": 217291
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 95591791,
+            "min_ns": 371958,
+            "median_ns": 419833,
+            "p95_ns": 476541,
+            "max_ns": 558834
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 63224167,
+            "min_ns": 218768,
+            "median_ns": 218768,
+            "p95_ns": 218768,
+            "max_ns": 218768
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 31606916,
+            "min_ns": 103292,
+            "median_ns": 138709,
+            "p95_ns": 175417,
+            "max_ns": 199583
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 96515625,
+            "min_ns": 352792,
+            "median_ns": 420917,
+            "p95_ns": 493125,
+            "max_ns": 761875
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 63087416,
+            "min_ns": 218295,
+            "median_ns": 218295,
+            "p95_ns": 218295,
+            "max_ns": 218295
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 33113708,
+            "min_ns": 105333,
+            "median_ns": 143500,
+            "p95_ns": 186041,
+            "max_ns": 268375
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94774417,
+            "min_ns": 359750,
+            "median_ns": 416500,
+            "p95_ns": 476000,
+            "max_ns": 508916
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 63798333,
+            "min_ns": 220755,
+            "median_ns": 220755,
+            "p95_ns": 220755,
+            "max_ns": 220755
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32369791,
+            "min_ns": 105833,
+            "median_ns": 142084,
+            "p95_ns": 177875,
+            "max_ns": 219167
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94204167,
+            "min_ns": 359834,
+            "median_ns": 413292,
+            "p95_ns": 474666,
+            "max_ns": 514000
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 2,
+          "generate": {
+            "count": 289,
+            "total_ns": 63552125,
+            "min_ns": 219903,
+            "median_ns": 219903,
+            "p95_ns": 219903,
+            "max_ns": 219903
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 33119709,
+            "min_ns": 109916,
+            "median_ns": 145250,
+            "p95_ns": 181667,
+            "max_ns": 217958
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94620542,
+            "min_ns": 358250,
+            "median_ns": 416625,
+            "p95_ns": 471042,
+            "max_ns": 499625
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "4": [
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 33466167,
+            "min_ns": 115799,
+            "median_ns": 115799,
+            "p95_ns": 115799,
+            "max_ns": 115799
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 35342333,
+            "min_ns": 108750,
+            "median_ns": 145958,
+            "p95_ns": 200667,
+            "max_ns": 585750
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 98888667,
+            "min_ns": 367916,
+            "median_ns": 427791,
+            "p95_ns": 523083,
+            "max_ns": 737708
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 32442209,
+            "min_ns": 112256,
+            "median_ns": 112256,
+            "p95_ns": 112256,
+            "max_ns": 112256
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32493541,
+            "min_ns": 106458,
+            "median_ns": 143084,
+            "p95_ns": 178125,
+            "max_ns": 262125
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94990250,
+            "min_ns": 363334,
+            "median_ns": 417209,
+            "p95_ns": 479291,
+            "max_ns": 525292
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 32309125,
+            "min_ns": 111796,
+            "median_ns": 111796,
+            "p95_ns": 111796,
+            "max_ns": 111796
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 33341542,
+            "min_ns": 102250,
+            "median_ns": 143417,
+            "p95_ns": 207625,
+            "max_ns": 267667
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94249500,
+            "min_ns": 359458,
+            "median_ns": 415084,
+            "p95_ns": 465917,
+            "max_ns": 500875
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 32314625,
+            "min_ns": 111815,
+            "median_ns": 111815,
+            "p95_ns": 111815,
+            "max_ns": 111815
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32954709,
+            "min_ns": 107459,
+            "median_ns": 144000,
+            "p95_ns": 182791,
+            "max_ns": 214417
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94183709,
+            "min_ns": 360250,
+            "median_ns": 414208,
+            "p95_ns": 473375,
+            "max_ns": 539542
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 4,
+          "generate": {
+            "count": 289,
+            "total_ns": 32409958,
+            "min_ns": 112145,
+            "median_ns": 112145,
+            "p95_ns": 112145,
+            "max_ns": 112145
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32407625,
+            "min_ns": 103250,
+            "median_ns": 142333,
+            "p95_ns": 183417,
+            "max_ns": 212583
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94956125,
+            "min_ns": 365125,
+            "median_ns": 416125,
+            "p95_ns": 478208,
+            "max_ns": 559709
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ],
+      "8": [
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 21871125,
+            "min_ns": 75678,
+            "median_ns": 75678,
+            "p95_ns": 75678,
+            "max_ns": 75678
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32769458,
+            "min_ns": 107791,
+            "median_ns": 143959,
+            "p95_ns": 178542,
+            "max_ns": 214208
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 95101583,
+            "min_ns": 360208,
+            "median_ns": 416875,
+            "p95_ns": 475542,
+            "max_ns": 517667
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 21084542,
+            "min_ns": 72956,
+            "median_ns": 72956,
+            "p95_ns": 72956,
+            "max_ns": 72956
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 33703000,
+            "min_ns": 107458,
+            "median_ns": 147916,
+            "p95_ns": 186750,
+            "max_ns": 259958
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94294250,
+            "min_ns": 357084,
+            "median_ns": 414166,
+            "p95_ns": 471166,
+            "max_ns": 515375
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 24352125,
+            "min_ns": 84263,
+            "median_ns": 84263,
+            "p95_ns": 84263,
+            "max_ns": 84263
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 31479708,
+            "min_ns": 103208,
+            "median_ns": 137584,
+            "p95_ns": 173334,
+            "max_ns": 222084
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94358083,
+            "min_ns": 356250,
+            "median_ns": 415375,
+            "p95_ns": 472542,
+            "max_ns": 490375
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 30309417,
+            "min_ns": 104876,
+            "median_ns": 104876,
+            "p95_ns": 104876,
+            "max_ns": 104876
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 31918459,
+            "min_ns": 100708,
+            "median_ns": 141375,
+            "p95_ns": 173708,
+            "max_ns": 213125
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94332916,
+            "min_ns": 359916,
+            "median_ns": 416084,
+            "p95_ns": 467208,
+            "max_ns": 503041
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        },
+        {
+          "lang": "cpp",
+          "seed": 1337,
+          "radius": 8,
+          "reps": 1,
+          "threads": 8,
+          "generate": {
+            "count": 289,
+            "total_ns": 24392375,
+            "min_ns": 84402,
+            "median_ns": 84402,
+            "p95_ns": 84402,
+            "max_ns": 84402
+          },
+          "mesh_plain": {
+            "count": 225,
+            "total_ns": 32084916,
+            "min_ns": 105458,
+            "median_ns": 141083,
+            "p95_ns": 178750,
+            "max_ns": 198750
+          },
+          "mesh_greedy": {
+            "count": 225,
+            "total_ns": 94288583,
+            "min_ns": 360708,
+            "median_ns": 414208,
+            "p95_ns": 469833,
+            "max_ns": 532959
+          },
+          "quads": {
+            "plain_opaque": 331828,
+            "plain_translucent": 0,
+            "greedy_opaque": 228167,
+            "greedy_translucent": 0
+          },
+          "checksum": "6ecaa3dd21b2260e"
+        }
+      ]
+    }
+  },
+  "markdown": "seed 1337, radius 8 (289 chunks generated, 225 meshed), 5 runs, median; checksum `6ecaa3dd21b2260e` (identical)\n\n| Phase (1 thread) | GTI \u00b5s/chunk (median) | C++ \u00b5s/chunk (median) | GTI/C++ | GTI total ms | C++ total ms | GTI p95 \u00b5s | C++ p95 \u00b5s |\n|---|---:|---:|---:|---:|---:|---:|---:|\n| Generate | 493.1 | 436.8 | 1.13x | 142.7 | 126.7 | 562.6 | 499.1 |\n| Mesh (culled) | 203.5 | 143.8 | 1.42x | 46.9 | 32.8 | 261.2 | 179.1 |\n| Mesh (greedy) | 525.0 | 417.5 | 1.26x | 119.7 | 94.7 | 604.5 | 475.1 |\n\nQuads: culled 331828 opaque + 0 translucent; greedy 228167 + 0\n\n| Generation threads | GTI total ms | GTI chunks/s | GTI speedup | C++ total ms | C++ chunks/s | C++ speedup |\n|---:|---:|---:|---:|---:|---:|---:|\n| 1 | 142.7 | 2025 | 1.00x | 126.7 | 2282 | 1.00x |\n| 2 | 72.5 | 3984 | 1.97x | 63.2 | 4571 | 2.00x |\n| 4 | 37.1 | 7782 | 3.84x | 32.4 | 8917 | 3.91x |\n| 8 | 26.4 | 10938 | 5.40x | 24.4 | 11868 | 5.20x |"
+}

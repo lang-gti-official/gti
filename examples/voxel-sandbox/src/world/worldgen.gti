@@ -1,0 +1,217 @@
+// Terrain generation: heightmap + biomes, water, beaches, caves, ores,
+// gravel, cacti and trees.
+//
+// Every decision is a pure function of (seed, world position), so a chunk's
+// blocks never depend on which other chunks exist or were generated first.
+// Trees whose trunk lies within TREE_MARGIN blocks of a chunk contribute the
+// parts of their canopy that fall inside that chunk.
+export module worldgen;
+
+import "block.gti";
+import "chunk.gti";
+import "noise.gti";
+import std.vector;
+
+export namespace voxel {
+constexpr int32_t BIOME_PLAINS = 0;
+constexpr int32_t BIOME_FOREST = 1;
+constexpr int32_t BIOME_DESERT = 2;
+constexpr int32_t BIOME_SNOWY = 3;
+
+constexpr int32_t TREE_MARGIN = 2;
+constexpr int32_t COLUMN_SPAN = 20; // CHUNK_WIDTH + 2 * TREE_MARGIN
+
+class ColumnInfo {
+public:
+  mut int32_t height = 0;
+  mut int32_t biome = 0;
+  mut bool gravel = false;
+  ColumnInfo() = default;
+};
+
+float clamp01(float value) {
+  if (value < 0.0) return 0.0;
+  if (value > 1.0) return 1.0;
+  return value;
+}
+
+// Terrain height and biome of one world column.
+void column_info(uint32_t seed, int32_t wx, int32_t wz, mut ColumnInfo& out) {
+  float fx = float(wx);
+  float fz = float(wz);
+  float continent = fbm2(seed_offset(seed, uint32_t(1)), fx * 0.00390625, fz * 0.00390625, 4);
+  float detail = fbm2(seed_offset(seed, uint32_t(2)), fx * 0.015625, fz * 0.015625, 3);
+  float ridge = fbm2(seed_offset(seed, uint32_t(3)), fx * 0.001953125, fz * 0.001953125, 3);
+  float temperature = fbm2(seed_offset(seed, uint32_t(4)), fx * 0.001953125, fz * 0.001953125, 2);
+  float humidity = fbm2(seed_offset(seed, uint32_t(5)), fx * 0.00390625, fz * 0.00390625, 2);
+  float mountain = clamp01((ridge - 0.05) * 4.0);
+  float height_f = 57.0 + continent * 28.0 + detail * 6.0 + mountain * mountain * 52.0;
+  mut int32_t height = fast_floor(height_f);
+  if (height < 4) height = 4;
+  if (height > 124) height = 124;
+  out.height = height;
+  if ((mountain > 0.4 and height > 76) or temperature < -0.4) {
+    out.biome = BIOME_SNOWY;
+  } else if (temperature > 0.1 and humidity < 0.12) {
+    out.biome = BIOME_DESERT;
+  } else if (humidity > 0.05) {
+    out.biome = BIOME_FOREST;
+  } else {
+    out.biome = BIOME_PLAINS;
+  }
+  out.gravel = perlin2(seed_offset(seed, uint32_t(6)), fx * 0.0625, fz * 0.0625) > 0.3;
+}
+
+uint8_t surface_block(ColumnInfo& column, int32_t y) {
+  int32_t depth = column.height - y;
+  if (column.biome == BIOME_DESERT) {
+    if (depth < 4) return SAND;
+    if (depth < 7) return SANDSTONE;
+    return STONE;
+  }
+  if (column.height <= SEA_LEVEL + 1) {
+    // Beaches and sea floor.
+    if (depth < 3) return column.gravel ? GRAVEL : SAND;
+    return STONE;
+  }
+  if (column.biome == BIOME_SNOWY) {
+    if (depth == 0) return SNOW;
+    if (depth < 3 and column.height < 72) return DIRT;
+    return STONE;
+  }
+  if (depth == 0) return GRASS;
+  if (depth < 4) return DIRT;
+  return STONE;
+}
+
+void put_if_air(mut Chunk& chunk, int32_t lx, int32_t y, int32_t lz, uint8_t id) {
+  if (lx < 0 or lx >= CHUNK_WIDTH or lz < 0 or lz >= CHUNK_DEPTH) return;
+  if (y < 0 or y >= CHUNK_HEIGHT) return;
+  uint64_t index = uint64_t(chunk_index(lx, y, lz));
+  if (chunk.blocks[index] == AIR) chunk.blocks[index] = id;
+}
+
+void put_block(mut Chunk& chunk, int32_t lx, int32_t y, int32_t lz, uint8_t id) {
+  if (lx < 0 or lx >= CHUNK_WIDTH or lz < 0 or lz >= CHUNK_DEPTH) return;
+  if (y < 0 or y >= CHUNK_HEIGHT) return;
+  chunk.blocks[uint64_t(chunk_index(lx, y, lz))] = id;
+}
+
+// Places the in-chunk part of the tree rooted on column (lx, lz) (chunk-local,
+// may lie outside 0..15 by up to TREE_MARGIN).
+void place_tree(mut Chunk& chunk, int32_t lx, int32_t lz, int32_t ground, uint32_t h) {
+  int32_t trunk = 4 + int32_t((h >> 8) % uint32_t(3));
+  int32_t top = ground + trunk;
+  bool round_corners = ((h >> 12) & uint32_t(1)) == uint32_t(1);
+  for (mut int32_t y = top - 2; y <= top + 1; y++) {
+    int32_t radius = y >= top ? 1 : 2;
+    for (mut int32_t dz = -radius; dz <= radius; dz++) {
+      for (mut int32_t dx = -radius; dx <= radius; dx++) {
+        bool corner = (dx == radius or dx == -radius) and (dz == radius or dz == -radius);
+        if (corner and (radius == 1 or round_corners)) continue;
+        put_if_air(chunk, lx + dx, y, lz + dz, LEAVES);
+      }
+    }
+  }
+  for (mut int32_t y = ground + 1; y <= top; y++) {
+    put_block(chunk, lx, y, lz, LOG);
+  }
+  put_block(chunk, lx, ground, lz, DIRT);
+}
+
+void generate_chunk(mut Chunk& chunk, uint32_t seed) {
+  int32_t base_x = chunk.cx * CHUNK_WIDTH;
+  int32_t base_z = chunk.cz * CHUNK_DEPTH;
+  uint32_t cave_a = seed_offset(seed, uint32_t(7));
+  uint32_t cave_b = seed_offset(seed, uint32_t(8));
+  uint32_t ore_seed = seed_offset(seed, uint32_t(9));
+  uint32_t bedrock_seed = seed_offset(seed, uint32_t(10));
+  uint32_t plant_seed = seed_offset(seed, uint32_t(11));
+
+  // Column cache including the tree margin.
+  mut std::vector<ColumnInfo> columns{};
+  columns.reserve(uint64_t(COLUMN_SPAN * COLUMN_SPAN));
+  for (mut int32_t cz = 0; cz < COLUMN_SPAN; cz++) {
+    for (mut int32_t cx = 0; cx < COLUMN_SPAN; cx++) {
+      mut ColumnInfo info{};
+      column_info(seed, base_x + cx - TREE_MARGIN, base_z + cz - TREE_MARGIN, info);
+      columns.push_back(info);
+    }
+  }
+
+  // Terrain, water, bedrock.
+  for (mut int32_t lz = 0; lz < CHUNK_DEPTH; lz++) {
+    for (mut int32_t lx = 0; lx < CHUNK_WIDTH; lx++) {
+      ColumnInfo& column = columns[uint64_t((lz + TREE_MARGIN) * COLUMN_SPAN + lx + TREE_MARGIN)];
+      int32_t wx = base_x + lx;
+      int32_t wz = base_z + lz;
+      int32_t height = column.height;
+      for (mut int32_t y = 0; y < CHUNK_HEIGHT; y++) {
+        mut uint8_t id = AIR;
+        if (y <= height) {
+          id = surface_block(column, y);
+        } else if (y <= SEA_LEVEL) {
+          id = WATER;
+        }
+        if (y == 0) {
+          id = BEDROCK;
+        } else if (y <= 2 and hash3(bedrock_seed, wx, y, wz) % uint32_t(3) == uint32_t(0)) {
+          id = BEDROCK;
+        }
+        if (id == STONE) {
+          // Caves: two thin 3D noise sheets intersecting form tunnels. Kept
+          // 4 blocks under the surface so the surface (and tree placement)
+          // only depends on the column.
+          if (y >= 4 and y <= height - 4) {
+            float fx = float(wx) * 0.03125;
+            float fy = float(y) * 0.0625;
+            float fz = float(wz) * 0.03125;
+            float a = perlin3(cave_a, fx, fy, fz);
+            float b = perlin3(cave_b, fx, fy, fz);
+            if (a * a + b * b < 0.006) id = AIR;
+          }
+        }
+        if (id == STONE) {
+          uint32_t r = hash3(ore_seed, wx, y, wz) % uint32_t(1000);
+          if (y < 64 and r < uint32_t(10)) {
+            id = COAL_ORE;
+          } else if (y < 40 and r >= uint32_t(10) and r < uint32_t(16)) {
+            id = IRON_ORE;
+          }
+        }
+        chunk.blocks[uint64_t(chunk_index(lx, y, lz))] = id;
+      }
+    }
+  }
+
+  // Cacti: confined to their own column, placed before trees.
+  for (mut int32_t lz = 0; lz < CHUNK_DEPTH; lz++) {
+    for (mut int32_t lx = 0; lx < CHUNK_WIDTH; lx++) {
+      ColumnInfo& column = columns[uint64_t((lz + TREE_MARGIN) * COLUMN_SPAN + lx + TREE_MARGIN)];
+      if (column.biome != BIOME_DESERT or column.height <= SEA_LEVEL + 1) continue;
+      uint32_t h = hash2(plant_seed, base_x + lx, base_z + lz);
+      if (h % uint32_t(1000) >= uint32_t(6)) continue;
+      int32_t tall = 1 + int32_t((h >> 8) % uint32_t(3));
+      for (mut int32_t y = column.height + 1; y <= column.height + tall; y++) {
+        put_if_air(chunk, lx, y, lz, CACTUS);
+      }
+    }
+  }
+
+  // Trees: every trunk within the margin, in a fixed order. Leaves only fill
+  // air and logs always win, so overlapping trees commute.
+  for (mut int32_t cz = 0; cz < COLUMN_SPAN; cz++) {
+    for (mut int32_t cx = 0; cx < COLUMN_SPAN; cx++) {
+      ColumnInfo& column = columns[uint64_t(cz * COLUMN_SPAN + cx)];
+      if (column.biome != BIOME_FOREST and column.biome != BIOME_PLAINS) continue;
+      if (column.height <= SEA_LEVEL + 1 or column.height > 116) continue;
+      int32_t lx = cx - TREE_MARGIN;
+      int32_t lz = cz - TREE_MARGIN;
+      uint32_t h = hash2(plant_seed, base_x + lx, base_z + lz);
+      uint32_t chance = column.biome == BIOME_FOREST ? uint32_t(30) : uint32_t(4);
+      if (h % uint32_t(1000) >= chance) continue;
+      place_tree(chunk, lx, lz, column.height, h);
+    }
+  }
+}
+}

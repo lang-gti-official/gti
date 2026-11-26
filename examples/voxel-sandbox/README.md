@@ -1,5 +1,7 @@
 # GTI voxel sandbox
 
+![A forested valley rendered by the GTI voxel sandbox](docs/screenshot.png)
+
 An original block-building sandbox game written in GTI: an endless chunked
 voxel world with biomes, caves, ores, trees and water. You can walk, fly, break
 and place blocks, and every frame is profiled. It exists to show that GTI can
@@ -37,10 +39,12 @@ Options:
 | `--render-distance R` | view radius in chunks, 2–32 (default 10) |
 | `--no-vsync` | uncapped frame rate |
 | `--fullscreen`, `--size WxH` | window mode / size |
-| `--budget-ms MS` | per-frame CPU budget for chunk generation and meshing |
+| `--budget-ms MS` | per-frame CPU budget for chunk meshing |
+| `--threads T`, `--batch N` | chunk-generation workers (1/2/4/8, default 4) and chunks per frame (default 8) |
 | `--benchmark [--seconds S]` | scripted flight benchmark (vsync off), writes a report |
 | `--report PATH` | profile report path (JSON plus a per-frame CSV) |
 | `--screenshot SECONDS PATH` | save a PNG of the frame at that time |
+| `--no-overlay` | start with the F3 debug overlay hidden |
 
 Controls: WASD to move, the mouse to look, space to jump (or rise while
 flying), shift to descend, ctrl to sprint, F to toggle flying. Left click
@@ -82,3 +86,30 @@ gti run voxel-sandbox --release -- --benchmark --render-distance 12 --report pro
 gti run voxel-bench --release -- --radius 8 --reps 5
 python3 bench/compare.py
 ```
+
+## Results (2026-11-26)
+
+These were measured on a Mac with an Apple M4 Pro, macOS, GTI 0.494.0 `--release`. Other
+jobs were running on the machine (load average about 9), so treat absolute
+numbers as indicative.
+
+**Kernels, GTI vs C++** (`bench/compare.py --runs 5`: seed 1337, radius 8,
+289 chunks, median per chunk, checksums identical). The C++ port is the same
+algorithm built with `clang++ -O3 -ffp-contract=off`. It has no bounds or
+overflow checks, while the GTI build keeps GTI's checked integer arithmetic.
+
+| Phase, 1 thread | GTI µs/chunk | C++ µs/chunk | GTI/C++ |
+| --- | ---: | ---: | ---: |
+| Generate | 493 | 437 | 1.13× |
+| Mesh (face culling) | 204 | 144 | 1.42× |
+| Mesh (greedy) | 525 | 418 | 1.26× |
+
+Parallel generation scales the same in both languages: 3.8× on 4 threads and
+5.4× on 8 threads in GTI, versus 3.9× and 5.2× in C++.
+
+**Game, flight benchmark** (render distance 12, 3200×1766 framebuffer, vsync
+off, 4 generation workers): about 300–410 fps average depending on machine
+load. Median frame time is about 2 ms, the 1% low is about 70–85 fps and GPU
+time about 1.2 ms per frame. The full view distance is generated and meshed
+0.8 s after start. CPU-side game work is under 1 ms per frame; most of the
+rest is waiting for the GPU in `swap`.

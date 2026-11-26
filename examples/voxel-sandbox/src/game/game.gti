@@ -36,6 +36,10 @@ public:
   mut std::string screenshot_path{};
   // Per-frame CPU budget for generating and meshing chunks.
   mut double stream_budget_ms = 6.0;
+  // Chunks generated per frame, in parallel on this many workers (1/2/4/8).
+  mut int32_t generate_batch = 8;
+  mut int32_t worker_threads = 4;
+  mut bool show_overlay = true;
   GameOptions() = default;
 };
 
@@ -168,15 +172,20 @@ class Game {
     mut int64_t generated = 0;
     this.profiler.zone_end(ZONE_STREAM);
     this.profiler.zone_begin(ZONE_WORLDGEN);
+    // Collect the nearest missing chunks and generate them as one parallel
+    // batch on worker threads (bit-identical to serial generation).
+    mut std::vector<ChunkCoord> batch{};
     uint64_t generate_count = this.generate_order.size();
     for (mut uint64_t i = uint64_t(0); i < generate_count; i++) {
       ChunkOffset o = this.generate_order[i];
       int32_t cx = pcx + o.dx;
       int32_t cz = pcz + o.dz;
       if (this.world.has_chunk(cx, cz)) continue;
-      this.world.generate_chunk(cx, cz);
-      generated += 1i64;
-      if (now_ns() - start > budget_ns) break;
+      batch.push_back(ChunkCoord(cx, cz));
+      if (int32_t(batch.size()) >= this.options.generate_batch) break;
+    }
+    if (batch.size() > uint64_t(0)) {
+      generated = this.world.generate_chunks(batch, this.options.worker_threads);
     }
     this.profiler.zone_end(ZONE_WORLDGEN);
 
@@ -365,6 +374,9 @@ public:
     this.options.benchmark_seconds = options.benchmark_seconds;
     this.options.report_path = std::string(options.report_path.view());
     this.options.stream_budget_ms = options.stream_budget_ms;
+    this.options.generate_batch = options.generate_batch;
+    this.options.worker_threads = options.worker_threads;
+    this.show_debug = options.show_overlay;
     this.options.screenshot_at = options.screenshot_at;
     this.options.screenshot_path = std::string(options.screenshot_path.view());
     this.world = World(this.options.seed);
@@ -402,10 +414,11 @@ public:
     this.profiler.set_meta("fullscreen", std::format("{}", this.options.fullscreen).view());
     this.profiler.set_meta("stream_budget_ms", std::format("{}", this.options.stream_budget_ms).view());
     this.profiler.set_meta("chunk_size", "16x128x16");
+    this.profiler.set_meta("worker_threads", std::format("{}", this.options.worker_threads).view());
+    this.profiler.set_meta("generate_batch", std::format("{}", this.options.generate_batch).view());
 
     if (this.options.benchmark) {
       this.drive_benchmark(0.0f64);
-      this.show_debug = true;
     } else {
       this.spawn();
       this.window.capture_cursor(true);

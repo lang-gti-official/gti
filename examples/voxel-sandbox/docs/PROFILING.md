@@ -33,15 +33,18 @@ durations accumulate.
 | `worldgen` | terrain/biome/cave/ore/tree generation of new chunks |
 | `meshing` | face culling, ambient occlusion and greedy merging into vertex arrays |
 | `upload` | `glBufferData` of new or changed chunk meshes |
-| `cull` | frustum culling and draw-list building/sorting |
+| `cull` | reserved; frustum culling and draw sorting currently run inside `render` |
 | `render` | issuing the opaque, cutout and water passes (CPU side of GL calls) |
 | `hud` | building and drawing the overlay |
 | `swap` | `glfwSwapBuffers`. With vsync off on macOS this mostly measures how long the driver makes the CPU wait for the GPU |
+| `stream` | chunk streaming bookkeeping: range scans, revision checks, unloading |
+| `stats` | GPU timer polling and the once-per-second statistics |
 
 `untracked_ms` in the report is the frame average minus the sum of zone
 averages. It is loop overhead and everything not inside a zone.
 
-World generation and meshing run under a per-frame budget (`--budget-ms`). Their
+World generation runs as one parallel batch per frame (`--batch` chunks on
+`--threads` workers), and meshing runs under a per-frame budget (`--budget-ms`). Their
 zone times therefore show how much of each frame went to streaming, not how
 fast a chunk is generated. For per-chunk throughput, use the headless benchmark.
 
@@ -184,10 +187,12 @@ and prints per-phase ratios. Notes:
 (The numbers above are illustrative, not measurements.)
 
 - All values in `meta` are strings and are free-form. The game is meant to record at
-  least the seed, render distance, window and framebuffer size, vsync, build
-  profile, GL renderer and version strings, and the compiler version.
+  least the seed, render distance, window and framebuffer size, vsync, worker
+  threads and batch size, and GL renderer and version strings. The build profile
+  and compiler version are not known at run time; record them with the
+  result (`gti --version`, `--release`).
 - `gpu_ms_avg` is `null` when no timer result arrived.
-- CSV columns: `frame,total_ms,input_ms,physics_ms,worldgen_ms,meshing_ms,upload_ms,cull_ms,render_ms,hud_ms,swap_ms,gpu_ms`,
+- CSV columns: `frame,total_ms,input_ms,physics_ms,worldgen_ms,meshing_ms,upload_ms,cull_ms,render_ms,hud_ms,swap_ms,stream_ms,stats_ms,gpu_ms`,
   one row per frame, times in ms with 4 decimals. `gpu_ms` is empty when a
   frame received no GPU result.
 
@@ -286,8 +291,9 @@ Not comparable, or only after explanation:
   Apple's Metal translation layer on macOS, as is Java Edition's on a Mac.
 - **Runtime.** JIT warm-up, GC pauses (they show up in the 0.1% lows) and a
   multithreaded chunk builder on its side; on ours, an AOT-compiled binary with
-  a per-frame generation budget on the main thread. Say how many threads each
-  side used.
+  chunk generation in parallel batches on worker threads (`--threads`,
+  default 4; `--batch`, default 8 chunks per frame) with meshing on the main
+  thread. Say how many threads each side used.
 - **Process memory** is not comparable: JVM heap reservation is not working
   set.
 

@@ -1,1 +1,7 @@
-int main() { return 0; }
+import "headless.gti";
+import std.string;
+import std.vector;
+
+int main(int argc, std::vector<std::string> argv) {
+  return voxel::run_bench(argv);
+}
