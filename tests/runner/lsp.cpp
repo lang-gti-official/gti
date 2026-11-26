@@ -1856,8 +1856,10 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
       fs::create_directories(path.parent_path());
       writeFile(path, file->getString("text").value_or("").str());
     } else if (const json::Value *expected = step->get("analysisTrace")) {
-      // The server closes the trace record before publishing diagnostics.
-      // Match the most recent analysis for the main document after that reply.
+      // The server records frontend work before replying or publishing.
+      const auto *fields = expected->getAsObject();
+      const auto kind =
+          fields ? fields->getString("kind").value_or("analysis") : "analysis";
       std::istringstream records(readFile(trace).value_or(""));
       std::optional<json::Value> latest;
       for (std::string row; std::getline(records, row);) {
@@ -1867,7 +1869,7 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
           continue;
         }
         const auto *object = record->getAsObject();
-        if (object && object->getString("kind") == "analysis" &&
+        if (object && object->getString("kind") == kind &&
             object->getString("uri") == uriFor(directory / "main.gti"))
           latest = std::move(*record);
       }

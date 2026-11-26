@@ -216,13 +216,15 @@ struct SemanticClassification {
 struct LspRelatedDiagnostic {
   lang::RelatedDiagnostic related;
   std::string uri;
-  std::string source;
+  std::shared_ptr<const std::string> source;
+  LspRange range;
 };
 
 struct LspFixIt {
   lang::FixIt fix;
   std::string uri;
-  std::string source;
+  std::shared_ptr<const std::string> source;
+  LspRange range;
   bool sourceKnown = false;
 };
 
@@ -235,7 +237,8 @@ struct RepairInputs {
 struct LspDiagnostic {
   lang::Diagnostic diagnostic;
   std::string uri;
-  std::string source;
+  std::shared_ptr<const std::string> source;
+  LspRange range;
   std::vector<LspRelatedDiagnostic> related;
   std::vector<LspFixIt> fixes;
   std::string repairSnapshot;
@@ -303,12 +306,12 @@ bool validRepairGroup(const std::vector<LspFixIt> &fixes) {
     const auto &edit = fixes[i];
     const auto &span = edit.fix.span;
     if (!edit.sourceKnown || edit.uri != fixes.front().uri ||
-        edit.source != fixes.front().source ||
+        (edit.source != fixes.front().source && *edit.source != *fixes.front().source) ||
         edit.fix.applicability == lang::RepairApplicability::Incomplete ||
         edit.fix.applicability != fixes.front().fix.applicability ||
-        span.start > span.end || !boundary(edit.source, span.start) ||
-        !boundary(edit.source, span.end) ||
-        edit.source.substr(span.start, span.end - span.start) ==
+        span.start > span.end || !boundary(*edit.source, span.start) ||
+        !boundary(*edit.source, span.end) ||
+        std::string_view(*edit.source).substr(span.start, span.end - span.start) ==
             edit.fix.replacement)
       return false;
     for (std::size_t j = 0; j < i; ++j) {
@@ -435,19 +438,30 @@ private:
   std::vector<std::size_t> lineStarts;
 };
 
-Position positionAt(std::string_view source, std::size_t byteOffset) {
-  return SourcePositionIndex(source).at(byteOffset);
-}
+// The index borrows the exact editor bytes, including unexpanded macros.
+struct IndexedEditorSource {
+  explicit IndexedEditorSource(const std::string &source)
+      : text(source), positions(text) {}
+  IndexedEditorSource(const IndexedEditorSource &) = delete;
+  IndexedEditorSource &operator=(const IndexedEditorSource &) = delete;
+
+  const std::string text;
+  const SourcePositionIndex positions;
+};
 
 JsonValue positionJson(Position position) {
   return JsonObject{{"line", position.line}, {"character", position.character}};
 }
 
+JsonValue rangeJson(const SourcePositionIndex &positions, std::size_t byteOffset,
+                    std::size_t byteLength) {
+  return JsonObject{{"start", positionJson(positions.at(byteOffset))},
+                    {"end", positionJson(positions.at(byteOffset + byteLength))}};
+}
+
 JsonValue rangeJson(std::string_view source, std::size_t byteOffset,
                     std::size_t byteLength) {
-  const std::size_t end = std::min(source.size(), byteOffset + byteLength);
-  return JsonObject{{"start", positionJson(positionAt(source, byteOffset))},
-                    {"end", positionJson(positionAt(source, end))}};
+  return rangeJson(SourcePositionIndex(source), byteOffset, byteLength);
 }
 
 const JsonValue *member(const JsonValue *value, llvm::StringRef name) {
@@ -885,34 +899,75 @@ std::string sourceForSpan(const lang::SourceSpan &span,
              : std::string{};
 }
 
-LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
-                                const lang::SourceManager &sources,
-                                std::string_view rootPath,
-                                std::string_view rootUri,
-                                std::string_view rootSource) {
-  LspDiagnostic result{
-      .diagnostic = diagnostic,
-      .uri = uriForSource(diagnostic.primary.source, rootPath, rootUri),
-      .source =
-          sourceForSpan(diagnostic.primary, sources, rootPath, rootSource)};
-  result.related.reserve(diagnostic.related.size());
-  for (const lang::RelatedDiagnostic &related : diagnostic.related) {
-    result.related.push_back(
-        {.related = related,
-         .uri = uriForSource(related.span.source, rootPath, rootUri),
-         .source = sourceForSpan(related.span, sources, rootPath, rootSource)});
+// One compiler diagnostic batch may refer to a large source hundreds of
+// times through primary, related and repair spans. Retain one immutable text
+// per source, and compute its wire positions once while the snapshot is live.
+class DiagnosticConverter {
+public:
+  DiagnosticConverter(const lang::SourceManager &sources,
+                      std::string_view rootPath, std::string_view rootUri,
+                      std::string_view rootSource)
+      : sources(sources), rootPath(rootPath), rootUri(rootUri),
+        rootSource(rootSource) {}
+
+  LspDiagnostic convert(const lang::Diagnostic &diagnostic) {
+    LspDiagnostic result{.diagnostic = diagnostic};
+    locate(result, diagnostic.primary);
+    result.related.reserve(diagnostic.related.size());
+    result.fixes.reserve(diagnostic.fixes.size());
+    for (const auto &related : diagnostic.related) {
+      auto &entry = result.related.emplace_back();
+      entry.related = related;
+      locate(entry, related.span);
+    }
+    for (const auto &fix : diagnostic.fixes) {
+      auto &entry = result.fixes.emplace_back();
+      entry.fix = fix;
+      entry.sourceKnown = locate(entry, fix.span);
+    }
+    return result;
   }
-  result.fixes.reserve(diagnostic.fixes.size());
-  for (const lang::FixIt &fix : diagnostic.fixes) {
-    result.fixes.push_back(
-        {.fix = fix,
-         .uri = uriForSource(fix.span.source, rootPath, rootUri),
-         .source = sourceForSpan(fix.span, sources, rootPath, rootSource),
-         .sourceKnown = sources.find(fix.span.source) != nullptr ||
-                        fix.span.source.empty() ||
-                        fix.span.source == rootPath});
+
+private:
+  struct Source {
+    std::string uri;
+    std::shared_ptr<const std::string> text;
+    SourcePositionIndex positions;
+    bool known;
+  };
+
+  template <typename Location>
+  bool locate(Location &location, const lang::SourceSpan &span) {
+    auto it = indexed.find(span.source);
+    if (it == indexed.end()) {
+      const auto *found = sources.find(span.source);
+      const bool root = span.source.empty() || span.source == rootPath;
+      std::string_view bytes;
+      if (found)
+        bytes = *found;
+      else if (root)
+        bytes = rootSource;
+      auto text = std::make_shared<const std::string>(bytes);
+      it = indexed.emplace(span.source,
+              Source{uriForSource(span.source, rootPath, rootUri), text,
+                     SourcePositionIndex(*text), found != nullptr || root}).first;
+    }
+    const auto &source = it->second;
+    location.uri = source.uri;
+    location.source = source.text;
+    location.range = {source.positions.at(span.start),
+                      source.positions.at(std::max(span.start, span.end))};
+    return source.known;
   }
-  return result;
+
+  const lang::SourceManager &sources;
+  std::string_view rootPath, rootUri, rootSource;
+  std::unordered_map<std::string, Source> indexed;
+};
+
+JsonValue diagnosticRangeJson(const LspRange &range) {
+  return JsonObject{{"start", positionJson(range.start)},
+                    {"end", positionJson(range.end)}};
 }
 
 std::string diagnosticMessage(const lang::Diagnostic &diagnostic,
@@ -952,10 +1007,7 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
   const lang::Diagnostic &diagnostic = published.diagnostic;
   JsonObject result{
       {"range",
-       rangeJson(published.source, diagnostic.primary.start,
-                 diagnostic.primary.end >= diagnostic.primary.start
-                     ? diagnostic.primary.end - diagnostic.primary.start
-                     : 0)},
+       diagnosticRangeJson(published.range)},
       {"severity", static_cast<int>(diagnostic.severity)},
       {"source", std::string(diagnosticSource)}};
   if (!diagnostic.code.empty()) {
@@ -983,10 +1035,7 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
       JsonObject location{
           {"uri", related.uri},
           {"range",
-           rangeJson(related.source, related.related.span.start,
-                     related.related.span.end >= related.related.span.start
-                         ? related.related.span.end - related.related.span.start
-                         : 0)}};
+           diagnosticRangeJson(related.range)}};
       relatedInformation.push_back(
           JsonObject{{"location", std::move(location)},
                      {"message", related.related.message}});
@@ -1018,10 +1067,7 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
             {"applicability",
              std::string(applicabilityName(fix.fix.applicability))},
             {"uri", fix.uri},
-            {"range", rangeJson(fix.source, fix.fix.span.start,
-                                fix.fix.span.end >= fix.fix.span.start
-                                    ? fix.fix.span.end - fix.fix.span.start
-                                    : 0)},
+            {"range", diagnosticRangeJson(fix.range)},
             {"replacement", fix.fix.replacement},
             {"message", fix.fix.message}});
       }
@@ -1034,11 +1080,7 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
 
 bool diagnosticIntersects(const LspDiagnostic &diagnostic,
                           const LspRange &requestedRange) {
-  const lang::SourceSpan &span = diagnostic.diagnostic.primary;
-  const LspRange diagnosticRange{
-      .start = positionAt(diagnostic.source, span.start),
-      .end = positionAt(diagnostic.source, span.end)};
-  return rangesIntersect(diagnosticRange, requestedRange);
+  return rangesIntersect(diagnostic.range, requestedRange);
 }
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
@@ -1054,10 +1096,6 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
   // supplied diagnostics still have to match the current publication.
   if (requestedValues->empty())
     return true;
-  const Position expectedStart =
-      positionAt(diagnostic.source, diagnostic.diagnostic.primary.start);
-  const Position expectedEnd =
-      positionAt(diagnostic.source, diagnostic.diagnostic.primary.end);
   for (const JsonValue &requested : *requestedValues) {
     if (requireSnapshot &&
         (diagnostic.repairSnapshot.empty() ||
@@ -1066,8 +1104,8 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
       continue;
     const std::optional<LspRange> range =
         rangeMember(member(&requested, "range"));
-    if (!range || !samePosition(range->start, expectedStart) ||
-        !samePosition(range->end, expectedEnd)) {
+    if (!range || !samePosition(range->start, diagnostic.range.start) ||
+        !samePosition(range->end, diagnostic.range.end)) {
       continue;
     }
     if (stringMember(&requested, "code") != diagnostic.diagnostic.code) {
@@ -1112,8 +1150,7 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
   JsonArray edits;
   for (const auto &fix : candidate.fixes) {
     edits.push_back(
-        JsonObject{{"range", rangeJson(fix.source, fix.fix.span.start,
-                                       fix.fix.span.end - fix.fix.span.start)},
+        JsonObject{{"range", diagnosticRangeJson(fix.range)},
                    {"newText", fix.fix.replacement}});
   }
 
@@ -1691,6 +1728,9 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
                              bool markdownDocumentation) {
   JsonArray items;
   items.reserve(completion.candidates.size());
+  std::optional<SourcePositionIndex> positions;
+  std::optional<std::pair<std::size_t, std::size_t>> previousSpan;
+  JsonValue replacementRange(nullptr);
   for (const lang::CompletionCandidate &candidate : completion.candidates) {
     if (candidate.kind == lang::CompletionCandidateKind::Snippet &&
         !snippetSupport)
@@ -1710,11 +1750,15 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
     const bool useSnippet = snippetSupport && candidate.snippet.has_value();
     const std::string &insertion =
         useSnippet ? *candidate.snippet : candidate.insertion;
-    item["textEdit"] =
-        JsonObject{{"range", rangeJson(source, candidate.replacementRange.start,
-                                       candidate.replacementRange.end -
-                                           candidate.replacementRange.start)},
-                   {"newText", insertion}};
+    const auto span = std::pair{candidate.replacementRange.start,
+                                candidate.replacementRange.end};
+    if (span != previousSpan) {
+      if (!positions)
+        positions.emplace(source);
+      replacementRange = rangeJson(*positions, span.first, span.second - span.first);
+      previousSpan = span;
+    }
+    item["textEdit"] = JsonObject{{"range", replacementRange}, {"newText", insertion}};
     if (useSnippet) {
       item["insertTextFormat"] = 2;
     }
@@ -1763,7 +1807,7 @@ int lspSymbolKind(lang::DocumentSymbolKind kind) {
 
 JsonArray
 documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbols,
-                    const std::string &source) {
+                    const SourcePositionIndex &source) {
   JsonArray result;
   for (const lang::DocumentSymbolInfo &symbol : symbols) {
     JsonObject json{
@@ -1788,7 +1832,7 @@ documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbols,
 void flattenDocumentSymbols(
     const std::vector<lang::DocumentSymbolInfo> &symbols,
     const std::string &container, const std::string &clientUri,
-    const std::string &source, JsonArray &result) {
+    const SourcePositionIndex &source, JsonArray &result) {
   for (const lang::DocumentSymbolInfo &symbol : symbols) {
     JsonObject json{
         {"name", symbol.name},
@@ -1829,6 +1873,7 @@ struct AnalysisRequest {
   // A raw-pointer audit of an already published generation; see
   // `runAuditWorker`. Ordinary analyses never run the audit.
   bool audit = false;
+  bool appliedPublishedFix = false;
   std::optional<lang::EditedLookupRange> editedRange;
   std::optional<lang::Diagnostic> priorLookup;
   unsigned remainingCompleteMirEdits = 0;
@@ -1849,6 +1894,9 @@ struct AnalysisRequest {
 };
 
 struct CompletionRequest {
+  // Invalidation of any other source or of the project model changes this
+  // identity. Edits to this document are checked byte-for-byte by the query.
+  std::uint64_t surroundingInputsGeneration = 0;
   JsonValue id{nullptr};
   std::string idKey;
   std::string uri;
@@ -1867,7 +1915,9 @@ struct CompletionRequest {
 };
 
 struct ActiveCompletionRequest {
-  std::string uri;
+  // The worker owns the stable request until it erases this entry under the
+  // same mutex that protects readers.
+  const CompletionRequest &request;
   std::shared_ptr<std::atomic<bool>> cancellation;
 };
 
@@ -1938,6 +1988,14 @@ struct AnalysisSnapshot {
   // `advanceAnalysisGenerationLocked`. Every reader requires a current
   // generation and a non-null frontend.
   std::shared_ptr<const lang::FrontendResult> frontend;
+  std::shared_ptr<const IndexedEditorSource> hoverSource;
+
+  // Called under the server state lock and shared by hover readers.
+  void indexHoverSource(const std::string &source) {
+    if (!hoverSource)
+      hoverSource = std::make_shared<IndexedEditorSource>(source);
+  }
+
   // Copied from the frontend so dependency invalidation can still read it
   // after a stale frontend has been released.
   bool includeSuggestionsRequested = false;
@@ -2429,7 +2487,11 @@ private:
         const auto before = documents.find(uri);
         std::optional<lang::EditedLookupRange> editedRange;
         std::optional<lang::Diagnostic> priorLookup;
-        if (progressiveOpenDiagnostics && before != documents.end()) {
+        bool appliedPublishedFix = false;
+        const auto prior = diagnosticsByRoot.find(uri);
+        if (before != documents.end() &&
+            (progressiveOpenDiagnostics ||
+             (prior != diagnosticsByRoot.end() && !prior->second.empty()))) {
           const auto &old = before->second;
           const auto first = static_cast<std::size_t>(
               std::ranges::mismatch(old, source).in2 - source.begin());
@@ -2440,19 +2502,35 @@ private:
             --oldEnd;
           }
           if (end != first || oldEnd != first) {
-            editedRange.emplace(first, end);
-            const auto prior = diagnosticsByRoot.find(uri);
+            if (progressiveOpenDiagnostics)
+              editedRange.emplace(first, end);
             if (prior != diagnosticsByRoot.end()) {
               for (const auto &d : prior->second) {
                 const auto &span = d.diagnostic.primary;
-                if ((d.provisionalLookup || d.diagnostic.localNameRepair) &&
-                    d.uri == uri && d.source == old && span.start <= first &&
-                    oldEnd <= span.end) {
+                if (!appliedPublishedFix) {
+                  for (const auto &fix : d.fixes) {
+                    const auto &edit = fix.fix.span;
+                    if (fix.uri == uri && edit.start <= first &&
+                        oldEnd <= edit.end && edit.end <= old.size() &&
+                        std::string_view(source).substr(
+                            edit.start, end - edit.start + (edit.end - oldEnd)) ==
+                            fix.fix.replacement &&
+                        *fix.source == old) {
+                      appliedPublishedFix = true;
+                      break;
+                    }
+                  }
+                }
+                if (progressiveOpenDiagnostics && !priorLookup &&
+                    (d.provisionalLookup || d.diagnostic.localNameRepair) &&
+                    d.uri == uri && span.start <= first && oldEnd <= span.end &&
+                    *d.source == old) {
                   editedRange.emplace(span.start, span.end - oldEnd + end,
                                       true);
                   priorLookup = d.diagnostic;
-                  break;
                 }
+                if (appliedPublishedFix && (!progressiveOpenDiagnostics || priorLookup))
+                  break;
               }
             }
           }
@@ -2469,8 +2547,9 @@ private:
         semanticTokenCache.erase(uri);
         ++contentGenerations[uri];
         requests.push_back(makeAnalysisRequestLocked(
-            uri, version, advanceAnalysisGenerationLocked(uri),
+            uri, version, advanceAnalysisGenerationLocked(uri, source),
             AnalysisTrigger::DocumentChanged));
+        requests.back().appliedPublishedFix = appliedPublishedFix;
         requests.back().editedRange = editedRange;
         requests.back().priorLookup = std::move(priorLookup);
         invalidateDependentsLocked(uri, requests);
@@ -2810,10 +2889,10 @@ private:
     sendJson(response(id, semanticTokensJson(tokens)));
   }
 
-  void respondHover(const JsonValue *id, Position position, std::string source,
+  void respondHover(const JsonValue *id, Position position,
                     const AnalysisSnapshot &snapshot) {
-    const std::optional<std::size_t> byteOffset =
-        SourcePositionIndex(source).byteOffset(position);
+    const auto &positions = snapshot.hoverSource->positions;
+    const std::optional<std::size_t> byteOffset = positions.byteOffset(position);
     if (!byteOffset) {
       sendJson(response(id, nullptr));
       return;
@@ -2827,10 +2906,10 @@ private:
       return;
     }
 
-    sendHover(id, source, *info);
+    sendHover(id, positions, *info);
   }
 
-  void sendHover(const JsonValue *id, const std::string &source,
+  void sendHover(const JsonValue *id, const SourcePositionIndex &source,
                  const lang::HoverInfo &hover) {
     std::string value = markdownHover ? "```gti\n" + hover.signature + "\n```"
                                       : hover.signature;
@@ -2904,7 +2983,10 @@ private:
           snapshot != analysisSnapshots.end() &&
           snapshot->second.generation == generation->second &&
           snapshot->second.frontend != nullptr) {
-        access.source = document->second;
+        if (kind == SemanticRequestKind::Hover)
+          snapshot->second.indexHoverSource(document->second);
+        else
+          access.source = document->second;
         access.snapshot = snapshot->second;
         access.current = true;
       } else if (id != nullptr && document != documents.end() &&
@@ -2946,7 +3028,7 @@ private:
     const SnapshotAccess access =
         acquireSnapshotOrQueue(id, params, uri, SemanticRequestKind::Hover);
     if (access.earlyHover) {
-      sendHover(id, access.source, *access.earlyHover);
+      sendHover(id, SourcePositionIndex(access.source), *access.earlyHover);
       return;
     }
     if (!access.current) {
@@ -2956,7 +3038,7 @@ private:
       return;
     }
 
-    respondHover(id, *position, access.source, access.snapshot);
+    respondHover(id, *position, access.snapshot);
   }
 
   void respondDefinition(const JsonValue *id, std::string_view uri,
@@ -3374,7 +3456,7 @@ private:
     const std::vector<lang::DocumentSymbolInfo> symbols =
         lang::LanguageQueries().documentSymbols(*snapshot.frontend, sourceUnit);
     if (hierarchicalDocumentSymbols) {
-      sendJson(response(id, JsonValue(documentSymbolArray(symbols, source))));
+      sendJson(response(id, JsonValue(documentSymbolArray(symbols, SourcePositionIndex(source)))));
       return;
     }
     std::string clientUri;
@@ -3383,7 +3465,7 @@ private:
       clientUri = clientUriForKeyLocked(uri);
     }
     JsonArray flat;
-    flattenDocumentSymbols(symbols, {}, clientUri, source, flat);
+    flattenDocumentSymbols(symbols, {}, clientUri, SourcePositionIndex(source), flat);
     sendJson(response(id, JsonValue(std::move(flat))));
   }
 
@@ -3416,8 +3498,15 @@ private:
           const std::optional<std::filesystem::path> path =
               filePathFromUri(documentUri);
           if (path) {
-            request.sourceOverrides[canonicalPath(*path).string()] =
-                documentSource;
+            const auto canonical = canonicalPath(*path).string();
+            request.sourceOverrides[canonical] = documentSource;
+            // The global counter advances once per source invalidation and
+            // once per project invalidation. Subtracting this source's
+            // counter leaves the identity of all surrounding inputs.
+            if (documentUri == uri)
+              request.surroundingInputsGeneration =
+                  includeDiscoveryGeneration -
+                  frontendSnapshots.generation(canonical);
             if (const auto current = contentGenerations.find(documentUri);
                 current != contentGenerations.end())
               request.documentGenerations[documentUri] = current->second;
@@ -3496,8 +3585,8 @@ private:
             continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
             if (diagnostic.fixes.empty() || diagnostic.uri != uri ||
-                diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
+                *diagnostic.source != document->second ||
                 !diagnosticRequested(diagnostic, requestedDiagnostics,
                                      codeActionLiterals, diagnosticData))
               continue;
@@ -3524,7 +3613,7 @@ private:
               // not apply edits. Review alternatives remain discoverable but
               // cannot become preferred automatic-fix candidates below.
               const auto target = documents.find(fix.uri);
-              if (target == documents.end() || target->second != fix.source) {
+              if (target == documents.end() || target->second != *fix.source) {
                 continue;
               }
               std::string key = diagnostic.diagnostic.code + '\n' +
@@ -3737,7 +3826,7 @@ private:
           lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
           "GTI source dependencies require a file URI.");
       result.diagnostics.push_back(
-          convertDiagnostic(diagnostic, sources, "", uri, source));
+          DiagnosticConverter(sources, "", uri, source).convert(diagnostic));
       return result;
     }
 
@@ -3747,9 +3836,9 @@ private:
         project.rawPointerAudit != lang::RawPointerAuditMode::Off;
     auto frontendOptions =
         documentOptions(request, project, result.workMetrics);
+    DiagnosticConverter diagnostics(project.sources, rootPath, uri, source);
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
-      result.diagnostics.push_back(convertDiagnostic(
-          diagnostic, project.sources, rootPath, uri, source));
+      result.diagnostics.push_back(diagnostics.convert(diagnostic));
     }
     if (!project.configurationValid) {
       // An invalid editor selection must not fabricate default-profile
@@ -3880,14 +3969,14 @@ private:
         result.dependencies.try_emplace(
             authoredFileUriFromPath(*import.authoredLookupPath), 0);
     }
+    DiagnosticConverter converter(analysis.sources, rootPath, request.uri, request.source);
     for (const lang::Diagnostic &diagnostic : diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic,
                                              analysis.sourceGraph)) {
         continue;
       }
-      result.diagnostics.push_back(convertDiagnostic(
-          diagnostic, analysis.sources, rootPath, request.uri, request.source));
+      result.diagnostics.push_back(converter.convert(diagnostic));
     }
   }
 
@@ -4079,7 +4168,10 @@ private:
             found != analysisSnapshots.end() &&
             found->second.generation == request.generation &&
             found->second.frontend != nullptr) {
-          source = document->second;
+          if (request.kind == SemanticRequestKind::Hover)
+            found->second.indexHoverSource(document->second);
+          else
+            source = document->second;
           snapshot = found->second;
           current = true;
         }
@@ -4094,7 +4186,7 @@ private:
         if (!position) {
           sendJson(response(request.id, nullptr));
         } else {
-          respondHover(&request.id, *position, source, snapshot);
+          respondHover(&request.id, *position, snapshot);
         }
       } else if (request.kind == SemanticRequestKind::Definition) {
         if (!position) {
@@ -4161,7 +4253,10 @@ private:
         return;
       }
       for (const auto &[id, active] : activeCompletionRequests) {
-        if (active.uri == request.uri)
+        if (active.request.uri == request.uri &&
+            lang::LanguageQueries::extendedQualifiedCompletionOffset(
+                active.request.source, active.request.byteOffset,
+                request.source) != request.byteOffset)
           active.cancellation->store(true, std::memory_order_relaxed);
       }
       for (auto queued = completionRequests.begin();
@@ -4188,6 +4283,13 @@ private:
   }
 
   void runCompletionWorker() {
+    struct PreviousCompletion {
+      std::string uri;
+      std::uint64_t surroundingInputsGeneration;
+      std::string source;
+      lang::CompletionResult result;
+    };
+    std::optional<PreviousCompletion> previous;
     while (true) {
       CompletionRequest request;
       {
@@ -4203,7 +4305,7 @@ private:
         ++activeCompletions;
         activeCompletionRequests.emplace(
             request.idKey,
-            ActiveCompletionRequest{request.uri, request.cancellation});
+            ActiveCompletionRequest{request, request.cancellation});
       }
 
       lang::CompletionResult completion;
@@ -4225,40 +4327,51 @@ private:
                            false, request.idKey);
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
-          ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
-              request.entryPath, request.projectProfile,
-              executionProfileOverride, rawPointerAuditOverride,
-              errorLimitOverride);
-          if (project.configurationValid) {
-            completion = lang::LanguageQueries().complete(
-                {.entryPath = request.entryPath,
-                 .source = request.source,
-                 .byteOffset = request.byteOffset,
-                 .includeSnippets = request.snippetSupport,
-                 .target = project.configuration.target(),
-                 .configurationFlags =
-                     project.configuration.configurationFlags(),
-                 .declaredConfigurationFlags =
-                     project.configuration.declaredConfigurationFlags(),
-                 // Completion is latency-critical and offers no diagnostics;
-                 // the audit is background work (see `runAuditWorker`).
-                 .rawPointerAudit = lang::RawPointerAuditMode::Off,
-                 .trustedBodies = lang::TrustedBodyAnalysis::Reachable,
-                 .limits = project.compileLimits,
-                 .preludePaths = {standardLibrary.prelude},
-                 .sourceOverrides = request.sourceOverrides,
-                 .standardLibraryRoots = {standardLibrary.root},
-                 .packageSourceRoots = project.packageSourceRoots,
-                 .workMetrics = &workMetrics,
-                 .cache = request.frontendSources.cache,
-                 .instanceCache = request.frontendSources.instanceCache,
-                 .preambleCache = request.frontendSources.preambleCache,
-                 .cancellation = request.cancellation.get(),
-                 .sourceGenerations = request.frontendSources.generations,
-                 .sourceDigests = request.frontendSources.digests,
-                 .deferPreambleBuild = true,
-                 .program = project.program,
-                 .requireEntryPoint = project.requireEntryPoint});
+          std::optional<lang::CompletionResult> narrowed;
+          if (previous && previous->uri == request.uri &&
+              previous->surroundingInputsGeneration ==
+                  request.surroundingInputsGeneration)
+            narrowed = lang::LanguageQueries::narrowCompletion(
+                previous->result, previous->source, request.source,
+                request.byteOffset);
+          if (narrowed) {
+            completion = std::move(*narrowed);
+          } else {
+            ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
+                request.entryPath, request.projectProfile,
+                executionProfileOverride, rawPointerAuditOverride,
+                errorLimitOverride);
+            if (project.configurationValid) {
+              completion = lang::LanguageQueries().complete(
+                  {.entryPath = request.entryPath,
+                   .source = request.source,
+                   .byteOffset = request.byteOffset,
+                   .includeSnippets = request.snippetSupport,
+                   .target = project.configuration.target(),
+                   .configurationFlags =
+                       project.configuration.configurationFlags(),
+                   .declaredConfigurationFlags =
+                       project.configuration.declaredConfigurationFlags(),
+                   // Completion is latency-critical and offers no diagnostics;
+                   // the audit is background work (see `runAuditWorker`).
+                   .rawPointerAudit = lang::RawPointerAuditMode::Off,
+                   .trustedBodies = lang::TrustedBodyAnalysis::Reachable,
+                   .limits = project.compileLimits,
+                   .preludePaths = {standardLibrary.prelude},
+                   .sourceOverrides = request.sourceOverrides,
+                   .standardLibraryRoots = {standardLibrary.root},
+                   .packageSourceRoots = project.packageSourceRoots,
+                   .workMetrics = &workMetrics,
+                   .cache = request.frontendSources.cache,
+                   .instanceCache = request.frontendSources.instanceCache,
+                   .preambleCache = request.frontendSources.preambleCache,
+                   .cancellation = request.cancellation.get(),
+                   .sourceGenerations = request.frontendSources.generations,
+                   .sourceDigests = request.frontendSources.digests,
+                   .deferPreambleBuild = true,
+                   .program = project.program,
+                   .requireEntryPoint = project.requireEntryPoint});
+            }
           }
         } catch (const std::exception &) {
           completion = {};
@@ -4302,6 +4415,17 @@ private:
                           completionListJson(completion, request.source,
                                              request.snippetSupport,
                                              request.markdownDocumentation)));
+      }
+      // A prefix-only edit may finish the original marker after its document
+      // version expired. Its response above remains ContentModified. Only
+      // the next verified extension of that same input may use its names.
+      if (!canceled && !request.cancellation->load(std::memory_order_relaxed)) {
+        if (completion.qualifiedPrefix)
+          previous.emplace(PreviousCompletion{
+              request.uri, request.surroundingInputsGeneration,
+              std::move(request.source), std::move(completion)});
+        else
+          previous.reset();
       }
       {
         const std::lock_guard lock(stateMutex);
@@ -4419,7 +4543,7 @@ private:
             reproduced && recovery == bodyRecovery &&
             std::ranges::all_of(previous->second,
                                 [&](const LspDiagnostic &d) {
-                                  return d.source == recovery->source;
+                                  return *d.source == recovery->source;
                                 }) &&
             std::ranges::equal(previous->second, recovery->diagnostics, {},
                                &LspDiagnostic::diagnostic);
@@ -4444,9 +4568,9 @@ private:
         }
         lang::SourceManager source;
         source.set(baseline->path, request.source);
+        DiagnosticConverter converter(source, baseline->path, request.uri, request.source);
         for (const auto &d : *answer)
-          current.push_back(convertDiagnostic(d, source, baseline->path,
-                                              request.uri, request.source));
+          current.push_back(converter.convert(d));
         std::unordered_set<std::string> affected{request.uri};
         for (const auto &d : previous->second)
           affected.insert(d.uri);
@@ -4497,7 +4621,11 @@ private:
         // Each further edit restarts the wait, so a typing burst is analysed
         // once, from its final text, and stops a running analysis of the
         // document, whose result would only be discarded.
-        request.readyAt = now + updateDebounceLocked(request.uri);
+        // Rechecking an applied compiler fix is interactive: the client
+        // needs the updated diagnostics as soon as the compiler proves them.
+        request.readyAt = request.appliedPublishedFix && !fixedUpdateDebounce
+                              ? now
+                              : now + updateDebounceLocked(request.uri);
         break;
       case AnalysisTrigger::Opened:
       case AnalysisTrigger::ProjectChanged:
@@ -4642,7 +4770,7 @@ private:
                   guarded.analysis->frontend->includeSuggestionsRequested,
               {}, guarded.analysis->mirSignatureOnlyFallback,
               guarded.analysis->frontendPasses,
-              guarded.analysis->frontend.get());
+              &*guarded.analysis, request.appliedPublishedFix && !fixedUpdateDebounce);
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -4934,16 +5062,15 @@ private:
       return;
     std::vector<LspDiagnostic> diagnostics;
     const auto rootPath = canonicalPath(*path).string();
+    DiagnosticConverter projectMessages(project.sources, rootPath, request.uri, request.source);
+    DiagnosticConverter adviceMessages(frontend->sources, rootPath, request.uri, request.source);
     for (const auto &diagnostic : project.diagnostics)
-      diagnostics.push_back(convertDiagnostic(
-          diagnostic, project.sources, rootPath, request.uri, request.source));
+      diagnostics.push_back(projectMessages.convert(diagnostic));
     for (const auto &diagnostic : advice->diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic, frontend->sourceGraph))
         continue;
-      diagnostics.push_back(convertDiagnostic(diagnostic, frontend->sources,
-                                              rootPath, request.uri,
-                                              request.source));
+      diagnostics.push_back(adviceMessages.convert(diagnostic));
     }
     std::vector<DiagnosticPublication> publications;
     {
@@ -5000,7 +5127,7 @@ private:
            !std::ranges::any_of(syntax.diagnostics, localSyntax)) ||
           std::ranges::any_of(previous, [&](const LspDiagnostic &d) {
             return d.uri == request.uri && !syntaxOwned(d) &&
-                   d.source != request.source;
+                   *d.source != request.source;
           }))
         return;
       std::erase_if(previous, localSyntax);
@@ -5077,10 +5204,10 @@ private:
         };
         const auto currentRange = [&](const auto &location) {
           if (location.uri == request.uri)
-            return location.source == request.source;
+            return *location.source == request.source;
           const auto dependency = checked.dependencies.find(location.uri);
           return dependency != checked.dependencies.end() &&
-                 dependency->second == lang::sourceTextDigest(location.source);
+                 dependency->second == lang::sourceTextDigest(*location.source);
         };
         const bool compatible =
             std::ranges::all_of(previous, [&](const LspDiagnostic &d) {
@@ -5131,7 +5258,7 @@ private:
     if (diagnosticStage)
       publish(std::move(publications), *diagnosticStage);
     for (const auto &[id, hover] : replies)
-      sendHover(&id, request.source, hover);
+      sendHover(&id, SourcePositionIndex(request.source), hover);
   }
 
   void publishAnalysis(const AnalysisRequest &request,
@@ -5525,9 +5652,14 @@ private:
   // longer serve any request, so the frontend result is released now rather
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
-  std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+  std::uint64_t advanceAnalysisGenerationLocked(
+      const std::string &uri,
+      std::optional<std::string_view> edit = std::nullopt) {
     for (const auto &[id, active] : activeCompletionRequests) {
-      if (active.uri == uri)
+      if (active.request.uri == uri &&
+          (!edit ||
+           !lang::LanguageQueries::extendedQualifiedCompletionOffset(
+               active.request.source, active.request.byteOffset, *edit)))
         active.cancellation->store(true, std::memory_order_relaxed);
     }
     // Includes close/reopen and project changes, not only ordinary edits.
@@ -5537,6 +5669,7 @@ private:
     if (const auto snapshot = analysisSnapshots.find(uri);
         snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
       retireSnapshotLocked(std::move(snapshot->second.frontend));
+      snapshot->second.hoverSource.reset();
     }
     checkedDeclarations.erase(uri);
     return ++analysisGenerations[uri];
@@ -5723,14 +5856,20 @@ private:
           sets.push_back(&audit->second.diagnostics);
         }
       }
+      const std::string *comparedSource = nullptr;
+      bool sourceMatches = false;
       for (const std::vector<LspDiagnostic> *diagnostics : sets) {
         for (const LspDiagnostic &diagnostic : *diagnostics) {
           if (diagnostic.uri != uri) {
             continue;
           }
-          if (openText != documents.end() &&
-              diagnostic.source != openText->second) {
-            continue;
+          if (openText != documents.end()) {
+            if (comparedSource != diagnostic.source.get()) {
+              comparedSource = diagnostic.source.get();
+              sourceMatches = *comparedSource == openText->second;
+            }
+            if (!sourceMatches)
+              continue;
           }
           const lang::SourceSpan &span = diagnostic.diagnostic.primary;
           std::string key =
@@ -5803,25 +5942,19 @@ private:
       if (related.uri != uri ||
           !std::string_view(related.related.message).starts_with(marker))
         continue;
-      const lang::SourceSpan &span = related.related.span;
       JsonObject companion{
           {"range",
-           rangeJson(related.source, span.start,
-                     span.end >= span.start ? span.end - span.start : 0)},
+           diagnosticRangeJson(related.range)},
           {"severity", 3},
           {"source", std::string(diagnosticSource)},
           {"message",
            "A macro expansion fails here: " + published.diagnostic.message}};
       if (!published.diagnostic.code.empty())
         companion["code"] = published.diagnostic.code;
-      const lang::SourceSpan &primary = published.diagnostic.primary;
       companion["relatedInformation"] = JsonArray{JsonObject{
           {"location",
            JsonObject{{"uri", published.uri},
-                      {"range", rangeJson(published.source, primary.start,
-                                          primary.end >= primary.start
-                                              ? primary.end - primary.start
-                                              : 0)}}},
+                      {"range", diagnosticRangeJson(published.range)}}},
           {"message", "The macro is expanded here."}}};
       diagnostics.push_back(std::move(companion));
     }
@@ -5851,7 +5984,7 @@ private:
       std::optional<std::size_t> retainedFrontends = std::nullopt,
       bool includeSuggestionsRequested = false, std::string_view requestId = {},
       bool mirSignatureOnlyFallback = false, unsigned frontendPasses = 0,
-      const lang::FrontendResult *frontend = nullptr) const {
+      const DocumentAnalysis *analysis = nullptr, bool expeditedFix = false) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5997,10 +6130,23 @@ private:
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(
              instanceStats.limits.maximumEstimatedBytes)}};
-    if (frontend) {
-      record["mirVerified"] = frontend->mirValid;
-      record["frontendDiagnosticCount"] =
-          static_cast<std::int64_t>(frontend->diagnostics.size());
+    if (analysis) {
+      std::unordered_set<const std::string *> buffers;
+      for (const auto &diagnostic : analysis->diagnostics) {
+        buffers.insert(diagnostic.source.get());
+        for (const auto &related : diagnostic.related)
+          buffers.insert(related.source.get());
+        for (const auto &fix : diagnostic.fixes)
+          buffers.insert(fix.source.get());
+      }
+      record["expeditedFix"] = expeditedFix;
+      record["diagnosticSourceBuffers"] =
+          static_cast<std::int64_t>(buffers.size());
+      if (analysis->frontend) {
+        record["mirVerified"] = analysis->frontend->mirValid;
+        record["frontendDiagnosticCount"] =
+            static_cast<std::int64_t>(analysis->frontend->diagnostics.size());
+      }
     }
     if (retainedFrontends) {
       record["retainedFrontends"] =

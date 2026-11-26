@@ -2071,6 +2071,28 @@ public:
       return result;
     }
 
+    // Only direct qualified contexts have one receiver/scope and no lexical
+    // distance distinctions. A parser snippet or synthesized macro token may
+    // have another replacement range or different filtering rules.
+    if (completionUnit && context->sourceUnit == completionUnit->id &&
+        context->replacementRange.source == completionUnit->path.string() &&
+        context->replacementRange.end == input.byteOffset &&
+        context->replacementRange.start <= input.byteOffset &&
+        std::string_view(input.source)
+                .substr(context->replacementRange.start,
+                        input.byteOffset - context->replacementRange.start) ==
+            context->prefix &&
+        context->kind != SemanticCompletionKind::Unqualified &&
+        result.candidates.empty() &&
+        std::ranges::none_of(snapshot.sourceGraph.sourceUnits(),
+                             [](const SourceUnit &unit) {
+                               return !unit.embeddedFiles.empty();
+                             }) &&
+        std::ranges::all_of(context->candidates, [](const auto &candidate) {
+          return candidate.scopeDistance == 0;
+        })) {
+      result.qualifiedPrefix = context->replacementRange;
+    }
     const SemanticModel &semantics = snapshot.semantics;
     const SignaturePrinter signatures(semantics);
     const SemanticTypePrinter types(semantics);
@@ -2175,6 +2197,43 @@ public:
     for (std::size_t index = 0; index < count; ++index) {
       result.candidates.push_back(std::move(ranked[index].candidate));
     }
+    if (result.isIncomplete || result.candidates.empty())
+      result.qualifiedPrefix.reset();
+    return result;
+  }
+
+  static std::optional<CompletionResult>
+  narrowCompletion(const CompletionResult &previous, std::string_view oldSource,
+                   std::string_view source, std::size_t byteOffset) {
+    if (!previous.qualifiedPrefix)
+      return std::nullopt;
+    const SourceSpan &prefix = *previous.qualifiedPrefix;
+    if (LanguageQueries::extendedQualifiedCompletionOffset(
+            oldSource, prefix.end, source) != byteOffset)
+      return std::nullopt;
+    const auto extended =
+        source.substr(prefix.start, byteOffset - prefix.start);
+    CompletionResult result{.qualifiedPrefix = prefix,
+                            .sourceDigests = previous.sourceDigests,
+                            .sourceLookupPaths = previous.sourceLookupPaths};
+    result.qualifiedPrefix->end = byteOffset;
+    result.sourceDigests.insert_or_assign(prefix.source,
+                                          sourceTextDigest(source));
+    for (const CompletionCandidate &candidate : previous.candidates) {
+      const auto rank = completionPrefixRank(candidate.label, extended);
+      if (!rank)
+        continue;
+      auto &item = result.candidates.emplace_back(candidate);
+      item.replacementRange.end = byteOffset;
+      item.sortText = completionSortText(
+          *rank * 100000 + completionKindRank(candidate.kind) * 10,
+          candidate.label);
+    }
+    std::stable_sort(result.candidates.begin(), result.candidates.end(),
+                     [](const auto &a, const auto &b) {
+                       return std::tie(a.sortText, a.detail) <
+                              std::tie(b.sortText, b.detail);
+                     });
     return result;
   }
 
@@ -3271,6 +3330,43 @@ LanguageQueries::signatureHelp(const FrontendResult &snapshot,
                                SourceUnitId sourceUnit,
                                std::size_t byteOffset) const {
   return LanguageQueriesImpl().signatureHelp(snapshot, sourceUnit, byteOffset);
+}
+
+std::optional<std::size_t>
+LanguageQueries::extendedQualifiedCompletionOffset(std::string_view oldSource,
+                                                   std::size_t oldOffset,
+                                                   std::string_view source) {
+  if (oldOffset > oldSource.size() || source.size() <= oldSource.size())
+    return std::nullopt;
+  const auto offset = source.size() - (oldSource.size() - oldOffset);
+  if (source.substr(0, oldOffset) != oldSource.substr(0, oldOffset) ||
+      source.substr(offset) != oldSource.substr(oldOffset))
+    return std::nullopt;
+  const auto identifierStart = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+  };
+  const auto identifierPart = [&](char c) {
+    return identifierStart(c) || (c >= '0' && c <= '9');
+  };
+  std::size_t start = oldOffset;
+  while (start && identifierPart(source[start - 1]))
+    --start;
+  const auto qualifier = source.substr(0, start);
+  if ((!qualifier.ends_with('.') && !qualifier.ends_with("::") &&
+       !qualifier.ends_with("->")) ||
+      !identifierStart(source[start]) ||
+      !std::ranges::all_of(source.substr(oldOffset, offset - oldOffset),
+                           identifierPart) ||
+      source.substr(offset).starts_with('"'))
+    return std::nullopt;
+  return offset;
+}
+
+std::optional<CompletionResult> LanguageQueries::narrowCompletion(
+    const CompletionResult &previous, std::string_view oldSource,
+    std::string_view source, std::size_t byteOffset) {
+  return LanguageQueriesImpl::narrowCompletion(previous, oldSource, source,
+                                               byteOffset);
 }
 
 CompletionResult LanguageQueries::complete(const CompletionInput &input) const {

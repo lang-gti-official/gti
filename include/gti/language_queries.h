@@ -207,6 +207,9 @@ struct CompletionCandidate {
 struct CompletionResult {
   std::vector<CompletionCandidate> candidates;
   bool isIncomplete = false;
+  // A complete, directly authored qualified-name or member list can be
+  // narrowed while the user extends the same identifier.
+  std::optional<SourceSpan> qualifiedPrefix;
   // Exact loaded inputs let asynchronous adapters reject results when a
   // dependency changes before publication, including newly discovered imports.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
@@ -283,6 +286,16 @@ public:
   signatureHelp(const FrontendResult &snapshot, SourceUnitId sourceUnit,
                 std::size_t byteOffset) const;
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const;
+  // A scheduling hint for an in-flight marker. Only a compiler-produced
+  // qualifiedPrefix can authorize actual reuse of semantic candidates.
+  [[nodiscard]] static std::optional<std::size_t>
+  extendedQualifiedCompletionOffset(std::string_view oldSource,
+                                    std::size_t oldOffset,
+                                    std::string_view source);
+  // The caller must establish unchanged project and dependency inputs.
+  [[nodiscard]] static std::optional<CompletionResult>
+  narrowCompletion(const CompletionResult &previous, std::string_view oldSource,
+                   std::string_view source, std::size_t byteOffset);
 };
 
 } // namespace lang
