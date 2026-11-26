@@ -50,6 +50,13 @@ as a class field; an API wrapper normally stores one parsed base URL, clones it
 for each operation, appends endpoint components, and reuses one
 `std::http::client` for its connection pool.
 
+With `std.http` and `std.json` imported (or `import std;`),
+`std::json::encode` and `std::json::decode` support `std::http::url`.
+The codec writes the URL as a JSON string. Decoding unescapes the string
+and passes it to `url::parse`, including the same scheme normalization and
+validation. A string rejected by the URL parser reports
+`std::json::errc::type_mismatch` at the start of the value.
+
 A URL owns one buffer holding its serialization, plus the offsets of its
 components. `scheme()`, `host()`, `path()`, `query()` and `view()` are views
 into that buffer, so observing a component never allocates. A retained view

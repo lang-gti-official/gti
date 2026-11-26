@@ -2022,6 +2022,11 @@ public:
     options.deferPreambleBuild = input.deferPreambleBuild;
     options.cancellation = input.cancellation;
     options.synthesizeTestEntry = false;
+    options.program = input.program;
+    options.requireEntryPoint = input.requireEntryPoint;
+    // Imported-module preambles use the same eligibility rules as editor
+    // analysis; completion still checks its marker in the current entry text.
+    options.lowerEntryUnitOnly = true;
     options.sourceGenerations = input.sourceGenerations;
     options.sourceDigests = input.sourceDigests;
     const FrontendResult snapshot = Frontend(options).analyze(

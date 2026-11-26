@@ -353,6 +353,10 @@ def case_plan(
     steps = []
     for optimization in optimizations:
         executable = case_root / f"program-{optimization}"
+        # Each optimization level runs in its own directory seeded with the
+        # case's files: a program that creates files must observe the same
+        # initial state at every level, not what an earlier level left behind.
+        run_root = case_root / f"run-{optimization}"
         command = [
             str(compiler),
             str(source),
@@ -375,7 +379,8 @@ def case_plan(
                 "check": False,
             },
             "run_command": [str(executable)],
-            "run_options": {"cwd": case_root / f"run-{optimization}", "input": case.get("stdin", ""),
+            "run_root": run_root,
+            "run_options": {"cwd": run_root, "input": case.get("stdin", ""),
                             "text": True, "capture_output": True, "timeout": 120, "check": False},
         })
     return {
@@ -467,6 +472,10 @@ def run_case(
         private_source(source, plan["case_root"] / source.name, case["private_modules"])
     for step in plan["steps"]:
         optimization = step["optimization"]
+        if plan["mode"] == "run":
+            step["run_root"].mkdir()
+            for name, contents in plan["files"].items():
+                (step["run_root"] / name).write_bytes(contents)
         built = build_fixture(step["command"], step["executable"], **step["build_options"])
         expected = plan["expected"]
         if plan["mode"] == "diagnostic":
@@ -484,10 +493,6 @@ def run_case(
                 f"run case {case['id']} {optimization} did not build: "
                 f"exit={built.returncode}\nstdout:\n{built.stdout}\nstderr:\n{built.stderr}"
             )
-        run_root = step["run_options"]["cwd"]
-        run_root.mkdir()
-        for name, contents in plan["files"].items():
-            (run_root / name).write_bytes(contents)
         executed = subprocess.run(step["run_command"], **step["run_options"])
         actual = (executed.returncode, executed.stdout, executed.stderr)
         wanted = (

@@ -2151,15 +2151,16 @@ int64_t bits = raw;         // implicit: a declaration may use it
 
 The target is the operator's result type. A conversion operator is a
 non-static member with no parameters and a read-only, `mut`, or consuming
-(`&&`) receiver, and it may be `constexpr` or virtual. Its target is an owned
+(`&&`) receiver, and it may be `constexpr`. Its target is an owned
 value type: not `void`, a reference, a text view (`std::string_view`,
 `c_string`), a type carrying a borrow, or its own class. The boolean
 conversion is spelled `operator bool()`; another spelling of `bool`, such as an
 alias, is rejected. A class declares at most one conversion operator per target
 and receiver. Aliases denote their resolved target, and `implicit` does not
 distinguish declarations, so `operator Count()` and `operator int()` collide
-when `Count` aliases `int`. A conversion operator is inherited and overridden
-like any member; an override has the same target and receiver.
+when `Count` aliases `int`. Derived classes inherit conversion operators. Virtual conversion operators and
+conversion-operator overrides are currently rejected (GTI-S2022). For dynamic
+dispatch, have the conversion operator call a named virtual method.
 
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
@@ -2993,6 +2994,21 @@ enum's alternatives are not integer constants, so `value()` is rejected for
 them (`GTI-S2117`). `type<E>::enumerator_count()`, `is_payload_enum()` and
 `std::meta::is_payload_enum<E>()` report the shape; an out-of-range enumerator
 or payload index is rejected like a field index (`GTI-S2111`).
+
+For a payload enum, `std::meta::visit<R, E, Visitor>(subject, visitor)`
+selects the active alternative and calls `visitor.visit(alternative, fields...)`.
+The first argument is its enumerator descriptor. The remaining arguments borrow
+the active fields read-only, in declaration order. A unit case passes only its
+descriptor. A visitor can overload the method for different alternatives.
+
+`std::meta::visit_fields<Error, E, Visitor>(subject, visitor)` calls
+`begin(alternative)`, then `field(descriptor, value)` for each active field,
+then `end(alternative)`. Each callback returns `expected<void, Error>`.
+The first failure returns immediately, including a failure before `end`.
+`std::meta::make_alternative<E, Error, Producer, I>(producer)` constructs
+alternative `I` by calling `producer.produce(field)` in declaration order.
+Each call returns the field's value or an error. Earlier values are cleaned
+up on failure. A unit alternative requires no calls to the producer.
 
 `std::meta::bases_of<T>()` is a list of `std::meta::type<B>` over the direct
 bases of a class in declaration order (`type<T>::base_count()`, `bases()`);

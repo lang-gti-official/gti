@@ -338,7 +338,9 @@ and rollback, with `GITHUB_TOKEN`; and the rollup bot, the release cut and the
 automatic revert's `act` job, with the rollup App's token. No other workflow
 uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
-the CPU/memory-based budgets. Compiler-object caches are separate for native, sanitizer and bundled-release
+the CPU/memory-based budgets. Full validation's Linux shard and installed-toolchain
+steps log `scripts/runner_monitor.sh` samples, so a runner GitHub reports as
+lost or shut down still shows its memory, disk and largest processes. Compiler-object caches are separate for native, sanitizer and bundled-release
 profiles; cache errors never skip builds or validation.
 GitHub shares a cache across branches only when `main` saved it, so
 `workflows/cache.yml` warms the system-LLVM native and sanitizer configurations
@@ -365,10 +367,11 @@ using a privileged container.
 The previous GitHub-era workflows are archived under
 `docs/plans/archive/github-actions-20261024/` and do not run.
 
-Compiler sanitizer coverage is one library partition: its curated CTest subset
+Compiler sanitizer coverage is one library partition, its curated CTest subset
 (including `gti_unit_tests`, the compiler-API checks) and the instrumented
-`gti-test` run over `tests/ui` and `tests/project`, which analyses every
-former compiler-aggregate case with the sanitized compiler. The existing
+runner's self-test, plus sixteen `gti-test-instrumented` shards over `tests/ui`
+and `tests/project`, which analyse every former compiler-aggregate case with
+the sanitized compiler. The existing
 timeout and per-runner memory limits remain in force.
 
 The serial single-body compile-scaling check warms all three workloads, then

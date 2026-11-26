@@ -362,7 +362,9 @@ derivation, and transactional edits. The implementation mirrors those
 contracts: body-local verification remains beside the model primitives in
 `mir.cpp`, while cross-body/program verification, defined-failure derivation,
 optimization-proof replay, and shared private verification queries are
-compiled independently. Deterministic printing remains in `mir_printer.cpp`.
+compiled independently. A scalar comma computation contributes no failure of
+its own. Each operand contributes its ordinary effects before the computation
+selects the right-hand value. Deterministic printing remains in `mir_printer.cpp`.
 
 Lowering has three lifetimes. `mir_body_lowering.cpp` owns body-local IDs,
 scopes, loans, drops, CFG, and ordered source lowering;
@@ -3780,7 +3782,10 @@ verification then reconstructs the callee effects and checks the rebuilt callers
 subsequent failure-effect refinement uses that verified provisional program when
 deriving loan ends.
 Static helper summaries compose through the same analysis and are cached within
-one immutable-program analysis session. Body verification and program-contract
+one immutable-program analysis session. A nested constructor or destructor
+summary is reusable when its computation encountered no recursive cutoff and
+the function summaries it read are still current. An enclosing summary also
+observes cutoffs from its nested analyses. Body verification and program-contract
 verification share that session. Detached bodies submitted while lowering are
 always analyzed afresh; cached summaries belong only to the immutable callee
 program. Input permutations are substituted at every boundary.

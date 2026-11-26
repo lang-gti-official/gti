@@ -4,10 +4,12 @@
 Moves, borrows and drops interact with branching, and the borrow checker plus
 the drop-arming machinery have to agree on every path. This crosses the two.
 """
-import pathlib, subprocess, sys
+import sys
 
-GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
-OUT = pathlib.Path("/tmp/flowmx"); OUT.mkdir(exist_ok=True)
+import matrix_support
+
+M = matrix_support.Matrix(__doc__.split("\n\n")[0], 'ownership-flow')
+OUT = M.out
 
 PRELUDE = """import std.vector;
 
@@ -48,24 +50,6 @@ CONTEXTS = {
     "switch-arm":    "switch (tag) {{ case Tag::a: {{ {OP} break; }} case Tag::b: break; }}",
 }
 
-def classify(path):
-    r = subprocess.run([GTI, str(path), "-o", str(path) + ".bin"],
-                       capture_output=True, text=True, timeout=180)
-    out = r.stdout + r.stderr
-    if r.returncode == 0:
-        run = subprocess.run([str(path) + ".bin"], capture_output=True, text=True, timeout=60)
-        return "ok" if run.returncode == 0 else f"RUN{run.returncode}"
-    if "GTI-B0001" in out:
-        return "ICE"
-    if "Undefined symbols" in out:
-        return "LINK"
-    if "error:" in out and "error[GTI-" not in out:
-        return "BAD-CPP"
-    if not out.strip():
-        return "SILENT"
-    code = [t for t in out.split() if t.startswith("error[GTI-")]
-    return code[0].strip("error[]:").replace("GTI-", "") if code else f"exit{r.returncode}"
-
 results = {}
 for oname, op in OPS.items():
     for cname, ctempl in CONTEXTS.items():
@@ -85,10 +69,7 @@ int main() {{
   return 0;
 }}
 """)
-        try:
-            results[(oname, cname)] = classify(src)
-        except subprocess.TimeoutExpired:
-            results[(oname, cname)] = "TIMEOUT"
+        results[(oname, cname)] = M.classify(src)
 
 hdr = f"{'operation':<14}" + "".join(f"{c:<15}" for c in CONTEXTS)
 print(hdr); print("-" * len(hdr))
@@ -96,7 +77,8 @@ for o in OPS:
     print(f"{o:<14}" + "".join(f"{results[(o,c)]:<15}" for c in CONTEXTS))
 
 bad = [(o, c, v) for (o, c), v in results.items()
-       if v in ("ICE", "BAD-CPP", "SILENT", "LINK", "TIMEOUT") or v.startswith("RUN")]
+       if matrix_support.hard(v)]
 print(f"\nhard failures: {len(bad)} / {len(results)}")
 for o, c, v in bad:
     print(f"  {v:<10} {o} in {c}")
+sys.exit(M.finish(bad))

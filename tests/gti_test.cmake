@@ -34,9 +34,11 @@ function(gti_test_report name out)
   endif()
 endfunction()
 
-# Per-test limits are CPU seconds measured on a fast development machine;
-# hosted runners are about twice as slow, and sanitizer or other slow trees
-# scale every bound by GTI_TEST_TIMEOUT_SCALE.
+# Per-test limits are CPU seconds measured on a fast development machine and
+# doubled here. Hosted runners are slower than that allows (about 3.3x on
+# Linux, 2.5x on macOS), so pull-request and merge-queue CI configures
+# GTI_TEST_TIMEOUT_SCALE=2 and full validation 3; sanitizer or other slow
+# trees scale every bound further.
 # (TestThroughput.cmake defines the cache entry after this file and also
 # multiplies each entry's TIMEOUT below by it.)
 set(gti_test_timeout_scale "${GTI_TEST_TIMEOUT_SCALE}")

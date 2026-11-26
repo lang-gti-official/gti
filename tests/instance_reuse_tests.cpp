@@ -629,7 +629,11 @@ void checkViewRelays(const std::filesystem::path &root,
     expect(warm.metrics.semanticInstanceReuseHits ==
                    cold.metrics.semanticInstanceReuseStores &&
                warm.metrics.semanticInstanceReuseMisses == 0,
-           label + ": an unchanged snapshot reuses every stored instance");
+           label + ": an unchanged snapshot reuses every stored instance (" +
+               std::to_string(warm.metrics.semanticInstanceReuseHits) + " of " +
+               std::to_string(cold.metrics.semanticInstanceReuseStores) + ", " +
+               std::to_string(warm.metrics.semanticInstanceReuseRejected) +
+               " rejected)");
   }
 }
 

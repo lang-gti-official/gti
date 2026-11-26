@@ -19,6 +19,14 @@
 using namespace lang::driver;
 using namespace std::chrono_literals;
 namespace {
+// Every child here is this whole test binary. Under ASan on a hosted runner
+// its start-up alone takes hundreds of milliseconds and varies with load
+// (sanitizer runs 44244953877 and 45163973652), so no outcome may depend on
+// how fast a child starts. A deadline that only bounds a child expected to
+// finish is therefore generous: it decides nothing unless the child hangs.
+// Only children that never exit (a_slow, background_timeout) are meant to
+// reach their deadline, and those keep short ones.
+constexpr auto finishes = 30s;
 int failures = 0;
 void check(bool value, const char *message) {
   if (!value) {
@@ -29,11 +37,13 @@ void check(bool value, const char *message) {
 #if !defined(_WIN32)
 // EOF proves the descendant closed its last writer, including when the caller
 // was descheduled. A missing marker after a sleep cannot prove termination.
+// The poll bound only limits a failing run: a byte or EOF ends it at once.
 int readLifetimeByte(int descriptor, char &byte) {
   pollfd channel{descriptor, POLLIN, 0};
   int ready;
   do {
-    ready = poll(&channel, 1, 2000);
+    ready = poll(&channel, 1,
+                 static_cast<int>(std::chrono::milliseconds(finishes).count()));
   } while (ready < 0 && errno == EINTR);
   if (ready <= 0)
     return -1;
@@ -56,7 +66,7 @@ GTI_UNIT_TEST(test_runner) {
       const auto result = invokeProcess(
           {std::filesystem::absolute(argv[0]).string(), "write-streams"},
           {.outputMode = ProcessOutputMode::Inherit,
-           .timeout = 2s,
+           .timeout = finishes,
            .isolateProcessGroup = true});
       return result.succeeded() && result.output.empty() ? 0 : 1;
     }
@@ -76,7 +86,7 @@ GTI_UNIT_TEST(test_runner) {
       const auto nested =
           invokeProcess({std::filesystem::absolute(argv[0]).string(), "b_fast"},
                         {.captureSuccessfulOutput = true,
-                         .timeout = 2s,
+                         .timeout = finishes,
                          .isolateProcessGroup = true});
       return nested.succeeded() && nested.output == "b_fast ran\n" ? 0 : 1;
     }
@@ -125,11 +135,12 @@ GTI_UNIT_TEST(test_runner) {
   const auto executable = std::filesystem::absolute(argv[0]);
   const auto inherited =
       invokeProcess({executable.string(), "inherit-streams"},
-                    {.captureSuccessfulOutput = true, .timeout = 3s});
+                    {.captureSuccessfulOutput = true, .timeout = 2 * finishes});
   check(inherited.succeeded() &&
             inherited.output == "child stdout\nchild stderr\n",
         "bounded inherited children must write through the parent's streams "
         "without storing captured output");
+  // a_slow never exits, so this short deadline is the outcome under test.
   const auto inheritedTimeout =
       invokeProcess({executable.string(), "a_slow"},
                     {.outputMode = ProcessOutputMode::Inherit,
@@ -138,13 +149,14 @@ GTI_UNIT_TEST(test_runner) {
   check(inheritedTimeout.timedOut && inheritedTimeout.exitCode == 124 &&
             inheritedTimeout.output.empty(),
         "inherited children must retain deadline enforcement");
-  check(invokeProcess({"/gti-test-missing-executable"},
-                      {.outputMode = ProcessOutputMode::Inherit, .timeout = 1s})
+  check(invokeProcess(
+            {"/gti-test-missing-executable"},
+            {.outputMode = ProcessOutputMode::Inherit, .timeout = finishes})
             .driverDiagnostic.has_value(),
         "inherited children must preserve launch diagnostics");
   check(invokeProcess({executable.string(), "closed-streams"},
                       {.captureSuccessfulOutput = true,
-                       .timeout = 3s,
+                       .timeout = 2 * finishes,
                        .isolateProcessGroup = true})
             .succeeded(),
         "closed standard streams must not corrupt capture or launch-handshake "
@@ -153,7 +165,7 @@ GTI_UNIT_TEST(test_runner) {
                          ("gti-test-runner-" + std::to_string(getpid()));
   std::filesystem::create_directory(directory);
   TestRunOptions options;
-  options.timeout = 1s;
+  options.timeout = finishes;
   const TestSuiteCommand suite{
       "suite", executable, {"first", "second", "third"}};
   options.listOnly = true;
@@ -177,6 +189,7 @@ GTI_UNIT_TEST(test_runner) {
   check(result.summary.exitCode == 0 && result.summary.complete,
         "explicit empty selection must be accepted");
   options = TestRunOptions{};
+  options.timeout = finishes;
   options.skips = {"second"};
   result = runTestSuites(std::span(&suite, 1), options);
   check(result.summary.passed == 2 && result.summary.skipped == 1 &&
@@ -206,15 +219,12 @@ GTI_UNIT_TEST(test_runner) {
         "duplicate compiler identities must be rejected before execution");
   options = TestRunOptions{};
   options.jobs = 2;
-  // The children are this whole test binary. Under ASan on a hosted runner
-  // its start-up alone can exceed 150 ms, which made b_fast time out too
-  // (sanitizer run 44244953877); a_slow never exits, so the limit only has to
-  // be long enough for b_fast to start and finish.
-  options.timeout = 2s;
   TestSuiteCommand timed{"suite", executable, {"a_slow", "b_fast"}};
   bool cancel = false;
   auto cancelledOptions = options;
   cancelledOptions.jobs = 1;
+  // Interruption, not the deadline, ends this run as soon as a_slow starts.
+  cancelledOptions.timeout = finishes;
   auto cancelled =
       runTestSuites(std::span(&timed, 1), cancelledOptions,
                     {.started = [&](auto, auto) { cancel = true; },
@@ -224,6 +234,22 @@ GTI_UNIT_TEST(test_runner) {
             cancelled.summary.completed == 1 && cancelled.cases.size() == 1,
         "interruption must reap active children and not invent unstarted "
         "results");
+  // One deadline bounds both children: a_slow never exits and must reach it,
+  // while b_fast must start and finish within it, before a_slow is killed.
+  // Its start-up is measured here rather than assumed (150 ms and then 2 s
+  // were each too short for an instrumented binary on a hosted runner); ten
+  // times one solo run leaves room for the two children starting together.
+  // a_slow's deadline is real time spent, so it is not simply `finishes`.
+  const auto measuredStart = std::chrono::steady_clock::now();
+  check(invokeProcess({executable.string(), "b_fast"},
+                      {.captureSuccessfulOutput = true, .timeout = finishes})
+            .succeeded(),
+        "a fast child must run on its own");
+  const auto fastChild = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - measuredStart);
+  options.timeout = std::clamp<std::chrono::milliseconds>(
+      10 * fastChild, std::chrono::milliseconds(2s),
+      std::chrono::milliseconds(finishes));
   std::vector<std::string> completed;
   result = runTestSuites(std::span(&timed, 1), options,
                          {.finished = [&](const auto &report) {
@@ -231,10 +257,11 @@ GTI_UNIT_TEST(test_runner) {
                          }});
   check(result.summary.complete && result.summary.timedOut == 1 &&
             result.summary.passed == 1 && result.summary.exitCode == 124 &&
-            completed.front() == "b_fast",
+            !completed.empty() && completed.front() == "b_fast",
         "a hanging test must not block another child or its own deadline");
   TestSuiteCommand barrier{"suite", executable, {"barrier_a", "barrier_b"}};
-  options.timeout = 2s;
+  // From here every child is expected to finish (or fail to start).
+  options.timeout = finishes;
   options.environment = {{"GTI_RUNNER_DIRECTORY", directory.string()}};
   unsigned active = 0, maximum = 0;
   result = runTestSuites(
@@ -275,11 +302,15 @@ GTI_UNIT_TEST(test_runner) {
       continue;
     }
     const bool timeout = std::string(mode) == "background_timeout";
+    // The owner enforces a deadline only when it observes the child, here
+    // after the handshake, so background_timeout's short deadline cannot
+    // kill it before its descendant starts, however slow start-up is.
     auto child = startProcess(
         {executable.string(), mode},
         {.captureSuccessfulOutput = true,
          .environment = {{"GTI_RUNNER_PEER", std::to_string(endpoints[1])}},
-         .timeout = timeout ? 2s : 10s,
+         .timeout = timeout ? std::chrono::milliseconds(100ms)
+                            : std::chrono::milliseconds(finishes),
          .isolateProcessGroup = true});
     close(endpoints[1]);
     char ready = 0;

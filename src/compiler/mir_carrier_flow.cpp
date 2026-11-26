@@ -112,6 +112,15 @@ struct AnalysisContext {
   // Constructor recursion cannot certify itself as having no outward stores.
   std::set<HirConstructorInstanceId> activeConstructors;
   std::set<HirDestructorInstanceId> activeDestructors;
+  std::size_t recursionCutoffs = 0;
+
+  // A summary that observes a cutoff may depend on its enclosing call stack.
+  bool enter(std::set<std::size_t> &active, std::size_t id) {
+    if (active.insert(id).second)
+      return true;
+    ++recursionCutoffs;
+    return false;
+  }
   // Public queries solve the reachable call graph before consuming these
   // summaries. Provisional iteration facts never escape that solver.
   std::map<HirFunctionInstanceId, MirRetainingStoreEffects> callEffects;
@@ -165,9 +174,11 @@ struct AnalysisContext {
 struct SummaryReads {
   AnalysisContext &context;
   std::size_t generation;
+  std::size_t initialCutoffs;
   std::set<HirFunctionInstanceId> reads;
   explicit SummaryReads(AnalysisContext &context)
-      : context(context), generation(context.generation) {
+      : context(context), generation(context.generation),
+        initialCutoffs(context.recursionCutoffs) {
     context.reading.push_back(&reads);
   }
   ~SummaryReads() { context.reading.pop_back(); }
@@ -176,7 +187,8 @@ struct SummaryReads {
   template <class Value>
   void remember(std::map<std::size_t, AnalysisContext::Cached<Value>> &cache,
                 std::size_t id, const Value &value) {
-    if (context.unchangedSince(generation, reads))
+    if (initialCutoffs == context.recursionCutoffs &&
+        context.unchangedSince(generation, reads))
       cache[id] = {generation, reads, value};
   }
 };
@@ -829,18 +841,13 @@ bool privateCleanupEffects(const MirDropType &recipe,
     if (!destructor ||
         destructor->definitionKind != MirDefinitionKind::Source ||
         destructor->body.kind != MirBodyKind::Destructor ||
-        !context.activeDestructors.insert(target).second)
+        !context.enter(context.activeDestructors, target))
       return false;
-    // A summary computed inside another construction or cleanup may be cut
-    // short by a recursion guard; remember only top-level summaries.
-    const bool topLevel = context.activeDestructors.size() == 1 &&
-                          context.activeConstructors.empty();
     SummaryReads reads(context);
     const auto cleanup = deriveFlow(destructor->body, context);
     context.activeDestructors.erase(target);
     const auto remember = [&](bool admitted) {
-      if (topLevel)
-        reads.remember(context.privateCleanups, target, admitted);
+      reads.remember(context.privateCleanups, target, admitted);
       return admitted;
     };
     if (!cleanup.effectsComplete)
@@ -1784,18 +1791,13 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
           return *cached;
         if (constructor->definitionKind != MirDefinitionKind::Source ||
             constructor->body.kind != MirBodyKind::Constructor ||
-            !context.activeConstructors.insert(constructor->id).second)
+            !context.enter(context.activeConstructors, constructor->id))
           return false;
-        // Only a top-level summary is free of recursion-guard cutoffs.
-        const bool topLevel = context.activeConstructors.size() == 1 &&
-                              context.activeDestructors.empty();
         SummaryReads reads(context);
         const auto construction = deriveFlow(constructor->body, context);
         context.activeConstructors.erase(constructor->id);
         const auto remember = [&](bool admitted) {
-          if (topLevel)
-            reads.remember(context.localConstructions, constructor->id,
-                           admitted);
+          reads.remember(context.localConstructions, constructor->id, admitted);
           return admitted;
         };
         if (!construction.effectsComplete)
@@ -2842,13 +2844,9 @@ deriveConstructorEffects(const MirConstructorInstance &constructor,
   if (const auto *cached =
           context.lookup(context.constructorEffects, constructor.id))
     return *cached;
-  // Only a top-level summary is free of recursion-guard cutoffs.
-  const bool topLevel =
-      context.activeConstructors.empty() && context.activeDestructors.empty();
   SummaryReads reads(context);
   auto result = deriveConstructorEffectsUncached(constructor, context);
-  if (topLevel)
-    reads.remember(context.constructorEffects, constructor.id, result);
+  reads.remember(context.constructorEffects, constructor.id, result);
   return result;
 }
 MirRetainingStoreEffects
@@ -2856,7 +2854,7 @@ deriveConstructorEffectsUncached(const MirConstructorInstance &constructor,
                                  AnalysisContext &context) {
   if (constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.body.kind != MirBodyKind::Constructor ||
-      !context.activeConstructors.insert(constructor.id).second)
+      !context.enter(context.activeConstructors, constructor.id))
     return {};
   auto result = deriveSourceEffects(
       constructor.body, constructor.parameterTypes,

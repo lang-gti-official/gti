@@ -2442,9 +2442,9 @@ snapshot, and every request still flows through the same provider calls.
   function, constructor or generic-parameter identities is not stored.
 - **Consulted facts.** The functions whose facts the analysis read (the late
   demand probe) are stored with the entry and must denote the same
-  declarations; any still pending in the current snapshot are late-demanded
-  before reuse, exactly as the fresh analysis would have done before analysing
-  again. A stored delta never consulted a non-trusted function.
+  declarations. If any are pending, the compiler runs the ordinary analysis
+  attempt and its late demand before retrying reuse. This preserves the order
+  in which the attempt, deferred bodies and final delta allocate identities. A stored delta never consulted a non-trusted function.
 - **Results.** Only diagnostic-free analyses are stored, so a reuse reports
   nothing a fresh analysis would have reported. Entries are published to the
   cache only once HIR is final; an analysis that is repeated with required
@@ -3089,7 +3089,12 @@ declaration catalog. Body analysis never edits a sealed catalog, so a worker's
 copy is still identical to its creator's when the query ends: it returns to a
 small idle pool on the creating analyzer, and the next query's worker takes it
 instead of copying the catalog again. The creator's catalog is only moved
-aside, never copied, while the rest of the session is copied. This changes no
+aside, never copied, while the rest of the session is copied. The trusted facts
+a query retains for the type parameters in its arguments are the caller's
+proofs, not declarations, so they go to the worker session's
+`queryArgumentConstraints`, which `constraintOf` reads beside the catalog's
+declared constraints and nested workers inherit; writing them into the catalog
+would carry one caller's proofs into the next query that took the copy. This changes no
 query input, and every query is still evaluated: requirement results are not
 cached, because distinct queries dominate (an unused `import std.json` forks
 about 40 workers, none of them repeated). `FrontendWorkMetrics` reports
@@ -3558,7 +3563,9 @@ same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
 the ordinary loan-conflict analysis and lower to exact HIR/MIR symbol places.
 Function borrow-summary resolution uses a separate declaration registry for
-namespace storage because summaries precede lexical body analysis. It reuses
+namespace storage because summaries precede lexical body analysis. It resolves
+each storage type using the names visible from the declaring source unit,
+including the element type of a namespace-scope array. It reuses
 the eventual tooling `SymbolId` without publishing the variable into ordinary
 lookup, so this support does not make namespace variables forward-declarable.
 When every return in a free/static function resolves to one identical global

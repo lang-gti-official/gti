@@ -1,5 +1,7 @@
 # Opt-in libFuzzer harnesses (Q-FUZZ-01B,
-# docs/plans/compiler-bug-finding-and-triage.md).
+# docs/plans/compiler-bug-finding-and-triage.md). LLVM-first: they build in the
+# default configuration and never need GTI_ENABLE_CPP_BACKEND; the pipeline
+# harness ends at the LLVM backend.
 #
 # Only reached when GTI_BUILD_FUZZERS=ON, which the root CMakeLists gates on a
 # Clang toolchain and pairs with tree-wide
@@ -20,8 +22,14 @@ endforeach()
 
 target_link_libraries("gti_parser_fuzzer" PRIVATE gti_compiler)
 target_link_libraries("gti_formatter_fuzzer" PRIVATE gti_compiler)
-# gti_llvm_backend links gti_compiler publicly; the pipeline harness needs both.
-target_link_libraries("gti_pipeline_fuzzer" PRIVATE gti_llvm_backend)
+# gti_llvm_backend links gti_compiler publicly. The pipeline harness also
+# re-parses and verifies the backend's textual module, so it links the LLVM
+# components the backend's own closure already carries (one static copy).
+llvm_map_components_to_libnames(gti_fuzz_llvm_libraries asmparser core support)
+target_include_directories("gti_pipeline_fuzzer" SYSTEM PRIVATE
+                           ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries("gti_pipeline_fuzzer" PRIVATE gti_llvm_backend
+                      ${gti_fuzz_llvm_libraries})
 target_link_libraries("gti_source_loader_fuzzer" PRIVATE gti_compiler)
 
 # Fixed-corpus smoke: every harness executes its seed corpus under ASan/UBSan

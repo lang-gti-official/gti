@@ -1944,6 +1944,13 @@ the environment noncopyable. Moving the environment transfers its dependencies
 without moving their referents. Borrowed environments cannot be assigned or
 relocated as independent objects.
 
+A generic function that takes ownership of a closure with borrowed captures
+can return the exact closure with its result borrow tied to that parameter.
+Passing a fresh borrowing lambda to a factory that returns it inside a
+different class is currently rejected (GTI-S2046). A named closure can be
+transferred with `std::move` when the factory has a checked contract that
+moves the closure into an exact result field.
+
 Within an instance method, `[&this]` borrows the receiver read-only and
 `[mut &this]` borrows it exclusively. The latter requires a mutable receiver
 and a mutable closure binding. Access captured members explicitly through

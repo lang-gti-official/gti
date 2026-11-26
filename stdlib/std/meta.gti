@@ -169,6 +169,11 @@ export concept reflectable<T> = std::meta::is_reflectable<T>();
 export @compiler_type("meta_type") struct type<T> {
 public:
   constexpr type() {}
+  /// Dispatch to visitor.visit(alternative, fields...) with read-only field
+  /// borrows. Concrete analysis supplies the exhaustive switch body.
+  R visit<R, Visitor>(T& subject, mut Visitor& visitor) {}
+  expected<void, Error> visit_fields<Error, Visitor>(T& subject, mut Visitor& visitor) {}
+
   /// The qualified spelling of `T`.
   constexpr std::string_view name() { return gti_internal::meta_type_name<T>(); }
   constexpr bool is_struct() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
@@ -361,6 +366,10 @@ public:
 export @compiler_type("meta_enumerator") struct enumerator<E, uint64_t I> {
 public:
   constexpr enumerator() {}
+  /// Construct this alternative from producer.produce(field) results, in
+  /// declaration order. The first error aborts ordinary construction.
+  expected<E, Error> make<Error, Producer>(mut Producer& producer) {}
+
   /// The enumerator's declared name.
   constexpr std::string_view name() { return gti_internal::meta_enumerator_name<E, I>(); }
   /// The enumerator's position in declaration order.
@@ -469,6 +478,22 @@ expected<T, E> construct_fields<T, E, Producer, Remaining, Values...>(
 /// invariants are never bypassed.
 export expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
   return detail::construct_fields<T, E, Producer, field_list<T>>(producer);
+}
+
+/// Invoke the visitor for the active case of a payload enum.
+export R visit<R, E, Visitor>(E& subject, mut Visitor& visitor) {
+  return type<E>().visit<R, Visitor>(subject, visitor);
+}
+
+/// Visit the active case in declaration order with fallible begin(alternative),
+/// field(descriptor, value) and end(alternative) callbacks.
+export expected<void, Error> visit_fields<Error, E, Visitor>(E& subject, mut Visitor& visitor) {
+  return type<E>().visit_fields<Error, Visitor>(subject, visitor);
+}
+
+/// Build alternative I after all of its fields have been produced.
+export expected<E, Error> make_alternative<E, Error, Producer, uint64_t I>(mut Producer& producer) {
+  return enumerator<E, I>().make<Error, Producer>(producer);
 }
 
 export constexpr type<T> type_of<T>() { return type<T>(); }

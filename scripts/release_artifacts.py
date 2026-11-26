@@ -91,6 +91,23 @@ def verify(directory, sha, run_id, attempt, repository, consume=False, channel="
             path.unlink()
 
 
+def reference_assets(directory, output, env):
+    """Bind the deterministic Linux projection to the already recorded package."""
+    archive = "gti-nightly-linux-x64.tar.gz"
+    provenance = json.loads((directory / "provenance-linux-x64.json").read_text())
+    identity = {"sha": env["GITHUB_SHA"], "platform": "linux-x64", "profile": PROFILE,
+                "repository": env["GITHUB_REPOSITORY"], "run_id": int(env["GITHUB_RUN_ID"]),
+                "attempt": int(env["GITHUB_RUN_ATTEMPT"])}
+    if any(provenance.get(key) != value for key, value in identity.items()):
+        raise ValueError("reference index and package provenance differ")
+    archive_digest = digest(directory / archive)
+    if provenance["files"][archive] != archive_digest:
+        raise ValueError("reference archive checksum mismatch")
+    manifest = {"schema": 1, **identity, "archive_sha256": archive_digest,
+                "index_sha256": digest(output / "gti-tip-documentation-index.json")}
+    (output / "gti-tip-reference.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+
+
 def tip_assets(directory, output, sha, run_id, attempt, repository):
     """Republish one run's verified packages under the tip channel's asset names.
 
@@ -257,7 +274,7 @@ def release_evidence(repository, sha, request, full_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("record", "verify", "tip"))
+    parser.add_argument("mode", choices=("record", "verify", "tip", "reference"))
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--platform", choices=PLATFORMS)
     parser.add_argument("--sha")
@@ -273,6 +290,8 @@ def main():
     if args.mode == "record":
         record(args.directory, args.platform, {**os.environ, "GITHUB_SHA": args.sha or os.environ["GITHUB_SHA"]}, args.channel,
                json.loads(args.compiler_origin.read_text()) if args.compiler_origin else None)
+    elif args.mode == "reference":
+        reference_assets(args.directory, args.output, os.environ)
     elif args.mode == "tip":
         tip_assets(args.directory, args.output, args.sha, args.run_id, args.attempt, args.repository)
     else:
