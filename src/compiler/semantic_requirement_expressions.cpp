@@ -172,7 +172,8 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker(
   std::optional<SemanticCatalog> workerCatalog;
   if (catalog.sealed) {
     while (!idleQueryCatalogs.empty() && !workerCatalog) {
-      if (idleQueryCatalogs.back().sealedShape == catalog.sealedShape)
+      if (&idleQueryCatalogs.back().callables() == &catalog.callables() &&
+          idleQueryCatalogs.back().sealedShape == catalog.sealedShape)
         workerCatalog.emplace(std::move(idleQueryCatalogs.back()));
       idleQueryCatalogs.pop_back();
     }
@@ -180,7 +181,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker(
       if (workMetrics != nullptr)
         ++workMetrics->semanticQueryCatalogReuses;
     } else {
-      workerCatalog.emplace(catalog);
+      workerCatalog.emplace(catalog.snapshotForInstanceAnalysis());
     }
   }
   {

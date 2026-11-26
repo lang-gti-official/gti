@@ -1,4 +1,5 @@
 #include "gti/driver/artifact.h"
+#include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project_facts.h"
 #include "gti/driver/registry.h"
@@ -382,6 +383,19 @@ void testArchives() {
         "GTI-B1718");
   }
 }
+void testCheckoutChecksum(const std::filesystem::path &root) {
+  std::string block(64 * 1024, '\0');
+  write(root / "dir/full.bin", block);
+  write(root / "empty", "");
+  block.push_back(static_cast<char>(0x80));
+  write(root / "tail.bin", block);
+  std::string error;
+  expect(
+      checkoutChecksum(root, error) ==
+          "sha256:"
+          "a611c7ace82b5c8adf2fc798da3bbe5a6ec3b05e74655fa0fd42b8b451e053fe",
+      "locked dependency checksum frames empty and multi-block binary files");
+}
 } // namespace
 GTI_UNIT_TEST(package_registry_model) {
   Temporary temporary;
@@ -390,6 +404,7 @@ GTI_UNIT_TEST(package_registry_model) {
   testSemver();
   testMetadataAndDeclarations();
   testArchives();
+  testCheckoutChecksum(temporary.root / "checkout");
   testResolution(temporary.root / "cache");
   env(saved);
   return failures == 0 ? 0 : 1;

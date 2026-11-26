@@ -78,7 +78,7 @@ std::vector<Token> Lexer::consume(const std::filesystem::path &path) {
 
   std::ostringstream buffer;
   buffer << file.rdbuf();
-  return scan(buffer.str(), path.string());
+  return scan(std::move(buffer).str(), path.string());
 }
 
 std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
@@ -433,8 +433,8 @@ char Lexer::peekNext() const {
 void Lexer::addToken(TokenKind token) { addToken(token, std::monostate{}); }
 
 void Lexer::addToken(TokenKind kind, Literal literal) {
-  std::string text = source.substr(start, current - start);
-  tokens.emplace_back(kind, text, std::move(literal), start, line, sourceName);
+  tokens.emplace_back(kind, source.substr(start, current - start),
+                      std::move(literal), start, line, sourceName);
   if (kind != TokenKind::END_OF_FILE && pendingDocumentationMarkdown) {
     if (line <= pendingDocumentationLastLine + 1) {
       tokens.back().leadingDocumentationMarkdown =
@@ -452,9 +452,7 @@ void Lexer::lineComment() {
     advance();
   }
   const std::size_t contentStart = current;
-  while (peek() != '\n' && !isAtEnd()) {
-    advance();
-  }
+  current = std::min(source.find('\n', current), source.size());
   if (collectCompletionExclusions)
     completionExclusions.emplace_back(start, current + 1);
 
@@ -484,18 +482,16 @@ void Lexer::lineComment() {
 }
 
 void Lexer::blockComment() {
-  while (!isAtEnd()) {
-    if (peek() == '*' && peekNext() == '/') {
-      advance();
-      advance();
-      if (collectCompletionExclusions)
-        completionExclusions.emplace_back(start, current);
-      return;
-    }
-    if (advance() == '\n') {
-      ++line;
-    }
+  const auto close = source.find("*/", current);
+  const auto body = std::string_view(source).substr(current, close - current);
+  line += static_cast<int>(std::count(body.begin(), body.end(), '\n'));
+  if (close != std::string::npos) {
+    current = close + 2;
+    if (collectCompletionExclusions)
+      completionExclusions.emplace_back(start, current);
+    return;
   }
+  current = source.size();
 
   report("GTI-L0011", "Unterminated block comment.", start,
          std::min(start + 2, source.size()));
@@ -537,22 +533,20 @@ void Lexer::directive() {
 }
 
 void Lexer::string() {
-  while (peek() != '"' && !isAtEnd()) {
-    if (peek() == '\\') {
-      advance();
-      if (!isAtEnd()) {
-        if (peek() == '\n') {
-          ++line;
-        }
-        advance();
-      }
-      continue;
-    }
-    if (peek() == '\n') {
-      ++line;
-    }
-    advance();
+  // A quote ends the literal after an even-length run of backslashes.
+  auto close = source.find('"', current);
+  while (close != std::string::npos) {
+    auto preceding = close;
+    while (preceding > current && source[preceding - 1] == '\\')
+      --preceding;
+    if ((close - preceding) % 2 == 0)
+      break;
+    close = source.find('"', close + 1);
   }
+  const auto encoded =
+      std::string_view(source).substr(current, close - current);
+  line += static_cast<int>(std::count(encoded.begin(), encoded.end(), '\n'));
+  current += encoded.size();
 
   if (isAtEnd()) {
     report("GTI-L0004", "Unterminated string.", start,
@@ -564,14 +558,11 @@ void Lexer::string() {
 
   advance();
 
-  const std::string_view encoded(source.data() + start + 1,
-                                 current - start - 2);
   if (collectCompletionExclusions)
     completionExclusions.emplace_back(start + 1, current);
   std::string value;
-  value.reserve(encoded.size());
   decodeLiteralBody(encoded, start + 1, value);
-  addToken(TokenKind::STRING_LITERAL, value);
+  addToken(TokenKind::STRING_LITERAL, std::move(value));
 }
 
 void Lexer::character() {
@@ -614,14 +605,17 @@ void Lexer::character() {
 void Lexer::decodeLiteralBody(std::string_view body, std::size_t bodyStart,
                               std::string &value) {
   value.reserve(value.size() + body.size());
-  for (std::size_t index = 0;
-       index < body.size() && !errorLimitReached(diagnostics, errorLimit);
-       ++index) {
-    if (body[index] != '\\' || index + 1 >= body.size()) {
-      value += body[index];
-      continue;
+  std::size_t index = 0;
+  while (index < body.size() && !errorLimitReached(diagnostics, errorLimit)) {
+    const auto escape = body.find('\\', index);
+    if (escape == std::string_view::npos || escape + 1 == body.size()) {
+      value.append(body.substr(index));
+      break;
     }
+    value.append(body.substr(index, escape - index));
+    index = escape;
     decodeEscape(body, index, bodyStart, value);
+    ++index;
   }
 }
 
@@ -1028,8 +1022,8 @@ void Lexer::identifier() {
   while (isAlphaNumeric(peek())) {
     advance();
   }
-  const std::string text = source.substr(start, current - start);
-  if (text.rfind("__gti_", 0) == 0) {
+  const auto text = std::string_view(source).substr(start, current - start);
+  if (text.starts_with("__gti_")) {
     report("GTI-L0008", "Identifiers beginning with '__gti_' are reserved for "
                         "compiler-generated names.");
   }

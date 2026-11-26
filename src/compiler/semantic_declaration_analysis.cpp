@@ -5580,7 +5580,7 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
     functionGenericParameters.emplace(definition, std::move(methodParameters));
     catalog.definitionOwnerGenericParameters.emplace(
         definition, std::move(ownerParameters));
-    catalog.callableDeclarationsBySyntax.insert_or_assign(definition, record);
+    catalog.writableCallables().bySyntax.insert_or_assign(definition, record);
     semanticModel.bindFunctionDefinition(declaration, *definition);
   }
 }
@@ -5675,10 +5675,10 @@ auto SemanticVisitor::Impl::bindNamespaceFunctionDefinition(
                                                std::move(parameters));
     auto *unused = catalog.mutableCallable(definition);
     record->definition = &definition;
-    catalog.callableDeclarationsBySyntax.insert_or_assign(&definition, record);
-    std::erase_if(catalog.callableDeclarations, [unused](const auto &entry) {
-      return entry.get() == unused;
-    });
+    catalog.writableCallables().bySyntax.insert_or_assign(&definition, record);
+    std::erase_if(
+        catalog.writableCallables().records,
+        [unused](const auto &entry) { return entry.get() == unused; });
     semanticModel.bindFunctionDefinition(declaration, definition);
     return true;
   }

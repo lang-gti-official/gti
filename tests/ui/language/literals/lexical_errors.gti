@@ -7,5 +7,7 @@ int main() {
   float d = 1.5u8;  //~ ERROR GTI-L0006 cannot be applied to a floating-point
   uint64_t e = 10usize;  //~ ERROR GTI-L0007 Unknown numeric literal suffix
   std::string_view f = R"a b(x)a b";  //~ ERROR GTI-L0016 Invalid character
+  std::string_view g = "first line
+bad\q";  //~ ERROR GTI-L0005 Unknown escape sequence
   return 0;
 }

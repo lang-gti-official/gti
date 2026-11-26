@@ -3090,7 +3090,11 @@ Forking a query worker copies the request session, whose bulk is the sealed
 declaration catalog. Body analysis never edits a sealed catalog, so a worker's
 copy is still identical to its creator's when the query ends: it returns to a
 small idle pool on the creating analyzer, and the next query's worker takes it
-instead of copying the catalog again. The creator's catalog is only moved
+instead of copying the catalog again. Sealed worker copies share the callable
+records, their syntax index and frozen overload lists. The pool checks the
+registry identity and catalog shape before reuse. A preamble resumed for
+further registration gets independent records and rebinds its overloads to them.
+The creator's catalog is only moved
 aside, never copied, while the rest of the session is copied. The trusted facts
 a query retains for the type parameters in its arguments are the caller's
 proofs, not declarations, so they go to the worker session's
@@ -4265,7 +4269,7 @@ conditions, are still evaluated, so a genuine cycle still fails as above.
 Concrete reanalysis resets body scopes, so early HIR discovery uses a lazy,
 isolated semantic provider rather than reentering the unfinished caller. Its
 request-local snapshot copies the sealed catalog and the canonical semantic
-model, preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
+model, preserving declaration IDs and sharing the sealed callable registry. Ordinary
 instance analysis still produces each typed delta; there is no second generic
 resolver. The requesting analysis validates each returned delta against any
 retained invalid effect query before staged HIR can execute it. The adapter uses
