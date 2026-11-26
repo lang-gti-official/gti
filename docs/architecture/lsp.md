@@ -1031,7 +1031,14 @@ the diagnostic snapshot's entry-point and test-program policy and the same
 import-prefix eligibility rules; those settings participate in semantic cache
 identity. Current entry text still receives completion-marker analysis, and
 changed dependency contents invalidate reuse. Like analysis, it never
-builds a missing preamble itself. Its request-owned
+builds a missing preamble itself. For a directly authored member marker in a concrete
+entry-file function or constructor, semantic
+analysis collects the receiver's candidates through the ordinary lexical
+body pass, including visibility, overloads, substituted types and declaration
+documentation. Once those facts are available the query can return a partial
+semantic model without checking unrelated deferred bodies or finalizing
+whole-program contracts. This query-only model never enters lowering.
+Its request-owned
 cancellation flag reaches the same compiler safe points as diagnostic analysis.
 An edit, close/reopen, newer completion on the same document, explicit
 `$/cancelRequest`, or shutdown stops obsolete work. Other documents' requests

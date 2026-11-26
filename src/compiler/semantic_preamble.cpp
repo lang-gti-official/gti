@@ -280,6 +280,8 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   }
 
   throwIfCancelled();
+  if (capturedMemberQuery())
+    return false;
   const auto finalizationStart = std::chrono::steady_clock::now();
   const std::unordered_set<const FunctionDecl *> functions(analyzed.begin(),
                                                            analyzed.end());

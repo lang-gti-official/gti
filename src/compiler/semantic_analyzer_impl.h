@@ -285,6 +285,10 @@ public:
   struct ErrorLimitReached {};
   void finishLimitedAnalysis();
   bool enforceErrorLimit = false;
+  bool memberCompletionQuery = false;
+  std::optional<bool> concreteMemberCapture;
+  [[nodiscard]] bool isConcreteMemberQuerySite(const Token &token) const;
+  [[nodiscard]] bool capturedMemberQuery() const;
   const std::atomic<bool> *cancellation = nullptr;
   const std::function<void()> *registrationObserver = nullptr;
   const SemanticVisitor::EntryDiagnosticObserver *entryDiagnosticObserver =

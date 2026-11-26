@@ -2015,6 +2015,7 @@ public:
     options.analyzeRecoveredProgram = true;
     options.analyzeRecoveredSourceGraph = true;
     options.completionOffset = input.byteOffset;
+    options.memberCompletionQuery = true;
     options.workMetrics = input.workMetrics;
     options.cache = input.cache;
     options.instanceCache = input.instanceCache;
