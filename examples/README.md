@@ -908,6 +908,14 @@ scene updates, CPU-side perspective projection, Assimp model import, shader
 compilation, interleaved vertex streaming, and an interactive ImGui debug panel,
 with headless math/model tests alongside the graphical executable.
 
+[`voxel-sandbox/`](voxel-sandbox/README.md) is an original block-building game
+written in GTI: streamed chunked terrain with biomes, caves and trees, greedy
+meshing with ambient occlusion, procedural textures, player physics, block
+editing, a bitmap-font HUD, parallel chunk generation on worker threads, and a
+built-in profiler. GLFW and raw OpenGL are its only native boundaries. A
+scripted flight benchmark and a headless benchmark measure it, and a C++ port of
+the same kernels gives a cross-language baseline.
+
 [`compiled-libraries/`](compiled-libraries/README.md) demonstrates two independent
 compiled libraries selected through the plural project manifest, with source-free
 consumer builds and checks. The `compiled_libraries_project` gate owns it.

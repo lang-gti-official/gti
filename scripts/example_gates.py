@@ -23,7 +23,7 @@ NESTED = {"ownership", "compiled-type-forwarding", "compiled-namespaces", "compi
           "libc-region-provider", "llvm", "module-only", "module-system", "module-discovery", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
-          "toy-3d-engine", "transit-planner", "window-factory"}
+          "toy-3d-engine", "transit-planner", "voxel-sandbox", "window-factory"}
 
 
 def validate_sources(paths):
