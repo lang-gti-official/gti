@@ -1,0 +1,8 @@
+// A function-local static is constant-initialized, so reaching a never-returning call in its initializer is a compile-time error.
+import std.panic;
+[[noreturn]] constexpr int die() { std::panic("static local failed"); }  //~ ERROR GTI-S2057 initializer for function-local static 'cached' failed
+int read() {
+  static int cached = die();
+  return cached;
+}
+int main() { return read(); }

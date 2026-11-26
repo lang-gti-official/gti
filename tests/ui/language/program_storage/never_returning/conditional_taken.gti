@@ -1,0 +1,9 @@
+// A conditional initializer whose selected arm never returns terminates program initialization.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: selected arm failed
+import std.panic;
+[[noreturn]] int die() { std::panic("selected arm failed"); }
+bool select(bool value) { return value; }
+int G = select(true) ? die() : 1;
+int main() { return G; }

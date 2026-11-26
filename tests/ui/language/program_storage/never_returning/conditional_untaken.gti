@@ -1,0 +1,11 @@
+// A conditional initializer with a never-returning arm initializes normally when the other arm is selected.
+//@ run-pass
+//@ stdout: 7
+//@ stdout: 9
+import std.format;
+import std.panic;
+[[noreturn]] int die() { std::panic("unselected arm ran"); }
+bool select(bool value) { return value; }
+int G = select(false) ? die() : 7;
+int H = G + 2;
+int main() { std::println(G); std::println(H); return 0; }

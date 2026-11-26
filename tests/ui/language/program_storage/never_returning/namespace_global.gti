@@ -1,0 +1,9 @@
+// A never-returning call as a namespace global's initializer terminates program initialization through the hosted containment boundary.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0017
+//@ stderr-contains: global initializer failed
+import std.panic;
+[[noreturn]] int die() { std::panic("global initializer failed"); }
+int G = die();
+int main() { return G; }

@@ -1,0 +1,9 @@
+// A never-returning thread_local initializer terminates when its storage is first initialized under the concurrent profile.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stderr-contains: thread-local failed
+import std.panic;
+[[noreturn]] int die() { std::panic("thread-local failed"); }
+thread_local int T = die();
+int main() { return T; }

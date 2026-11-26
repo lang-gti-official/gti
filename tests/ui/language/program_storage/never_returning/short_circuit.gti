@@ -1,0 +1,17 @@
+// A never-returning right operand terminates an initializer only when short-circuit evaluation selects it.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stderr-contains: right operand failed
+import std.format;
+import std.panic;
+[[noreturn]] bool die() { std::panic("right operand failed"); }
+bool select(bool value) { return value; }
+int note(bool value) {
+  std::println(value ? 1 : 0);
+  return 0;
+}
+bool Skipped = select(true) || die();
+int Printed = note(Skipped);
+bool Evaluated = select(true) && die();
+int main() { return Evaluated ? 0 : 1; }

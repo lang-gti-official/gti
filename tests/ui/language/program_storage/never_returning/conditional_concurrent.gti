@@ -1,0 +1,10 @@
+// A conditional initializer with a never-returning arm initializes normally under the concurrent profile.
+//@ run-pass
+//@ execution-profile: concurrent
+//@ stdout: 8
+import std.format;
+import std.panic;
+[[noreturn]] int die() { std::panic("unselected arm ran"); }
+bool select(bool value) { return value; }
+int G = select(true) ? 8 : die();
+int main() { std::println(G); return 0; }

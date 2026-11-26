@@ -12012,8 +12012,18 @@ verifyMirProgramInitialization(const MirProgram &program) {
       }
     }
   }
-  if (previousTag != plan.steps.size()) {
-    add("module block tags do not cover every initialization step");
+  // A terminal step ends the reachable plan: it and the steps before it own
+  // blocks, while every later step is unreached and owns none.
+  const ProgramInitializationStepId lastTaggedStep =
+      plan.terminalStep != 0 ? plan.terminalStep : plan.steps.size();
+  if (plan.terminalStep > plan.steps.size() ||
+      (plan.terminalStep != 0 &&
+       plan.steps[plan.terminalStep - 1].role !=
+           ProgramInitializationStepRole::Initializer)) {
+    add("program-initialization terminal step is not a dynamic step");
+  }
+  if (previousTag != lastTaggedStep) {
+    add("module block tags do not cover every reached initialization step");
   }
   std::unordered_map<HirBindingId, ProgramInitializationStepId> bindingSteps;
   std::unordered_map<SymbolId, ProgramInitializationStepId> symbolSteps;
@@ -12027,6 +12037,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
   std::unordered_set<MirPlaceId> localAliasPlaces;
   std::unordered_set<MirPlaceId> localPlaces;
   std::unordered_set<MirPlaceId> storagePlaces;
+  // Storage of a terminal or unreached step, which no path initializes.
+  std::unordered_set<MirPlaceId> unpublishedStorage;
   std::unordered_set<MirInstructionId> storageInitializations;
   std::unordered_set<HirStatementId> statements;
   std::unordered_set<HirValueId> initializerValues;
@@ -12058,6 +12070,14 @@ verifyMirProgramInitialization(const MirProgram &program) {
 
   for (std::size_t index = 0; index < plan.steps.size(); ++index) {
     const MirProgramInitializationStep &step = plan.steps[index];
+    // A terminal initializer never completes, so it publishes no storage;
+    // an unreached step keeps only its storage identity.
+    const bool terminal = step.id == plan.terminalStep;
+    const bool unreached =
+        plan.terminalStep != 0 && step.id > plan.terminalStep;
+    const bool publishes = !terminal && !unreached;
+    if (!publishes)
+      unpublishedStorage.insert(step.storagePlace);
     const MirPlace *storage = module.findPlace(step.storagePlace);
     const LocatedInstruction located =
         instructions.contains(step.storageInitialization)
@@ -12081,7 +12101,9 @@ verifyMirProgramInitialization(const MirProgram &program) {
         !bindingSteps.emplace(step.binding, step.id).second ||
         !symbolSteps.emplace(step.symbol, step.id).second ||
         !storagePlaces.insert(step.storagePlace).second ||
-        !storageInitializations.insert(step.storageInitialization).second ||
+        (publishes
+             ? !storageInitializations.insert(step.storageInitialization).second
+             : step.storageInitialization != 0) ||
         step.requiresActiveCleanup != (step.nativeRetirement.has_value() ||
                                        step.sourceCleanup.has_value()) ||
         (step.nativeRetirement && step.sourceCleanup) ||
@@ -12099,12 +12121,15 @@ verifyMirProgramInitialization(const MirProgram &program) {
         !storage->projections.empty() ||
         storage->type == SemanticType::Unknown || storage->sourceValue != 0 ||
         !storage->key || *storage->key != expectedKey ||
-        storage->initiallyAvailable || entry == nullptr ||
-        entry->programInitializationStep != step.id ||
-        stepBlocks[index].empty() ||
-        stepBlocks[index].front()->id != step.entryBlock ||
-        (index == 0 ? module.entry != step.entryBlock
-                    : plan.steps[index - 1].entryBlock >= step.entryBlock)) {
+        storage->initiallyAvailable ||
+        (unreached ? step.entryBlock != 0 || !stepBlocks[index].empty()
+                   : entry == nullptr ||
+                         entry->programInitializationStep != step.id ||
+                         stepBlocks[index].empty() ||
+                         stepBlocks[index].front()->id != step.entryBlock ||
+                         (index == 0 ? module.entry != step.entryBlock
+                                     : plan.steps[index - 1].entryBlock >=
+                                           step.entryBlock))) {
       add("program-initialization step has invalid identity or storage",
           step.entryBlock, step.storageInitialization);
     }
@@ -12128,7 +12153,7 @@ verifyMirProgramInitialization(const MirProgram &program) {
     for (const auto &local : step.locals) {
       const auto *place = module.findPlace(local.place);
       if (step.role != ProgramInitializationStepRole::Initializer ||
-          local.binding == 0 || local.binding <= previousLocal ||
+          unreached || local.binding == 0 || local.binding <= previousLocal ||
           !localBindingSteps.emplace(local.binding, step.id).second ||
           !localsByBinding.emplace(local.binding, &local).second ||
           (local.symbol != 0 &&
@@ -12154,13 +12179,15 @@ verifyMirProgramInitialization(const MirProgram &program) {
           full->id != nested || full->statement == 0 ||
           full->constructorInitializer != 0 ||
           !fullExpressions.insert(nested).second ||
-          !fullExpressionSteps.emplace(nested, step.id).second ||
-          found == fullExpressionMarkers.end() || found->second.empty() ||
-          std::any_of(found->second.begin(), found->second.end(),
-                      [&](const auto &marker) {
-                        return marker.block->programInitializationStep !=
-                               step.id;
-                      })) {
+          !fullExpressionSteps.emplace(nested, step.id).second || unreached ||
+          (!terminal &&
+           (found == fullExpressionMarkers.end() || found->second.empty())) ||
+          (found != fullExpressionMarkers.end() &&
+           std::any_of(found->second.begin(), found->second.end(),
+                       [&](const auto &marker) {
+                         return marker.block->programInitializationStep !=
+                                step.id;
+                       }))) {
         add("nested initializer full expression is not exact to its owning "
             "step",
             step.entryBlock);
@@ -12195,14 +12222,53 @@ verifyMirProgramInitialization(const MirProgram &program) {
           constantMatchesType(*step.dataConstant, storage->type, &program);
       if ((!implicitZero && !constant) || step.statement != 0 ||
           step.initializer != 0 || step.fullExpression != 0 ||
-          !commonInitialize || *initialize != canonicalInitialize ||
-          stepBlocks[index].size() != 1 ||
-          stepBlocks[index].front()->instructions.size() != 1 ||
-          stepBlocks[index].front()->instructions.front().id !=
-              step.storageInitialization) {
+          (!unreached &&
+           (!commonInitialize || *initialize != canonicalInitialize ||
+            stepBlocks[index].size() != 1 ||
+            stepBlocks[index].front()->instructions.size() != 1 ||
+            stepBlocks[index].front()->instructions.front().id !=
+                step.storageInitialization))) {
         add("data-only initialization step is not its exact zero/constant "
             "storage stage",
             step.entryBlock, step.storageInitialization);
+      }
+    } else if (step.role == ProgramInitializationStepRole::Initializer &&
+               !publishes) {
+      // A terminal initializer lowered its full expression up to the
+      // never-returning call and has no storage Initialize; its marker, if
+      // any, is lifetime bookkeeping in the call's impossible continuation.
+      // An unreached initializer lowered nothing.
+      const MirFullExpression *full =
+          step.fullExpression == 0 ||
+                  step.fullExpression > module.fullExpressions.size()
+              ? nullptr
+              : &module.fullExpressions[step.fullExpression - 1];
+      if (step.dataInitialization != MirProgramDataInitializationKind::None ||
+          step.dataConstant || step.statement == 0 || step.initializer == 0 ||
+          !statements.insert(step.statement).second ||
+          !initializerValues.insert(step.initializer).second ||
+          (unreached
+               ? !markers.empty()
+               : markers.size() > 1 ||
+                     std::any_of(
+                         markers.begin(), markers.end(),
+                         [&](const auto &marker) {
+                           return marker.block->programInitializationStep !=
+                                  step.id;
+                         })) ||
+          (unreached
+               ? step.fullExpression != 0
+               : full == nullptr || full->id != step.fullExpression ||
+                     full->statement != step.statement ||
+                     full->constructorInitializer != 0 ||
+                     full->roots != std::vector<HirValueId>{step.initializer} ||
+                     !fullExpressions.insert(step.fullExpression).second ||
+                     !fullExpressionSteps.emplace(step.fullExpression, step.id)
+                          .second)) {
+        add(unreached ? "unreached initialization step lowers its initializer"
+                      : "terminal initialization step lacks its exact "
+                        "statement and root, or publishes its storage",
+            step.entryBlock);
       }
     } else if (step.role == ProgramInitializationStepRole::Initializer) {
       const MirFullExpression *full =
@@ -12307,6 +12373,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
     } else {
       add("program-initialization step has an invalid role");
     }
+    if (unreached)
+      continue;
 
     const std::vector<MirBlockId> &incoming = predecessors[step.entryBlock];
     const MirBlock *boundary = nullptr;
@@ -12331,7 +12399,9 @@ verifyMirProgramInitialization(const MirProgram &program) {
       }
     }
 
-    if (index + 1 == plan.steps.size()) {
+    if (terminal) {
+      // No path leaves a terminal step, so it has no boundary.
+    } else if (index + 1 == plan.steps.size()) {
       const auto finalExit = std::find_if(
           stepBlocks[index].begin(), stepBlocks[index].end(),
           [](const MirBlock *block) {
@@ -12353,7 +12423,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
       expectedBoundary.kind = MirTerminatorKind::Goto;
       expectedBoundary.target = plan.steps[index + 1].entryBlock;
     }
-    if (boundary == nullptr || boundary->terminator != expectedBoundary) {
+    if (!terminal &&
+        (boundary == nullptr || boundary->terminator != expectedBoundary)) {
       add("program-initialization boundary is not the exact dense Goto or "
           "final Exit",
           boundary == nullptr ? step.entryBlock : boundary->id);
@@ -12377,7 +12448,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
         }
       }
     }
-    if (forwardReachable.size() != stepBlocks[index].size()) {
+    // Blocks the body's own reachability marks dead, such as the join of a
+    // conditional whose arms all never return, are not part of the schedule.
+    const auto liveStepBlocks = static_cast<std::size_t>(
+        std::count_if(stepBlocks[index].begin(), stepBlocks[index].end(),
+                      [](const MirBlock *block) { return block->reachable; }));
+    if (forwardReachable.size() != liveStepBlocks) {
       add("program-initialization step contains a block unreachable from its "
           "entry",
           step.entryBlock);
@@ -12429,6 +12505,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
           "than once",
           markers.front().block->id, markers.front().instruction->id);
     }
+    if (terminal)
+      continue;
     if (boundary == nullptr || located.block == nullptr || !dominance ||
         !dominance->dominates(located.block->id, boundary->id)) {
       add("program storage Initialize does not dominate the dense transition "
@@ -12571,6 +12649,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (!exact)
       add("initializer local views are not an exact aggregate decomposition");
   }
+  std::unordered_set<HirValueId> deadConditionalResults;
+  for (const MirBlock &block : module.blocks)
+    if (!block.reachable &&
+        block.terminator.kind == MirTerminatorKind::Unreachable &&
+        block.terminator.hirValue != 0)
+      deadConditionalResults.insert(block.terminator.hirValue);
   const auto placeIsUsed = [&](MirPlaceId id) {
     if (std::any_of(module.loans.begin(), module.loans.end(),
                     [&](const MirLoan &loan) { return loan.source == id; }) ||
@@ -12646,8 +12730,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (!rootAxesExact) {
       add("Module place retains identities outside its exact root kind");
     }
+    // A conditional whose every arm never returns has a dead join and never
+    // publishes its result temporary, exactly as in a function body.
     if (place.root == MirPlaceRootKind::Temporary &&
-        (place.sourceValue == 0 || !placeIsUsed(place.id))) {
+        (place.sourceValue == 0 ||
+         (!placeIsUsed(place.id) &&
+          !deadConditionalResults.contains(place.sourceValue)))) {
       add("Module contains an orphan program-initialization temporary place");
     }
     if (!bindingRoot && !symbolRoot) {
@@ -12659,7 +12747,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
       // step.
       continue;
     }
-    if (!placeIsUsed(place.id) && !localAliasPlaces.contains(place.id))
+    if (!placeIsUsed(place.id) && !localAliasPlaces.contains(place.id) &&
+        !unpublishedStorage.contains(place.id))
       add("module contains orphan persistent/local storage place");
     if (symbolRoot && place.capture == 0 &&
         program.findThreadLocalStorage(place.symbol) != nullptr) {
@@ -12884,6 +12973,46 @@ verifyMirProgramInitialization(const MirProgram &program) {
     return found != fullExpressionSteps.end() && found->second == current;
   };
 
+  // An initializer path may end only where a never-returning call ended it:
+  // in the call's own block, or in its normal continuation reached through
+  // the call's Invoke, plain Gotos and fallible bookkeeping drops. The body
+  // verifier separately limits that continuation to lifetime bookkeeping.
+  const auto neverReturningContinuation = [&](const MirBlock &end) {
+    std::unordered_set<MirBlockId> visited;
+    const MirBlock *block = &end;
+    while (block != nullptr && visited.insert(block->id).second) {
+      if (std::any_of(block->instructions.begin(), block->instructions.end(),
+                      [](const MirInstruction &instruction) {
+                        return !instruction.tombstone &&
+                               instruction.neverReturns;
+                      }))
+        return true;
+      const auto incoming = predecessors.find(block->id);
+      if (incoming == predecessors.end() || incoming->second.size() != 1)
+        return false;
+      const MirBlock *predecessor = module.findBlock(incoming->second.front());
+      if (predecessor == nullptr || predecessor->programInitializationStep !=
+                                        block->programInitializationStep)
+        return false;
+      if (predecessor->terminator.kind == MirTerminatorKind::Invoke) {
+        const auto call =
+            instructions.find(predecessor->terminator.invokeInstruction);
+        if (predecessor->terminator.target != block->id ||
+            call == instructions.end())
+          return false;
+        if (call->second.instruction->neverReturns)
+          return true;
+        // A fallible drop in the impossible continuation is bookkeeping.
+        if (call->second.instruction->kind != MirInstructionKind::Drop)
+          return false;
+      } else if (predecessor->terminator.kind != MirTerminatorKind::Goto) {
+        return false;
+      }
+      block = predecessor;
+    }
+    return false;
+  };
+
   std::size_t exits = 0;
   for (const MirBlock &block : module.blocks) {
     const ProgramInitializationStepId current = block.programInitializationStep;
@@ -13007,15 +13136,21 @@ verifyMirProgramInitialization(const MirProgram &program) {
         add("program-initialization failure endpoint has no active failure",
             block.id);
       }
+    } else if (block.terminator.kind == MirTerminatorKind::Unreachable) {
+      if (block.reachable && !neverReturningContinuation(block))
+        add("program-initialization Unreachable does not follow a "
+            "never-returning call",
+            block.id);
     } else if (block.terminator.kind == MirTerminatorKind::Return ||
-               block.terminator.kind == MirTerminatorKind::Unreachable ||
                block.terminator.kind == MirTerminatorKind::ContainFailure ||
                block.terminator.kind == MirTerminatorKind::None) {
       add("program-initialization block has a non-normal terminator", block.id);
     }
   }
-  if (exits != 1) {
-    add("final program-initialization step must reach exactly one Exit");
+  if (exits != (plan.terminalStep == 0 ? 1u : 0u)) {
+    add(plan.terminalStep == 0
+            ? "final program-initialization step must reach exactly one Exit"
+            : "program initialization exits after a terminal step");
   }
 
   for (std::size_t index = 0; index < stepBlocks.size(); ++index) {
@@ -13027,7 +13162,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
     while (changed) {
       changed = false;
       for (const MirBlock *block : stepBlocks[index]) {
-        if (block->activeFailure != 0 || canReachBoundary.contains(block->id)) {
+        if (block->activeFailure != 0 || !block->reachable ||
+            canReachBoundary.contains(block->id)) {
           continue;
         }
         std::vector<MirBlockId> outgoing =
@@ -13035,11 +13171,15 @@ verifyMirProgramInitialization(const MirProgram &program) {
         if (block->terminator.kind == MirTerminatorKind::Invoke) {
           outgoing = {block->terminator.target};
         }
+        // A never-returning call's continuation ends its path, as in any
+        // body; it need not reach the boundary.
         const bool boundary =
-            (nextEntry != 0 && std::find(outgoing.begin(), outgoing.end(),
-                                         nextEntry) != outgoing.end()) ||
-            (nextEntry == 0 &&
-             block->terminator.kind == MirTerminatorKind::Exit);
+            block->terminator.kind == MirTerminatorKind::Unreachable ||
+            (stepId != plan.terminalStep &&
+             ((nextEntry != 0 && std::find(outgoing.begin(), outgoing.end(),
+                                           nextEntry) != outgoing.end()) ||
+              (nextEntry == 0 &&
+               block->terminator.kind == MirTerminatorKind::Exit)));
         const bool reachesKnown = std::any_of(
             outgoing.begin(), outgoing.end(), [&](MirBlockId successor) {
               const MirBlock *target = module.findBlock(successor);
@@ -13053,12 +13193,14 @@ verifyMirProgramInitialization(const MirProgram &program) {
         }
       }
     }
-    const std::size_t normalBlocks = static_cast<std::size_t>(std::count_if(
-        stepBlocks[index].begin(), stepBlocks[index].end(),
-        [](const MirBlock *block) { return block->activeFailure == 0; }));
+    const std::size_t normalBlocks = static_cast<std::size_t>(
+        std::count_if(stepBlocks[index].begin(), stepBlocks[index].end(),
+                      [](const MirBlock *block) {
+                        return block->activeFailure == 0 && block->reachable;
+                      }));
     if (canReachBoundary.size() != normalBlocks) {
       add("program-initialization step has a block that cannot reach its "
-          "dense successor or final Exit",
+          "dense successor, final Exit or a terminal end",
           plan.steps[index].entryBlock);
     }
   }

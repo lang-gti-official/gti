@@ -1,0 +1,8 @@
+// Constant evaluation rejects only the constexpr initializer whose selected arm reaches a never-returning call.
+import std.panic;
+[[noreturn]] constexpr int die() { std::panic("selected constant arm failed"); }  //~ ERROR GTI-S2057 initializer for constexpr binding 'Taken' failed
+constexpr bool select(bool value) { return value; }
+constexpr int Untaken = select(false) ? die() : 5;
+constexpr int Taken = select(true) ? die() : 5;
+static_assert(Untaken == 5);
+int main() { return Untaken + Taken; }

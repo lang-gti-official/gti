@@ -1,0 +1,5 @@
+// A constexpr namespace global cannot call a never-returning function that is not constexpr.
+import std.panic;
+[[noreturn]] int die() { std::panic("runtime only"); }
+constexpr int C = die();  //~ ERROR GTI-S2057 Call to non-constexpr function 'die'
+int main() { return C; }

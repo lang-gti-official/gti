@@ -1,0 +1,10 @@
+// A never-returning namespace global initializer terminates program initialization under the concurrent profile.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0017
+//@ stderr-contains: global initializer failed
+import std.panic;
+[[noreturn]] int die() { std::panic("global initializer failed"); }
+int G = die();
+int main() { return G; }

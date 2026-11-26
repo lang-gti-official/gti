@@ -1,0 +1,12 @@
+// A never-returning class static field initializer terminates program initialization under the concurrent profile.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stderr-contains: static field failed
+import std.panic;
+[[noreturn]] int die() { std::panic("static field failed"); }
+class Counter {
+public:
+  static int start = die();
+};
+int main() { return Counter::start; }

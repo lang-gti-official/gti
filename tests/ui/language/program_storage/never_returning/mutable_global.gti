@@ -1,0 +1,8 @@
+// A never-returning call terminates program initialization from a mutable namespace global's initializer.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: mutable initializer failed
+import std.panic;
+[[noreturn]] int die() { std::panic("mutable initializer failed"); }
+mut int G = die();
+int main() { G += 1; return G; }

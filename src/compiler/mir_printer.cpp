@@ -986,7 +986,10 @@ private:
 
   void programInitialization(const MirProgramInitializationPlan &plan) {
     output << "program-initialization units=" << plan.units.size()
-           << " steps=" << plan.steps.size() << '\n';
+           << " steps=" << plan.steps.size();
+    if (plan.terminalStep != 0)
+      output << " terminal-step=@" << plan.terminalStep;
+    output << '\n';
     for (const MirProgramInitializationUnit &unit : plan.units) {
       output << "  unit source=" << unit.sourceUnit << " steps=[";
       list(unit.steps);

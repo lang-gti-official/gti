@@ -1782,6 +1782,12 @@ struct MirProgramInitializationStep {
 struct MirProgramInitializationPlan {
   std::vector<MirProgramInitializationUnit> units;
   std::vector<MirProgramInitializationStep> steps;
+  // The first dynamic step whose initializer cannot complete normally on any
+  // path (it reaches a never-returning call unconditionally), or 0. That step
+  // owns blocks but publishes no storage Initialize, full-expression marker or
+  // transition; every later step is unreached and owns no block, entry or
+  // storage Initialize, and Module/0 has no Exit.
+  ProgramInitializationStepId terminalStep = 0;
 
   [[nodiscard]] const MirProgramInitializationStep *
   findStep(ProgramInitializationStepId id) const {

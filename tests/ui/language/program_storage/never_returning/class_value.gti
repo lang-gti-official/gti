@@ -1,0 +1,18 @@
+// A never-returning call producing a class value terminates program initialization without publishing or destroying that global.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stdout: 1
+//@ stderr-contains: class initializer failed
+import std.format;
+import std.panic;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) { std::println(value); }
+  ~Marker() { std::println(value); }
+};
+[[noreturn]] Marker make() { std::panic("class initializer failed"); }
+Marker first{1};
+Marker second = make();
+int main() { return 0; }
