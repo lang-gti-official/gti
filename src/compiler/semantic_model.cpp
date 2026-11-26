@@ -130,15 +130,17 @@ SemanticType substituteSemanticType(const SemanticType &type,
       SemanticType::appendExpandedArgument(expanded, std::move(argument));
     result.arguments = std::move(expanded);
   }
-  substituteTypes(result.lambdaEnclosingClassTypes);
-  substituteTypes(result.lambdaEnclosingFunctionTypes);
   const auto substituteValues = [&](auto &values) {
     for (auto &argument : values)
       argument = substituteCompileTimeValue(argument, substitution.values);
   };
   substituteValues(result.valueArguments);
-  substituteValues(result.lambdaEnclosingClassValues);
-  substituteValues(result.lambdaEnclosingFunctionValues);
+  result.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    substituteTypes(context.classTypes);
+    substituteTypes(context.functionTypes);
+    substituteValues(context.classValues);
+    substituteValues(context.functionValues);
+  });
   if (result.arrayLengthParameterId != 0) {
     const auto found = substitution.values.find(result.arrayLengthParameterId);
     if (found != substitution.values.end()) {
@@ -1542,12 +1544,14 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   for (SemanticType &argument : type.arguments) {
     argument = resolveExactClassSpecialization(std::move(argument));
   }
-  for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = resolveExactClassSpecialization(std::move(argument));
-  }
-  for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = resolveExactClassSpecialization(std::move(argument));
-  }
+  type.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    for (SemanticType &argument : context.classTypes) {
+      argument = resolveExactClassSpecialization(std::move(argument));
+    }
+    for (SemanticType &argument : context.functionTypes) {
+      argument = resolveExactClassSpecialization(std::move(argument));
+    }
+  });
   if (type.kind != SemanticType::Class || type.classId == 0) {
     return type;
   }
@@ -1579,12 +1583,14 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
     for (SemanticType &argument : value.arguments) {
       argument = self(self, std::move(argument));
     }
-    for (SemanticType &argument : value.lambdaEnclosingClassTypes) {
-      argument = self(self, std::move(argument));
-    }
-    for (SemanticType &argument : value.lambdaEnclosingFunctionTypes) {
-      argument = self(self, std::move(argument));
-    }
+    value.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+      for (SemanticType &argument : context.classTypes) {
+        argument = self(self, std::move(argument));
+      }
+      for (SemanticType &argument : context.functionTypes) {
+        argument = self(self, std::move(argument));
+      }
+    });
     if (value.kind != SemanticType::Class || value.classId == 0) {
       return value;
     }

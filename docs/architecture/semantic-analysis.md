@@ -2519,7 +2519,9 @@ generic instances may give the same source body different compile-time meaning.
 Function and constructor instance identity includes bounded inferred and
 explicit `uint64_t` arguments. Lambda identity retains enclosing function value
 arguments as a separate identity component rather than treating them as
-capture or signature types.
+capture or signature types. Copies of a semantic type share immutable enclosing
+arguments. Substitution builds a new context for the concrete instance. Types
+with no enclosing arguments carry an empty handle.
 
 Each lambda capture records its new binding symbol, original source symbol,
 exact type and traits, initialization mode, and initializer expression. Bare

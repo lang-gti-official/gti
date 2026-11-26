@@ -41,6 +41,21 @@ GTI_UNIT_TEST(library_bundle) {
   expect(hash("abc") ==
              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
          "SHA-256 known vector");
+  // A digest can be inspected mid-stream while its partial block remains live.
+  std::string binary(257, '\0');
+  for (std::size_t i = 0; i < binary.size(); ++i)
+    binary[i] = static_cast<char>(i % 251);
+  Sha256 stream;
+  stream.update(std::string_view(binary).substr(0, 60));
+  expect(stream.finishHex() ==
+             "0ddde28e40838ef6f9853e887f597d6adb5f40eb35d5763c52e1e64d8ba3bfff",
+         "snapshot before the block boundary");
+  stream.update(std::string_view(binary).substr(60, 7));
+  stream.update({});
+  stream.update(std::string_view(binary).substr(67));
+  expect(stream.finishHex() ==
+             "a2c6cad2ffa699b14538231fef914f45d30440389e6f8d79091efba836165a2b",
+         "chunked digest after a snapshot, including binary data");
   LibraryBundle b{
       {hash("compiler"), "aarch64-apple-darwin", hash("config"),
        hash("runtime"), hash("package:target"), hash("sources")},

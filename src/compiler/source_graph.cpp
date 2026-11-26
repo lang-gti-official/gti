@@ -215,10 +215,8 @@ bool SourceGraph::isVisible(SourceUnitId requester,
   }
   std::unordered_set<SourceUnitId> visited;
   std::vector<SourceUnitId> reexports;
-  for (const SourceDependency &dependency : dependencies) {
-    if (dependency.source != requester) {
-      continue;
-    }
+  for (const auto edge : outgoingEdges(requester)) {
+    const auto &dependency = dependencies[edge];
     if (dependency.target == declaration) {
       return true;
     }
@@ -233,9 +231,9 @@ bool SourceGraph::isVisible(SourceUnitId requester,
     if (!visited.insert(unit).second) {
       continue;
     }
-    for (const SourceDependency &dependency : dependencies) {
-      if (dependency.source != unit ||
-          dependency.kind != SourceDependencyKind::ExportImport) {
+    for (const auto edge : outgoingEdges(unit)) {
+      const auto &dependency = dependencies[edge];
+      if (dependency.kind != SourceDependencyKind::ExportImport) {
         continue;
       }
       if (dependency.target == declaration) {
@@ -281,11 +279,8 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
       return;
     }
     visiting.insert(id);
-    for (const SourceDependency &dependency : dependencies) {
-      if (dependency.source == id) {
-        visit(dependency.target);
-      }
-    }
+    for (const auto edge : outgoingEdges(id))
+      visit(dependencies[edge].target);
     visiting.erase(id);
     visited.insert(id);
     result.push_back(id);
@@ -315,6 +310,7 @@ void SourceGraph::clear() {
   sourceImports.clear();
   owners.reset();
   dependencies.clear();
+  edgesBySource.clear();
   configuredPreludeRoots.clear();
   implementationRoots.clear();
   unitsByPath.clear();
@@ -338,6 +334,7 @@ SourceGraph::addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
                  .role = role,
                  .entry = isEntry,
                  .prelude = isPrelude});
+  edgesBySource.emplace_back();
   unitsByPath.emplace(key, id);
   if (isEntry) {
     entry = id;
@@ -346,7 +343,15 @@ SourceGraph::addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
 }
 
 void SourceGraph::addDependency(SourceDependency dependency) {
+  edgesBySource.at(dependency.source - 1).push_back(dependencies.size());
   dependencies.push_back(std::move(dependency));
+}
+
+std::span<const std::size_t>
+SourceGraph::outgoingEdges(SourceUnitId unit) const {
+  if (unit == 0 || unit > edgesBySource.size())
+    return {};
+  return edgesBySource[unit - 1];
 }
 
 void SourceGraph::addPreludeRoot(SourceUnitId id) {
@@ -355,11 +360,10 @@ void SourceGraph::addPreludeRoot(SourceUnitId id) {
 
 bool SourceGraph::hasDirectDependency(SourceUnitId source,
                                       SourceUnitId target) const {
-  return std::any_of(dependencies.begin(), dependencies.end(),
-                     [source, target](const SourceDependency &dependency) {
-                       return dependency.source == source &&
-                              dependency.target == target;
-                     });
+  const auto edges = outgoingEdges(source);
+  return std::any_of(edges.begin(), edges.end(), [&](std::size_t edge) {
+    return dependencies[edge].target == target;
+  });
 }
 
 bool SourceGraph::hasDependencyPath(SourceUnitId source,
@@ -372,8 +376,8 @@ bool SourceGraph::hasDependencyPath(SourceUnitId source,
     if (!visited.insert(unit).second) {
       return false;
     }
-    for (const SourceDependency &dependency : dependencies) {
-      if (dependency.source == unit && reaches(dependency.target)) {
+    for (const auto edge : outgoingEdges(unit)) {
+      if (reaches(dependencies[edge].target)) {
         return true;
       }
     }

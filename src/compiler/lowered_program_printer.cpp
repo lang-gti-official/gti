@@ -308,28 +308,28 @@ private:
       compileTimeValue(value.valueArguments[index]);
     }
     output << "];lambda-class-types=[";
-    for (std::size_t index = 0; index < value.lambdaEnclosingClassTypes.size();
+    for (std::size_t index = 0; index < value.lambdaClassTypeArguments().size();
          ++index) {
       separator(index);
-      type(value.lambdaEnclosingClassTypes[index]);
+      type(value.lambdaClassTypeArguments()[index]);
     }
     output << "];lambda-function-types=[";
     for (std::size_t index = 0;
-         index < value.lambdaEnclosingFunctionTypes.size(); ++index) {
+         index < value.lambdaFunctionTypeArguments().size(); ++index) {
       separator(index);
-      type(value.lambdaEnclosingFunctionTypes[index]);
+      type(value.lambdaFunctionTypeArguments()[index]);
     }
     output << "];lambda-class-values=[";
-    for (std::size_t index = 0; index < value.lambdaEnclosingClassValues.size();
-         ++index) {
+    for (std::size_t index = 0;
+         index < value.lambdaClassValueArguments().size(); ++index) {
       separator(index);
-      compileTimeValue(value.lambdaEnclosingClassValues[index]);
+      compileTimeValue(value.lambdaClassValueArguments()[index]);
     }
     output << "];lambda-function-values=[";
     for (std::size_t index = 0;
-         index < value.lambdaEnclosingFunctionValues.size(); ++index) {
+         index < value.lambdaFunctionValueArguments().size(); ++index) {
       separator(index);
-      compileTimeValue(value.lambdaEnclosingFunctionValues[index]);
+      compileTimeValue(value.lambdaFunctionValueArguments()[index]);
     }
     output << "])";
   }

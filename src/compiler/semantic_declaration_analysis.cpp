@@ -1123,8 +1123,8 @@ auto SemanticVisitor::Impl::refreshTypeAliasProjections() -> void {
       });
     };
     return type.isAssociatedTypeProjection() || any(type.arguments) ||
-           any(type.lambdaEnclosingClassTypes) ||
-           any(type.lambdaEnclosingFunctionTypes);
+           any(type.lambdaContext.arguments().classTypes) ||
+           any(type.lambdaContext.arguments().functionTypes);
   };
   const bool deferred = deferringTypeAliasConstraints;
   deferringTypeAliasConstraints = true;
@@ -3411,12 +3411,14 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
   for (SemanticType &argument : type.arguments) {
     argument = canonicalExactSpecializationType(std::move(argument));
   }
-  for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = canonicalExactSpecializationType(std::move(argument));
-  }
-  for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = canonicalExactSpecializationType(std::move(argument));
-  }
+  type.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    for (SemanticType &argument : context.classTypes) {
+      argument = canonicalExactSpecializationType(std::move(argument));
+    }
+    for (SemanticType &argument : context.functionTypes) {
+      argument = canonicalExactSpecializationType(std::move(argument));
+    }
+  });
   if (type.kind != SemanticType::Class || type.classId == 0 ||
       type.classId > classes.size()) {
     return type;
@@ -4648,12 +4650,14 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
   for (SemanticType &argument : type.arguments) {
     argument = selectExactClassSpecialization(std::move(argument));
   }
-  for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = selectExactClassSpecialization(std::move(argument));
-  }
-  for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = selectExactClassSpecialization(std::move(argument));
-  }
+  type.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    for (SemanticType &argument : context.classTypes) {
+      argument = selectExactClassSpecialization(std::move(argument));
+    }
+    for (SemanticType &argument : context.functionTypes) {
+      argument = selectExactClassSpecialization(std::move(argument));
+    }
+  });
   if (type.isAssociatedTypeProjection()) {
     return reduceAssociatedTypeProjection(std::move(type));
   }
@@ -4702,11 +4706,11 @@ auto SemanticVisitor::Impl::isConcreteExactSpecializationType(
   }
   return std::all_of(type.arguments.begin(), type.arguments.end(),
                      isConcreteExactSpecializationType) &&
-         std::all_of(type.lambdaEnclosingClassTypes.begin(),
-                     type.lambdaEnclosingClassTypes.end(),
+         std::all_of(type.lambdaClassTypeArguments().begin(),
+                     type.lambdaClassTypeArguments().end(),
                      isConcreteExactSpecializationType) &&
-         std::all_of(type.lambdaEnclosingFunctionTypes.begin(),
-                     type.lambdaEnclosingFunctionTypes.end(),
+         std::all_of(type.lambdaFunctionTypeArguments().begin(),
+                     type.lambdaFunctionTypeArguments().end(),
                      isConcreteExactSpecializationType);
 }
 

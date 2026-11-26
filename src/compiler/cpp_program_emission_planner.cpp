@@ -252,8 +252,8 @@ public:
                          });
     };
     return contains(type.arguments) ||
-           contains(type.lambdaEnclosingClassTypes) ||
-           contains(type.lambdaEnclosingFunctionTypes);
+           contains(type.lambdaContext.arguments().classTypes) ||
+           contains(type.lambdaContext.arguments().functionTypes);
   }
 
   [[nodiscard]] bool loweredProgramContainsRuntimeBinding() const {
@@ -1642,10 +1642,10 @@ public:
     for (const SemanticType &argument : type.arguments) {
       collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    for (const SemanticType &argument : type.lambdaClassTypeArguments()) {
       collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    for (const SemanticType &argument : type.lambdaFunctionTypeArguments()) {
       collectLoweredNativePrimaryTypeDependencies(argument, dependencies);
     }
   }

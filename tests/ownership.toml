@@ -1536,6 +1536,12 @@ owners = [
 consumers = []
 
 [[area]]
+area = "unit-test-cases"
+paths = ["tests/unit/*.cpp"]
+owners = ["gti_unit_tests"]
+consumers = []
+
+[[area]]
 area = "test-infrastructure"
 risk = "system"
 paths = [

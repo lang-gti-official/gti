@@ -260,13 +260,13 @@ template <typename Nodes, typename Ids>
                   [](const CompileTimeValue &value) {
                     return containsUnresolvedGeneric(value);
                   }) ||
-      std::any_of(type.lambdaEnclosingClassValues.begin(),
-                  type.lambdaEnclosingClassValues.end(),
+      std::any_of(type.lambdaClassValueArguments().begin(),
+                  type.lambdaClassValueArguments().end(),
                   [](const CompileTimeValue &value) {
                     return containsUnresolvedGeneric(value);
                   }) ||
-      std::any_of(type.lambdaEnclosingFunctionValues.begin(),
-                  type.lambdaEnclosingFunctionValues.end(),
+      std::any_of(type.lambdaFunctionValueArguments().begin(),
+                  type.lambdaFunctionValueArguments().end(),
                   [](const CompileTimeValue &value) {
                     return containsUnresolvedGeneric(value);
                   })) {
@@ -277,10 +277,10 @@ template <typename Nodes, typename Ids>
   };
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      containsType) ||
-         std::any_of(type.lambdaEnclosingClassTypes.begin(),
-                     type.lambdaEnclosingClassTypes.end(), containsType) ||
-         std::any_of(type.lambdaEnclosingFunctionTypes.begin(),
-                     type.lambdaEnclosingFunctionTypes.end(), containsType);
+         std::any_of(type.lambdaClassTypeArguments().begin(),
+                     type.lambdaClassTypeArguments().end(), containsType) ||
+         std::any_of(type.lambdaFunctionTypeArguments().begin(),
+                     type.lambdaFunctionTypeArguments().end(), containsType);
 }
 
 [[nodiscard]] SemanticType referentOrSelf(const SemanticType &type) {
@@ -3205,10 +3205,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirLambda &instance : program.lambdaInstances()) {
     verifyRangeIterations(
         instance.body,
-        !instance.type.lambdaEnclosingClassTypes.empty() ||
-            !instance.type.lambdaEnclosingClassValues.empty() ||
-            !instance.type.lambdaEnclosingFunctionTypes.empty() ||
-            !instance.type.lambdaEnclosingFunctionValues.empty());
+        !instance.type.lambdaClassTypeArguments().empty() ||
+            !instance.type.lambdaClassValueArguments().empty() ||
+            !instance.type.lambdaFunctionTypeArguments().empty() ||
+            !instance.type.lambdaFunctionValueArguments().empty());
   }
   if (program.foreignStorageDeclarations() !=
       semantics.foreignStorageDeclarations())

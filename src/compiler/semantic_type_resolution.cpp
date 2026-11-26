@@ -473,13 +473,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         pattern.lambdaId != actual.lambdaId ||
         pattern.lambdaParameterCount != actual.lambdaParameterCount ||
         pattern.lambdaCaptureCount != actual.lambdaCaptureCount ||
-        pattern.lambdaEnclosingClassTypes != actual.lambdaEnclosingClassTypes ||
-        pattern.lambdaEnclosingFunctionTypes !=
-            actual.lambdaEnclosingFunctionTypes ||
-        pattern.lambdaEnclosingClassValues !=
-            actual.lambdaEnclosingClassValues ||
-        pattern.lambdaEnclosingFunctionValues !=
-            actual.lambdaEnclosingFunctionValues ||
+        pattern.lambdaContext != actual.lambdaContext ||
         pattern.referenceAccess != actual.referenceAccess ||
         pattern.pointerAccess != actual.pointerAccess ||
         pattern.projectionConcept != actual.projectionConcept ||
@@ -7967,12 +7961,6 @@ auto SemanticVisitor::Impl::substituteType(
     }
     result.arguments = std::move(expanded);
   }
-  for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
-    argument = substituteType(argument, substitution);
-  }
-  for (SemanticType &argument : result.lambdaEnclosingFunctionTypes) {
-    argument = substituteType(argument, substitution);
-  }
   for (CompileTimeValue &argument : result.valueArguments) {
     argument = substituteCompileTimeValue(argument, substitution.values);
   }
@@ -7981,8 +7969,16 @@ auto SemanticVisitor::Impl::substituteType(
       argument = substituteCompileTimeValue(argument, substitution.values);
     }
   };
-  substituteValues(result.lambdaEnclosingClassValues);
-  substituteValues(result.lambdaEnclosingFunctionValues);
+  result.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    for (SemanticType &argument : context.classTypes) {
+      argument = substituteType(argument, substitution);
+    }
+    for (SemanticType &argument : context.functionTypes) {
+      argument = substituteType(argument, substitution);
+    }
+    substituteValues(context.classValues);
+    substituteValues(context.functionValues);
+  });
   if (result.arrayLengthParameterId != 0) {
     const auto found = substitution.values.find(result.arrayLengthParameterId);
     if (found != substitution.values.end() &&
@@ -8607,10 +8603,10 @@ auto SemanticVisitor::Impl::seedExternalLambdaTypes(
     for (const SemanticType &argument : type.arguments) {
       self(argument, self);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    for (const SemanticType &argument : type.lambdaClassTypeArguments()) {
       self(argument, self);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    for (const SemanticType &argument : type.lambdaFunctionTypeArguments()) {
       self(argument, self);
     }
   };

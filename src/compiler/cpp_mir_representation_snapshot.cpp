@@ -144,14 +144,6 @@ substituteTemplateType(SemanticType type,
     }
     type.arguments = std::move(expanded);
   }
-  for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument =
-        substituteTemplateType(std::move(argument), substitution, program);
-  }
-  for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument =
-        substituteTemplateType(std::move(argument), substitution, program);
-  }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &value : values) {
       if (value.kind != CompileTimeValue::Parameter) {
@@ -166,8 +158,18 @@ substituteTemplateType(SemanticType type,
     }
   };
   substituteValues(type.valueArguments);
-  substituteValues(type.lambdaEnclosingClassValues);
-  substituteValues(type.lambdaEnclosingFunctionValues);
+  type.lambdaContext.transform([&](LambdaEnclosingArguments &context) {
+    for (SemanticType &argument : context.classTypes) {
+      argument =
+          substituteTemplateType(std::move(argument), substitution, program);
+    }
+    for (SemanticType &argument : context.functionTypes) {
+      argument =
+          substituteTemplateType(std::move(argument), substitution, program);
+    }
+    substituteValues(context.classValues);
+    substituteValues(context.functionValues);
+  });
   if (type.arrayLengthParameterId != 0) {
     const auto found =
         std::find_if(substitution.values.begin(), substitution.values.end(),
@@ -299,8 +301,8 @@ appendTemplateArguments(TemplateSubstitution &substitution,
                        });
   };
   if (!valuesAreOwned(type.valueArguments) ||
-      !valuesAreOwned(type.lambdaEnclosingClassValues) ||
-      !valuesAreOwned(type.lambdaEnclosingFunctionValues) ||
+      !valuesAreOwned(type.lambdaContext.arguments().classValues) ||
+      !valuesAreOwned(type.lambdaContext.arguments().functionValues) ||
       (type.arrayLengthParameterId != 0 &&
        !owns(type.arrayLengthParameterId, true))) {
     return false;
@@ -312,8 +314,8 @@ appendTemplateArguments(TemplateSubstitution &substitution,
                        });
   };
   return typesAreOwned(type.arguments) &&
-         typesAreOwned(type.lambdaEnclosingClassTypes) &&
-         typesAreOwned(type.lambdaEnclosingFunctionTypes);
+         typesAreOwned(type.lambdaContext.arguments().classTypes) &&
+         typesAreOwned(type.lambdaContext.arguments().functionTypes);
 }
 
 [[nodiscard]] bool applyTemplateTypeOverlay(
@@ -1724,10 +1726,10 @@ struct RowsBuilder {
     for (const SemanticType &argument : type.arguments) {
       addType(argument);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    for (const SemanticType &argument : type.lambdaClassTypeArguments()) {
       addType(argument);
     }
-    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    for (const SemanticType &argument : type.lambdaFunctionTypeArguments()) {
       addType(argument);
     }
   }
@@ -2378,15 +2380,15 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
                          return value.kind == CompileTimeValue::Parameter &&
                                 value.parameterId == parameter.id;
                        }) ||
-                   std::any_of(type.lambdaEnclosingClassValues.begin(),
-                               type.lambdaEnclosingClassValues.end(),
+                   std::any_of(type.lambdaClassValueArguments().begin(),
+                               type.lambdaClassValueArguments().end(),
                                [&](const CompileTimeValue &value) {
                                  return value.kind ==
                                             CompileTimeValue::Parameter &&
                                         value.parameterId == parameter.id;
                                }) ||
-                   std::any_of(type.lambdaEnclosingFunctionValues.begin(),
-                               type.lambdaEnclosingFunctionValues.end(),
+                   std::any_of(type.lambdaFunctionValueArguments().begin(),
+                               type.lambdaFunctionValueArguments().end(),
                                [&](const CompileTimeValue &value) {
                                  return value.kind ==
                                             CompileTimeValue::Parameter &&
