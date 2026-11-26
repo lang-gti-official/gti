@@ -1,0 +1,90 @@
+// Program constants after a return, break, continue or never-returning call are never lowered or run.
+//@ run-pass
+enum class Mode { Idle, Busy };
+constexpr int LIMIT = 4;
+constexpr int NEGATIVE = -3;
+constexpr Mode MODE = Mode::Busy;
+struct Pair {
+  int value;
+  consteval Pair(int n) : value(n) {}
+};
+
+[[noreturn]] void stop() {
+  while (true) {
+  }
+}
+bool runtime_false() { return false; }
+
+int after_return() {
+  return LIMIT;
+  int skipped = LIMIT + NEGATIVE;  //~ WARN GTI-S2095
+  Mode mode = MODE;
+  Pair pair = Pair(LIMIT);
+}
+
+int after_break() {
+  mut int count = 0;
+  while (count < 10) {
+    count = count + 1;
+    break;
+    count = count + LIMIT;  //~ WARN GTI-S2095
+  }
+  return count;
+}
+
+int after_continue() {
+  mut int count = 0;
+  for (mut int i = 0; i < 3; i = i + 1) {
+    count = count + 1;
+    continue;
+    count = count + LIMIT;  //~ WARN GTI-S2095
+  }
+  return count;
+}
+
+int after_both_branches(bool flag) {
+  if (flag) {
+    return 1;
+  } else {
+    return 2;
+  }
+  int skipped = LIMIT;  //~ WARN GTI-S2095
+}
+
+int after_switch() {
+  switch (LIMIT) {
+  case 4:
+    return 4;
+    int skipped = NEGATIVE;  //~ WARN GTI-S2095
+  default:
+    return 0;
+  }
+}
+
+void after_void_return(mut int& out) {
+  out = LIMIT;
+  return;
+  out = NEGATIVE;  //~ WARN GTI-S2095
+}
+
+int after_stop() {
+  if (runtime_false()) {
+    stop();
+    int skipped = LIMIT;  //~ WARN GTI-S2095
+  }
+  return 7;
+}
+
+int main() {
+  auto lambda = []() -> int {
+    return 5;
+    int skipped = LIMIT;  //~ WARN GTI-S2095
+  };
+  mut int out = 0;
+  after_void_return(out);
+  return after_return() == 4 && after_break() == 1 && after_continue() == 3 &&
+                 after_both_branches(false) == 2 && after_switch() == 4 &&
+                 out == 4 && after_stop() == 7 && lambda() == 5
+             ? 0
+             : 1;
+}

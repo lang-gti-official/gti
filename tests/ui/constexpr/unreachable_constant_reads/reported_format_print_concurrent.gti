@@ -1,0 +1,4 @@
+// A formatted print after `return` compiles under the concurrent profile.
+//@ execution-profile: concurrent
+import std.format;
+int main() { return 0; std::println("{}", 3); }  //~ WARN GTI-S2095
