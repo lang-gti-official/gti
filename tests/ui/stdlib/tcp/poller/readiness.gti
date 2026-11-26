@@ -1,0 +1,109 @@
+// One poller reports readiness for several registered sockets under their tokens.
+//@ run-pass
+//@ exit-code: 0
+import std.tcp;
+import std.chrono;
+import std.span;
+import std.vector;
+
+std::chrono::nanoseconds seconds(int64_t count) {
+  return std::chrono::nanoseconds(count * 1_000_000_000i64);
+}
+
+// The first report for `token` in the first `count` events, or -1.
+int64_t find(mut std::mutable_span<std::tcp::readiness>& events, std::size_t count, uint64_t token) {
+  for (mut std::size_t i = 0; i < count; i++) {
+    if (events[i].token() == token) { return int64_t(i); }
+  }
+  return int64_t(-1);
+}
+
+int main() {
+  auto any = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = std::tcp::listener::bind(any).expect("bind");
+  server.set_nonblocking(true).expect("nonblocking listener");
+  auto endpoint = server.local_address().expect("address");
+  mut auto poll = std::tcp::poller::create().expect("poller");
+  poll.add(server, uint64_t(100)).expect("listener");
+  mut std::vector<std::tcp::readiness> storage = std::vector<std::tcp::readiness>();
+  storage.resize(std::size_t(8));
+  mut auto events = storage.as_mutable_span();
+
+  // Nothing is pending: a zero timeout polls, a short one expires.
+  if (poll.wait(events, std::chrono::nanoseconds(0)).expect("poll") != std::size_t(0)) { return 1; }
+  if (poll.wait(events, std::chrono::nanoseconds(20_000_000i64)).expect("expire") != std::size_t(0)) { return 2; }
+  if (poll.wait(events, std::chrono::nanoseconds(-1))) { return 3; }
+
+  // A pending connection makes the listener readable.
+  mut auto first = std::tcp::stream::connect(endpoint).expect("connect first");
+  mut auto second = std::tcp::stream::connect(endpoint).expect("connect second");
+  std::size_t accepting = poll.wait(events, seconds(5)).expect("accept wait");
+  if (accepting != std::size_t(1) || !events[std::size_t(0)].readable() ||
+      events[std::size_t(0)].token() != uint64_t(100)) { return 4; }
+  mut auto a = server.accept().expect("accept a");
+  mut auto b = server.accept().expect("accept b");
+  if (server.accept()) { return 5; }  // drained: would_block
+  poll.add(a, uint64_t(1), std::tcp::interest::readable).expect("add a");
+  poll.add(b, uint64_t(2), std::tcp::interest::readable).expect("add b");
+  if (poll.size() != std::size_t(3)) { return 6; }
+
+  // Tokens are unique; unknown tokens are rejected.
+  if (poll.add(b, uint64_t(1), std::tcp::interest::readable)) { return 7; }
+  if (poll.modify(uint64_t(9), std::tcp::interest::writable)) { return 8; }
+  if (poll.remove(uint64_t(9))) { return 9; }
+
+  // Idle connections are not reported; data makes exactly that one ready.
+  if (poll.wait(events, std::chrono::nanoseconds(0)).expect("idle") != std::size_t(0)) { return 10; }
+  std::vector<uint8_t> payload{std::size_t(4)};
+  auto bytes = payload.as_span();
+  second.send_all(bytes).expect("send to b");
+  std::size_t one = poll.wait(events, seconds(5)).expect("b readable");
+  if (one != std::size_t(1) || events[std::size_t(0)].token() != uint64_t(2) ||
+      !events[std::size_t(0)].readable() || events[std::size_t(0)].writable()) { return 11; }
+
+  // Level-triggered: unread data is reported again.
+  if (poll.wait(events, std::chrono::nanoseconds(0)).expect("again") != std::size_t(1)) { return 12; }
+
+  // Both readable once `a`'s data arrives (b stays ready: level-triggered).
+  first.send_all(bytes).expect("send to a");
+  mut std::size_t both = 0;
+  for (mut int round = 0; round < 50 && both != std::size_t(2); round++) {
+    both = poll.wait(events, std::chrono::nanoseconds(100_000_000i64)).expect("both");
+  }
+  if (both != std::size_t(2) || find(events, both, uint64_t(1)) < int64_t(0) ||
+      find(events, both, uint64_t(2)) < int64_t(0)) { return 13; }
+
+  // A span smaller than the ready set reports the rest on the next wait.
+  mut auto single = events.first(std::size_t(1));
+  std::size_t early = poll.wait(single, seconds(5)).expect("first half");
+  uint64_t seen = single[std::size_t(0)].token();
+  std::size_t later = poll.wait(single, seconds(5)).expect("second half");
+  if (early != std::size_t(1) || later != std::size_t(1) || single[std::size_t(0)].token() == seen) { return 14; }
+
+  // Interest changes take effect at the next wait; removal silences a token.
+  poll.modify(uint64_t(1), std::tcp::interest::writable).expect("writable");
+  poll.remove(uint64_t(2)).expect("remove b");
+  std::size_t writable = poll.wait(events, seconds(5)).expect("a writable");
+  if (writable != std::size_t(1) || events[std::size_t(0)].token() != uint64_t(1) ||
+      !events[std::size_t(0)].writable() || events[std::size_t(0)].readable()) { return 15; }
+  poll.modify(uint64_t(1), std::tcp::interest::read_write).expect("read_write");
+  std::size_t mixed = poll.wait(events, seconds(5)).expect("a read and write");
+  if (mixed != std::size_t(1) || !events[std::size_t(0)].readable() || !events[std::size_t(0)].writable()) { return 16; }
+
+  // A hang-up is reported whatever the interest.
+  poll.modify(uint64_t(1), std::tcp::interest::writable).expect("writable again");
+  { auto closing = std::move(first); }
+  mut bool hung_up = false;
+  for (mut int round = 0; round < 50 && !hung_up; round++) {
+    std::size_t got = poll.wait(events, std::chrono::nanoseconds(100_000_000i64)).expect("hang-up");
+    int64_t at = find(events, got, uint64_t(1));
+    hung_up = at >= int64_t(0) && (events[std::size_t(at)].closed() || events[std::size_t(at)].failed() ||
+                                   events[std::size_t(at)].writable());
+  }
+  if (!hung_up) { return 17; }
+
+  // A plain report value, as a loop under test might build one.
+  std::tcp::readiness built{uint64_t(7), true, false, true, false};
+  if (built.token() != uint64_t(7) || !built.readable() || built.writable() || !built.closed() || built.failed()) { return 18; }
+  return 0;
+}

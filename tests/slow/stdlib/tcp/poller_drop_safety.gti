@@ -1,0 +1,85 @@
+// Moving keeps a registration; closing or dropping a socket silences it, even when its descriptor is reused.
+//@ slow
+//@ run-pass
+//@ exit-code: 0
+import std.tcp;
+import std.chrono;
+import std.span;
+import std.vector;
+
+std::chrono::nanoseconds seconds(int64_t count) {
+  return std::chrono::nanoseconds(count * 1_000_000_000i64);
+}
+
+class connection {
+  mut std::tcp::stream socket;
+public:
+  connection(std::tcp::stream socket) : socket(std::move(socket)) {}
+  std::tcp::stream& get() { return this.socket; }
+};
+
+int main() {
+  auto any = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = std::tcp::listener::bind(any).expect("bind");
+  auto endpoint = server.local_address().expect("address");
+  mut auto poll = std::tcp::poller::create().expect("poller");
+  mut std::vector<std::tcp::readiness> storage = std::vector<std::tcp::readiness>();
+  storage.resize(std::size_t(4));
+  mut auto events = storage.as_mutable_span();
+  std::vector<uint8_t> payload{std::size_t(1)};
+  auto bytes = payload.as_span();
+
+  // A registered stream moved into package state keeps its registration.
+  mut auto client = std::tcp::stream::connect(endpoint).expect("connect");
+  mut auto accepted = server.accept().expect("accept");
+  poll.add(accepted, uint64_t(1), std::tcp::interest::readable).expect("add");
+  mut std::vector<connection> owned = std::vector<connection>();
+  owned.push_back(connection(std::move(accepted)));
+  client.send_all(bytes).expect("send");
+  std::size_t moved = poll.wait(events, seconds(5)).expect("moved socket");
+  if (moved != std::size_t(1) || events[std::size_t(0)].token() != uint64_t(1)) { return 1; }
+
+  // Dropping it silences the registration; the token stays reserved.
+  owned.erase(std::size_t(0));
+  if (poll.wait(events, std::chrono::nanoseconds(0)).expect("dropped") != std::size_t(0)) { return 2; }
+  if (!poll.contains(uint64_t(1)) || poll.size() != std::size_t(1)) { return 3; }
+  if (poll.add(client, uint64_t(1), std::tcp::interest::readable)) { return 4; }
+
+  // A new socket very likely reuses the closed descriptor number. Readiness on
+  // it is reported only under its own registration, never under token 1.
+  mut auto next_client = std::tcp::stream::connect(endpoint).expect("connect again");
+  mut auto reused = server.accept().expect("accept again");
+  next_client.send_all(bytes).expect("send again");
+  poll.add(reused, uint64_t(2), std::tcp::interest::readable).expect("add reused");
+  std::size_t fresh = poll.wait(events, seconds(5)).expect("reused descriptor");
+  if (fresh != std::size_t(1) || events[std::size_t(0)].token() != uint64_t(2)) { return 5; }
+
+  // An explicit close behaves like a drop.
+  reused.close().expect("close");
+  if (poll.wait(events, std::chrono::nanoseconds(0)).expect("closed") != std::size_t(0)) { return 6; }
+
+  // A closed socket cannot be registered.
+  if (poll.add(reused, uint64_t(3), std::tcp::interest::readable)) { return 7; }
+
+  // Removing every registration leaves an empty poller; waiting forever on
+  // it is rejected, while a timed wait simply expires.
+  poll.remove(uint64_t(1)).expect("remove 1");
+  poll.remove(uint64_t(2)).expect("remove 2");
+  if (poll.size() != std::size_t(0)) { return 8; }
+  if (poll.wait(events)) { return 9; }
+  if (poll.wait(events, std::chrono::nanoseconds(1_000_000i64)).expect("empty timed") != std::size_t(0)) { return 10; }
+
+  // Dropping a poller closes no registered socket.
+  mut auto last_client = std::tcp::stream::connect(endpoint).expect("connect last");
+  mut auto last_peer = server.accept().expect("accept last");
+  {
+    mut auto temporary = std::tcp::poller::create().expect("temporary");
+    temporary.add(last_client, uint64_t(5), std::tcp::interest::writable).expect("add client");
+    temporary.add(last_peer, uint64_t(6), std::tcp::interest::readable).expect("add peer");
+  }
+  last_client.send_all(bytes).expect("client still open");
+  mut std::vector<uint8_t> received{std::size_t(1)};
+  mut auto into = received.as_mutable_span();
+  if (last_peer.receive(into).expect("peer still open") != std::size_t(1)) { return 11; }
+  return 0;
+}

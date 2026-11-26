@@ -459,6 +459,50 @@ requests. A successful zero from `read_body()` means the body is complete.
 The adapter keeps unread bytes across reusable exchanges. The owner closes
 the stream on drop without draining or implicitly flushing it.
 
+### A poller-driven event loop
+
+`std::tcp::poller` (see [TCP Streams And Listeners](tcp.md#readiness-polling))
+lets one thread drive every connection's codec without blocking on any
+single socket. Each connection keeps its nonblocking stream and codec. A step
+that reports `would_block` returns to the loop, which records whether that
+connection waits for input or for send capacity:
+
+```gti
+enum class wait_for { readable, writable, complete, closed };
+
+void run(mut std::tcp::listener& server, mut std::tcp::poller& poll,
+         mut std::vector<peer>& peers, mut std::vector<uint64_t>& tokens) {
+  mut std::vector<std::tcp::readiness> storage = std::vector<std::tcp::readiness>();
+  storage.resize(std::size_t(16));
+  while (true) {
+    mut auto events = storage.as_mutable_span();
+    std::size_t count = poll.wait(events, std::chrono::nanoseconds(10_000_000_000i64)).expect("wait");
+    for (mut std::size_t i = 0; i < count; i++) {
+      std::tcp::readiness event = events[i];
+      if (event.token() == uint64_t(0)) {
+        // accept() until would_block; set each stream nonblocking, open its
+        // server_codec and poll.add(stream, token, interest::readable).
+        continue;
+      }
+      std::size_t at = /* the index of event.token() in tokens */;
+      wait_for next = peers[at].pump();   // parse_head/parse_body/next_output
+      if (next == wait_for::readable) { poll.modify(event.token(), std::tcp::interest::readable).expect("read"); }
+      if (next == wait_for::writable) { poll.modify(event.token(), std::tcp::interest::writable).expect("write"); }
+      if (next == wait_for::closed) { poll.remove(event.token()).expect("remove"); /* erase the peer */ }
+    }
+  }
+}
+```
+
+- A connection stalled in the middle of a request head simply waits for
+  readable readiness. Another connection's complete request is served on the
+  next wait.
+- A large response that fills the socket switches its registration to
+  `writable` and resumes the same `output_step` when capacity returns, while
+  other connections keep making progress.
+- The complete package, a `web` library with a `dashboard` executable, is
+  [`tests/slow/project/http_server_event_loop`](../../tests/slow/project/http_server_event_loop).
+
 ### Wire rules and errors
 
 The decoder requires CRLF, one valid Host field and unambiguous body framing.

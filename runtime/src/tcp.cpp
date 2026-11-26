@@ -49,6 +49,14 @@ gti_tcp_status_v1 gti_rt_tcp_resolve_v1(gti_c_string_view, uint32_t, uint32_t,
                                         uint8_t *, uint64_t, uint64_t *) {
   return GTI_TCP_UNSUPPORTED_V1;
 }
+gti_tcp_status_v1 gti_rt_tcp_identity_v1(int32_t, uint64_t *) {
+  return GTI_TCP_UNSUPPORTED_V1;
+}
+gti_tcp_status_v1 gti_rt_tcp_poll_v1(const int32_t *, const uint32_t *,
+                                     const uint64_t *, uint32_t *, uint64_t,
+                                     int64_t, uint64_t *) {
+  return GTI_TCP_UNSUPPORTED_V1;
+}
 }
 
 #else
@@ -65,7 +73,37 @@ gti_tcp_status_v1 gti_rt_tcp_resolve_v1(gti_c_string_view, uint32_t, uint32_t,
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
 namespace {
+
+// Identities of the descriptors this runtime created. Readiness pollers
+// compare them so that a closed descriptor, or a number reused by another
+// socket, never reports readiness for an earlier registration.
+std::mutex identityMutex;
+std::unordered_map<int32_t, uint64_t> &identities() {
+  static std::unordered_map<int32_t, uint64_t> table;
+  return table;
+}
+uint64_t nextIdentity = 1;
+
+void recordIdentity(int32_t descriptor) {
+  const std::lock_guard<std::mutex> guard(identityMutex);
+  identities()[descriptor] = nextIdentity++;
+}
+
+void forgetIdentity(int32_t descriptor) {
+  const std::lock_guard<std::mutex> guard(identityMutex);
+  identities().erase(descriptor);
+}
+
+// Whether descriptor still carries identity. Caller holds identityMutex.
+bool currentIdentity(int32_t descriptor, uint64_t identity) {
+  const auto found = identities().find(descriptor);
+  return found != identities().end() && found->second == identity;
+}
 
 gti_tcp_status_v1 classify(int error) {
   switch (error) {
@@ -327,6 +365,7 @@ gti_tcp_status_v1 gti_rt_tcp_connect_v1(const uint8_t *address,
     closeQuietly(descriptor);
     return classify(error);
   }
+  recordIdentity(descriptor);
   *output_descriptor = descriptor;
   return GTI_TCP_OK_V1;
 }
@@ -367,6 +406,7 @@ gti_tcp_status_v1 gti_rt_tcp_listen_v1(const uint8_t *address, int32_t backlog,
     closeQuietly(descriptor);
     return classify(error);
   }
+  recordIdentity(descriptor);
   *output_descriptor = descriptor;
   return GTI_TCP_OK_V1;
 }
@@ -396,6 +436,7 @@ gti_tcp_status_v1 gti_rt_tcp_accept_v1(int32_t listener, uint8_t *output_peer,
     closeQuietly(descriptor);
     return classify(error == 0 ? EINVAL : error);
   }
+  recordIdentity(descriptor);
   *output_descriptor = descriptor;
   return GTI_TCP_OK_V1;
 }
@@ -473,6 +514,8 @@ gti_tcp_status_v1 gti_rt_tcp_close_v1(int32_t descriptor) {
   if (descriptor < 0) {
     return GTI_TCP_INVALID_ARGUMENT_V1;
   }
+  // Forget the identity before the number can be reused by another socket.
+  forgetIdentity(descriptor);
   // POSIX leaves the descriptor state unspecified after EINTR; never retry,
   // since another thread may already have reused the number.
   if (close(descriptor) == 0 || errno == EINTR) {
@@ -657,6 +700,125 @@ gti_tcp_status_v1 gti_rt_tcp_resolve_v1(gti_c_string_view host, uint32_t port,
   *output_count = written;
   return written == 0 ? gti_tcp_status_v1(GTI_TCP_NAME_NOT_FOUND_V1)
                       : gti_tcp_status_v1(GTI_TCP_OK_V1);
+}
+
+gti_tcp_status_v1 gti_rt_tcp_identity_v1(int32_t descriptor,
+                                         uint64_t *output_identity) {
+  if (output_identity == nullptr) {
+    return GTI_TCP_INVALID_ARGUMENT_V1;
+  }
+  *output_identity = 0;
+  const std::lock_guard<std::mutex> guard(identityMutex);
+  const auto found = identities().find(descriptor);
+  if (found == identities().end()) {
+    return GTI_TCP_INVALID_ARGUMENT_V1;
+  }
+  *output_identity = found->second;
+  return GTI_TCP_OK_V1;
+}
+
+gti_tcp_status_v1 gti_rt_tcp_poll_v1(const int32_t *descriptors,
+                                     const uint32_t *interests,
+                                     const uint64_t *entryIdentities,
+                                     uint32_t *ready, uint64_t count,
+                                     int64_t timeout_ms,
+                                     uint64_t *output_ready_count) {
+  if (output_ready_count == nullptr ||
+      (count != 0 && (descriptors == nullptr || interests == nullptr ||
+                      entryIdentities == nullptr || ready == nullptr)) ||
+      count > uint64_t(0x7fffffff)) {
+    return GTI_TCP_INVALID_ARGUMENT_V1;
+  }
+  *output_ready_count = 0;
+  const uint32_t allInterest =
+      uint32_t(GTI_TCP_INTEREST_READ_V1 | GTI_TCP_INTEREST_WRITE_V1);
+  std::vector<pollfd> entries(static_cast<size_t>(count));
+  {
+    const std::lock_guard<std::mutex> guard(identityMutex);
+    for (uint64_t index = 0; index < count; ++index) {
+      ready[index] = 0;
+      if ((interests[index] & ~allInterest) != 0) {
+        return GTI_TCP_INVALID_ARGUMENT_V1;
+      }
+      // A stale entry is excluded from the host wait: poll ignores a
+      // negative descriptor.
+      entries[index].fd =
+          currentIdentity(descriptors[index], entryIdentities[index])
+              ? descriptors[index]
+              : -1;
+      entries[index].events = 0;
+      if ((interests[index] & GTI_TCP_INTEREST_READ_V1) != 0) {
+        entries[index].events |= POLLIN;
+      }
+      if ((interests[index] & GTI_TCP_INTEREST_WRITE_V1) != 0) {
+        entries[index].events |= POLLOUT;
+      }
+    }
+  }
+  timeval start{};
+  gettimeofday(&start, nullptr);
+  int result = 0;
+  for (;;) {
+    int wait = -1;
+    if (timeout_ms >= 0) {
+      timeval now{};
+      gettimeofday(&now, nullptr);
+      const int64_t elapsed =
+          (int64_t(now.tv_sec) - int64_t(start.tv_sec)) * 1000 +
+          (int64_t(now.tv_usec) - int64_t(start.tv_usec)) / 1000;
+      const int64_t remaining = timeout_ms - elapsed;
+      wait = remaining <= 0
+                 ? 0
+                 : (remaining > 0x7fffffff ? 0x7fffffff : int(remaining));
+    }
+    for (auto &entry : entries) {
+      entry.revents = 0;
+    }
+    result = poll(entries.data(), nfds_t(entries.size()), wait);
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+  if (result < 0) {
+    return classify(errno);
+  }
+  uint64_t readyCount = 0;
+  const std::lock_guard<std::mutex> guard(identityMutex);
+  for (uint64_t index = 0; index < count; ++index) {
+    // The descriptor may have been closed, or closed and reused, during the
+    // wait: only an entry whose identity still matches reports readiness.
+    if (entries[index].fd < 0 ||
+        !currentIdentity(descriptors[index], entryIdentities[index])) {
+      ready[index] = GTI_TCP_READY_STALE_V1;
+      continue;
+    }
+    const short revents = entries[index].revents;
+    if ((revents & POLLNVAL) != 0) {
+      ready[index] = GTI_TCP_READY_STALE_V1;
+      continue;
+    }
+    uint32_t bits = 0;
+    if ((revents & POLLIN) != 0) {
+      bits |= GTI_TCP_INTEREST_READ_V1;
+    }
+    if ((revents & POLLOUT) != 0) {
+      bits |= GTI_TCP_INTEREST_WRITE_V1;
+    }
+    bits &= interests[index];
+    if ((revents & POLLHUP) != 0) {
+      bits |= GTI_TCP_READY_HANGUP_V1;
+    }
+    if ((revents & POLLERR) != 0) {
+      bits |= GTI_TCP_READY_ERROR_V1;
+    }
+    ready[index] = bits;
+    if (bits != 0) {
+      ++readyCount;
+    }
+  }
+  *output_ready_count = readyCount;
+  return GTI_TCP_OK_V1;
 }
 
 } // extern "C"

@@ -1,0 +1,6 @@
+// One thread and one std::tcp::poller serve concurrent HTTP connections across a package boundary.
+slow
+$ cd app
+$ gti build
+$ python3 ../exercise.py
+stdout: one poller served concurrent HTTP connections
