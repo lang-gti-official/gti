@@ -1835,6 +1835,8 @@ Frontend::checkParsed(const std::filesystem::path &entryPath,
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
+    semantic.setMemberCompletionQuery(options.memberCompletionQuery &&
+                                      options.completionOffset.has_value());
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {

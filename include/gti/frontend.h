@@ -74,6 +74,9 @@ struct FrontendOptions {
   // failure. The graph stays invalid and never reaches HIR or code generation.
   bool analyzeRecoveredSourceGraph = false;
   std::optional<std::size_t> completionOffset;
+  // A language query only consumes the captured member list and its checked
+  // declarations. Its partial result cannot be used to generate code.
+  bool memberCompletionQuery = false;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
   // Set only for an executable root, never inferred from a source filename.

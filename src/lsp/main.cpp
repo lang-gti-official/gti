@@ -1262,24 +1262,53 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   return std::nullopt;
 }
 
-void collectCommentTokens(std::string_view source,
-                          const SourcePositionIndex &positions,
-                          std::vector<SemanticToken> &result) {
-  const auto appendComment = [&](std::size_t start, std::size_t end) {
-    for (std::size_t segmentStart = start; segmentStart < end;) {
-      const std::size_t newline = source.find('\n', segmentStart);
-      const std::size_t segmentEnd =
-          newline == std::string_view::npos || newline > end ? end : newline;
-      if (segmentEnd > segmentStart) {
-        result.push_back({positions.at(segmentStart),
-                          utf16Length(source.substr(segmentStart,
-                                                    segmentEnd - segmentStart)),
-                          Comment, 0});
-      }
-      segmentStart = segmentEnd < end ? segmentEnd + 1 : end;
-    }
-  };
+// Lexical tokens and comments each arrive in byte order. Track their UTF-16
+// positions independently so a long line is scanned once per stream.
+class SemanticTokenWriter {
+public:
+  SemanticTokenWriter(std::string_view source, std::vector<SemanticToken> &out)
+      : source(source), out(out) {}
 
+  void append(std::size_t start, std::size_t end,
+              SemanticClassification classification) {
+    auto gap = source.substr(offset, start - offset);
+    for (auto newline = gap.find('\n'); newline != std::string_view::npos;
+         newline = gap.find('\n')) {
+      ++position.line;
+      position.character = 0;
+      gap.remove_prefix(newline + 1);
+    }
+    position.character += utf16Length(gap);
+
+    auto span = source.substr(start, end - start);
+    while (!span.empty()) {
+      const auto newline = span.find('\n');
+      const auto segment = span.substr(0, newline);
+      if (!segment.empty()) {
+        const auto length = utf16Length(segment);
+        out.push_back(
+            {position, length, classification.type, classification.modifiers});
+        position.character += length;
+      }
+      if (newline == std::string_view::npos)
+        break;
+      ++position.line;
+      position.character = 0;
+      span.remove_prefix(newline + 1);
+    }
+    offset = end;
+  }
+
+private:
+  std::string_view source;
+  std::vector<SemanticToken> &out;
+  std::size_t offset = 0;
+  Position position;
+};
+
+void collectCommentTokens(std::string_view source,
+                          std::vector<SemanticToken> &result) {
+  SemanticTokenWriter writer(source, result);
   for (std::size_t index = 0; index < source.size();) {
     if (source[index] == 'R' && index + 1 < source.size() &&
         source[index + 1] == '"' &&
@@ -1310,14 +1339,14 @@ void collectCommentTokens(std::string_view source,
       const std::size_t start = index;
       const std::size_t newline = source.find('\n', start);
       index = newline == std::string_view::npos ? source.size() : newline;
-      appendComment(start, index);
+      writer.append(start, index, {Comment, 0});
       continue;
     }
     if (source[index + 1] == '*') {
       const std::size_t start = index;
       const std::size_t close = source.find("*/", start + 2);
       index = close == std::string_view::npos ? source.size() : close + 2;
-      appendComment(start, index);
+      writer.append(start, index, {Comment, 0});
       continue;
     }
     ++index;
@@ -1456,7 +1485,7 @@ std::vector<std::optional<lang::ConfigurationTokenKind>>
 configurationTokenRoles(const std::vector<lang::Token> &tokens,
                         const lang::SourceUnit *unit) {
   std::vector<std::optional<lang::ConfigurationTokenKind>> roles(tokens.size());
-  if (unit == nullptr) {
+  if (unit == nullptr || unit->configurationTokens.empty()) {
     return roles;
   }
 
@@ -1481,7 +1510,6 @@ std::vector<SemanticToken>
 collectSemanticTokens(std::string_view source,
                       const lang::FrontendResult *snapshot = nullptr,
                       lang::SourceUnitId sourceUnit = 0) {
-  const SourcePositionIndex positions(source);
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
   std::vector<std::optional<SemanticClassification>> classifications;
@@ -1592,36 +1620,24 @@ collectSemanticTokens(std::string_view source,
   }
 
   std::vector<SemanticToken> result;
+  SemanticTokenWriter writer(source, result);
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if (!classifications[index] || tokens[index].lexeme.empty()) {
-      continue;
-    }
-
-    const std::size_t tokenStart = tokens[index].position;
-    const std::size_t tokenEnd = tokenStart + tokens[index].lexeme.size();
-    for (std::size_t segmentStart = tokenStart; segmentStart < tokenEnd;) {
-      const std::size_t newline = source.find('\n', segmentStart);
-      const std::size_t segmentEnd =
-          newline == std::string_view::npos || newline > tokenEnd ? tokenEnd
-                                                                  : newline;
-      if (segmentEnd > segmentStart) {
-        result.push_back({positions.at(segmentStart),
-                          utf16Length(source.substr(segmentStart,
-                                                    segmentEnd - segmentStart)),
-                          classifications[index]->type,
-                          classifications[index]->modifiers});
-      }
-      segmentStart = segmentEnd < tokenEnd ? segmentEnd + 1 : tokenEnd;
+    if (classifications[index] && !tokens[index].lexeme.empty()) {
+      const auto start = tokens[index].position;
+      writer.append(start, start + tokens[index].lexeme.size(),
+                    *classifications[index]);
     }
   }
 
-  collectCommentTokens(source, positions, result);
-  std::sort(result.begin(), result.end(),
-            [](const SemanticToken &left, const SemanticToken &right) {
-              return left.position.line < right.position.line ||
-                     (left.position.line == right.position.line &&
-                      left.position.character < right.position.character);
-            });
+  const auto lexicalCount = result.size();
+  collectCommentTokens(source, result);
+  std::inplace_merge(
+      result.begin(), result.begin() + lexicalCount, result.end(),
+      [](const SemanticToken &left, const SemanticToken &right) {
+        return left.position.line < right.position.line ||
+               (left.position.line == right.position.line &&
+                left.position.character < right.position.character);
+      });
   return result;
 }
 
@@ -3173,29 +3189,42 @@ private:
                         static_cast<std::int64_t>(info->activeParameter)}}));
   }
 
-  // Converts a compiler span into an LSP location, preferring the client's
-  // own spelling of the URI for open documents.
-  std::optional<JsonValue> locationJson(const lang::SourceSpan &span,
-                                        const AnalysisSnapshot &snapshot,
-                                        std::string_view rootUri,
-                                        const std::string &rootSource) {
-    const std::string targetSource = sourceForSpan(
-        span, snapshot.frontend->sources, snapshot.rootPath, rootSource);
-    if (targetSource.empty()) {
-      return std::nullopt;
+  // A symbol can have hundreds of occurrences. Borrow the snapshot's text
+  // and index each referenced file once for the entire response.
+  struct ReferenceSources {
+    struct File {
+      std::string uri;
+      SourcePositionIndex positions;
+      std::optional<std::string> clientUri;
+    };
+
+    const AnalysisSnapshot &snapshot;
+    std::string_view rootUri;
+    std::string_view rootText;
+    std::unordered_map<std::string, File> files;
+
+    File *find(const std::string &path) {
+      if (const auto found = files.find(path); found != files.end())
+        return &found->second;
+      std::string_view text;
+      if (const auto *source = snapshot.frontend->sources.find(path))
+        text = *source;
+      else if (path.empty() || path == snapshot.rootPath)
+        text = rootText;
+      if (text.empty())
+        return nullptr;
+      return &files
+                  .emplace(path,
+                           File{uriForSource(path, snapshot.rootPath, rootUri),
+                                SourcePositionIndex(text), std::nullopt})
+                  .first->second;
     }
-    std::string targetUri =
-        uriForSource(span.source, snapshot.rootPath, rootUri);
-    {
-      const std::lock_guard lock(stateMutex);
-      if (const auto preferred = clientUris.find(targetUri);
-          preferred != clientUris.end()) {
-        targetUri = preferred->second;
-      }
-    }
-    return JsonValue(JsonObject{
-        {"uri", targetUri},
-        {"range", rangeJson(targetSource, span.start, span.end - span.start)}});
+  };
+
+  static JsonValue referenceRange(const SourcePositionIndex &positions,
+                                  const lang::SourceSpan &span) {
+    return JsonObject{{"start", positionJson(positions.at(span.start))},
+                      {"end", positionJson(positions.at(span.end))}};
   }
 
   void respondReferences(const JsonValue *id, std::string_view uri,
@@ -3217,12 +3246,20 @@ private:
       sendJson(response(id, nullptr));
       return;
     }
+    ReferenceSources sources{snapshot, uri, source, {}};
     JsonArray locations;
+    locations.reserve(info->sites.size());
     for (const lang::ReferenceSite &site : info->sites) {
-      if (std::optional<JsonValue> location =
-              locationJson(site.span, snapshot, uri, source)) {
-        locations.push_back(std::move(*location));
+      auto *file = sources.find(site.span.source);
+      if (!file)
+        continue;
+      if (!file->clientUri) {
+        const std::lock_guard lock(stateMutex);
+        file->clientUri = clientUriForKeyLocked(file->uri);
       }
+      locations.push_back(
+          JsonObject{{"uri", *file->clientUri},
+                     {"range", referenceRange(file->positions, site.span)}});
     }
     sendJson(response(id, JsonValue(std::move(locations))));
   }
@@ -3230,8 +3267,9 @@ private:
   void respondHighlights(const JsonValue *id, Position position,
                          const std::string &source,
                          const AnalysisSnapshot &snapshot) {
+    const SourcePositionIndex positions(source);
     const std::optional<std::size_t> byteOffset =
-        SourcePositionIndex(source).byteOffset(position);
+        positions.byteOffset(position);
     if (!byteOffset) {
       sendJson(response(id, nullptr));
       return;
@@ -3251,8 +3289,7 @@ private:
         continue;
       }
       highlights.push_back(JsonObject{
-          {"range",
-           rangeJson(source, site.span.start, site.span.end - site.span.start)},
+          {"range", referenceRange(positions, site.span)},
           {"kind",
            lang::hasRole(site.roles, lang::OccurrenceRole::Write) ? 3 : 2}});
     }
@@ -3310,27 +3347,26 @@ private:
       std::optional<std::int64_t> version;
       JsonArray edits;
     };
+    ReferenceSources sources{snapshot, uri, source, {}};
     std::vector<std::string> order;
     std::unordered_map<std::string, FileEdits> byUri;
     for (const lang::SourceSpan &span : outcome.edits->spans) {
-      const std::string targetSource = sourceForSpan(
-          span, snapshot.frontend->sources, snapshot.rootPath, source);
-      if (targetSource.empty()) {
+      const auto *file = sources.find(span.source);
+      if (!file) {
         sendJson(errorResponse(id, -32803,
                                "Rename coverage is incomplete in this "
                                "snapshot."));
         return;
       }
-      const std::string targetKey =
-          uriForSource(span.source, snapshot.rootPath, uri);
+      const std::string &targetKey = file->uri;
       auto entry = byUri.find(targetKey);
       if (entry == byUri.end()) {
         entry = byUri.emplace(targetKey, FileEdits{}).first;
         order.push_back(targetKey);
       }
-      entry->second.edits.push_back(JsonObject{
-          {"range", rangeJson(targetSource, span.start, span.end - span.start)},
-          {"newText", newName}});
+      entry->second.edits.push_back(
+          JsonObject{{"range", referenceRange(file->positions, span)},
+                     {"newText", newName}});
     }
     {
       const std::lock_guard lock(stateMutex);

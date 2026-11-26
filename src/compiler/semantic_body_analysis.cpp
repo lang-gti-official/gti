@@ -307,6 +307,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             .count());
   }
   throwIfCancelled();
+  if (capturedMemberQuery())
+    return false;
   const auto finalizationStart = std::chrono::steady_clock::now();
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
@@ -444,6 +446,14 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
       checkOverloads(member.symbol);
 }
 
+bool SemanticVisitor::Impl::capturedMemberQuery() const {
+  if (!concreteMemberCapture.value_or(false))
+    return false;
+  const auto &context = semanticModel.completionContext();
+  return context && context->kind == SemanticCompletionKind::Member &&
+         sourceGraph && context->sourceUnit == sourceGraph->entryUnit();
+}
+
 auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
                                           const LateFinalizationScope *scope)
     -> void {
@@ -459,6 +469,15 @@ auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
                            : nullptr);
     runLexicalPass(declarations);
     measureTopLevelStatements = false;
+    // All declarations have supplied their signatures, visibility and docs.
+    // The member candidates already contain the compiler's selected receiver
+    // access and substituted types. Unrelated deferred bodies and the
+    // program-wide diagnostic and lowering passes consume other facts.
+    if (capturedMemberQuery()) {
+      bodyPhaseActive = false;
+      endScope();
+      return;
+    }
     analyzeDeferredBodies();
   }
   // Named rows use ordinary call resolution, but must invoke the declaration
