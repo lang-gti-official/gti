@@ -2578,9 +2578,9 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
   // With multiple paths, a consumer can reborrow each stored field even
   // when the same whole owner supplies all of them. Retain their identities.
   const auto &first = summary.dependencies.front();
-  if (summary.possibleAlternatives.empty() && summary.dependencies.size() == 1 &&
-      first.sourceFields.empty() && first.sourceConditions.empty() &&
-      first.resultConditions.empty())
+  if (summary.possibleAlternatives.empty() &&
+      summary.dependencies.size() == 1 && first.sourceFields.empty() &&
+      first.sourceConditions.empty() && first.resultConditions.empty())
     return std::nullopt;
   return summary;
 }

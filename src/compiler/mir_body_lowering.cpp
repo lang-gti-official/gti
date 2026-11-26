@@ -5140,7 +5140,8 @@ private:
   // Mirror retainedCarrierInput in complete-set verification. A reference
   // into a live local carrier borrows its stored group while that binding
   // still holds precisely the executable value being projected.
-  void retainBorrowedCarrierGroup(MirPlaceId id, MirBorrowDependencySet &input) {
+  void retainBorrowedCarrierGroup(MirPlaceId id,
+                                  MirBorrowDependencySet &input) {
     const auto *place = output.findPlace(id);
     if (!place || place->root != MirPlaceRootKind::Binding ||
         !place->projections.empty())
