@@ -1738,7 +1738,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (context == constructionContexts.end() ||
         ambiguousConstructionContexts.contains(&body))
       return;
-    const auto &substitution = context->second;
     // This verifier only reads the body. Retain findValue's first-match
     // behavior even for malformed duplicate IDs, without rescanning every
     // value for every operand. Discard the index before any later body edit.
@@ -1750,6 +1749,42 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto found = values.find(id);
       return found == values.end() ? nullptr : found->second;
     };
+    // Omitted arguments execute in this body, but their written expressions
+    // name the selected callee's generic parameters. Nested calls can in turn
+    // supply their own defaults. Attribute each default subtree to its
+    // declaration instance; ordinary arguments retain their enclosing context.
+    std::unordered_map<HirValueId, const GenericSubstitution *> defaultContexts;
+    std::vector<HirValueId> defaultWork;
+    for (const auto &call : body.values) {
+      if (call.defaultArguments.empty())
+        continue;
+      const HirBody *callee = nullptr;
+      if (call.functionTarget) {
+        if (const auto *target =
+                program.findFunctionInstance(*call.functionTarget))
+          callee = &target->body;
+      } else if (call.constructorTarget) {
+        if (const auto *target =
+                program.findConstructorInstance(*call.constructorTarget))
+          callee = &target->body;
+      }
+      const auto lexical = constructionContexts.find(callee);
+      if (lexical == constructionContexts.end())
+        continue;
+      for (const auto id : call.defaultArguments)
+        if (defaultContexts.emplace(id, &lexical->second).second)
+          defaultWork.push_back(id);
+    }
+    for (std::size_t next = 0; next < defaultWork.size(); ++next) {
+      const auto id = defaultWork[next];
+      const auto *node = findValue(id);
+      if (!node)
+        continue;
+      const auto *lexical = defaultContexts.at(id);
+      for (const auto operand : node->operands)
+        if (defaultContexts.emplace(operand, lexical).second)
+          defaultWork.push_back(operand);
+    }
     verifyDirectInitializations(body, findValue);
     for (const auto &value : body.values) {
       if (value.intrinsic == IntrinsicKind::SourceExpressionText)
@@ -1826,6 +1861,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *construction = value.source != nullptr
                                      ? semantics.findConstruction(*value.source)
                                      : nullptr;
+      const auto lexical = defaultContexts.find(value.id);
+      const auto &substitution =
+          lexical == defaultContexts.end() ? context->second : *lexical->second;
       const SemanticType selectedType =
           construction != nullptr
               ? semantics.resolveExactClassSpecialization(
