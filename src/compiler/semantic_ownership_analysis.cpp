@@ -7189,17 +7189,23 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         explicitLifetimeResult(syntax, parameterTypes, ownerClass);
     const bool reference = returnType.kind == SemanticType::Reference &&
                            returnType.arguments.size() == 1;
-    contract.access =
-        reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    // An explicit region selects the suppliers. The result's primary
+    // permission still comes from its type, as it does for an elided result.
+    contract.access = borrowAccess(returnType);
     switch (lifetime.kind) {
     case ExplicitLifetimeResult::Kind::None:
     case ExplicitLifetimeResult::Kind::Static:
       return contract;
     case ExplicitLifetimeResult::Kind::This:
-      if (ownerClass != 0 && !staticMember)
+      if (ownerClass != 0 && !staticMember) {
         contract.origin = BorrowOriginKind::Receiver;
-      else
+        contract.access =
+            functionReturnBorrowSummary(returnType, {}, ownerClass,
+                                        staticMember, IntrinsicKind::None)
+                .access;
+      } else {
         contract.missing = true;
+      }
       return contract;
     case ExplicitLifetimeResult::Kind::Region:
       const bool arrayInput =
@@ -7260,6 +7266,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
           (lifetime.classStoresRegion || lifetime.parameters.empty())) {
         if (ownerClass != 0 && !staticMember) {
           contract.origin = BorrowOriginKind::Receiver;
+          contract.access =
+              functionReturnBorrowSummary(returnType, {}, ownerClass,
+                                          staticMember, IntrinsicKind::None)
+                  .access;
           if (!lifetime.parameters.empty() &&
               (reference || isBorrowReturningType(returnType) ||
                inlineTextResult))
@@ -7282,15 +7292,13 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
           return contract;
         }
         // As for an elided contract, the primary supplier is the first one
-        // whose access matches a reference result's, or the first shared one
-        // of a carrier; each keeps its own access in MIR.
-        const AccessMode primaryAccess =
-            reference ? contract.access : AccessMode::ReadOnly;
+        // whose access matches the primary result loan; every other supplier
+        // keeps its own permission in MIR.
         if (const auto matching = std::find_if(
                 suppliers.begin(), suppliers.end(),
                 [&](std::size_t position) {
                   return position < expanded.size() &&
-                         borrowAccess(expanded[position]) == primaryAccess;
+                         borrowAccess(expanded[position]) == contract.access;
                 });
             matching != suppliers.end() && matching != suppliers.begin())
           std::rotate(suppliers.begin(), matching, matching + 1);
