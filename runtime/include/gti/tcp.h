@@ -129,6 +129,37 @@ gti_tcp_status_v1 gti_rt_tcp_wait_v1(int32_t descriptor,
                                      int64_t timeout_ms,
                                      uint32_t *output_ready);
 
+// Readiness of one poll entry. The read and write bits use the interest
+// values; hang-up and error are reported whatever the interest, and a stale
+// entry (its descriptor was closed, or closed and reused, since the caller
+// recorded its identity) reports only GTI_TCP_READY_STALE_V1.
+enum {
+  GTI_TCP_READY_HANGUP_V1 = 4,
+  GTI_TCP_READY_ERROR_V1 = 8,
+  GTI_TCP_READY_STALE_V1 = 16,
+};
+
+// The identity the runtime assigned to an open descriptor. Every descriptor
+// an entry above creates receives a fresh nonzero identity before it is
+// reported, and gti_rt_tcp_close_v1 forgets it before closing, so a reused
+// descriptor number never carries an earlier socket's identity. An unknown
+// descriptor reports GTI_TCP_INVALID_ARGUMENT_V1.
+gti_tcp_status_v1 gti_rt_tcp_identity_v1(int32_t descriptor,
+                                         uint64_t *output_identity);
+
+// Waits until one of count entries is ready or timeout_ms elapses (negative:
+// indefinitely). Entry i is descriptors[i] with interests[i] (read/write
+// bits) and the identity identities[i]; ready[i] receives its readiness. An
+// entry whose identity does not match both before and after the host wait is
+// stale: it is not waited on and reports only GTI_TCP_READY_STALE_V1.
+// output_ready_count receives the number of live entries with readiness;
+// expiry reports GTI_TCP_OK_V1 with zero. Interrupted waits resume with the
+// remaining time. No pointer is retained after return.
+gti_tcp_status_v1
+gti_rt_tcp_poll_v1(const int32_t *descriptors, const uint32_t *interests,
+                   const uint64_t *identities, uint32_t *ready, uint64_t count,
+                   int64_t timeout_ms, uint64_t *output_ready_count);
+
 // Resolves host for stream sockets. family is 0 (any), 4 or 6. Up to
 // capacity encoded addresses, each carrying port, are written to output in
 // resolver order; output_count receives how many were written.

@@ -1,0 +1,25 @@
+// A poller is move-only and thread-confined, needs mutable access, and never reveals descriptors.
+import std.tcp;
+
+void require_share<std::shareable T>(T& value) {}
+T require_transfer<std::transferable T>(T value) { return value; }
+
+void copy(std::tcp::poller& original) {
+  std::tcp::poller copied = original;  //~ ERROR GTI-S2003
+}
+void add_through_view(std::tcp::poller& view, std::tcp::stream& socket) {
+  view.add(socket, uint64_t(1), std::tcp::interest::readable);  //~ ERROR GTI-S2000 Mutable method requires a mutable receiver
+}
+void share(std::tcp::poller& view) {
+  require_share(view);  //~ ERROR GTI-S2029 'std::shareable<
+}
+void register_number(mut std::tcp::poller& poll) {
+  int descriptor = 3;
+  poll.add(descriptor, uint64_t(1), std::tcp::interest::readable);  //~ ERROR GTI-S2003
+}
+int main() {
+  gti_internal::tcp_registration forged{};  //~ ERROR GTI-S2058
+  mut auto poll = std::tcp::poller::create().expect("poller");
+  auto moved = require_transfer(std::move(poll));
+  return 0;
+}

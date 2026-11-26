@@ -43,6 +43,17 @@ public:
   }
 };
 
+// What a socket tells std::tcp::poller about itself: its descriptor and the
+// runtime identity the descriptor carries while open. Only trusted std
+// source can name this type (GTI-S2058), so a descriptor never reaches
+// application code through it.
+class tcp_registration {
+public:
+  mut int32_t descriptor = -1;
+  mut uint64_t identity = 0;
+  tcp_registration() {}
+};
+
 namespace runtime {
 extern "C" {
 uint32_t gti_rt_tcp_connect_v1(const uint8_t* address, int64_t timeout_ms, int32_t* output_descriptor);
@@ -57,6 +68,8 @@ uint32_t gti_rt_tcp_peer_address_v1(int32_t descriptor, uint8_t* output);
 uint32_t gti_rt_tcp_set_option_v1(int32_t descriptor, uint32_t option, int64_t value);
 uint32_t gti_rt_tcp_wait_v1(int32_t descriptor, uint32_t interest, int64_t timeout_ms, uint32_t* output_ready);
 uint32_t gti_rt_tcp_resolve_v1(gti_internal::text_view host, uint32_t port, uint32_t family, uint8_t* output, uint64_t capacity, uint64_t* output_count);
+uint32_t gti_rt_tcp_identity_v1(int32_t descriptor, uint64_t* output_identity);
+uint32_t gti_rt_tcp_poll_v1(const int32_t* descriptors, const uint32_t* interests, const uint64_t* identities, uint32_t* ready, uint64_t count, int64_t timeout_ms, uint64_t* output_ready_count);
 }
 }
 }
@@ -869,6 +882,21 @@ public:
   expected<socket_address, errc> local_address() { return this.address_of(false); }
   expected<socket_address, errc> peer_address() { return this.address_of(true); }
 
+  // Fills a poller's registration record. Only trusted std source can name
+  // the record's type, so this reveals nothing to application code.
+  expected<void, errc> describe_readiness(mut gti_internal::tcp_registration& into) {
+    ?this.require_open();
+    mut uint64_t identity = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_identity_v1(this.handle.get(), &identity);
+    }
+    ?detail::check(status);
+    into.descriptor = this.handle.get();
+    into.identity = identity;
+    return;
+  }
+
   /// In nonblocking mode `receive` and `send` report `would_block` instead of
   /// waiting; pair it with `wait_readable`/`wait_writable`.
   expected<void, errc> set_nonblocking(bool enabled) mut {
@@ -1015,6 +1043,20 @@ public:
         this.handle.get(), uint32_t(0), enabled ? int64_t(1) : int64_t(0)));
   }
 
+  // As stream::describe_readiness, for acceptance.
+  expected<void, errc> describe_readiness(mut gti_internal::tcp_registration& into) {
+    ?this.require_open();
+    mut uint64_t identity = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_identity_v1(this.handle.get(), &identity);
+    }
+    ?detail::check(status);
+    into.descriptor = this.handle.get();
+    into.identity = identity;
+    return;
+  }
+
   /// Waits until `accept` would not block, or fails with `timed_out`.
   expected<void, errc> wait_acceptable(std::chrono::nanoseconds timeout) {
     ?this.require_open();
@@ -1033,6 +1075,209 @@ public:
     uint32_t status = gti_internal::runtime::gti_rt_tcp_close_v1(this.handle.release());
     if (status != uint32_t(0)) { return unexpected(errc::close_failed); }
     return;
+  }
+};
+
+/// What a stream registration waits for. A listener registration always
+/// waits for acceptance, which is reported as `readable`.
+enum class interest { readable, writable, read_write };
+
+/// One readiness report from `poller::wait`: the token a package chose at
+/// registration and what its socket is ready for. Readiness is a hint: an
+/// operation it suggests may still report `would_block`.
+class readiness {
+  mut uint64_t token_value = 0;
+  mut uint32_t bits = 0;
+
+public:
+  readiness() {}
+  /// A report as `poller::wait` produces it, for example to test a loop.
+  readiness(uint64_t token, bool readable, bool writable, bool closed, bool failed)
+      : token_value(token),
+        bits((readable ? uint32_t(1) : uint32_t(0)) | (writable ? uint32_t(2) : uint32_t(0)) |
+             (closed ? uint32_t(4) : uint32_t(0)) | (failed ? uint32_t(8) : uint32_t(0))) {}
+  readiness(readiness& other) = default;
+
+  /// The token passed to `poller::add`.
+  uint64_t token() { return this.token_value; }
+  /// Data, end of stream, or (for a listener) a pending connection.
+  bool readable() { return (this.bits & uint32_t(1)) != uint32_t(0); }
+  /// Send capacity is available.
+  bool writable() { return (this.bits & uint32_t(2)) != uint32_t(0); }
+  /// The peer hung up; reported whatever the interest.
+  bool closed() { return (this.bits & uint32_t(4)) != uint32_t(0); }
+  /// The socket holds a pending error the next operation reports; reported
+  /// whatever the interest.
+  bool failed() { return (this.bits & uint32_t(8)) != uint32_t(0); }
+};
+
+/// Waits on many streams and listeners at once, level-triggered. A package
+/// keeps owning its sockets and chooses a token for each registration; the
+/// poller keeps no reference to a socket. A registered socket may be moved
+/// freely. Once it is closed or dropped, its registration reports no further
+/// readiness, even if its descriptor number is reused, and its token stays
+/// reserved until `remove`. Dropping a poller closes no socket.
+[[unsafe_transfer, no_share]] class poller {
+  mut vector<int32_t> descriptors = vector<int32_t>();
+  mut vector<uint32_t> interests = vector<uint32_t>();
+  mut vector<uint64_t> identities = vector<uint64_t>();
+  mut vector<uint64_t> tokens = vector<uint64_t>();
+  mut vector<uint32_t> ready = vector<uint32_t>();
+  // Where the next wait starts reporting, so a small event span cannot
+  // starve later registrations.
+  mut size_t cursor = 0;
+
+  poller() {}
+
+  size_t position_of(uint64_t token) {
+    mut size_t index = 0;
+    while (index < this.tokens.size()) {
+      if (this.tokens[index] == token) { return index; }
+      index++;
+    }
+    return this.tokens.size();
+  }
+
+  static uint32_t interest_bits(interest wanted) {
+    switch (wanted) {
+    case interest::readable: return uint32_t(1);
+    case interest::writable: return uint32_t(2);
+    case interest::read_write: return uint32_t(3);
+    }
+    return uint32_t(3);
+  }
+
+  expected<void, errc> insert(gti_internal::tcp_registration& record, uint64_t token, uint32_t bits) mut {
+    if (this.position_of(token) != this.tokens.size()) {
+      return unexpected(errc::invalid_argument);
+    }
+    this.descriptors.push_back(record.descriptor);
+    this.interests.push_back(bits);
+    this.identities.push_back(record.identity);
+    this.tokens.push_back(token);
+    this.ready.push_back(uint32_t(0));
+    return;
+  }
+
+  expected<size_t, errc> wait_for(mut mutable_span<readiness>& events, int64_t timeout_ms) mut {
+    size_t count = this.tokens.size();
+    if (count == 0 && timeout_ms < int64_t(0)) {
+      return unexpected(errc::invalid_argument);
+    }
+    mut uint64_t live = 0;
+    mut uint32_t status = 0;
+    if (count == 0) {
+      unsafe {
+        status = gti_internal::runtime::gti_rt_tcp_poll_v1(
+            nullptr, nullptr, nullptr, nullptr, uint64_t(0), timeout_ms, &live);
+      }
+      ?detail::check(status);
+      return size_t(0);
+    }
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_poll_v1(
+          &this.descriptors[size_t(0)], &this.interests[size_t(0)],
+          &this.identities[size_t(0)], &this.ready[size_t(0)],
+          uint64_t(count), timeout_ms, &live);
+    }
+    ?detail::check(status);
+    if (this.cursor >= count) { this.cursor = 0; }
+    mut size_t written = 0;
+    mut size_t visited = 0;
+    mut size_t index = this.cursor;
+    while (visited < count && written < events.size()) {
+      uint32_t bits = this.ready[index];
+      // A stale registration (closed or dropped socket) reports nothing.
+      if (bits != uint32_t(0) && (bits & uint32_t(16)) == uint32_t(0)) {
+        events[written] = readiness(this.tokens[index], (bits & uint32_t(1)) != uint32_t(0),
+                                    (bits & uint32_t(2)) != uint32_t(0), (bits & uint32_t(4)) != uint32_t(0),
+                                    (bits & uint32_t(8)) != uint32_t(0));
+        written++;
+      }
+      visited++;
+      index++;
+      if (index == count) { index = 0; }
+    }
+    this.cursor = index;
+    return written;
+  }
+
+public:
+  poller(poller& other) = delete;
+  poller(poller&& other) = default;
+
+  /// Creates an empty poller.
+  static expected<poller, errc> create() {
+    return poller();
+  }
+
+  /// The number of registrations, including those whose socket has since
+  /// been closed or dropped.
+  size_t size() { return this.tokens.size(); }
+
+  /// Whether `token` is registered.
+  bool contains(uint64_t token) { return this.position_of(token) != this.tokens.size(); }
+
+  /// Registers an open stream under `token`. A token already in use is
+  /// `invalid_argument`; a closed stream is `not_open`. The stream itself is
+  /// not borrowed beyond this call.
+  expected<void, errc> add(stream& socket, uint64_t token, interest wanted) mut {
+    mut gti_internal::tcp_registration record{};
+    ?socket.describe_readiness(record);
+    return this.insert(record, token, poller::interest_bits(wanted));
+  }
+
+  /// Registers an open listener under `token`; acceptance is reported as
+  /// `readable`.
+  expected<void, errc> add(listener& socket, uint64_t token) mut {
+    mut gti_internal::tcp_registration record{};
+    ?socket.describe_readiness(record);
+    return this.insert(record, token, uint32_t(1));
+  }
+
+  /// Changes what a registration waits for. An unknown token is
+  /// `invalid_argument`.
+  expected<void, errc> modify(uint64_t token, interest wanted) mut {
+    size_t index = this.position_of(token);
+    if (index == this.tokens.size()) { return unexpected(errc::invalid_argument); }
+    this.interests[index] = poller::interest_bits(wanted);
+    return;
+  }
+
+  /// Removes a registration. An unknown token is `invalid_argument`.
+  expected<void, errc> remove(uint64_t token) mut {
+    size_t index = this.position_of(token);
+    size_t count = this.tokens.size();
+    if (index == count) { return unexpected(errc::invalid_argument); }
+    size_t last = count - size_t(1);
+    if (index != last) {
+      this.descriptors[index] = this.descriptors[last];
+      this.interests[index] = this.interests[last];
+      this.identities[index] = this.identities[last];
+      this.tokens[index] = this.tokens[last];
+      this.ready[index] = this.ready[last];
+    }
+    this.descriptors.pop_back();
+    this.interests.pop_back();
+    this.identities.pop_back();
+    this.tokens.pop_back();
+    this.ready.pop_back();
+    return;
+  }
+
+  /// Waits until a registration is ready or `timeout` elapses, writing at
+  /// most `events.size()` reports and returning how many it wrote: zero on
+  /// timeout. Readiness beyond the span is reported by the next wait. A
+  /// negative timeout is `invalid_argument`.
+  expected<size_t, errc> wait(mut mutable_span<readiness>& events, std::chrono::nanoseconds timeout) mut {
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    return this.wait_for(events, detail::timeout_milliseconds(timeout));
+  }
+
+  /// Waits without a timeout. Waiting with nothing registered is
+  /// `invalid_argument`, since nothing could end it.
+  expected<size_t, errc> wait(mut mutable_span<readiness>& events) mut {
+    return this.wait_for(events, int64_t(-1));
   }
 };
 
