@@ -11,19 +11,6 @@
 namespace lang {
 namespace {
 
-std::optional<ConstantValue> dataConstantInType(const ConstantValue &value,
-                                                const SemanticType &type) {
-  if (std::holds_alternative<NullConstant>(value) &&
-      type.acceptsNullInitialization())
-    return value;
-  if (std::holds_alternative<std::string>(value) &&
-      (type.kind == SemanticType::StringView ||
-       type.kind == SemanticType::CString))
-    return value;
-  const auto converted = convertConstantToType(value, type);
-  return converted.value;
-}
-
 std::optional<ConstantValue> dataLiteralInType(const Literal &literal,
                                                const SemanticType &type) {
   const auto evaluated =
@@ -36,6 +23,13 @@ bool exactDataInitializer(const MirThreadLocalStorage &storage) {
   if (!storage.dataInitializer || storage.requiresActiveCleanup ||
       storage.traits.containsBorrowedState ||
       storage.traits.drop != DropKind::Trivial)
+    return false;
+  // The datum is spelled in the storage type itself: a binary32 literal never
+  // stands for binary64 storage, nor an integer for floating storage.
+  const auto expected =
+      dataLiteralInType(*storage.dataInitializer, storage.type);
+  if (!expected ||
+      dataConstantLiteral(*expected, storage.type) != storage.dataInitializer)
     return false;
   const MirBody &body = storage.initializer;
   const MirTerminator *returned = nullptr;
@@ -92,9 +86,7 @@ bool exactDataInitializer(const MirThreadLocalStorage &storage) {
       // by the typed destination, not necessarily a separate Compute node.
       if (actual)
         actual = dataConstantInType(*actual, storage.type);
-      const auto expected =
-          dataLiteralInType(*storage.dataInitializer, storage.type);
-      return actual && expected && *actual == *expected;
+      return actual && *actual == *expected;
     }
     if (instruction.operands.size() != 1 ||
         instruction.operands.front().kind != MirOperandKind::Value)

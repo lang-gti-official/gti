@@ -1,0 +1,10 @@
+// A thread-local's unsuffixed floating literal initializer is stored as its declared double.
+//@ run-pass
+//@ execution-profile: concurrent
+thread_local mut double pending = 0.1;
+
+int main() {
+  if (pending != double(0.1)) return 1;
+  pending = pending + 1.0f64;
+  return pending > 0.5f64 ? 0 : 2;
+}

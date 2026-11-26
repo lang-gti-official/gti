@@ -1,0 +1,9 @@
+// A parenthesized literal initializes a thread-local as the bare literal does.
+//@ run-pass
+thread_local mut int64_t count = (5);
+thread_local mut double ratio = (0.5);
+
+int main() {
+  count = count + 1;
+  return count == 6 && ratio == 0.5f64 ? 0 : 1;
+}

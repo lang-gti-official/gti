@@ -134,6 +134,51 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
   return {.failure = ConstantEvaluationFailure::UnsupportedType};
 }
 
+std::optional<ConstantValue> dataConstantInType(const ConstantValue &value,
+                                                const SemanticType &type) {
+  if (std::holds_alternative<NullConstant>(value) &&
+      type.acceptsNullInitialization())
+    return value;
+  if (std::holds_alternative<std::string>(value) &&
+      (type.kind == SemanticType::StringView ||
+       type.kind == SemanticType::CString))
+    return value;
+  return convertConstantToType(value, type).value;
+}
+
+std::optional<Literal> dataConstantLiteral(const ConstantValue &value,
+                                           const SemanticType &type) {
+  if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+    const std::optional<CheckedIntegerDomain> domain =
+        constantIntegerDomain(type);
+    if (domain && integer->domain == *domain && !integer->negative)
+      return Literal{integer->magnitude};
+    return std::nullopt;
+  }
+  if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+    const std::optional<BinaryFloatFormat> format = semanticFloatFormat(type);
+    if (format && floating->format == *format)
+      return Literal{*floating};
+    return std::nullopt;
+  }
+  if (const auto *boolean = std::get_if<bool>(&value))
+    return type == SemanticType::Bool ? std::optional<Literal>{*boolean}
+                                      : std::nullopt;
+  if (const auto *character = std::get_if<CharacterLiteral>(&value))
+    return type == SemanticType::Char ? std::optional<Literal>{*character}
+                                      : std::nullopt;
+  if (const auto *text = std::get_if<std::string>(&value))
+    return type.kind == SemanticType::StringView ||
+                   type.kind == SemanticType::CString
+               ? std::optional<Literal>{*text}
+               : std::nullopt;
+  if (std::holds_alternative<NullConstant>(value))
+    return type.acceptsNullInitialization()
+               ? std::optional<Literal>{std::nullptr_t{}}
+               : std::nullopt;
+  return std::nullopt;
+}
+
 ConstantEvaluation evaluateConstantTextSize(const ConstantValue &text) {
   const auto *bytes = std::get_if<std::string>(&text);
   if (bytes == nullptr) {

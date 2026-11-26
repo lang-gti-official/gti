@@ -461,7 +461,9 @@ The TLS slice has distinct source, independent MIR, runtime and native gates:
   in both orders: temporary cleanup must produce `GTI-S2045`, never `GTI-B0001`,
   while disjoint TLS loans remain valid.
 - `mir_thread_local` independently verifies descriptors, first-use/Ready facts,
-  native literal publication, final-address owning construction, guarded failure
+  native literal publication (one literal spelled in the storage type, so a
+  `float` literal never publishes `double` storage), final-address owning
+  construction, guarded failure
   and cleanup transfer. `tests/ui/mir/persistent_storage/` forges hidden accesses, exact
   field/input origins, ordered call-input intervals and foreign-boundary records.
   A source proof is not permission to accept detached or substituted MIR facts.
