@@ -11,6 +11,33 @@ import tempfile
 import tomllib
 
 
+def verify_diagnostic_excerpts(run, fixture, source, stdlib):
+    # Exercise the normal installed-bundle diagnostic path with the matching
+    # source and with a stale companion at the same byte offsets.
+    shutil.copyfile(fixture.parents[1] / "slow/stdlib/json/unsupported_field_location.gti", source)
+    companion = stdlib / "std/json.gti"
+    original = companion.read_bytes()
+    assertion = b'static_assert(false, "std::json cannot encode this type");'
+    stale = assertion.replace(b"false", b"stale")
+    if assertion not in original:
+        raise RuntimeError("JSON assertion fixture is stale")
+    try:
+        for mode in ("matching", "stale", "absent"):
+            if mode == "stale":
+                companion.write_bytes(original.replace(assertion, stale))
+            elif mode == "absent":
+                companion.unlink()
+            output = run("build", rejection="GTI-S2079")
+            if ("|     auto text = std::json::encode_pretty(dst);" not in output or
+                    (assertion.decode() in output) != (mode == "matching") or
+                    stale.decode() in output or
+                    any(line.partition("|")[0].strip().isdigit() and
+                        not line.partition("|")[2].strip() for line in output.splitlines())):
+                raise RuntimeError(f"incorrect installed diagnostic excerpt ({mode}):\n{output}")
+    finally:
+        companion.write_bytes(original)
+
+
 def verify(stage):
     stage = stage.resolve()
     fixture = Path(__file__).resolve().parent
@@ -66,6 +93,10 @@ def verify(stage):
                     raise RuntimeError(output)
             elif result.returncode == 0 or rejection not in output:
                 raise RuntimeError(f"expected {rejection!r} from {arguments}\n{output}")
+
+            return output
+
+        verify_diagnostic_excerpts(run, fixture, source, stdlib)
 
         # Keep all logical and physical paths fixed, cold-build both ways, and
         # exercise an input-dependent destructor in the generic vector body.

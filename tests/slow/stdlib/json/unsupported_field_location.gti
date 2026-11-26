@@ -1,0 +1,34 @@
+// A nested JSON failure points at the application encoder call that requested it.
+//@ slow
+import std.json;
+
+class Opaque {
+public:
+  Opaque() {}
+private:
+  int value = 1;
+};
+
+enum Heartbeat { seconds(Opaque interval) };
+struct Destination {
+  Destination() = default;
+  Heartbeat heartbeat = Heartbeat::seconds(Opaque());
+};
+
+class Monitor {
+public:
+  Monitor() = default;
+  void Run() {
+    Destination dst{};
+    log(dst);
+  }
+  void log(Destination& dst) {
+    auto text = std::json::encode_pretty(dst);  //~ ERROR GTI-S2079 std::json cannot encode this type
+  }
+};
+
+int main() {
+  Monitor m{};
+  m.Run();
+  return 0;
+}

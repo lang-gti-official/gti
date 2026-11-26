@@ -369,7 +369,13 @@ private:
   };
 
   [[nodiscard]] InstanceDiscovery
-  nextDiscovery(const std::optional<SourceSpan> &site) const {
+  nextDiscovery(const std::optional<SourceSpan> &site,
+                const Token &declaration) const {
+    // Start library provenance at the application-to-library call. Earlier
+    // application calls may only have made the enclosing method reachable.
+    if (site && !trustedSources.contains(site->source) &&
+        trustedSources.contains(declaration.source))
+      return {discoveryDepth + 1, site};
     return {discoveryDepth + 1, discoveryOrigin ? discoveryOrigin : site};
   }
 
@@ -527,7 +533,7 @@ private:
       HirClassInstance &instance = output.program.classes[*existing - 1];
       if (!instance.instantiationSite && site) {
         classDiscoveryDepths[*existing - 1].origin =
-            discoveryOrigin ? discoveryOrigin : site;
+            nextDiscovery(site, instance.source->name()).origin;
         instance.instantiationSite = std::move(site);
       }
       return *existing;
@@ -660,7 +666,8 @@ private:
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
     classDiscoveryDepths.push_back(
-        nextDiscovery(output.program.classes.back().instantiationSite));
+        nextDiscovery(output.program.classes.back().instantiationSite,
+                      declaration->declaration->name()));
     discoveredGenericInstances += generic;
     if (declaration->enclosingClass != 0) {
       // Keep the lexical declaration shell even when only its child is used.
@@ -768,7 +775,7 @@ private:
       return 0;
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
-    functionDiscoveryDepths.push_back(nextDiscovery(site));
+    functionDiscoveryDepths.push_back(nextDiscovery(site, declarationToken));
     discoveredGenericInstances += generic;
     if (freeFunction || owner.has_value()) {
       // An instance whose owner failed to resolve was never matchable by the
@@ -969,7 +976,8 @@ private:
     // still counting a distinct generic constructor toward the request budget.
     // Ordinary constructor bodies retain their independent discovery edge.
     const InstanceDiscovery constructorDiscovery =
-        generatedBody ? classDiscoveryDepths[*owner - 1] : nextDiscovery(site);
+        generatedBody ? classDiscoveryDepths[*owner - 1]
+                      : nextDiscovery(site, declarationToken);
     const bool admitted = [&] {
       DiscoveryScope scope(discoveryDepth, discoverySite, discoveryOrigin,
                            {.depth = constructorDiscovery.depth - 1,
@@ -1042,7 +1050,8 @@ private:
       return std::nullopt;
     }
     destructorDiscoveryDepths.push_back(
-        nextDiscovery(classInstance.instantiationSite));
+        nextDiscovery(classInstance.instantiationSite,
+                      lifecycle->declaredDestructor->declaration->name()));
     discoveredGenericInstances += generic;
     output.program.destructors.push_back(
         {.codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
