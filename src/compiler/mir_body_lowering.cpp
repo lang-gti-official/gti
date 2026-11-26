@@ -299,6 +299,7 @@ public:
         } else {
           output.programConstantSubstitutions.push_back(
               {.hirValue = value.id, .constant = *value.constant});
+          unreachedProgramConstants.insert(value.id);
         }
       }
     }
@@ -737,6 +738,7 @@ public:
       }
     }
     reconcileRetainedNormalEndpoints();
+    retainReachedProgramConstants();
     // The discarded first pass still needs a complete CFG for carrier-flow
     // liveness. Invoke targets with deferred cleanup are unfinished blocks;
     // analysing them would discard all precise copy/replacement uses. Emit
@@ -3760,6 +3762,29 @@ private:
     }
   }
 
+  // The inventory starts as every HIR substitution in the body. Lowering
+  // never evaluates a value after control has left: statements after a
+  // `return`, `break`, `continue` or never-returning call, and operands after
+  // a terminating operand, have no MIR at all, so they keep no row. Every
+  // value lowering did reach keeps its row, and verification still requires
+  // its one exact materialization rather than a storage read.
+  void retainReachedProgramConstants() {
+    if (unreachedProgramConstants.empty())
+      return;
+    std::erase_if(output.programConstantSubstitutions,
+                  [&](const MirProgramConstantSubstitution &substitution) {
+                    return unreachedProgramConstants.contains(
+                               substitution.hirValue) &&
+                           !emittedValues.contains(substitution.hirValue);
+                  });
+  }
+
+  // Lowering entered `id` as a value, place or place dependency.
+  void markReached(HirValueId id) {
+    if (!unreachedProgramConstants.empty())
+      unreachedProgramConstants.erase(id);
+  }
+
   void finishFailureCleanupAndVerify() {
     reconcileRetainedFailureEndpoints();
     if (plannedFailureCleanup.empty()) {
@@ -6618,6 +6643,7 @@ private:
   }
 
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
+    markReached(id);
     ensureThreadLocalValue(id);
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
       return found->second;
@@ -7130,6 +7156,7 @@ private:
     if (terminated()) {
       return {};
     }
+    markReached(id);
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       valid = false;
@@ -7593,6 +7620,7 @@ private:
   }
 
   void emitPlaceDependencies(HirValueId id, bool checkedPrefix = false) {
+    markReached(id);
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       valid = false;
@@ -14773,6 +14801,7 @@ private:
     if (terminated()) {
       return;
     }
+    markReached(id);
     emitValueImpl(id, discardResult);
     finishTerminalFullExpression(id);
   }
@@ -21543,6 +21572,9 @@ private:
   std::unordered_map<MirLoanId, HirStatementId>
       enclosingTransferredLoanEndpoints;
   std::unordered_set<HirValueId> emittedValues;
+  // Substituted program constants whose evaluation lowering has not entered
+  // on a live path yet (see retainReachedProgramConstants).
+  std::unordered_set<HirValueId> unreachedProgramConstants;
   std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
   std::vector<ResultRegion> resultRegions;

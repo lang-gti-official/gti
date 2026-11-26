@@ -1,0 +1,3 @@
+// A formatted print after `return` compiles: its unreachable program constants have no MIR.
+import std.format;
+int main() { return 0; std::println("{}", 3); }  //~ WARN GTI-S2095

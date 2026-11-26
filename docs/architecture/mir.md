@@ -4620,6 +4620,15 @@ later-storage proof inside the merged executable program-initialization body;
 the initializer consumes the materialized constant rather than loading
 not-yet-initialized program storage.
 
+The inventory covers the substitutions lowering evaluates. A substituted value
+that lowering never reaches, because control already left before its evaluation
+point, has no MIR and keeps no row: statements after a `return`, `break`,
+`continue` or never-returning call, and operands after a terminating operand
+(`stop() + C`). Every value lowering does enter on a live path, as a value,
+place or place dependency, keeps its row, so verification still requires its
+one exact materialization and still rejects a reached constant read through
+storage or another wrapper.
+
 Receiver lowering honors the same substitution before considering the source
 expression's place category. A direct read-only receiver consumes the constant
 value, including through transparent grouping and comma expressions. Their
