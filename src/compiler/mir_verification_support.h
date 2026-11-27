@@ -11,6 +11,12 @@
 
 namespace lang::mir_detail {
 
+// Consume an exact cached proof, or verify the original input in full on a
+// miss. Retire the thread's old snapshots before optimization allocates its
+// mutable working copy. The caller keeps the actual input as source authority.
+[[nodiscard]] MirVerificationResult
+verifyMirOptimizationInput(const MirProgram &program);
+
 // Runs every program check. Body-local structure may be reused only for equal
 // bodies at the same address in a verified immutable input. Carrier loan flow
 // is rechecked against the current program because callee effects may change.
