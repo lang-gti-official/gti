@@ -184,10 +184,14 @@ void publishWorkerOutcome(void *context,
 }
 
 [[nodiscard]] gti_thread_spawn_status_v1
-spawnStatus(const std::system_error &error) noexcept {
-  const int value = error.code().value();
-  return value == EPERM ? GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1
+spawnFailureStatus(int error) noexcept {
+  return error == EPERM ? GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1
                         : GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+}
+
+[[nodiscard]] gti_thread_spawn_status_v1
+spawnStatus(const std::system_error &error) noexcept {
+  return spawnFailureStatus(error.code().value());
 }
 
 [[nodiscard]] gti_thread_join_result_v2 emptyJoinResult() noexcept {
@@ -375,6 +379,18 @@ void *runManagedTask(void *opaque) noexcept {
     std::terminate();
   }
   return nullptr;
+}
+
+gti_thread_spawn_status_v1
+startManagedWorker(gti_thread_state_v1 &state) noexcept {
+  try {
+    const int error = state.worker.start(runManagedTask, &state);
+    return error == 0 ? GTI_THREAD_SPAWN_OK_V1 : spawnFailureStatus(error);
+  } catch (const std::system_error &error) {
+    return spawnStatus(error);
+  } catch (...) {
+    return GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+  }
 }
 
 } // namespace
@@ -886,16 +902,9 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
   state->entry = entry;
   state->taskContext = task_context;
   state->destroyTask = destroy;
-  try {
-    state->worker.start(runManagedTask, state);
-  } catch (const std::system_error &error) {
+  result.status = startManagedWorker(*state);
+  if (result.status != GTI_THREAD_SPAWN_OK_V1) {
     destroy(task_context);
-    result.status = spawnStatus(error);
-    delete state;
-    return result;
-  } catch (...) {
-    destroy(task_context);
-    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
     delete state;
     return result;
   }
@@ -945,16 +954,9 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
   state->completeTask = complete_task;
   state->takeResult = take_result;
   state->abandonResult = abandon_result;
-  try {
-    state->worker.start(runManagedTask, state);
-  } catch (const std::system_error &error) {
+  result.status = startManagedWorker(*state);
+  if (result.status != GTI_THREAD_SPAWN_OK_V1) {
     releaseTaskContext(task_context, abandon_task);
-    result.status = spawnStatus(error);
-    delete state;
-    return result;
-  } catch (...) {
-    releaseTaskContext(task_context, abandon_task);
-    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
     delete state;
     return result;
   }
@@ -990,13 +992,8 @@ gti_rt_thread_join_v2(gti_thread_state_v1 **stateAddress) {
     // from.
     std::terminate();
   }
-  if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed)) {
-    result.status = GTI_THREAD_JOIN_FAILED_V1;
-    return result;
-  }
-  try {
-    state->worker.join();
-  } catch (...) {
+  if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed) ||
+      state->worker.join() != 0) {
     if (!state->worker.joinable()) {
       // Native failure changed the ownership state despite not completing the
       // GTI join contract. There is no coherent recoverable handle to return.
@@ -1039,13 +1036,8 @@ gti_rt_thread_join_value_v2(gti_thread_state_v1 **stateAddress) {
   if (state->completeTask == nullptr || !state->worker.joinable()) {
     std::terminate();
   }
-  if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed)) {
-    result.join.status = GTI_THREAD_JOIN_FAILED_V1;
-    return result;
-  }
-  try {
-    state->worker.join();
-  } catch (...) {
+  if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed) ||
+      state->worker.join() != 0) {
     if (!state->worker.joinable()) {
       std::terminate();
     }

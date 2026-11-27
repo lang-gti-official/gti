@@ -1,9 +1,10 @@
 #pragma once
 
+#include <cerrno>
 #include <exception>
-#include <system_error>
 
 #if defined(_WIN32)
+#include <system_error>
 #include <thread>
 #else
 #include <pthread.h>
@@ -29,11 +30,18 @@ public:
       std::terminate();
   }
 
-  void start(Entry entry, void *context) {
+  // Native operations return zero or their error number. Setup can still
+  // throw before a worker exists (for example, allocating libc++ exit state).
+  [[nodiscard]] int start(Entry entry, void *context) {
     if (joinable())
       std::terminate();
 #if defined(_WIN32)
-    handle = std::thread(entry, context);
+    try {
+      handle = std::thread(entry, context);
+      return 0;
+    } catch (const std::system_error &error) {
+      return error.code().value();
+    }
 #else
 #if defined(_LIBCPP_VERSION)
     // libc++ callbacks such as promise::set_value_at_thread_exit expect the
@@ -46,9 +54,8 @@ public:
     context = this;
 #endif
     const int error = pthread_create(&handle, nullptr, entry, context);
-    if (error != 0)
-      throw std::system_error(error, std::generic_category(), "pthread_create");
-    started = true;
+    started = error == 0;
+    return error;
 #endif
   }
 
@@ -60,20 +67,25 @@ public:
 #endif
   }
 
-  void join() {
+  [[nodiscard]] int join() noexcept {
 #if defined(_WIN32)
-    handle.join();
+    try {
+      handle.join();
+      return 0;
+    } catch (const std::system_error &error) {
+      return error.code().value();
+    } catch (...) {
+      return EIO;
+    }
 #else
     if (!started)
-      throw std::system_error(
-          std::make_error_code(std::errc::invalid_argument));
+      return EINVAL;
     if (pthread_equal(handle, pthread_self()))
-      throw std::system_error(
-          std::make_error_code(std::errc::resource_deadlock_would_occur));
+      return EDEADLK;
     const int error = pthread_join(handle, nullptr);
-    if (error != 0)
-      throw std::system_error(error, std::generic_category(), "pthread_join");
-    started = false;
+    if (error == 0)
+      started = false;
+    return error;
 #endif
   }
 
