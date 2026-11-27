@@ -2146,7 +2146,7 @@ auto SemanticVisitor::Impl::noteContractRelayUse(const Expr &expression,
                                                  const SemanticType &type)
     -> void {
   const FunctionInfo *scope = textFieldContractScope();
-  if (scope == nullptr || !nestedTextClass(type))
+  if (scope == nullptr || type.kind != SemanticType::Class)
     return;
   std::optional<FieldSourcedTextResult> relay;
   if (const auto *call = exprAs<Call>(&expression)) {
@@ -2156,11 +2156,19 @@ auto SemanticVisitor::Impl::noteContractRelayUse(const Expr &expression,
     relay = operatorTextReferenceRelay(*unary);
   }
   std::optional<OwnerlessTextField> prefix;
+  if (!relay) {
+    const auto *get = exprAs<Get>(&expression);
+    if (get == nullptr || get->access().kind == TokenKind::ARROW)
+      return;
+    prefix = contractRelayPrefix(get->object().get());
+    if (!prefix)
+      return;
+  }
+  // Inspect the class fields only once the expression has a relay to record.
+  if (!nestedTextClass(type))
+    return;
   if (relay)
     prefix = fieldSourcedTextFormal(*relay);
-  else if (const auto *get = exprAs<Get>(&expression);
-           get != nullptr && get->access().kind != TokenKind::ARROW)
-    prefix = contractRelayPrefix(get->object().get());
   if (!prefix)
     return;
   const auto [entry, inserted] = requestSession.contractRelayUses.try_emplace(
