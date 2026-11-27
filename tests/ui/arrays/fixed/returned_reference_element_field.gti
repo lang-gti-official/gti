@@ -1,0 +1,36 @@
+// Field access through a returned reference checks its array index and evaluates the receiver once.
+//@ run-pass
+//@ revisions: in_bounds out_of_bounds
+//@[out_of_bounds] args: a b
+//@[out_of_bounds] run-fail
+//@[out_of_bounds] exit-code: 70
+//@[out_of_bounds] stderr-contains: GTI-R0007
+import std.string;
+import std.vector;
+
+struct Cell {
+  mut int32_t value = 3;
+  Cell() = default;
+};
+struct Table {
+  mut Cell cells[2] = {};
+  Table() = default;
+};
+class Access {
+public:
+  mut Table data{};
+  mut int32_t calls = 0;
+  Access() = default;
+  mut Table& table() mut {
+    this.calls++;
+    return this.data;
+  }
+};
+
+int32_t main(int32_t argc, std::vector<std::string> argv) {
+  mut Access a{};
+  if (a.table().cells[0].value != 3 or a.calls != 1) return 1;
+  a.table().cells[argc - 1].value = 17;
+  if (a.calls != 2) return 2;
+  return a.table().cells[argc - 1].value == 17 and a.calls == 3 ? 0 : 3;
+}
