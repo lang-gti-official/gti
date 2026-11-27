@@ -1,0 +1,7 @@
+main.gti:4:53: error[GTI-S2017]: Returned reference must derive from unnamed read-only parameter 1.
+ 4 | int32_t& pick(int32_t&) { int32_t local = 4; return local; }  //~ ERROR GTI-S2017
+   |                                                     ^~~~~
+main.gti:4:15: note: Required owner dependency source is here.
+ 4 | int32_t& pick(int32_t&) { int32_t local = 4; return local; }  //~ ERROR GTI-S2017
+   |               ^~~~~~~
+help: Return the parameter, a checked projection of it, or a borrowed value constructed from it; local, temporary, global, and unrelated parameter storage cannot escape.

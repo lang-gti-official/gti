@@ -6252,23 +6252,33 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
           argumentShell && function &&
           contract->origin == BorrowOriginKind::Global && !contract->place &&
           function->returnType.kind != SemanticType::Reference;
+      // GTI-S2127 states the RFC 0004 implicit 'static' result, in the same
+      // terms as MIR's escape diagnostic for that signature.
       Diagnostic diagnostic = makeDiagnostic(
           implicitStatic ? "GTI-S2127" : std::move(code),
           DiagnosticPhase::Semantics, expressionToken(value),
-          "Returned " + std::string(description) +
-              (stable ? " refers to local or by-value storage that does "
-                        "not outlive this call."
-                      : " refers to temporary storage that is destroyed "
-                        "at the end of this full expression."));
+          implicitStatic
+              ? std::string("No input supplies this borrowed result, so it "
+                            "is implicitly 'static', but a return borrows "
+                            "storage that does not live for 'static'.")
+              : "Returned " + std::string(description) +
+                    (stable ? " refers to local or by-value storage that "
+                              "does not outlive this call."
+                            : " refers to temporary storage that is "
+                              "destroyed at the end of this full "
+                              "expression."));
       if (storage != nullptr && *storage)
         diagnostic.related.push_back(
             {tokenSpan(expressionToken(*storage)),
              "The result borrows this object's storage."});
       diagnostic.hints.emplace_back(
-          "Return an owned value, or borrow from storage that "
-          "outlives "
-          "the call. An external dependency does not extend the containing "
-          "object's lifetime.");
+          implicitStatic && stable
+              ? "Return an owned value, or borrow storage supplied by the "
+                "caller. A lifetime annotation cannot extend local storage "
+                "past the return."
+              : "Return an owned value, or borrow from storage that "
+                "outlives the call. An external dependency does not extend "
+                "the containing object's lifetime.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }

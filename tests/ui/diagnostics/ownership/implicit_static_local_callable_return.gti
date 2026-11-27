@@ -1,0 +1,11 @@
+// A function_ref over a local closure returned from an implicitly 'static'
+// result reports GTI-S2127 in RFC 0004 terms and explains local storage.
+//@ snapshot: diagnostics
+import std.functional;
+std::function_ref<int()> invalid() {
+  int value = 1;
+  auto callback = [&value]() -> int { return value; };
+  std::function_ref<int()> result{callback};
+  return result;  //~ ERROR GTI-S2127
+}
+int main() { auto call = invalid(); return call(); }
