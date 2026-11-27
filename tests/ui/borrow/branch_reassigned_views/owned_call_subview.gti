@@ -1,0 +1,22 @@
+//@ run-pass
+// A substring assigned on only one path keeps the called string owner alive.
+import std.string;
+
+std::string make_text(std::string_view input) {
+  mut std::string result{};
+  for (mut uint64_t i = 0u64; i < input.size(); i++) result.push_back(input[i]);
+  return result;
+}
+
+bool matches(std::string_view input, bool trim, std::string_view expected) {
+  std::string owner = make_text(input);
+  mut std::string_view text = owner.view();
+  if (trim) text = text.substr(1u64, text.size() - 1u64);
+  return text == expected;
+}
+
+int main() {
+  if (!matches("abc", true, "bc")) return 1;
+  if (!matches("abc", false, "abc")) return 2;
+  return 0;
+}
