@@ -1,3 +1,5 @@
+#include <cstdio> // TMPDEBUG
+#include <cstdlib> // TMPDEBUG
 #include "mir_carrier_flow.h"
 #include "gti/mir_effects.h"
 #include "gti/optimization/dataflow.h"
@@ -2752,9 +2754,24 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
   if (function.definitionKind != MirDefinitionKind::Source ||
       function.body.kind != MirBodyKind::Function)
     return result;
-  return deriveSourceEffects(
+  auto tmp = deriveSourceEffects(
       function.body, function.parameterTypes, function.parameterBindings,
       function.staticMember ? std::nullopt : function.owner, context);
+  if (std::getenv("GTI_TMP_DUMP_INVALID_MIR")) { // TMPDEBUG
+    const auto flow = deriveFlow(function.body, context, true);
+    std::fprintf(stderr, "TMPFX fn=%u params=%zu complete=%d returned=%d flowEffectsComplete=%d incomplete:",
+                 (unsigned)function.id, function.parameterTypes.size(), (int)tmp.complete,
+                 (int)tmp.returnedOrigins.has_value(), (int)flow.effectsComplete);
+    for (auto i : flow.incompleteEffectInstructions) {
+      int kind = -1;
+      for (auto &b : function.body.blocks) for (auto &in : b.instructions) if (in.id == i) kind = (int)in.kind;
+      std::fprintf(stderr, " i%u(k%d)", (unsigned)i, kind);
+    }
+    std::fprintf(stderr, " returnedBlocks:");
+    for (auto &[b, r] : flow.returned) std::fprintf(stderr, " bb%u=%s", (unsigned)b, r ? "known" : "unknown");
+    std::fprintf(stderr, "\n");
+  }
+  return tmp;
 }
 
 MirRetainingStoreEffects

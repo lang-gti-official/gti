@@ -1,3 +1,4 @@
+#include <cstdio> // TMPDEBUG
 #include "gti/mir.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -3283,6 +3284,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           replacedDependencies.insert(id);
       }
     }
+  if (std::getenv("GTI_TMP_DUMP_INVALID_MIR")) { // TMPDEBUG
+    std::fprintf(stderr, "TMPDEBUG body owner=%zu replaced:", owner);
+    for (auto id : replacedDependencies) std::fprintf(stderr, " %u", (unsigned)id);
+    std::fprintf(stderr, "\n");
+    for (const auto &[ins, loans] : carried.storeInputs) {
+      std::fprintf(stderr, "  storeInputs i%u:", (unsigned)ins);
+      if (!loans) std::fprintf(stderr, " unknown");
+      else for (auto id : *loans) std::fprintf(stderr, " %u", (unsigned)id);
+      std::fprintf(stderr, "\n");
+    }
+  }
   std::unordered_map<MirInstructionId,
                      std::vector<const MirPersistentStorageAccess *>>
       ambient;

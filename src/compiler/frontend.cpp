@@ -8,6 +8,8 @@
 #include "gti/lexer.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
+#include "gti/mir_printer.h" // TMPDEBUG
+#include <cstdio> // TMPDEBUG
 #include "gti/parser.h"
 #include "gti/project_template.h"
 #include "gti/semantic_analyzer.h"
@@ -2457,6 +2459,10 @@ void Frontend::verifyLowering(const std::filesystem::path &entryPath,
     SourceSpan primary{
         entry == nullptr ? entryPath.string() : entry->path.string(), 0, 0, 1};
     std::vector<RelatedDiagnostic> related;
+    if (std::getenv("GTI_TMP_DUMP_INVALID_MIR"))
+      for (const MirLoweringError &error : mir.errors)
+        if (const MirBody *body = findMirBody(result.mir, error.body))
+          std::fprintf(stderr, "%s\n", MirPrinter{}.print(*body).c_str());
     for (const MirLoweringError &error : mir.errors) {
       std::string detail = error.message + " (body kind " +
                            std::to_string(static_cast<int>(error.body.kind)) +
