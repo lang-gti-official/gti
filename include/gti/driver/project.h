@@ -176,7 +176,12 @@ public:
       BackendKind backend = BackendKind::Llvm,
       std::vector<std::string> compiledFunctions = {},
       std::optional<CompiledLibraryImport> compiledImport = {},
-      std::vector<CompiledLibraryImport> compiledImports = {});
+      std::vector<CompiledLibraryImport> compiledImports = {},
+      std::optional<MacosBundleSettings> bundle = {});
+
+  const std::optional<MacosBundleSettings> &macosBundle() const {
+    return bundleSettings;
+  }
 
   [[nodiscard]] const std::vector<ProjectBuildPlan> &
   compiledBuildDependencies() const {
@@ -268,6 +273,7 @@ private:
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;
+  std::optional<MacosBundleSettings> bundleSettings;
   CompileLimits resolvedCompileLimits;
 };
 
