@@ -1,1 +1,1 @@
-Reduce compiler memory use by allocating MIR instruction cleanup recipes only when present.
+Reduce compiler memory use by allocating large, optional MIR instruction payloads only when present.
