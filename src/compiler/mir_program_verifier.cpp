@@ -5377,6 +5377,31 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                  iterator->root == MirPlaceRootKind::Binding &&
                                  iterator->binding == receiverPlace->binding;
                         })));
+      // A range dereference can designate an element through the cursor's
+      // retained owner field. Its result reborrows that authority, even when
+      // the element type can itself store references. Verify the composed
+      // source set below instead of requiring a second loan on the shell.
+      const bool relayedRangeElement =
+          opaqueRangeCarrier && loan->parent == receiverLoan->id &&
+          !loan->storedDependency && !receiverLoan->storedDependency &&
+          loan->source == receiverLoan->source &&
+          instruction.borrowOrigin == BorrowOriginKind::Receiver && target &&
+          target->overloadedOperator == OverloadedOperator::Dereference &&
+          target->returnBorrowFields == instruction.borrowFields &&
+          mappedCallSources.size() == 1 &&
+          mappedCallSources.front().source == loan->source &&
+          std::any_of(
+              body.rangeIterations.begin(), body.rangeIterations.end(),
+              [&](const MirRangeIteration &range) {
+                const auto *iterator = body.findPlace(range.iterator);
+                return iterator &&
+                       iterator->root == MirPlaceRootKind::Binding &&
+                       iterator->binding == receiverPlace->binding &&
+                       range.elementAccessSource &&
+                               range.elementAccessSource == instruction.hirValue &&
+                       range.dereferenceFunction == target->declaration &&
+                       range.elementAccess == AccessMode::ReadOnly;
+              });
       const bool receiverStorageResult =
           !opaqueRangeCarrier && instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None && target != nullptr &&
@@ -5394,7 +5419,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
            ((!opaqueRangeCarrier &&
              (instruction.info.type.kind == SemanticType::StringView ||
               instruction.info.type.kind == SemanticType::CString)) ||
-            (instruction.info.type.kind == SemanticType::Class &&
+            (!relayedRangeElement &&
+             instruction.info.type.kind == SemanticType::Class &&
              instruction.info.traits.containsBorrowedState) ||
             (exactMirCapabilityClass(
                  program, instruction.info.type,

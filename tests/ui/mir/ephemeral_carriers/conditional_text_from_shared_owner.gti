@@ -1,0 +1,14 @@
+//@ run-pass
+import std.string;
+
+std::string label(std::string& source) {
+  mut std::string_view text = "Default";
+  if (!source.empty()) text = source.view();
+  return std::string(text.substr(0u64, 3u64));
+}
+
+int main() {
+  std::string empty{};
+  std::string name{"Copper"};
+  return label(empty).view() == "Def" && label(name).view() == "Cop" ? 0 : 1;
+}

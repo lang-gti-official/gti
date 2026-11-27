@@ -9920,6 +9920,13 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         target->second.retainsDependency =
             sameRetainedDependency ? leftSymbol->second.retainsDependency
                                    : baseSymbol.retainsDependency;
+        // A text value may be ownerless on one path and borrow an owner on
+        // another. While no single loan represents both, any later relay of
+        // the value must still carry its possible owner dependency.
+        if (baseSymbol.type.kind == SemanticType::StringView)
+          target->second.retainsDependency =
+              (leftCanFallThrough && leftSymbol->second.retainsDependency) ||
+              (rightCanFallThrough && rightSymbol->second.retainsDependency);
         // Complete transport facts describe values reaching this join. A
         // terminating arm is absent, not an unknown supplier to join with the
         // continuing arm. Keep the conservative loan union above separate.

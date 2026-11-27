@@ -1,0 +1,24 @@
+// Reading a record through a vector cursor reborrows its retained owner.
+//@ run-pass
+import std.span;
+import std.vector;
+
+struct Image {
+  int value;
+  std::span<uint8_t, static> bytes;
+  Image(int n, std::span<uint8_t, static> data) : value(n), bytes(data) {}
+};
+
+int sum(mut std::vector<Image>& source) {
+  mut std::vector<Image> local{};
+  local.swap(source);
+  mut int result = 0;
+  for (auto& image : local) result += image.value;
+  return result;
+}
+
+int main() {
+  mut std::vector<Image> images{};
+  images.push_back(Image(17, embed_bytes("readonly_range_of_borrowing_records.gti")));
+  return sum(images) == 17 && sum(images) == 0 ? 0 : 1;
+}
