@@ -5054,6 +5054,24 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         auto sources = compactCarrier ? abstractSources
                                       : dependencySources(dependencySources,
                                                           *input, 0, true);
+        // A whole-input mapping borrows the staged address, not one of the
+        // external references stored in that object. The input stage and
+        // complete-set flow independently verify its retained dependencies.
+        if (mapping.sourceFields.empty() && mapping.sourceConditions.empty()) {
+          const MirOperand *storage = input;
+          if (input->kind == MirOperandKind::Value) {
+            const auto *stage = definitionFor(body, input->value);
+            if (stage && stage->kind == MirInstructionKind::CallInput &&
+                stage->operands.size() == 1)
+              storage = &stage->operands.front();
+          }
+          if (storage->kind == MirOperandKind::BorrowRead ||
+              storage->kind == MirOperandKind::BorrowWrite)
+            sources = {{.source = storage->place,
+                        .access = storage->kind == MirOperandKind::BorrowWrite
+                                      ? AccessMode::Mutable
+                                      : AccessMode::ReadOnly}};
+        }
         const auto prefixOf = [](const auto &prefix, const auto &fields) {
           return prefix.size() <= fields.size() &&
                  std::equal(prefix.begin(), prefix.end(), fields.begin());
@@ -25768,9 +25786,10 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       return entry.result;
   auto result =
       mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr);
-  recent.push_front({program, result});
-  if (recent.size() > 2)
+  // Release the evicted snapshot before allocating its whole-program successor.
+  if (recent.size() == 2)
     recent.pop_back();
+  recent.push_front({program, result});
   return result;
 }
 

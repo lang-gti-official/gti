@@ -10,6 +10,7 @@
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/install.h"
+#include "gti/driver/macos_bundle.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
@@ -295,6 +296,7 @@ struct ProjectOptions {
   bool verbose = false;
   bool useCache = true;
   bool noBuild = false;
+  bool bundleMacos = false;
   bool offline = false;
   bool locked = false;
   // gti install only.
@@ -547,6 +549,8 @@ void printUsage(std::ostream &stream) {
          "      --no-debug-info  Disable the profile's debug-info setting.\n"
          "      --no-cache       Build without reading or updating the "
          "project cache.\n"
+         "      --bundle macos   Package a macOS executable target as an "
+         "application bundle.\n"
          "      --no-build       Run an existing managed executable without "
          "checking or rebuilding it (gti run only).\n"
          "      --offline        Never run git; only already fetched "
@@ -1616,6 +1620,15 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.useCache = false;
       continue;
     }
+    if (argument == "--bundle") {
+      if (options.command != ProjectCommand::Build || options.bundleMacos ||
+          ++index >= argc || std::string_view(argv[index]) != "macos") {
+        std::cerr << "gti: expected a single --bundle macos on gti build\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.bundleMacos = true;
+      continue;
+    }
     if (argument == "--no-build") {
       if (options.command != ProjectCommand::Run) {
         std::cerr << "gti: --no-build is supported only by gti run\n";
@@ -1710,6 +1723,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.buildReport && options.buildAll) {
     std::cerr << "gti: --build-report describes one target and cannot be "
                  "combined with --all\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.bundleMacos && (options.emitMir || options.buildAll)) {
+    std::cerr << "gti: --bundle macos requires a single executable build\n";
     return ArgumentResult::ExitFailure;
   }
   if (options.noBuild &&
@@ -3649,6 +3666,14 @@ int runProjectAttempt(
   }
 
   const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  if (options.bundleMacos &&
+      (plan.target().os != "macos" || lang::TargetInfo::host().os != "macos" ||
+       !plan.macosBundle() ||
+       plan.targetKind() != lang::driver::ProjectTargetKind::Executable)) {
+    std::cerr << "gti: --bundle macos requires a macOS host and executable "
+                 "target with macos-bundle settings\n";
+    return exitCode(ExitStatus::Usage);
+  }
   if ((plan.compiledLibrary() || !plan.compiledImports().empty()) &&
       options.emitMir) {
     std::cerr
@@ -3813,6 +3838,15 @@ int runProjectAttempt(
       &diagnosticSummary, nullptr, nullptr, nullptr, &unsupportedLibrary);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
+  }
+
+  if (options.bundleMacos) {
+    std::filesystem::path bundle;
+    if (auto error = lang::driver::publishMacosBundle(plan, bundle)) {
+      std::cerr << "gti: " << *error << '\n';
+      return exitCode(ExitStatus::Io);
+    }
+    std::cout << "Bundled " << bundle.string() << '\n';
   }
 
   if (install) {

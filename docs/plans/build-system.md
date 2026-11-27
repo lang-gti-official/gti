@@ -1978,3 +1978,7 @@ source deletion, import and native link on macOS arm64 and Linux x86-64. Promoti
 must add exact bundle/runtime/compiler identities and import-plan receipts to
 the evidence provider, retaining those execution tests and malformed-input
 controls. This is not a waiver of the general F5 readiness gates.
+
+Executable targets on macOS support opt-in application packaging through
+`gti build <target> --bundle macos`. See the manifest example under
+[macOS application bundles](../architecture/build-and-driver.md#macos-application-bundles).

@@ -1,0 +1,23 @@
+// A by-value carrier formal copied to a local and reassigned in an `if` to a value relayed from that formal joins its owners.
+//@ run-pass
+struct Cursor {
+  int& target;
+  Cursor(int& t) : target(t) {}
+};
+
+Cursor same(Cursor c) { return c; }
+
+int read(Cursor c, bool flag) {
+  mut Cursor current = c;
+  if (flag) {
+    current = same(c);
+  }
+  return current.target;
+}
+
+int main() {
+  int value = 7;
+  if (read(Cursor(value), true) != 7) return 1;
+  if (read(Cursor(value), false) != 7) return 2;
+  return 0;
+}

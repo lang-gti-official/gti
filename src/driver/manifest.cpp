@@ -2655,7 +2655,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         validateFields(*targetTable,
                        {"kind", "linkage", "root", "exports", "native",
                         "defines", "functions", "compiled-library",
-                        "compiled-libraries", "compiled-dependencies"},
+                        "compiled-libraries", "compiled-dependencies",
+                        "macos-bundle"},
                        "target", sourceName, source, result.diagnostics);
         const std::optional<std::string> kind =
             requiredString(*targetTable, "kind", "target", sourceName, source,
@@ -2828,6 +2829,46 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               buildDiagnostic("GTI-B1005", sourceSpan(sourceName, source, node),
                               std::move(message)));
         };
+        if (const auto *node = targetTable->get("macos-bundle")) {
+          const auto *table = node->as_table();
+          if (!table || targetKind != ProjectTargetKind::Executable) {
+            targetError(
+                *node,
+                "macos-bundle requires a table on an executable target.");
+          } else {
+            validateFields(*table, {"name", "identifier", "icon", "resources"},
+                           "macos-bundle", sourceName, source,
+                           result.diagnostics);
+            auto field = [&](const char *key) {
+              return requiredString(*table, key, "macos-bundle", sourceName,
+                                    source, result.diagnostics)
+                  .value_or("");
+            };
+            MacosBundleSettings bundle{.name = field("name"),
+                                       .identifier = field("identifier")};
+            if (bundle.name.empty() || bundle.name == "." ||
+                bundle.name == ".." ||
+                bundle.name.find_first_of("/:\\") != std::string::npos ||
+                std::any_of(bundle.name.begin(), bundle.name.end(),
+                            [](unsigned char c) { return c < 32; }))
+              targetError(*node,
+                          "Bundle name must be a single printable filename.");
+            if (bundle.identifier.empty() ||
+                bundle.identifier.starts_with('.') ||
+                bundle.identifier.ends_with('.') ||
+                bundle.identifier.find("..") != std::string::npos ||
+                bundle.identifier.find_first_not_of(
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345"
+                    "6789-.") != std::string::npos)
+              targetError(*node, "Invalid macOS bundle identifier.");
+            if (table->contains("icon"))
+              bundle.icon = field("icon");
+            bundle.resources =
+                stringArray(*table, "resources", "macos-bundle", sourceName,
+                            source, result.diagnostics);
+            parsedTarget.macosBundle = std::move(bundle);
+          }
+        }
         if (targetKind == ProjectTargetKind::CompiledLibrary) {
           const auto registered =
               std::find_if(package.modules.begin(), package.modules.end(),

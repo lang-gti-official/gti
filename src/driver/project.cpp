@@ -932,7 +932,8 @@ ProjectBuildPlan makeBuildPlan(
              rawPointerAudit, selectedTarget.linkage, selectedTarget.exports,
              configuration.declaredConfigurationFlags(),
              rawPointerAuditLibraryFindings, backend,
-             selectedTarget.compiledFunctions, std::nullopt, compiledImports)
+             selectedTarget.compiledFunctions, std::nullopt, compiledImports,
+             selectedTarget.macosBundle)
       .withCompileLimits(compileLimits);
 }
 
@@ -1331,7 +1332,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     bool rawPointerAuditLibraryFindings, BackendKind backend,
     std::vector<std::string> compiledFunctions,
     std::optional<CompiledLibraryImport> compiledImport,
-    std::vector<CompiledLibraryImport> compiledImports)
+    std::vector<CompiledLibraryImport> compiledImports,
+    std::optional<MacosBundleSettings> bundle)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1361,6 +1363,7 @@ ProjectBuildPlan::ProjectBuildPlan(
           std::move(compiledImport), std::move(compiledImports))),
       sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit),
       reportLibraryAuditFindings(rawPointerAuditLibraryFindings) {
+  bundleSettings = std::move(bundle);
   if (resolvedCompiledImports.size() == 1)
     resolvedCompiledImport = resolvedCompiledImports.front();
 }
