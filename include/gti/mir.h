@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -674,6 +675,48 @@ enum class MirLiteralProvenanceKind {
   Count,
 };
 
+// Most instructions carry no cleanup recipe. Keep its recursive descriptor
+// out of the instruction array, with independent, mutable value semantics
+// for optimizer, verifier and backend snapshots.
+class MirInstructionCleanup {
+public:
+  MirInstructionCleanup() = default;
+  MirInstructionCleanup(MirDropType value)
+      : recipe(std::make_unique<MirDropType>(std::move(value))) {}
+  MirInstructionCleanup(std::optional<MirDropType> value)
+      : recipe(value ? std::make_unique<MirDropType>(std::move(*value))
+                     : nullptr) {}
+  MirInstructionCleanup(const MirInstructionCleanup &other)
+      : recipe(other ? std::make_unique<MirDropType>(*other) : nullptr) {}
+  MirInstructionCleanup &operator=(const MirInstructionCleanup &other) {
+    if (this != &other)
+      *this = MirInstructionCleanup(other);
+    return *this;
+  }
+  MirInstructionCleanup(MirInstructionCleanup &&) noexcept = default;
+  MirInstructionCleanup &operator=(MirInstructionCleanup &&) noexcept = default;
+
+  [[nodiscard]] bool has_value() const { return bool(recipe); }
+  explicit operator bool() const { return has_value(); }
+  MirDropType &operator*() { return *recipe; }
+  const MirDropType &operator*() const { return *recipe; }
+  MirDropType *operator->() { return recipe.get(); }
+  const MirDropType *operator->() const { return recipe.get(); }
+  void reset() { recipe.reset(); }
+
+  friend bool operator==(const MirInstructionCleanup &lhs,
+                         const MirInstructionCleanup &rhs) {
+    return lhs && rhs ? *lhs == *rhs : bool(lhs) == bool(rhs);
+  }
+  friend bool operator==(const MirInstructionCleanup &lhs,
+                         const std::optional<MirDropType> &rhs) {
+    return lhs && rhs ? *lhs == *rhs : bool(lhs) == rhs.has_value();
+  }
+
+private:
+  std::unique_ptr<MirDropType> recipe;
+};
+
 // Every MIR Compute/Literal instruction says whether it came directly from
 // lowering or from a verified optimizer rewrite. A rewrite retains its
 // original MIR input rather than asking a backend to recover transformation
@@ -789,8 +832,8 @@ struct MirInstruction {
   // explicit optional-slot destruction. The operation retires the slot before
   // executing this recipe; a destructor failure propagates its original record
   // through Invoke.
-  std::optional<MirDropType> elementCleanup;
-  std::optional<MirDropType> replacementCleanup;
+  MirInstructionCleanup elementCleanup;
+  MirInstructionCleanup replacementCleanup;
   // Symmetric exact instruction pair: CleanupBeforeAssign <-> Assign.
   MirInstructionId replacementPair = 0;
   std::vector<FailureSiteId> localFailureSites;
