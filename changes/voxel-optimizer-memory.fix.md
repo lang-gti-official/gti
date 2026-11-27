@@ -1,1 +1,1 @@
-Reduce peak compiler memory during MIR optimization by releasing obsolete verification snapshots before allocating the working program.
+Reduce peak compiler memory during MIR optimization by retiring old verification snapshots before edits and keeping intermediate replay programs out of the verifier cache.

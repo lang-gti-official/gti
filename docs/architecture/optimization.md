@@ -175,7 +175,10 @@ At optimizing levels, input verification consumes the result for an exactly
 equal cached program or checks the submitted input in full. It releases the
 old verifier snapshots before allocating the mutable pass input. The
 submitted MIR remains the immutable source for independent replay.
-Standalone verification and final independent replay keep their full checks.
+Independent replay verifies its intermediate candidates locally. The general
+verifier cache can retain the optimized output for the backend. When no safety
+records exist, replay carries the verification result for the unchanged
+folded candidate forward.
 
 `-O0` schedules no transform and keeps pre/post MIR structurally identical.
 `-O1` schedules the following deterministic local pipeline:
