@@ -1712,6 +1712,14 @@ private:
 
   struct FieldInfo {
     const VariableDecl *declaration = nullptr;
+    // Registration precedes evaluation of some constexpr array bounds.
+    // Structural traits depend on the element, even before the layout is known.
+    std::shared_ptr<const SemanticType> deferredArrayElement;
+
+    [[nodiscard]] const SemanticType &
+    typeForTraits(const SemanticType &declared) const {
+      return deferredArrayElement ? *deferredArrayElement : declared;
+    }
   };
 
   // `@compiler_type` bindings of classes in the trusted std/meta unit.

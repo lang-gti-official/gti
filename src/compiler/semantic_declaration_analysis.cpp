@@ -9853,6 +9853,7 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
       if (member == owner.members.end() ||
           member->second.access != AccessModifier::Public ||
           member->second.symbol.type.kind == SemanticType::Reference ||
+          entry.deferredArrayElement ||
           member->second.symbol.type.kind == SemanticType::Array ||
           typeTraits(member->second.symbol.type).containsBorrowedState) {
         eligible = false;
@@ -10526,6 +10527,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
 
     const Token *name = nullptr;
     const VariableDecl *field = nullptr;
+    FieldInfo fieldInfo;
     const FunctionDecl *function = stmtAs<FunctionDecl>(statement.get());
     Symbol symbol;
     if (function != nullptr) {
@@ -10614,6 +10616,14 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                                               : SemanticBindingKind::Field,
           .staticMember = variable->isStatic(),
           .compilerPrivate = owner.compilerPrivate};
+      fieldInfo.declaration = field;
+      if (!field->isStatic() && symbol.type == SemanticType::Unknown &&
+          !field->type().reference && !field->type().arrayExtents.empty()) {
+        TypeRef element = field->type();
+        element.arrayExtents.clear();
+        fieldInfo.deferredArrayElement =
+            std::make_shared<SemanticType>(typeOf(element, memberScope));
+      }
       predeclaredVariables.insert(variable);
       if (owner.kind == ClassKind::Interface) {
         report(variable->name(),
@@ -10712,7 +10722,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                                                    .access = access});
     if (field != nullptr) {
       (field->isStatic() ? owner.staticFields : owner.fields)
-          .push_back(FieldInfo{.declaration = field});
+          .push_back(std::move(fieldInfo));
     }
   }
 }

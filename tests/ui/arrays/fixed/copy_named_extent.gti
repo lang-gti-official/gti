@@ -1,0 +1,34 @@
+// A named array extent preserves the copy and assignment traits of its elements.
+//@ run-pass
+import std.meta;
+
+namespace scene {
+constexpr int32_t BONES = 3;
+struct Palette<T> {
+  mut T values[BONES * 2] = {};
+  Palette() = default;
+};
+struct Frame {
+  mut Palette<float> palette{};
+  Frame() = default;
+};
+struct MoveOnly {
+  MoveOnly() = default;
+  MoveOnly(MoveOnly& other) = delete;
+};
+}
+
+static_assert(std::meta::is_copyable<scene::Frame>());
+static_assert(!std::meta::is_copy_constructible<scene::Palette<scene::MoveOnly>>());
+
+int main() {
+  mut scene::Frame source{};
+  source.palette.values[5] = 42.0;
+  mut scene::Frame copy = source;
+  source.palette.values[5] = 13.0;
+  if (copy.palette.values[5] != 42.0) return 1;
+  copy.palette = source.palette;
+  if (copy.palette.values[5] != 13.0) return 2;
+  copy = scene::Frame();
+  return copy.palette.values[5] == 0.0 ? 0 : 3;
+}
