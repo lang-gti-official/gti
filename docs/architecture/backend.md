@@ -19,6 +19,12 @@ they do not receive the AST,
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
 
+For artifact generation, the builder verifies source and optimized MIR and
+collects their metadata before moving the optimized MIR into the sealed
+program. Callers that retain their MIR can pass it by reference to copy it.
+The driver retains diagnostic sources and requested optimizer outputs, and
+releases the frontend and optimizer snapshots before backend generation.
+
 Typed macro results reach this boundary only as verified ordinary MIR
 initialization, lifecycle, cleanup and join transport. The C++ backend never
 executes a HIR result region or interprets a macro-local return as a native

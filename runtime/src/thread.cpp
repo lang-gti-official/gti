@@ -2,6 +2,7 @@
 
 #include "cthread_internal.h"
 #include "failure_internal.h"
+#include "native_thread.h"
 #include "thread_internal.h"
 
 #include <atomic>
@@ -10,11 +11,14 @@
 #include <mutex>
 #include <new>
 #include <system_error>
-#include <thread>
 #include <utility>
 
 struct gti_thread_state_v1 {
-  std::thread worker;
+  gti::runtime::detail::NativeThread worker;
+  void *taskContext = nullptr;
+  gti_thread_task_entry_v1 entry = nullptr;
+  gti_thread_task_abandon_v1 destroyTask = nullptr;
+  gti_thread_task_complete_v1 completeTask = nullptr;
   std::mutex failureMutex;
   gti_thread_worker_failure_kind_v1 failureKind =
       GTI_THREAD_WORKER_FAILURE_NONE_V1;
@@ -22,7 +26,6 @@ struct gti_thread_state_v1 {
   gti_failure_emergency_v2 cleanupFailure{};
   const gti_failure_artifact_descriptor_v1 *primaryArtifact = nullptr;
   const gti_failure_artifact_descriptor_v1 *secondaryArtifact = nullptr;
-  bool valueBearing = false;
   void *resultContext = nullptr;
   gti_thread_result_take_v1 takeResult = nullptr;
   gti_thread_result_abandon_v1 abandonResult = nullptr;
@@ -340,6 +343,39 @@ public:
 private:
   gti_thread_state_v1 &state;
 };
+
+void *runManagedTask(void *opaque) noexcept {
+  auto &state = *static_cast<gti_thread_state_v1 *>(opaque);
+  ActiveWorkerScope scope(state);
+  ThreadLocalExitScope threadLocals(state);
+  try {
+    state.entry(state.taskContext);
+  } catch (const gti_runtime_detail::worker_failure_handoff &) {
+    // Generated adapters normally contain this handoff themselves.
+    gti_runtime_detail::clear_managed_failure_handoff();
+  } catch (...) {
+    std::terminate();
+  }
+  try {
+    ActiveTaskObjectCleanupScope cleanup;
+    if (state.completeTask == nullptr || workerFailed(state)) {
+      state.destroyTask(state.taskContext);
+    } else {
+      void *result = state.completeTask(state.taskContext);
+      if (workerFailed(state)) {
+        if (result != nullptr)
+          state.abandonResult(result);
+      } else {
+        if (result == nullptr)
+          std::terminate();
+        state.resultContext = result;
+      }
+    }
+  } catch (...) {
+    std::terminate();
+  }
+  return nullptr;
+}
 
 } // namespace
 
@@ -847,27 +883,11 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
     return result;
   }
 
+  state->entry = entry;
+  state->taskContext = task_context;
+  state->destroyTask = destroy;
   try {
-    state->worker = std::thread([state, entry, task_context, destroy] {
-      ActiveWorkerScope scope(*state);
-      ThreadLocalExitScope threadLocals(*state);
-      try {
-        entry(task_context);
-      } catch (const gti_runtime_detail::worker_failure_handoff &) {
-        gti_runtime_detail::clear_managed_failure_handoff();
-        // Generated adapters catch this. Retain a defensive runtime boundary
-        // so a malformed adapter still cannot leak an exception to std::thread.
-      } catch (...) {
-        std::terminate();
-      }
-      try {
-        ActiveTaskObjectCleanupScope cleanup;
-        destroy(task_context);
-      } catch (...) {
-        // No native unwind may cross the task cleanup/runtime boundary.
-        std::terminate();
-      }
-    });
+    state->worker.start(runManagedTask, state);
   } catch (const std::system_error &error) {
     destroy(task_context);
     result.status = spawnStatus(error);
@@ -919,44 +939,14 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
     result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
     return result;
   }
-  state->valueBearing = true;
-
+  state->entry = entry;
+  state->taskContext = task_context;
+  state->destroyTask = abandon_task;
+  state->completeTask = complete_task;
+  state->takeResult = take_result;
+  state->abandonResult = abandon_result;
   try {
-    state->worker = std::thread([state, entry, task_context, complete_task,
-                                 abandon_task, take_result, abandon_result] {
-      ActiveWorkerScope scope(*state);
-      ThreadLocalExitScope threadLocals(*state);
-      try {
-        entry(task_context);
-      } catch (const gti_runtime_detail::worker_failure_handoff &) {
-        gti_runtime_detail::clear_managed_failure_handoff();
-        // Generated adapters normally contain this handoff themselves.
-      } catch (...) {
-        std::terminate();
-      }
-      try {
-        ActiveTaskObjectCleanupScope cleanup;
-        if (workerFailed(*state)) {
-          abandon_task(task_context);
-          return;
-        }
-        void *result_context = complete_task(task_context);
-        if (workerFailed(*state)) {
-          if (result_context != nullptr)
-            abandon_result(result_context);
-          return;
-        }
-        if (result_context == nullptr) {
-          std::terminate();
-        }
-        state->resultContext = result_context;
-        state->takeResult = take_result;
-        state->abandonResult = abandon_result;
-      } catch (...) {
-        // No native unwind may cross task completion or abandonment.
-        std::terminate();
-      }
-    });
+    state->worker.start(runManagedTask, state);
   } catch (const std::system_error &error) {
     releaseTaskContext(task_context, abandon_task);
     result.status = spawnStatus(error);
@@ -990,7 +980,7 @@ gti_rt_thread_join_v2(gti_thread_state_v1 **stateAddress) {
   }
 
   gti_thread_state_v1 *state = *stateAddress;
-  if (state->valueBearing) {
+  if (state->completeTask != nullptr) {
     std::terminate();
   }
   if (!state->worker.joinable()) {
@@ -1046,7 +1036,7 @@ gti_rt_thread_join_value_v2(gti_thread_state_v1 **stateAddress) {
   }
 
   gti_thread_state_v1 *state = *stateAddress;
-  if (!state->valueBearing || !state->worker.joinable()) {
+  if (state->completeTask == nullptr || !state->worker.joinable()) {
     std::terminate();
   }
   if (consumeTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed)) {

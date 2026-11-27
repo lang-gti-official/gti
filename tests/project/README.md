@@ -35,7 +35,7 @@ $ gti check --profile nosuch
 
 | Line | Meaning |
 | --- | --- |
-| `$ program args…` | run a command; `gti` and `gti_lsp` are the built tools, other programs come from `PATH`; `"…"` groups words, `$DIR` is the copied directory and `$HOME` the commands' home |
+| `$ program args…` | run a command; `gti` and `gti_lsp` are the built tools, other programs come from `PATH`; `"…"` groups words, `$DIR` is the copied directory and `$HOME` the commands' home, and `$GTI` the tested executable path for helper arguments |
 | `$ tty: program args…` | run it with stdout and stderr on one pseudo-terminal (80×24, newlines untranslated); its expectations are all `stdout:` |
 | `$ cd dir` | change the directory later commands run in |
 | `env NAME=value` | set a variable for every later command; `$DIR`, `$HOME` and `$PATH` (the PATH later commands would otherwise see) expand in the value |

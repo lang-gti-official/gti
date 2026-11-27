@@ -59,7 +59,11 @@ the parent of each additional input separately. Its second input is not a child
 of the first input's unrelated storage. Field-mapped return verification also
 preserves an owned receiver's explicit input borrow permission, without deriving
 writable access merely from a mutable place. These are compile-time provenance
-facts; they introduce no runtime loan state or allocation.
+facts; they introduce no runtime loan state or allocation. A field mapping
+that names the whole borrowed input selects its staged physical address, even
+when that object stores several external references. A mapping naming a stored
+field instead selects that field's referent. The input stage and complete-set
+flow independently retain and verify the external dependencies in both cases.
 
 A temporary view of a carrier's physical storage retains the carrier's
 external authority as one stored dependency. If selecting the receiver also
@@ -3263,6 +3267,14 @@ rebuilds its initialization plan on each round. Reuse ends with the current HIR
 and cleanup-sharing attempt. The assembled program goes through ordinary
 interprocedural verification.
 
+Seed and provisional MIR describe application bodies before the hosted entry
+adapter exists. The final rounds publish the entry declaration and its adapter
+together. Lowering verifies the provisional program in place. It retains the
+seed only while the next round can move bodies out of it, and releases
+provisional MIR after failure effects converge. The whole-program verifier
+caches final snapshots for later consumers. Its two-entry cache evicts the
+oldest snapshot before making a replacement copy.
+
 Across revisions the editor's bounded MIR cache retains two structural facts.
 Dominance depends on the entry and successor lists of a validated CFG.
 Mutual exclusion of full-expression cleanup markers also depends on the
@@ -3595,8 +3607,16 @@ missing boundary evidence.
 Lowering stores a set of possible retained groups per local. Exact-parent and
 physical-authority consumers explicitly request a singleton; they never select
 an arbitrary member of a joined set. Shared branch joins can preserve distinct
-parentless read-only producer groups without manufacturing a new loan. Missing
-branch authority is not treated as a proven empty alternative. Cleanup removes
+parentless read-only producer groups without manufacturing a new loan. A
+formal's read-only entry Stored group (the contents its caller supplied) joins
+the same way: it is held for the whole body and never ends inside it, so a
+local copied from a view formal on one path and reassigned to a view relayed
+from that formal (`entry.substr(...)`, or a carrier returned through a call) on
+the other holds both groups after the `if`. Missing branch authority is not
+treated as a proven empty alternative: the absent path is ownerless only when
+the converged carrier flow holds the present path's groups and otherwise only
+the contents its Stored groups relay from a whole local, since carrier flow
+reports a relayed view with its source's groups as well. Cleanup removes
 only the ended group from a local's set, and canonical place queries receive all
 remaining candidates. At a completed loop exit, lowering can request the
 existing carrier-flow solver's converged block-entry facts rather than restore

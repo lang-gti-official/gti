@@ -238,7 +238,8 @@ part of validation; its tests and `cpp-backend.yml` were removed on
 
 Hosted Linux runners have 16 GiB and four vCPUs, and one that runs out of
 memory dies with its files: GitHub reports only a lost runner or a shutdown
-signal. Full validation's shard and installed-toolchain steps therefore log
+signal. Full validation's shard and installed-toolchain steps and the slow
+tier's shard step therefore log
 `scripts/runner_monitor.sh` samples (available memory, swap, free disk, the
 largest processes and the CTest entries still running). Whole-program
 analysis memory currently grows quadratically with the number of initialized

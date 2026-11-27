@@ -972,6 +972,7 @@ add_library(
   "src/driver/borrow_dependencies.cpp"
   "src/driver/compilation.cpp"
   "src/driver/install.cpp"
+  "src/driver/macos_bundle.cpp"
   "src/driver/registry_commands.cpp"
   "src/driver/test_runner.cpp"
   "src/driver/test_report.cpp"

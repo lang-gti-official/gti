@@ -3800,3 +3800,25 @@ Checking does not execute build scripts. Producer native inputs/scripts remain
 unsupported; compiled-library checks with bindgen imports reject before any
 binding generation. LSP snapshot ingestion, provenance reports, emitted MIR and
 automatic dependency/cache orchestration retain their separate prerequisites.
+
+## macOS application bundles
+
+On macOS, `gti build game --release --bundle macos` builds the selected
+executable and publishes a sibling Finder application. Declare the metadata
+on the executable target in `gti.toml`:
+
+```toml
+[targets.game.macos-bundle]
+name = "Example Game"
+identifier = "org.example.game"
+icon = "art/game.icns"
+resources = ["data/levels.json"]
+```
+
+The name and identifier are required. The optional icon is copied to the
+resource root and other files retain their package-relative paths inside
+`Contents/Resources`. The driver generates Info.plist from the target and
+package version, copies the executable, and applies a local ad-hoc signature.
+Packaging runs on cache hits so resource-only edits are reflected. A failed
+packaging step preserves the previous application. Third-party dynamic library
+embedding, Developer ID signing and notarization are separate distribution steps.

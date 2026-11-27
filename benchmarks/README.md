@@ -73,6 +73,28 @@ Neither means GTI has reached a physical lower bound. The bounded investigation
 and remaining costs are recorded in
 [performance tooling](../docs/plans/performance-tooling.md).
 
+### Voxel game release build
+
+The [voxel sandbox](https://git.internal.howetotech.dev/gti-lang/voxel)
+exercises module discovery, generic library code, ownership analysis, MIR
+optimization and native linking in one application. The macOS arm64 baseline
+uses game revision `e532f315b19738908100631126c56c1e7599b0bd`, its committed
+`gti.lock`, and the concurrent release profile. Use a disposable checkout.
+Fetch the locked dependencies once, then time the game executable target:
+
+```sh
+gti fetch --locked
+/usr/bin/time -p gti build voxel-sandbox --release --offline --progress=plain
+```
+
+For a compiler comparison, use the same checkout path, locked dependency
+cache, host toolchain and standard library. Move the checkout's entire
+`build/` directory aside before each clean run so native dependency builds
+and executable cache lookups have the same starting state. Retain the
+executables for comparison. Repeat the command with `build/` in place to
+measure an unchanged build. Collect stack samples in a separate profiling
+run and leave the machine idle during the timed comparison.
+
 ## LSP scalability
 
 `scripts/lsp_benchmark.py` drives `gti_lsp` over its real JSON-RPC transport

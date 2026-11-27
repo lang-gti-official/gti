@@ -1,0 +1,18 @@
+// A view formal's local copy reassigned only in the `else` branch joins its owners.
+//@ run-pass
+import std.string_view;
+
+bool tail_is(std::string_view entry, bool keep, std::string_view expected) {
+  mut std::string_view value = entry;
+  if (keep) {
+  } else {
+    value = entry.substr(1u64);
+  }
+  return value == expected;
+}
+
+int main() {
+  if (!tail_is("xtrue", false, "true")) return 1;
+  if (!tail_is("xtrue", true, "xtrue")) return 2;
+  return 0;
+}

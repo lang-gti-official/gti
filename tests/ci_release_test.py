@@ -771,6 +771,10 @@ def slow_tier_contract(root):
     shards = sections["shards"]
     assert "ref: ${{ needs.source.outputs.sha }}" in shards and "if: needs.source.outputs.selected == 'true'" in shards
     assert "validation_checks.py shard --build build" in shards and '--test-set "${GTI_SHARD_TEST_SET}"' in shards
+    # A lost slow-tier runner leaves no log either: the same monitor and the
+    # same errexit-safe cleanup as the integration shards.
+    assert 'bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/' in shards
+    assert """trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT""" in shards
     rows = re.findall(r"platform: (linux|darwin), set: ([a-z0-9-]+), shards: (\d+), index: (\d+)", shards)
     sets = {}
     for platform, test_set, count, index in rows:

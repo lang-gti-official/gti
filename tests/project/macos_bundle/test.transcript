@@ -1,0 +1,14 @@
+// Packaging accepts only a single macOS executable build.
+$ gti build --bundle windows
+? 64
+stderr: expected a single --bundle macos
+$ gti run --bundle macos
+? 64
+stderr: expected a single --bundle macos
+$ gti build --bundle macos --emit-mir
+? 64
+stderr: requires a single executable build
+$ gti build --bundle macos --all
+? 64
+stderr: requires a single executable build
+$ python3 publication.py "$GTI"

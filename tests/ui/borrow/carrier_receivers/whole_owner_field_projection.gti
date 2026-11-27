@@ -1,0 +1,21 @@
+// A shared receiver can lend several fields and return another carrier through them.
+//@ run-pass
+struct Pair<lifetime a> {
+  int&<a> left;
+  int&<a> right;
+  Pair(int&<a> left, int&<a> right) : left(left), right(right) {}
+  Pair<a> entries() { return Pair<a>(this.left, this.right); }
+  int sum() { return this.left + this.right; }
+};
+struct Owner {
+  mut int left = 1;
+  mut int right = 2;
+  Owner() = default;
+  Pair<this> view() { return Pair<this>(this.left, this.right); }
+};
+int main() {
+  Owner owner{};
+  auto view = owner.view();
+  auto iterator = view.entries();
+  return iterator.sum() - 3;
+}
