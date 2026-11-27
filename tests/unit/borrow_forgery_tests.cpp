@@ -6787,6 +6787,56 @@ int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }
   }
 }
 
+void testWholeInputFieldContract() {
+  std::ifstream input(repositoryRoot() /
+                      "tests/ui/borrow/carrier_receivers/whole_carrier_subview.gti");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  expect(!source.empty(), "whole-input carrier fixture is available");
+  const auto result = analyze(source);
+  if (!result.canGenerateCode())
+    return;
+  const auto id = functionId(result, "main");
+  const auto *function = result.mir.findFunctionInstance(id);
+  bool checked = false;
+  bool checkedOwner = false;
+  for (const auto &block : function->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Call ||
+          !instruction.loan || instruction.borrowFields.size() != 2 ||
+          !std::all_of(instruction.borrowFields.begin(),
+                       instruction.borrowFields.end(), [](const auto &field) {
+                         return field.origin == lang::BorrowOriginKind::Receiver &&
+                                field.sourceFields.empty();
+                       }))
+        continue;
+      const auto *loan = function->body.findLoan(*instruction.loan);
+      expect(loan && loan->additionalDependencies.size() == 1,
+             "whole-input result retains both designated fields");
+      if (!loan || loan->additionalDependencies.size() != 1)
+        continue;
+      checked = true;
+      auto lostField = result.mir;
+      mutableFunction(lostField, id)
+          .body.loans[loan->id - 1]
+          .additionalDependencies.clear();
+      expect(!lang::verifyMirProgram(lostField).valid(),
+             "whole-input result cannot omit its second field dependency");
+      for (const auto &owner : function->body.loans) {
+        if (owner.id == loan->id || owner.additionalDependencies.size() != 1)
+          continue;
+        checkedOwner = true;
+        auto lostOwner = result.mir;
+        mutableFunction(lostOwner, id)
+            .body.loans[owner.id - 1]
+            .additionalDependencies.clear();
+        expect(!lang::verifyMirProgram(lostOwner).valid(),
+               "physical input address cannot hide a missing external owner");
+      }
+    }
+  expect(checked, "whole-input result forgery exercised a carrier subview");
+  expect(checkedOwner, "whole-input forgery exercised external owner retention");
+}
+
 void testDependencySourceIdentity() {
   const auto root = repositoryRoot();
   (void)root;
@@ -7112,6 +7162,11 @@ GTI_UNIT_TEST(borrowing_composition_check_projected_mixed_reborrows) {
 
 GTI_UNIT_TEST(complete_borrow_global_origin_contract) {
   complete_borrow::testGlobalOriginContract();
+  return complete_borrow::failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(complete_borrow_whole_input_field_contract) {
+  complete_borrow::testWholeInputFieldContract();
   return complete_borrow::failures == 0 ? 0 : 1;
 }
 

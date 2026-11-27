@@ -8,7 +8,7 @@ struct Pair {
 };
 int main() {
   mut int left = 3;
-  mut int right = 5;
+  int right = 5;
   auto view = Pair(left, right);
   auto tail = view.subview();
   left = 7; //~ ERROR GTI-S2017

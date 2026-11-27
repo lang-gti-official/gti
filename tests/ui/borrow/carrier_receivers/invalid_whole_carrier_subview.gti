@@ -7,7 +7,7 @@ struct Pair {
   int sum() { return this.left + this.right; }
 };
 int main() {
-  mut int left = 3;
+  int left = 3;
   mut int right = 5;
   auto view = Pair(left, right);
   auto tail = view.subview();
