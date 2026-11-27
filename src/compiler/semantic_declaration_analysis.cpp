@@ -9853,6 +9853,7 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
       if (member == owner.members.end() ||
           member->second.access != AccessModifier::Public ||
           member->second.symbol.type.kind == SemanticType::Reference ||
+          entry.deferredArrayElement ||
           member->second.symbol.type.kind == SemanticType::Array ||
           typeTraits(member->second.symbol.type).containsBorrowedState) {
         eligible = false;
