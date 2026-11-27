@@ -7633,8 +7633,17 @@ private:
             (value->kind == HirValueKind::MemberAccess &&
              value->unsafeOperation != UnsafeOperationKind::RawMember)))
       value = findValue(value->operands.front());
-    if (value == nullptr || value->kind != HirValueKind::Index || !value->place)
+    if (value == nullptr || value->kind != HirValueKind::Index ||
+        value->functionTarget || value->operands.size() != 2)
       return false;
+    const HirValue *base = findValue(value->operands.front());
+    if (base == nullptr || base->info.type.kind != SemanticType::Array)
+      return false;
+    // A value-rooted array (including a field of a call's returned reference)
+    // can have no binding-based PlaceKey. Its MIR index still needs the
+    // selection's checked success edge: there is no static place proof.
+    if (!value->place)
+      return true;
     const auto index = std::find_if(
         value->place->projections.rbegin(), value->place->projections.rend(),
         [](const PlaceProjection &projection) {
