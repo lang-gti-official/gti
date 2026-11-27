@@ -219,6 +219,13 @@ struct CompiledSourceDependency {
   bool automatic = false;
 };
 
+struct MacosBundleSettings {
+  std::string name;
+  std::string identifier;
+  std::string icon;
+  std::vector<std::string> resources;
+};
+
 struct ProjectTarget {
   std::string name;
   ProjectTargetKind kind = ProjectTargetKind::Executable;
@@ -234,6 +241,7 @@ struct ProjectTarget {
   std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
   std::string libraryModule;
+  std::optional<MacosBundleSettings> macosBundle;
 };
 
 struct ProjectProfile {

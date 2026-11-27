@@ -3371,3 +3371,9 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
+
+if(APPLE)
+  add_test(NAME macos_bundle_publication
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/macos_bundle_test.py"
+            "$<TARGET_FILE:gti>")
+endif()
