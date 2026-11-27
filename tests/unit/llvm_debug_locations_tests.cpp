@@ -23,9 +23,11 @@ void require(bool condition, const char *message) {
 GTI_UNIT_TEST(llvm_debug_locations_and_native_return_types) {
   using namespace lang;
   using namespace lang::native_llvm;
-  const auto frontend =
-      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("debug-locations.gti", R"(
+  LoweredProgramBuild lowered;
+  {
+    auto frontend =
+        Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+            .analyze("debug-locations.gti", R"(
 namespace example {
   int doubled(int input) {
     int local = input * 2;
@@ -38,11 +40,16 @@ int main() {
   return example::identity(answer) - 42;
 }
 )");
-  require(frontend.canGenerateCode(), "invalid debug locations fixture");
-  auto lowered = LoweredProgramBuilder().build(
-      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host());
-  require(lowered.valid(), "invalid debug locations lowered program");
+    require(frontend.canGenerateCode(), "invalid debug locations fixture");
+    const auto *originalFunctions = frontend.mir.functionInstances().data();
+    lowered = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+        std::move(frontend.mir), {}, TargetInfo::host());
+    require(lowered.valid(), "invalid debug locations lowered program");
+    require(lowered.program->mir().functionInstances().data() ==
+                originalFunctions,
+            "sealing copied the optimized function inventory");
+  }
   std::vector<LoweredProgramIssue> issues;
   auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
   require(input.has_value(), "unverified debug locations program");
