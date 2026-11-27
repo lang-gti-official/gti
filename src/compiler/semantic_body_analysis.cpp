@@ -1232,6 +1232,25 @@ auto SemanticVisitor::Impl::beginClassBody(const ClassDecl &stmt,
                                   .classType = &stmt});
   currentNamespace = info.namespaceScope;
   beginTypeParameterScope(info.genericParameters);
+  // Members can refer to fields declared later in the class. Bind late
+  // array types in the declaring scope, before entering a method's locals.
+  for (const FieldInfo &field : info.fields) {
+    const VariableDecl &declaration = *field.declaration;
+    const auto member = info.members.find(declaration.name().lexeme);
+    if (member == info.members.end() ||
+        member->second.symbol.type != SemanticType::Unknown ||
+        declaration.type().arrayExtents.empty())
+      continue;
+    const SemanticType fieldType =
+        typeOf(declaration.type(), declaration.mutability());
+    if (fieldType == SemanticType::Unknown)
+      continue;
+    BindingInfo binding =
+        bindingInfo(fieldType, declaration.isMutable() ? AccessMode::Mutable
+                                                       : AccessMode::ReadOnly);
+    binding.symbol = toolingSymbolFor(member->second.symbol);
+    semanticModel.record(declaration, std::move(binding));
+  }
   for (const BaseSpecifier &base : stmt.bases()) {
     validateType(base.type);
     validateReferencePlacement(base.type, false, "base type");
