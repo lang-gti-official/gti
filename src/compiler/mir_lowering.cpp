@@ -6,6 +6,7 @@
 #include "mir_lowering_rounds.h"
 #include "mir_source_debug.h"
 #include "mir_verification_session.h"
+#include "mir_verification_support.h"
 
 namespace lang {
 
@@ -220,31 +221,31 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // the initial pass cannot retain a call's inputs before its callee exists.
   // Verification below reconstructs effects from the rebuilt program and
   // checks every lifetime; an unchecked seed never becomes executable MIR.
-  MirCarrierAnalysis seedAnalysis(seed.program);
-  MirLoweringResult provisional =
-      lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false,
-                   reuse, &seed.program, &seedAnalysis);
-  if (!provisional.valid()) {
-    return provisional;
+  MirLoweringResult provisional;
+  std::unique_ptr<MirCarrierAnalysis> provisionalAnalysis;
+  {
+    // Hosted entry metadata is published with the startup plan in the final
+    // rounds. The provisional snapshot can therefore be verified in place.
+    MirCarrierAnalysis seedAnalysis(seed.program);
+    provisional =
+        lowerProgram(source, failureMetadata, MirDefinedFailureEffects{}, false,
+                     reuse, &seed.program, &seedAnalysis);
+    if (!provisional.valid())
+      return provisional;
+    provisionalAnalysis =
+        MirCarrierAnalysis::reusingUnchanged(provisional.program, seedAnalysis);
   }
-  MirProgram provisionalVerification = provisional.program;
-  for (MirFunctionInstance &function : provisionalVerification.functions) {
-    if (function.entryKind == ProgramEntryKind::None) {
-      continue;
-    }
-    function.entryKind = ProgramEntryKind::None;
-    function.entryArgumentAppendTarget.reset();
-  }
-  // The verification copy differs only in entry metadata: its call
-  // summaries are the provisional program's, reused for the rounds below.
-  // Summaries whose inputs the rebuild left unchanged carry over from the
-  // seed.
-  const auto verificationAnalysis = MirCarrierAnalysis::reusingUnchanged(
-      provisionalVerification, seedAnalysis);
+  if (reuse && seed.program == provisional.program)
+    rounds.previous = &seed.program;
+  else
+    seed = {};
+
   const auto provisionalProof = [&] {
-    const MirCarrierAnalysisScope scope(*verificationAnalysis);
-    return verifyMirProgram(provisionalVerification,
-                            requiredMirVerificationComponents, verification);
+    const MirCarrierAnalysisScope scope(*provisionalAnalysis);
+    // Run all checks. This construction snapshot is never submitted to the
+    // optimizer, so do not retain another copy in the whole-program cache.
+    return mir_detail::verifyMirProgramWithVerifiedBodies(
+        provisional.program, nullptr, verification);
   }();
   if (!provisionalProof.valid()) {
     for (const auto &error : provisionalProof.errors)
@@ -265,21 +266,17 @@ MirLowerer::lowerVerified(const HirProgram &source,
   // Retaining transfers come from independently verified source MIR, never
   // from unchecked declaration hints. Reuse that conservative shape while
   // failure cleanup is refined; source function identities remain fixed.
-  MirCarrierAnalysis provisionalAnalysis(provisional.program,
-                                         *verificationAnalysis);
   MirDefinedFailureEffects effects = [&] {
-    const MirCarrierAnalysisScope scope(provisionalAnalysis);
+    const MirCarrierAnalysisScope scope(*provisionalAnalysis);
     return deriveMirDefinedFailureEffects(provisional.program);
   }();
-  // A body lowered with the seed's retention facts cannot be reused when
-  // those facts may have changed. Equal programs have the same retained
-  // context. Move bodies out of the seed so the verified snapshot remains
-  // intact for call analysis throughout the final rounds.
-  if (reuse && seed.program == provisional.program)
-    rounds.previous = &seed.program;
   MirLoweringResult result =
       lowerProgram(source, failureMetadata, effects, true, reuse,
-                   &provisional.program, &provisionalAnalysis);
+                   &provisional.program, provisionalAnalysis.get());
+  if (rounds.previous) {
+    rounds.previous = nullptr;
+    seed = {};
+  }
   // The final program's effects and its verification share one analysis
   // session. A session never outlives the program contents it read.
   // Functions whose bodies and reached bodies the rounds left unchanged keep
@@ -292,20 +289,25 @@ MirLowerer::lowerVerified(const HirProgram &source,
           scope(*analysis) {}
   };
   auto resultAnalysis =
-      std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
+      std::make_unique<ScopedAnalysis>(result.program, *provisionalAnalysis);
   MirDefinedFailureEffects finalEffects =
       deriveMirDefinedFailureEffects(result.program);
   for (int round = 0; round < maximumEffectRounds && effects != finalEffects;
        ++round) {
     effects = finalEffects;
     resultAnalysis.reset();
-    rounds.previous = &result.program;
+    if (reuse)
+      rounds.previous = &result.program;
+    else
+      result = {};
     result = lowerProgram(source, failureMetadata, effects, true, reuse,
-                          &provisional.program, &provisionalAnalysis);
+                          &provisional.program, provisionalAnalysis.get());
     resultAnalysis =
-        std::make_unique<ScopedAnalysis>(result.program, provisionalAnalysis);
+        std::make_unique<ScopedAnalysis>(result.program, *provisionalAnalysis);
     finalEffects = deriveMirDefinedFailureEffects(result.program);
   }
+  provisionalAnalysis.reset();
+  provisional = {};
   const bool exactSummaries =
       effects == finalEffects &&
       effects.functions.size() == result.program.functionInstances().size() &&
@@ -550,6 +552,10 @@ MirLoweringResult MirLowerer::lowerProgram(
       }
       callableParameters.emplace_back(std::move(lowered));
     }
+    // Publish the entry and its argument adapter together with hosted startup.
+    // Preserve an orphan adapter on a non-entry for the verifier to reject.
+    const bool deferEntry =
+        !includeHostedStartup && instance.entryKind != ProgramEntryKind::None;
     result.program.functions.push_back(
         {.id = instance.id,
          .declaration = instance.declaration,
@@ -563,8 +569,9 @@ MirLoweringResult MirLowerer::lowerProgram(
          .publishedTextFields = instance.publishedTextFields,
          .dependentTextReturn = instance.dependentTextReturn,
          .parameterBindings = instance.parameterBindings,
-         .entryKind = instance.entryKind,
-         .entryArgumentAppendTarget = instance.entryArgumentAppendTarget,
+         .entryKind = deferEntry ? ProgramEntryKind::None : instance.entryKind,
+         .entryArgumentAppendTarget =
+             deferEntry ? std::nullopt : instance.entryArgumentAppendTarget,
          .staticMember = instance.staticMember,
          .receiverMutability = instance.source == nullptr
                                    ? ReceiverMutability::ReadOnly
