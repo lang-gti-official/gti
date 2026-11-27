@@ -440,6 +440,13 @@ with the unsafe caller. This is not a safe scoped condition-variable wrapper.
 
 ## Managed Threads
 
+On macOS and Linux, managed tasks, scoped parallel tasks and manual
+`std.cthread` workers share a native launcher that calls `pthread_create` and
+`pthread_join`. Each successful start creates a fresh OS thread. A successful
+join observes native thread exit, including C++ thread-local destruction in
+foreign callbacks. The POSIX handle stays private to the runtime. GTI keeps
+ownership, result delivery and failure handling in its existing thread APIs.
+
 `std.thread` provides the move-only `std::thread` and
 `std::thread_result<Result>` owners. A task and every capture cross by owned
 transfer exactly once. References, stored borrowed state, raw pointers, and
