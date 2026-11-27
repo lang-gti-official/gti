@@ -1,0 +1,1 @@
+Returning a `std::function_ref` or other borrowing value built over a local closure again reports GTI-S2127 as an implicitly `'static'` result, with the hint that a lifetime annotation cannot extend local storage past the return.
