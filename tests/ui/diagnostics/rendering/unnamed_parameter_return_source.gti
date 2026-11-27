@@ -1,0 +1,5 @@
+// A return-source diagnostic names an unnamed parameter by its index and
+// anchors its note at the parameter's written type, inside the source.
+//@ snapshot: diagnostics
+int32_t& pick(int32_t&) { int32_t local = 4; return local; }  //~ ERROR GTI-S2017
+int main() { int32_t seed = 1; return pick(seed); }

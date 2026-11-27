@@ -3070,6 +3070,9 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
     // In a generic class a field typed by a class parameter may be text in
     // an instance (`T elements[N]` of `array<std::string_view, N>`). Require
     // it here; each instance keeps only the fields that are text there.
+    // A class-typed field that merely mentions a parameter
+    // (`prefix_slots<T, A>`) is never direct text in any instance, so it
+    // names no field contract.
     if (const ClassInfo *owner = classInfo(type);
         owner != nullptr && !owner->genericParameters.empty())
       for (const FieldInfo &entry : owner->fields) {
@@ -3077,8 +3080,13 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
           continue;
         const auto member =
             owner->members.find(entry.declaration->name().lexeme);
-        if (member == owner->members.end() ||
-            !containsOpenTypeParameter(member->second.symbol.type))
+        if (member == owner->members.end())
+          continue;
+        const SemanticType *element = &member->second.symbol.type;
+        while (element->kind == SemanticType::Array &&
+               element->arguments.size() == 1)
+          element = &element->arguments.front();
+        if (element->kind != SemanticType::TypeParameter)
           continue;
         (void)requireOwnerlessTextField(
             use.function,
