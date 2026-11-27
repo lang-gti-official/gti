@@ -1,0 +1,31 @@
+// A view reassigned under an `if` inside loop bodies, from its formal or from itself, keeps the formal's owner.
+//@ run-pass
+import std.string_view;
+
+bool strip_to(std::string_view entry, std::string_view expected) {
+  mut std::string_view value = entry;
+  for (mut int i = 0; i < 8; i = i + 1) {
+    if (value.size() > 4u64) {
+      value = value.substr(1u64);
+    }
+  }
+  return value == expected;
+}
+
+bool skip_twice(std::string_view entry) {
+  mut std::string_view value = entry;
+  mut int i = 0;
+  while (i < 2) {
+    if (value.size() > 3u64) {
+      value = entry.substr(2u64);
+    }
+    i = i + 1;
+  }
+  return value == "rue";
+}
+
+int main() {
+  if (!strip_to("xxxtrue", "true")) return 1;
+  if (!skip_twice("xtrue")) return 2;
+  return 0;
+}

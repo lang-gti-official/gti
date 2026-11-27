@@ -3599,8 +3599,16 @@ missing boundary evidence.
 Lowering stores a set of possible retained groups per local. Exact-parent and
 physical-authority consumers explicitly request a singleton; they never select
 an arbitrary member of a joined set. Shared branch joins can preserve distinct
-parentless read-only producer groups without manufacturing a new loan. Missing
-branch authority is not treated as a proven empty alternative. Cleanup removes
+parentless read-only producer groups without manufacturing a new loan. A
+formal's read-only entry Stored group (the contents its caller supplied) joins
+the same way: it is held for the whole body and never ends inside it, so a
+local copied from a view formal on one path and reassigned to a view relayed
+from that formal (`entry.substr(...)`, or a carrier returned through a call) on
+the other holds both groups after the `if`. Missing branch authority is not
+treated as a proven empty alternative: the absent path is ownerless only when
+the converged carrier flow holds the present path's groups and otherwise only
+the contents its Stored groups relay from a whole local, since carrier flow
+reports a relayed view with its source's groups as well. Cleanup removes
 only the ended group from a local's set, and canonical place queries receive all
 remaining candidates. At a completed loop exit, lowering can request the
 existing carrier-flow solver's converged block-entry facts rather than restore
