@@ -130,7 +130,8 @@ auto valueGenericFrontend() {
   return lang::Frontend().analyze(
       "transient.gti", "class Box<uint64_t N> { public: Box() = default; "
                        "int get() { return int(N); } }; "
-                       "int main() { Box<3> box{}; return box.get(); }");
+                       "int main() { Box<3> box{}; mut int value = box.get(); "
+                       "return value + 0; }");
 }
 
 // A concrete value has no deferred expression. A null alias preserves the
@@ -188,6 +189,33 @@ GTI_UNIT_TEST(mir_native_admission_releases_verifier_snapshots) {
   }
   if (!lifetime.expired()) {
     std::cerr << "verifier retained the program after backend admission\n";
+    return 1;
+  }
+  return 0;
+}
+
+GTI_UNIT_TEST(mir_replay_releases_optimized_program) {
+  using namespace lang;
+  std::weak_ptr<int> lifetime;
+  {
+    auto frontend = valueGenericFrontend();
+    if (!frontend.canGenerateCode())
+      return 1;
+    auto optimized = gti_test::optimizeProgram(frontend, OptimizationLevel::O3);
+    if (optimized.mir == optimized.sourceMir ||
+        optimized.mir.classInstances().size() != 1 ||
+        !mir_detail::verifyMirOptimizationInput(optimized.mir).valid()) {
+      std::cerr << "expected an optimized program with a transformed body\n";
+      return 1;
+    }
+    lifetime = trackCopies(optimized.mir.classInstances().front().type);
+    const auto replay = verifyMirOptimizationCoherence(
+        optimized.sourceMir, optimized.mir, optimized.report.transformations);
+    if (!replay.valid())
+      return 1;
+  }
+  if (!lifetime.expired()) {
+    std::cerr << "replay retained a copy of the optimized program\n";
     return 1;
   }
   return 0;

@@ -1,2 +1,3 @@
-Reduce compiler memory use by releasing whole-program verification copies after
-diagnostic checks and before native code generation.
+Reduce peak compiler memory during release builds by shortening the lifetime of
+whole-program verification copies during lowering, optimization and native code
+generation.
