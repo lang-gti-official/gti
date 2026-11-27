@@ -1,6 +1,7 @@
 #include "cthread_internal.h"
 #include "gti/cthread.h"
 #include "gti/runtime_thread.hpp"
+#include "thread_mutex.h"
 
 #include <atomic>
 #include <limits>
@@ -26,7 +27,7 @@ struct Worker {
 };
 
 struct Runtime {
-  std::mutex mutex;
+  StaticThreadMutex mutex;
   std::atomic<RuntimePhase> phase{RuntimePhase::Uninitialized};
   std::thread::id owner;
   std::unordered_map<CThreadHandle, std::unique_ptr<Worker>> workers;

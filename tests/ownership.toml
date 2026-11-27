@@ -699,6 +699,7 @@ risk = "system"
 paths = [
   "runtime/src/thread.cpp",
   "runtime/src/thread_internal.h",
+  "runtime/src/thread_mutex.h",
   "runtime/include/gti/runtime_thread.*",
 ]
 owners = [
@@ -729,6 +730,7 @@ area = "runtime-cthread"
 risk = "system"
 paths = [
   "runtime/src/cthread*",
+  "runtime/src/thread_mutex.h",
   "runtime/include/gti/cthread.h",
 ]
 owners = [

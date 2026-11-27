@@ -3,6 +3,7 @@
 #include "cthread_internal.h"
 #include "failure_internal.h"
 #include "thread_internal.h"
+#include "thread_mutex.h"
 
 #include <atomic>
 #include <cerrno>
@@ -15,7 +16,7 @@
 
 struct gti_thread_state_v1 {
   std::thread worker;
-  std::mutex failureMutex;
+  gti::runtime::detail::ThreadMutex failureMutex;
   gti_thread_worker_failure_kind_v1 failureKind =
       GTI_THREAD_WORKER_FAILURE_NONE_V1;
   gti_failure_record_v2 failure{};
@@ -46,7 +47,7 @@ thread_local gti_runtime_detail::thread_local_cleanup_entry
     *threadLocalCleanup = nullptr;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
-std::mutex quarantineMutex;
+gti::runtime::detail::StaticThreadMutex quarantineMutex;
 gti_thread_state_v1 *quarantinedStates = nullptr;
 constinit std::atomic<bool> programStoragePinned{false};
 
@@ -185,6 +186,21 @@ spawnStatus(const std::system_error &error) noexcept {
   const int value = error.code().value();
   return value == EPERM ? GTI_THREAD_SPAWN_OPERATION_NOT_PERMITTED_V1
                         : GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+}
+
+// State allocation is observable through the native nothrow allocator. Native
+// mutex initialization can fail independently, before a worker can start.
+[[nodiscard]] gti_thread_spawn_status_v1
+allocateWorkerState(gti_thread_state_v1 *&state) noexcept {
+  try {
+    state = new (std::nothrow) gti_thread_state_v1;
+  } catch (const std::system_error &error) {
+    return spawnStatus(error);
+  } catch (const std::bad_alloc &) {
+    return GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
+  }
+  return state != nullptr ? GTI_THREAD_SPAWN_OK_V1
+                          : GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
 }
 
 [[nodiscard]] gti_thread_join_result_v2 emptyJoinResult() noexcept {
@@ -840,10 +856,10 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
     return result;
   }
 
-  gti_thread_state_v1 *state = new (std::nothrow) gti_thread_state_v1;
-  if (state == nullptr) {
+  gti_thread_state_v1 *state = nullptr;
+  result.status = allocateWorkerState(state);
+  if (result.status != GTI_THREAD_SPAWN_OK_V1) {
     destroy(task_context);
-    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
     return result;
   }
 
@@ -913,10 +929,10 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
     return result;
   }
 
-  gti_thread_state_v1 *state = new (std::nothrow) gti_thread_state_v1;
-  if (state == nullptr) {
+  gti_thread_state_v1 *state = nullptr;
+  result.status = allocateWorkerState(state);
+  if (result.status != GTI_THREAD_SPAWN_OK_V1) {
     releaseTaskContext(task_context, abandon_task);
-    result.status = GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
     return result;
   }
   state->valueBearing = true;
