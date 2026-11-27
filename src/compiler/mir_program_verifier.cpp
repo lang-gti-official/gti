@@ -5398,7 +5398,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                        iterator->root == MirPlaceRootKind::Binding &&
                        iterator->binding == receiverPlace->binding &&
                        range.elementAccessSource &&
-                               range.elementAccessSource == instruction.hirValue &&
+                       range.elementAccessSource == instruction.hirValue &&
                        range.dereferenceFunction == target->declaration &&
                        range.elementAccess == AccessMode::ReadOnly;
               });
