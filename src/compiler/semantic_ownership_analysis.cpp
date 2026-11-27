@@ -313,7 +313,9 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (member != owner.members.end()) {
         result = requiresActiveCleanup(
-            substituteType(member->second.symbol.type, substitution), query);
+            substituteType(field.typeForTraits(member->second.symbol.type),
+                           substitution),
+            query);
       }
     }
     break;
@@ -367,8 +369,8 @@ auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const
     if (member == owner.members.end()) {
       continue;
     }
-    const SemanticType fieldType =
-        substituteType(member->second.symbol.type, substitution);
+    const SemanticType fieldType = substituteType(
+        field.typeForTraits(member->second.symbol.type), substitution);
     if (requiresActiveCleanup(fieldType, query)) {
       return ActiveCleanupCause{.source = &field.declaration->name(),
                                 .message = "Field '" +
@@ -588,7 +590,8 @@ auto SemanticVisitor::Impl::typeCapabilities(
     }
     const auto member = owner.members.find(field.declaration->name().lexeme);
     if (member != owner.members.end()) {
-      merge(substituteType(member->second.symbol.type, substitution));
+      merge(substituteType(field.typeForTraits(member->second.symbol.type),
+                           substitution));
     }
   }
   if (hasSourceDestructorBody(owner) ||
@@ -944,11 +947,12 @@ auto SemanticVisitor::Impl::typeTraits(
     if (member == owner.members.end()) {
       continue;
     }
-    const SemanticType fieldType =
-        substituteType(member->second.symbol.type, substitution);
+    const SemanticType fieldType = substituteType(
+        field.typeForTraits(member->second.symbol.type), substitution);
+    const bool directReference = !field.deferredArrayElement &&
+                                 fieldType.kind == SemanticType::Reference;
     auto fieldTraits = typeTraits(fieldType, visiting);
-    if (fieldType.kind == SemanticType::Reference &&
-        fieldType.referenceAccess == AccessMode::ReadOnly) {
+    if (directReference && fieldType.referenceAccess == AccessMode::ReadOnly) {
       // Whole-record replacement copies a shared reference value into the new
       // aggregate. This does not make an individual reference field reseatable;
       // place and lifetime checks still govern replacement of the aggregate.
@@ -959,8 +963,7 @@ auto SemanticVisitor::Impl::typeTraits(
     // Copying a reference as an expression is distinct from duplicating a
     // stored exclusive capability. Every direct reference field participates,
     // not only the first field used by the legacy primary-dependency record.
-    if (fieldType.kind == SemanticType::Reference &&
-        fieldType.referenceAccess == AccessMode::Mutable)
+    if (directReference && fieldType.referenceAccess == AccessMode::Mutable)
       traits.copyable = false;
   }
   if (hasSourceDestructorBody(owner)) {
@@ -1064,8 +1067,8 @@ auto SemanticVisitor::Impl::shareCapabilityDenial(
     if (member == owner.members.end()) {
       continue;
     }
-    const SemanticType fieldType =
-        substituteType(member->second.symbol.type, substitution);
+    const SemanticType fieldType = substituteType(
+        field.typeForTraits(member->second.symbol.type), substitution);
     if (!typeTraits(fieldType).shareCapable) {
       return ShareCapabilityDenial{
           .source = &field.declaration->name(),
@@ -1142,8 +1145,8 @@ auto SemanticVisitor::Impl::transferCapabilityDenial(
     if (member == owner.members.end()) {
       continue;
     }
-    const SemanticType fieldType =
-        substituteType(member->second.symbol.type, substitution);
+    const SemanticType fieldType = substituteType(
+        field.typeForTraits(member->second.symbol.type), substitution);
     if (!typeTraits(fieldType).transferCapable) {
       return TransferCapabilityDenial{
           .source = &field.declaration->name(),
