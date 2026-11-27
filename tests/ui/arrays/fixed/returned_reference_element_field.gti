@@ -1,3 +1,4 @@
+// Field access through a returned reference checks its array index and evaluates the receiver once.
 //@ run-pass
 //@ revisions: in_bounds out_of_bounds
 //@[out_of_bounds] args: a b
