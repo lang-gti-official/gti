@@ -471,15 +471,22 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
     return place.root == MirPlaceRootKind::Binding && place.binding != 0 &&
            !designatesOther(place) && !referenced.contains(place.binding);
   };
-  for (std::size_t left = 0; left < result.placeCount; ++left)
+  result.canonicalPlaces.reserve(result.placeCount);
+  for (std::size_t left = 0; left < result.placeCount; ++left) {
+    MirPlaceId firstMustAlias = 0;
     for (std::size_t right = 0; right < result.placeCount; ++right) {
       const MirPlace &first = body->places[left];
       const MirPlace &second = body->places[right];
+      auto &relation = result.relations[left * result.placeCount + right];
       if ((designatesOther(first) && unreferencedLocal(second)) ||
           (designatesOther(second) && unreferencedLocal(first)))
-        result.relations[left * result.placeCount + right] =
-            MirAliasRelation::NoAlias;
+        relation = MirAliasRelation::NoAlias;
+      if (!firstMustAlias && relation == MirAliasRelation::MustAlias)
+        firstMustAlias = right + 1;
     }
+    result.canonicalPlaces.push_back(firstMustAlias ? firstMustAlias
+                                                    : left + 1);
+  }
   return result;
 }
 

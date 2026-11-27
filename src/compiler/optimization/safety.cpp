@@ -1042,19 +1042,6 @@ integerForPlace(const MirBody &body, const AbstractState &state,
   return fullIntegerFact(*domain, std::move(evidence));
 }
 
-[[nodiscard]] MirPlaceId
-canonicalPlace(const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId place) {
-  if (place == 0 || place > aliases.placeCount) {
-    return place;
-  }
-  for (MirPlaceId candidate = 1; candidate <= aliases.placeCount; ++candidate) {
-    if (aliases.relation(place, candidate) == MirAliasRelation::MustAlias) {
-      return candidate;
-    }
-  }
-  return place;
-}
-
 [[nodiscard]] bool immutableScalarBinding(const MirBody &body, MirPlaceId id) {
   const auto *place = body.findPlace(id);
   return place && place->root == MirPlaceRootKind::Binding &&
@@ -2516,7 +2503,7 @@ fixedArrayProjection(const MirBody &body, MirPlaceId projectedId) {
 [[nodiscard]] MirPlaceId
 aggregateRoot(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
               MirPlaceId placeId) {
-  placeId = canonicalPlace(aliases, placeId);
+  placeId = aliases.canonicalPlace(placeId);
   const MirPlace *place = body.findPlace(placeId);
   if (place == nullptr) {
     return 0;
@@ -2541,7 +2528,7 @@ aggregateRoot(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       best = &candidate;
     }
   }
-  return best == nullptr ? 0 : canonicalPlace(aliases, best->id);
+  return best == nullptr ? 0 : aliases.canonicalPlace(best->id);
 }
 
 [[nodiscard]] std::optional<FieldPath> fieldPath(const MirPlace &root,
@@ -2633,11 +2620,11 @@ ownedRootPath(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     return std::nullopt;
   if (place->root != MirPlaceRootKind::This &&
       place->root != MirPlaceRootKind::Binding)
-    return FieldOrigin{.root = canonicalPlace(aliases, id)};
+    return FieldOrigin{.root = aliases.canonicalPlace(id)};
   const auto root =
-      canonicalPlace(aliases, place->root == MirPlaceRootKind::This
-                                  ? thisRoot(body)
-                                  : rootForBinding(body, place->binding));
+      aliases.canonicalPlace(place->root == MirPlaceRootKind::This
+                                 ? thisRoot(body)
+                                 : rootForBinding(body, place->binding));
   if (root == 0 && place->root != MirPlaceRootKind::This)
     return std::nullopt;
   const auto path = fieldPath(body, root, id, true);
@@ -2972,14 +2959,14 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
 void seedObjectFact(const MirBody &body,
                     const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId root,
                     const ObjectFact &object, AbstractState &state) {
-  root = canonicalPlace(aliases, root);
+  root = aliases.canonicalPlace(root);
   state.objects.insert_or_assign(root, object);
   for (const MirPlace &place : body.places) {
     const std::optional<FieldPath> path = fieldPath(body, root, place.id);
     if (!path) {
       continue;
     }
-    const MirPlaceId destination = canonicalPlace(aliases, place.id);
+    const MirPlaceId destination = aliases.canonicalPlace(place.id);
     if (const auto integer = object.integers.find(*path);
         integer != object.integers.end()) {
       state.integerPlaces[destination] =
@@ -3007,7 +2994,7 @@ void seedObjectFact(const MirBody &body,
 extractObjectFact(const MirBody &body,
                   const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId root,
                   const AbstractState &state) {
-  root = canonicalPlace(aliases, root);
+  root = aliases.canonicalPlace(root);
   ObjectFact result;
   if (const auto object = state.objects.find(root);
       object != state.objects.end()) {
@@ -3079,7 +3066,7 @@ extractObjectFact(const MirBody &body,
     if (!path) {
       continue;
     }
-    const MirPlaceId source = canonicalPlace(aliases, place.id);
+    const MirPlaceId source = aliases.canonicalPlace(place.id);
     if (const auto integer = state.integerPlaces.find(source);
         integer != state.integerPlaces.end()) {
       result.integers.insert_or_assign(*path, integer->second);
@@ -3274,14 +3261,14 @@ compoundCheckedOperation(MirOperation operation) {
     const FixedArrayProjection projected =
         fixedArrayProjection(body, *instruction.destination);
     const auto elements =
-        state.arrayElements.find(canonicalPlace(aliases, projected.arrayPlace));
+        state.arrayElements.find(aliases.canonicalPlace(projected.arrayPlace));
     if (projected.arrayPlace != 0 && elements != state.arrayElements.end()) {
       left = elements->second;
     }
   }
   if (!left) {
     left = integerForPlace(body, state,
-                           canonicalPlace(aliases, *instruction.destination));
+                           aliases.canonicalPlace(*instruction.destination));
   }
   return left ? binaryFact(*operation, *left, *right) : std::nullopt;
 }
@@ -3305,7 +3292,7 @@ arrayForOperand(const AbstractState &state,
   }
   if (operand.place != 0) {
     const auto elements =
-        state.arrayElements.find(canonicalPlace(aliases, operand.place));
+        state.arrayElements.find(aliases.canonicalPlace(operand.place));
     if (elements != state.arrayElements.end()) {
       return elements->second;
     }
@@ -3714,8 +3701,7 @@ void invalidatePlaceRoot(const MirBody &body,
         if (const auto path = fieldPath(body, origin.root, place.id);
             path && *path == origin.path &&
             constantIntegerDomain(place.type) == field->second.domain)
-          state.integerPlaces[canonicalPlace(aliases, place.id)] =
-              field->second;
+          state.integerPlaces[aliases.canonicalPlace(place.id)] = field->second;
     }
 }
 
@@ -4210,7 +4196,7 @@ void publishRelativeMetadata(const MirProgram &program, MirBodyAddress address,
   if (!place || place->type.kind != SemanticType::Class)
     return std::nullopt;
   const bool receiver = place->root == MirPlaceRootKind::This;
-  const auto root = receiver ? canonicalPlace(aliases, thisRoot(body))
+  const auto root = receiver ? aliases.canonicalPlace(thisRoot(body))
                              : aggregateRoot(body, aliases, source);
   if (!receiver && !root)
     return std::nullopt;
@@ -4689,7 +4675,7 @@ void invalidateClosedCallInputs(
     if (!path || *path != input.field)
       continue;
     if (const auto found =
-            state.scalarAddressPlaces.find(canonicalPlace(aliases, place.id));
+            state.scalarAddressPlaces.find(aliases.canonicalPlace(place.id));
         found != state.scalarAddressPlaces.end())
       return displaced(found->second);
   }
@@ -5353,7 +5339,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           place.loan != *instruction.loan) {
         continue;
       }
-      const MirPlaceId destination = canonicalPlace(aliases, place.id);
+      const MirPlaceId destination = aliases.canonicalPlace(place.id);
       if (summary.result.fact) {
         IntegerFact fact = *summary.result.fact;
         stabilize(fact);
@@ -5737,9 +5723,9 @@ ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
                  place->root != MirPlaceRootKind::Binding))
     return std::nullopt;
   const auto root =
-      canonicalPlace(aliases, place->root == MirPlaceRootKind::This
-                                  ? thisRoot(body)
-                                  : rootForBinding(body, place->binding));
+      aliases.canonicalPlace(place->root == MirPlaceRootKind::This
+                                 ? thisRoot(body)
+                                 : rootForBinding(body, place->binding));
   if (!root && place->root != MirPlaceRootKind::This)
     return std::nullopt;
   auto path = fieldPath(body, root, id, true);
@@ -5760,7 +5746,7 @@ ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
   if (!place)
     return std::nullopt;
   const bool receiver = place->root == MirPlaceRootKind::This;
-  const MirPlaceId root = receiver ? canonicalPlace(aliases, thisRoot(body))
+  const MirPlaceId root = receiver ? aliases.canonicalPlace(thisRoot(body))
                                    : aggregateRoot(body, aliases, source);
   if (!receiver && !root)
     return std::nullopt;
@@ -5793,9 +5779,9 @@ normalizedFieldOrigin(const MirProgram &program, MirBodyAddress address,
   if (place->root == MirPlaceRootKind::This ||
       place->root == MirPlaceRootKind::Binding) {
     const auto root =
-        canonicalPlace(aliases, place->root == MirPlaceRootKind::This
-                                    ? thisRoot(body)
-                                    : rootForBinding(body, place->binding));
+        aliases.canonicalPlace(place->root == MirPlaceRootKind::This
+                                   ? thisRoot(body)
+                                   : rootForBinding(body, place->binding));
     const auto prefix = fieldPath(body, root, receiver, true);
     if (!prefix)
       return std::nullopt;
@@ -6556,7 +6542,7 @@ void applyInstructionCore(
   if (scalarResultMove(program, instruction, body)) {
     const auto &source = instruction.operands.front();
     const auto fact =
-        integerForPlace(body, state, canonicalPlace(aliases, source.place));
+        integerForPlace(body, state, aliases.canonicalPlace(source.place));
     // Movement retires the source. Do not retain place-derived origins or
     // make a later source read usable; only the independent result SSA value
     // receives the old scalar envelope. Exact by-value scalar parameters
@@ -6771,7 +6757,7 @@ void applyInstructionCore(
         state.fieldOrigins[*instruction.result] = field->second;
     } else if (source.place != 0) {
       state.loadedOrigins[*instruction.result] =
-          canonicalPlace(aliases, source.place);
+          aliases.canonicalPlace(source.place);
     }
     if (const MirPlaceId origin =
             objectOriginForOperand(body, aliases, state, source);
@@ -6789,7 +6775,7 @@ void applyInstructionCore(
     state.fieldOrigins.erase(*instruction.result);
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
-      const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
+      const MirPlaceId sourcePlace = aliases.canonicalPlace(source.place);
       if (instruction.info.type.kind == SemanticType::RawPointer &&
           instruction.info.type.arguments.size() == 1) {
         const auto found = state.scalarAddressPlaces.find(sourcePlace);
@@ -6828,7 +6814,7 @@ void applyInstructionCore(
       const FixedArrayProjection projected =
           fixedArrayProjection(body, source.place);
       const MirPlaceId arrayPlace =
-          canonicalPlace(aliases, projected.arrayPlace);
+          aliases.canonicalPlace(projected.arrayPlace);
       const std::optional<IndexedAggregateAccess> indexed =
           indexedAggregateAccess(program, body, aliases, source.place);
       const auto arrayElements = state.arrayElements.find(arrayPlace);
@@ -6907,10 +6893,10 @@ void applyInstructionCore(
     const bool referenceCarrierInitialization =
         initializesReferenceCarrier(body, instruction, program, &state);
     const MirPlaceId destination =
-        canonicalPlace(aliases, *instruction.destination);
+        aliases.canonicalPlace(*instruction.destination);
     const FixedArrayProjection projected =
         fixedArrayProjection(body, *instruction.destination);
-    const MirPlaceId arrayPlace = canonicalPlace(aliases, projected.arrayPlace);
+    const MirPlaceId arrayPlace = aliases.canonicalPlace(projected.arrayPlace);
     const std::optional<IndexedAggregateAccess> indexed =
         indexedAggregateAccess(program, body, aliases,
                                *instruction.destination);
@@ -7037,8 +7023,7 @@ void applyInstructionCore(
     }
     std::optional<IntegerFact> fact =
         source.place != 0
-            ? integerForPlace(body, state,
-                              canonicalPlace(aliases, source.place))
+            ? integerForPlace(body, state, aliases.canonicalPlace(source.place))
             : integerForOperand(body, state, source);
     const auto receiverPath = fieldPath(body, 0, destination);
     const auto scalarAddress =
@@ -8182,7 +8167,7 @@ loadedPlace(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   if (definition->kind == MirInstructionKind::Load &&
       definition->operands.size() == 1 &&
       definition->operands.front().place != 0) {
-    return canonicalPlace(aliases, definition->operands.front().place);
+    return aliases.canonicalPlace(definition->operands.front().place);
   }
   if (definition->kind == MirInstructionKind::Compute &&
       definition->operation == MirOperation::Identity &&
@@ -8619,7 +8604,7 @@ struct FiniteLoopBound {
         continue;
       }
       const MirPlaceId destination =
-          canonicalPlace(aliases, *assignment.destination);
+          aliases.canonicalPlace(*assignment.destination);
       if (destination == 0 || result.contains(destination)) {
         continue;
       }
@@ -9368,13 +9353,13 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
       }
     };
     if (const auto *type = implicitReceiverType(&program, address))
-      seed(seed, canonicalPlace(aliases, thisRoot(body)), *type, {});
+      seed(seed, aliases.canonicalPlace(thisRoot(body)), *type, {});
     for (std::size_t index = 0; index < bindings.size() && index < types.size();
          ++index)
       if (types[index].kind == SemanticType::Reference &&
           types[index].arguments.size() == 1)
         if (const auto root = roots[index])
-          seed(seed, canonicalPlace(aliases, root),
+          seed(seed, aliases.canonicalPlace(root),
                types[index].arguments.front(), {});
   }
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
@@ -9385,7 +9370,7 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
     const auto root = roots[index];
     const auto *place = body.findPlace(root);
     if (place && place->type == types[index])
-      entry.scalarAddressPlaces[canonicalPlace(aliases, root)] =
+      entry.scalarAddressPlaces[aliases.canonicalPlace(root)] =
           ScalarAddress{.kind = AddressOriginKind::EntryPointer, .place = root};
   }
   for (std::size_t index = 0;
@@ -9397,7 +9382,7 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
     if (context.arguments[index].observed && context.arguments[index].fact) {
       IntegerFact fact = *context.arguments[index].fact;
       stabilize(fact);
-      entry.integerPlaces[canonicalPlace(aliases, root)] =
+      entry.integerPlaces[aliases.canonicalPlace(root)] =
           rebased(std::move(fact), 0, 0, 0, root);
     }
     if (index < context.argumentObjects.size() &&
@@ -9534,7 +9519,7 @@ objectAtExits(const MirProgram &program, const MirBody &body,
       if (fieldRoot == 0) {
         continue;
       }
-      const MirPlaceId root = canonicalPlace(aliases, fieldRoot);
+      const MirPlaceId root = aliases.canonicalPlace(fieldRoot);
       if (const auto integer = state.integerPlaces.find(root);
           integer != state.integerPlaces.end()) {
         object.integers.insert_or_assign(FieldPath{field.symbol},
@@ -9572,14 +9557,14 @@ void exportTagSummary(const MirProgram &program, MirBodyAddress address,
                       const std::vector<HirBindingId> &bindings,
                       const std::vector<SemanticType> &types,
                       ClosedCallSummary &summary) {
-  const MirPlaceId receiverRoot = canonicalPlace(aliases, thisRoot(body));
+  const MirPlaceId receiverRoot = aliases.canonicalPlace(thisRoot(body));
   const bool member = function && function->owner;
   std::vector<std::pair<std::size_t, MirPlaceId>> references;
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
        ++index)
     if (types[index].kind == SemanticType::Reference)
       if (const auto root = rootForBinding(body, bindings[index]))
-        references.emplace_back(index, canonicalPlace(aliases, root));
+        references.emplace_back(index, aliases.canonicalPlace(root));
   const auto exported =
       [&](const FieldOrigin &carrier) -> std::optional<InputField> {
     if (member && carrier.root == receiverRoot)
@@ -10970,7 +10955,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
                          field.path.end());
   }
   if (implicitReceiverType(&program, address) &&
-      exported.root == canonicalPlace(aliases, thisRoot(body)))
+      exported.root == aliases.canonicalPlace(thisRoot(body)))
     return InputField{std::nullopt, exported.path};
   const auto bindings = parameterBindings(program, address);
   const auto types = parameterTypes(program, address);
@@ -10978,7 +10963,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
        ++index)
     if (types[index].kind == SemanticType::Reference)
       if (const auto root = rootForBinding(body, bindings[index]);
-          root && exported.root == canonicalPlace(aliases, root))
+          root && exported.root == aliases.canonicalPlace(root))
         return InputField{index, exported.path};
   return std::nullopt;
 }

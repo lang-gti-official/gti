@@ -53,6 +53,14 @@ struct MirPlaceAliasEscapeAnalysis {
   std::size_t placeCount = 0;
   std::vector<MirAliasRelation> relations;
   std::vector<MirPlaceEscapeFact> escapes;
+  // First MustAlias entry in each finalized relation row, or the place itself.
+  std::vector<MirPlaceId> canonicalPlaces;
+
+  [[nodiscard]] MirPlaceId canonicalPlace(MirPlaceId place) const {
+    return place == 0 || place > canonicalPlaces.size()
+               ? place
+               : canonicalPlaces[place - 1];
+  }
 
   [[nodiscard]] MirAliasRelation relation(MirPlaceId left,
                                           MirPlaceId right) const;

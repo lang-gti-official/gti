@@ -1307,9 +1307,9 @@ unconditional success edge. Source lifetime operations, storage/index aliasing,
 opaque calls and unsupported joins retain the independently documented
 invalidation rules; only admitted content/postcondition profiles republish
 facts.
-Place alias facts refine mutable safety state:
-duplicate
-`must-alias` place IDs share one deterministic fact key, and a write preserves
+The finalized body-local alias table records the lowest `must-alias` place ID
+for each row. Safety dataflow uses that ID as its fact key in both optimization
+and independent proof replay. A write preserves
 facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
 invalidated. Alias facts do not themselves discharge a check or infer a
 container invariant.
