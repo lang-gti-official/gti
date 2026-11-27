@@ -168,7 +168,20 @@ void MirLowerer::resetCleanupSharingStatistics() {
 MirLoweringResult
 MirLowerer::lower(const HirProgram &source,
                   const FailureMetadata &failureMetadata) const {
-  MirLoweringResult result = lowerVerified(source, failureMetadata);
+  return lower(source, failureMetadata, ProofRetention::Remember);
+}
+
+MirLoweringResult
+MirLowerer::lowerForDiagnostics(const HirProgram &source,
+                                const FailureMetadata &failureMetadata) const {
+  return lower(source, failureMetadata, ProofRetention::Discard);
+}
+
+MirLoweringResult MirLowerer::lower(const HirProgram &source,
+                                    const FailureMetadata &failureMetadata,
+                                    ProofRetention retention) const {
+  mir_detail::discardRecentMirVerifications();
+  MirLoweringResult result = lowerVerified(source, failureMetadata, retention);
   if (result.valid()) {
     return result;
   }
@@ -187,23 +200,24 @@ MirLowerer::lower(const HirProgram &source,
   if (shareExitCleanup_) {
     ++cleanupSharingStatistics_.exitSharingProgramFallbacks;
     const Unshared unsharedExits(shareExitCleanup_);
-    result = lowerVerified(source, failureMetadata);
+    result = lowerVerified(source, failureMetadata, retention);
     if (result.valid() || !shareFailureCleanup_) {
       return result;
     }
     const Unshared unsharedFailureCleanup(shareFailureCleanup_);
-    return lowerVerified(source, failureMetadata);
+    return lowerVerified(source, failureMetadata, retention);
   }
   if (!shareFailureCleanup_) {
     return result;
   }
   const Unshared unsharedFailureCleanup(shareFailureCleanup_);
-  return lowerVerified(source, failureMetadata);
+  return lowerVerified(source, failureMetadata, retention);
 }
 
 MirLoweringResult
 MirLowerer::lowerVerified(const HirProgram &source,
-                          const FailureMetadata &failureMetadata) const {
+                          const FailureMetadata &failureMetadata,
+                          ProofRetention retention) const {
   mir_detail::LoweringRounds rounds;
   auto *reuse = verification ? &rounds : nullptr;
   MirLoweringResult seed = lowerProgram(
@@ -330,11 +344,15 @@ MirLowerer::lowerVerified(const HirProgram &source,
                  [](bool mayRaise, const MirDestructorInstance &destructor) {
                    return mayRaise == destructor.mayRaiseDefinedFailure;
                  });
+  const auto verifyResult = [&] {
+    if (retention == ProofRetention::Discard)
+      return mir_detail::verifyMirProgramWithVerifiedBodies(
+          result.program, nullptr, verification);
+    return verifyMirProgram(result.program, requiredMirVerificationComponents,
+                            verification);
+  };
   result.program.valid_ =
-      result.program.valid_ && exactSummaries &&
-      verifyMirProgram(result.program, requiredMirVerificationComponents,
-                       verification)
-          .valid();
+      result.program.valid_ && exactSummaries && verifyResult().valid();
   resultAnalysis.reset();
   return result;
 }

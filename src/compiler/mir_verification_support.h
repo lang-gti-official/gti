@@ -17,6 +17,10 @@ namespace lang::mir_detail {
 [[nodiscard]] MirVerificationResult
 verifyMirOptimizationInput(const MirProgram &program);
 
+// A fresh lowering builds independent MIR. Previous whole-program snapshots
+// need not overlap its construction; incremental body proofs are separate.
+void discardRecentMirVerifications();
+
 // Runs every program check. Body-local structure may be reused only for equal
 // bodies at the same address in a verified immutable input. Carrier loan flow
 // is rechecked against the current program because callee effects may change.

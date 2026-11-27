@@ -1,7 +1,9 @@
 // Intermediate MIR verification rejects the same body edits and program-level
 // contract changes as a full verification, with the same diagnostics.
 #include "../../src/compiler/mir_verification_support.h"
+#include "../lowered_program_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir_lowering.h"
 #include "gti/optimizer.h"
 #include "unit_test.h"
 
@@ -120,5 +122,73 @@ GTI_UNIT_TEST(mir_optimizer_owns_verified_input) {
                           sameError) ||
       cold.mir != forged || cached.sourceMir != forged)
     return 1;
+  return 0;
+}
+
+namespace {
+auto valueGenericFrontend() {
+  return lang::Frontend().analyze(
+      "transient.gti", "class Box<uint64_t N> { public: Box() = default; "
+                       "int get() { return int(N); } }; "
+                       "int main() { Box<3> box{}; return box.get(); }");
+}
+
+// A concrete value has no deferred expression. A null alias preserves the
+// exact value while making copies of this particular type observable.
+std::weak_ptr<int> trackCopies(const lang::SemanticType &type) {
+  if (type.valueArguments.size() != 1 || type.valueArguments.front().expression)
+    throw std::logic_error("expected a concrete generic value");
+  auto marker = std::make_shared<int>(0);
+  std::weak_ptr<int> lifetime = marker;
+  auto &value = const_cast<lang::SemanticType &>(type).valueArguments.front();
+  value.expression = std::shared_ptr<const lang::GenericValueExpression>(
+      std::move(marker), nullptr);
+  return lifetime;
+}
+} // namespace
+
+GTI_UNIT_TEST(mir_diagnostic_lowering_releases_program) {
+  using namespace lang;
+  std::weak_ptr<int> lifetime;
+  {
+    auto frontend = valueGenericFrontend();
+    if (!frontend.canGenerateCode() ||
+        frontend.hir.classInstances().size() != 1 ||
+        !mir_detail::verifyMirOptimizationInput(frontend.mir).valid())
+      return 1;
+    lifetime = trackCopies(frontend.hir.classInstances().front().type);
+    auto lowered = MirLowerer().lowerForDiagnostics(frontend.hir,
+                                                    frontend.failureMetadata);
+    if (!lowered.valid() || lowered.program != frontend.mir)
+      return 1;
+  }
+  if (!lifetime.expired()) {
+    std::cerr << "verifier retained the diagnostic-only program\n";
+    return 1;
+  }
+  return 0;
+}
+
+GTI_UNIT_TEST(mir_native_admission_releases_verifier_snapshots) {
+  using namespace lang;
+  std::weak_ptr<int> lifetime;
+  {
+    auto frontend = valueGenericFrontend();
+    if (!frontend.canGenerateCode())
+      return 1;
+    auto lowered = gti_test::lowerOptimizedProgram(frontend);
+    if (lowered.mir().classInstances().size() != 1 ||
+        !mir_detail::verifyMirOptimizationInput(lowered.mir()).valid())
+      return 1;
+    lifetime = trackCopies(lowered.mir().classInstances().front().type);
+    std::vector<LoweredProgramIssue> issues;
+    auto admitted = verifiedLoweredProgram(std::move(lowered), issues);
+    if (!admitted || !issues.empty() || lifetime.expired())
+      return 1;
+  }
+  if (!lifetime.expired()) {
+    std::cerr << "verifier retained the program after backend admission\n";
+    return 1;
+  }
   return 0;
 }

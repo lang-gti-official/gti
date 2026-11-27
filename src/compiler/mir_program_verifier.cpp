@@ -25774,6 +25774,10 @@ std::deque<CachedMirVerification> &recentMirVerifications() {
 }
 } // namespace
 
+void mir_detail::discardRecentMirVerifications() {
+  recentMirVerifications().clear();
+}
+
 MirVerificationResult
 mir_detail::verifyMirOptimizationInput(const MirProgram &program) {
   auto &recent = recentMirVerifications();
