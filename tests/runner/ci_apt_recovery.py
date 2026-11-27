@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Prove bounded CI apt retries recover interrupted dpkg without hiding failures."""
+"""Exercise CI apt source selection, bounded retries and interrupted dpkg recovery."""
 
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 source = Path(sys.argv[1]).read_text()
 wrapper = source.split("    apt_get() {", 1)[1].split("    apt_get update", 1)[0]
@@ -14,6 +15,7 @@ fakes = r'''
 set -euo pipefail
 mode="$1"
 operation="$2"
+apt_sources="/tmp/CI sources"
 calls=0
 interrupted=0
 sleep() { echo "sleep $*"; }
@@ -28,6 +30,24 @@ sudo() {
   case "$1" in
     apt-get)
       calls=$((calls + 1))
+      if [[ "$mode" == unrelated_feed ]]; then
+        # The runner's default sources contain an unrelated feed returning 403.
+        # APT reads both the main list and sourceparts on update and install.
+        shift
+        local list="" parts=""
+        while [[ "${1:-}" == -o ]]; do
+          case "$2" in
+            Dir::Etc::sourcelist=*) list="${2#*=}" ;;
+            Dir::Etc::sourceparts=*) parts="${2#*=}" ;;
+          esac
+          shift 2
+        done
+        if [[ "$list" != /dev/null || "$parts" != "$apt_sources" ]]; then
+          echo '403 Forbidden from unrelated runner repository' >&2
+          return 100
+        fi
+        return 0
+      fi
       [[ "$mode" == success ]] && return 0
       [[ "$mode" == persistent ]] && return 100
       if (( calls == 1 )); then interrupted=1; return 124; fi
@@ -69,6 +89,8 @@ def check(mode, operation, success, attempts, repairs):
     if not success:
         assert "did not succeed after 4 attempts" in result.stderr, output
 
+check("unrelated_feed", "update", True, 1, 0)
+check("unrelated_feed", "install", True, 1, 0)
 check("interrupted", "install", True, 2, 1)
 check("success", "install", True, 1, 0)
 check("success", "update", True, 1, 0)
@@ -76,4 +98,26 @@ check("missing_dependency", "install", True, 2, 1)
 check("broken_recovery", "install", False, 4, 3)
 check("persistent", "install", False, 4, 3)
 check("persistent", "update", False, 4, 0)
-print("CI apt recovery: 7 scenarios passed")
+# Capture the actual source files APT receives in the normal and coverage jobs.
+# Use a miniature runner configuration so this also runs on macOS.
+setup = source.split('    rm -f "${key}"', 1)[1].split('    # A stalled mirror', 1)[0]
+coverage = source.split('      : "${coverage_major:?', 1)[1].split("\n", 1)[1].split("      apt_get install", 1)[0]
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    sources = root / "sources.list.d"
+    sources.mkdir()
+    ubuntu = "Types: deb\nURIs: https://runner-mirror.example/ubuntu\nSuites: noble noble-security\n"
+    (sources / "ubuntu.sources").write_text(ubuntu)
+    (sources / "microsoft.list").write_text("deb https://unrelated.example noble main\n")
+    script = ('set -eu\ncodename=noble\nllvm_major=23\ncoverage_major=20\n'
+              'apt_get() { test "$1" = update; }\n' + setup +
+              'cp -R "${apt_sources}" normal\n' + coverage + 'cp -R "${apt_sources}" coverage\n')
+    subprocess.run(["bash", "-c", script.replace("/etc/apt/sources.list.d", str(sources))],
+                   cwd=root, check=True, timeout=5)
+    llvm = "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-"
+    for job, majors in (("normal", [23]), ("coverage", [23, 20])):
+        entries = {p.name: p.read_text() for p in (root / job).iterdir()}
+        assert entries == {"ubuntu.sources": ubuntu,
+                           "llvm.list": "".join(f"{llvm}{major} main\n" for major in majors)}, entries
+
+print("CI apt source selection, coverage and retry cases passed")

@@ -47,8 +47,15 @@ case "$(uname -s)" in
     sudo install -d -m 0755 /etc/apt/keyrings
     sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/apt.llvm.org.gpg "${key}"
     rm -f "${key}"
-    echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" |
-      sudo tee /etc/apt/sources.list.d/apt.llvm.org.list >/dev/null
+    # Keep Ubuntu's configured mirrors and signing policy. Hosted runners also
+    # have repositories for unrelated products, which can fail independently.
+    apt_sources="$(mktemp -d)"
+    trap 'rm -rf -- "${apt_sources}"' EXIT
+    cp /etc/apt/sources.list.d/ubuntu.sources "${apt_sources}/ubuntu.sources"
+    add_llvm_source() {
+      echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-$1 main" >> "${apt_sources}/llvm.list"
+    }
+    add_llvm_source "${llvm_major}"
     # A stalled mirror once held an integration shard in `apt-get update`
     # until the six-hour job limit. Bound each attempt and retry instead.
     apt_get() {
@@ -58,7 +65,9 @@ case "$(uname -s)" in
       if [[ "$1" == install ]]; then limit=900; fi
       for attempt in 1 2 3 4; do
         if sudo timeout --kill-after=30 "${limit}" apt-get -o Acquire::Retries=3 \
-             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"; then
+             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+             -o Dir::Etc::sourcelist=/dev/null -o "Dir::Etc::sourceparts=${apt_sources}" \
+             -o APT::Get::List-Cleanup=false "$@"; then
           return 0
         fi
         echo "apt-get $1: attempt ${attempt} failed or exceeded ${limit} s" >&2
@@ -95,8 +104,7 @@ case "$(uname -s)" in
         "${repository}/runtime/src/atomic_lane.h" | head -n 1)"
       : "${coverage_major:?runtime/src/atomic_lane.h names no reviewed Linux Clang}"
       if [[ "${coverage_major}" != "${llvm_major}" ]]; then
-        echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${coverage_major} main" |
-          sudo tee /etc/apt/sources.list.d/apt.llvm.org-coverage.list >/dev/null
+        add_llvm_source "${coverage_major}"
         apt_get update
       fi
       apt_get install -y --no-install-recommends \
