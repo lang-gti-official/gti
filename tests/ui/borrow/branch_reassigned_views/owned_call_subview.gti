@@ -12,11 +12,16 @@ bool matches(std::string_view input, bool trim, std::string_view expected) {
   std::string owner = make_text(input);
   mut std::string_view text = owner.view();
   if (trim) text = text.substr(1u64, text.size() - 1u64);
-  return text == expected;
+  mut int visits = 0;
+  if (!text.empty()) {
+    for (mut int i = 0; i < 2; i++) visits++;
+  }
+  return text == expected && visits == (expected.empty() ? 0 : 2);
 }
 
 int main() {
   if (!matches("abc", true, "bc")) return 1;
   if (!matches("abc", false, "abc")) return 2;
+  if (!matches("x", true, "")) return 3;
   return 0;
 }

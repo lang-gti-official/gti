@@ -1837,11 +1837,62 @@ private:
     return true;
   }
 
+  // A private view descriptor that a loop never touches still holds its
+  // incoming value. An opaque string factory can hide the owner's nested
+  // contents from carrier flow without changing the descriptor's own loans.
+  // Exclude any descriptor whose writable storage identity may have escaped.
+  [[nodiscard]] std::set<HirBindingId>
+  loopTouchedOrAddressedBindings(MirBlockId firstLoopBlock) const {
+    std::set<HirBindingId> bindings;
+    const auto record = [&](MirPlaceId id) {
+      const auto *place = output.findPlace(id);
+      if (place && place->root == MirPlaceRootKind::Binding)
+        bindings.insert(place->binding);
+    };
+    for (const auto &loan : output.loans) {
+      if (loan.access != AccessMode::ReadOnly) {
+        record(loan.source);
+        for (const auto place : mirLoanProtectedSources(output, loan.id))
+          record(place);
+      }
+      for (const auto &dependency : loan.additionalDependencies)
+        if (dependency.access != AccessMode::ReadOnly)
+          record(dependency.source);
+    }
+    for (const auto &block : output.blocks) {
+      const bool inLoop = block.id >= firstLoopBlock;
+      const auto operand = [&](const MirOperand &input) {
+        if (inLoop || input.kind == MirOperandKind::Address ||
+            input.kind == MirOperandKind::BorrowWrite ||
+            input.kind == MirOperandKind::Loan)
+          record(input.place);
+      };
+      for (const auto &instruction : block.instructions) {
+        if (inLoop && instruction.destination)
+          record(*instruction.destination);
+        if (instruction.receiver)
+          operand(*instruction.receiver);
+        for (const auto &input : instruction.operands)
+          operand(input);
+      }
+      if (block.terminator.value)
+        operand(*block.terminator.value);
+      for (const auto &input : block.terminator.targetArguments)
+        operand(input);
+      for (const auto &input : block.terminator.elseArguments)
+        operand(input);
+      for (const auto &target : block.terminator.switchTargets)
+        for (const auto &input : target.arguments)
+          operand(input);
+    }
+    return bindings;
+  }
+
   // Recover a completed loop's value dependencies from the same forward
   // flow used by verification. A traversal snapshot predates backedge stores.
   // Seal only the analysis copy's unfinished frontiers; these prefix facts
   // do not replace final whole-body origin, activity, or availability checks.
-  void refreshRetainedBindingsAtLoopExit() {
+  void refreshRetainedBindingsAtLoopExit(MirBlockId firstLoopBlock) {
     if (conditionalRetainedLoans.empty())
       return;
     MirBody prefix = output;
@@ -1858,6 +1909,7 @@ private:
     const auto entry = flow.entryRoots.find(current);
     if (entry == flow.entryRoots.end())
       return;
+    std::optional<std::set<HirBindingId>> touched;
     for (const auto &scope : scopes)
       for (const auto binding : scope.bindings) {
         const auto held =
@@ -1865,7 +1917,19 @@ private:
         if (held == entry->second.end())
           continue;
         if (!held->second) {
-          // Unknown flow cannot preserve an old exact-group claim.
+          const auto found = bindingPlaces.find(binding);
+          const auto *place = found == bindingPlaces.end()
+                                  ? nullptr
+                                  : output.findPlace(found->second);
+          if (place && place->type.kind == SemanticType::StringView &&
+              !place->initiallyAvailable && !place->foreignStorage &&
+              bindingLoans.contains(binding)) {
+            if (!touched)
+              touched = loopTouchedOrAddressedBindings(firstLoopBlock);
+            if (!touched->contains(binding))
+              continue;
+          }
+          // A possibly changed value with unknown flow has no exact group.
           bindingLoans.erase(binding);
           continue;
         }
@@ -19550,7 +19614,7 @@ private:
     bindingLoans = std::move(exitBindingLoans);
     // A possibly unexecuted loop cannot contribute a transfer proof at exit.
     callTransferredLoanEndpoints = loopTransferEndpoints;
-    refreshRetainedBindingsAtLoopExit();
+    refreshRetainedBindingsAtLoopExit(conditionBlock);
   }
 
   void lowerDoWhile(const HirStatement &statement) {
@@ -19621,7 +19685,7 @@ private:
     temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
     callTransferredLoanEndpoints = loopTransferEndpoints;
-    refreshRetainedBindingsAtLoopExit();
+    refreshRetainedBindingsAtLoopExit(bodyBlock);
   }
 
   void lowerFor(const HirStatement &statement) {
@@ -19722,7 +19786,7 @@ private:
     scopes.pop_back();
     current = exitBlock;
     temporaryDrops = loopTemporaryDrops;
-    refreshRetainedBindingsAtLoopExit();
+    refreshRetainedBindingsAtLoopExit(conditionBlock);
     loweredLoops.insert_or_assign(
         statement.id, LoweredLoopShape{.conditionEntry = conditionBlock,
                                        .condition = comparisonBlock,
