@@ -40,6 +40,24 @@ public:
         const std::vector<MirTransformRecord> &transformations,
         const TargetInfo &target,
         LoweredProgramVerifiedInputs verified = {}) const;
+  // Transfer storage only after checks and collection finish reading both MIR
+  // inputs.
+  [[nodiscard]] LoweredProgramBuild
+  build(const Program &program, const SemanticModel &semantics,
+        const HirProgram &hir, const MirProgram &sourceMir,
+        MirProgram &&optimizedMir,
+        const std::vector<MirTransformRecord> &transformations,
+        const TargetInfo &target,
+        LoweredProgramVerifiedInputs verified = {}) const;
+
+private:
+  [[nodiscard]] LoweredProgramBuild
+  buildImpl(const Program &program, const SemanticModel &semantics,
+            const HirProgram &hir, const MirProgram &sourceMir,
+            const MirProgram &optimizedMir,
+            const std::vector<MirTransformRecord> &transformations,
+            const TargetInfo &target, LoweredProgramVerifiedInputs verified,
+            MirProgram *ownedMir) const;
 };
 
 } // namespace lang
