@@ -1980,6 +1980,27 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const MirProgram &optimizedMir,
     const std::vector<MirTransformRecord> &transformations,
     const TargetInfo &target, LoweredProgramVerifiedInputs verified) const {
+  return buildImpl(program, semantics, hir, sourceMir, optimizedMir,
+                   transformations, target, verified, nullptr);
+}
+
+LoweredProgramBuild LoweredProgramBuilder::build(
+    const Program &program, const SemanticModel &semantics,
+    const HirProgram &hir, const MirProgram &sourceMir,
+    MirProgram &&optimizedMir,
+    const std::vector<MirTransformRecord> &transformations,
+    const TargetInfo &target, LoweredProgramVerifiedInputs verified) const {
+  return buildImpl(program, semantics, hir, sourceMir, optimizedMir,
+                   transformations, target, verified, &optimizedMir);
+}
+
+LoweredProgramBuild LoweredProgramBuilder::buildImpl(
+    const Program &program, const SemanticModel &semantics,
+    const HirProgram &hir, const MirProgram &sourceMir,
+    const MirProgram &optimizedMir,
+    const std::vector<MirTransformRecord> &transformations,
+    const TargetInfo &target, LoweredProgramVerifiedInputs verified,
+    MirProgram *ownedMir) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -2077,7 +2098,6 @@ LoweredProgramBuild LoweredProgramBuilder::build(
 
   LoweredProgram lowered;
   lowered.target_ = target;
-  lowered.mir_ = optimizedMir;
   lowered.programKind_ = optimizedMir.programKind();
   if (const std::optional<MirEmbeddingPlan> &embedding =
           optimizedMir.embeddingPlan()) {
@@ -2258,7 +2278,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     lowered.bodies_.push_back(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
     auto &debug = lowered.bodies_.back().sourceDebug;
-    const auto &mir = *findMirBody(lowered.mir_, address);
+    const auto &mir = *findMirBody(optimizedMir, address);
     debug.collection = mir.sourceDebug.collection;
     if (mir.sourceDebug.tables) {
       debug.tables = std::make_unique<LoweredSourceDebugTables>();
@@ -2268,12 +2288,12 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       debug.tables->locations = captureSourceLocations(mir);
       debug.tables->valueRanges = lowered_detail::deriveSourceValueRanges(mir);
       if (auto ranges =
-              lowered_detail::deriveSourceRanges(lowered.mir_, address)) {
+              lowered_detail::deriveSourceRanges(optimizedMir, address)) {
         debug.tables->ranges = std::move(*ranges);
         debug.tables->fragments = lowered_detail::deriveSourceFragments(
-            lowered.mir_, address, debug.tables->ranges);
+            optimizedMir, address, debug.tables->ranges);
         debug.tables->parameterFragments =
-            lowered_detail::deriveSourceParameterFragments(lowered.mir_,
+            lowered_detail::deriveSourceParameterFragments(optimizedMir,
                                                            address);
       } else
         addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
@@ -2300,14 +2320,18 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     return build;
   }
 
-  // Checking a seal immediately after computing it from the same value would
-  // print the whole program a second time without testing anything.
+  if (ownedMir)
+    lowered.mir_ = std::move(*ownedMir);
+  else
+    lowered.mir_ = optimizedMir;
   lowered.indexDeclarations();
   build.issues = [&] {
     const PhaseTimeScope timeScope("lowered-verify-contents");
     return lowered_detail::verifyLoweredProgramContents(lowered);
   }();
   if (build.issues.empty()) {
+    // Checking a seal immediately after computing it from the same value would
+    // print the whole program a second time without testing anything.
     if (loweredProgramSealValidation()) {
       lowered.constructionSeal_ = constructionSeal(lowered);
     }
