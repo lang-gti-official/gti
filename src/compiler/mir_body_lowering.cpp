@@ -17272,8 +17272,6 @@ private:
   readsOwnedContents(const HirBody &body, SymbolId symbol,
                      std::vector<HirFunctionInstanceId> &path) const {
     for (const auto &read : body.values) {
-      if (!borrowsCarrierStorage(read))
-        continue;
       const bool direct = read.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
                           read.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut;
       const bool viaReceiver =
@@ -17283,6 +17281,8 @@ private:
            read.dispatch != CallDispatch::Static ||
            (!viaReceiver && read.borrowOrigin != BorrowOriginKind::Argument) ||
            !read.borrowArguments.empty() || !read.borrowFields.empty()))
+        continue;
+      if (!borrowsCarrierStorage(read))
         continue;
       const auto arguments = callArgumentValues(read);
       const auto index = direct ? std::size_t{1} : read.borrowArgument;
