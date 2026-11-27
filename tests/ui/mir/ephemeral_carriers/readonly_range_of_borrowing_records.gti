@@ -3,6 +3,8 @@
 import std.span;
 import std.vector;
 
+constexpr uint8_t icon[2] = {1u8, 2u8};
+
 struct Image {
   int value;
   std::span<uint8_t, static> bytes;
@@ -19,6 +21,6 @@ int sum(mut std::vector<Image>& source) {
 
 int main() {
   mut std::vector<Image> images{};
-  images.push_back(Image(17, embed_bytes("readonly_range_of_borrowing_records.gti")));
+  images.push_back(Image(17, icon.as_span()));
   return sum(images) == 17 && sum(images) == 0 ? 0 : 1;
 }
