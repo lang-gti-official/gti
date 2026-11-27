@@ -7,6 +7,7 @@
 #include "lowered_program_closure.h"
 #include "lowered_program_source_debug.h"
 #include "mir_source_debug.h"
+#include "mir_verification_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1979,6 +1980,9 @@ verifiedLoweredProgram(LoweredProgram program,
   // (for example, program kind is independent of the embedding plan). A seal
   // match cannot replace verification of the exact snapshot being admitted.
   issues = verifyLoweredProgram(*snapshot);
+  // The backend owns this verified immutable program. It will not consult
+  // whole-program verification snapshots while generating its representation.
+  mir_detail::discardRecentMirVerifications();
   if (!issues.empty()) {
     return std::nullopt;
   }

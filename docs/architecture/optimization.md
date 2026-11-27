@@ -171,12 +171,20 @@ returns an `OptimizedProgram` containing both the unchanged canonical
 the verifier can reuse a body-local success from that immutable input when the
 complete body at the same kind and owner compares equal, including source debug
 tables. Other bodies and all cross-body contracts are verified on the candidate.
+Each fresh HIR-to-MIR lowering retires previous whole-program verifier snapshots.
+The frontend fully verifies diagnostic-only MIR, including application bodies
+outside the executable closure, without caching a copy for the optimizer.
+Incremental body verification keeps its own session.
+
 At optimizing levels, input verification consumes the result for an exactly
 equal cached program or checks the submitted input in full. It releases the
 old verifier snapshots before allocating the mutable pass input. The
 submitted MIR remains the immutable source for independent replay.
-Independent replay verifies its intermediate candidates locally. The general
-verifier cache can retain the optimized output for the backend. When no safety
+Independent replay verifies the optimized output and its intermediate
+candidates locally. It avoids holding a cached output copy alongside its
+replay candidate. The lowered-program builder can cache the verified output
+for backend admission, which checks the exact owned lowered program and
+releases those snapshots. When no safety
 records exist, replay carries the verification result for the unchanged
 folded candidate forward.
 

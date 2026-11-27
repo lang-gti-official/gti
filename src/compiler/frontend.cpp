@@ -2340,7 +2340,7 @@ void Frontend::verifyLowering(const std::filesystem::path &entryPath,
                                        checked, entryPath);
     if (completeMetadata.valid()) {
       MirLoweringResult complete =
-          MirLowerer().lower(checked, completeMetadata.metadata);
+          MirLowerer().lowerForDiagnostics(checked, completeMetadata.metadata);
       if (rawAudit) {
         for (Diagnostic &diagnostic : mirRawAuditDiagnostics(
                  complete.program, checked, entryPath.string()))
@@ -2582,7 +2582,7 @@ verifyEditedBody(const SemanticModel &model, SemanticInstanceProvider &provider,
       FailureMetadataBuilder().build(graph, sources, hir.program, entry);
   if (!metadata.valid() || cancelled())
     return std::nullopt;
-  auto mir = MirLowerer().lower(hir.program, metadata.metadata);
+  auto mir = MirLowerer().lowerForDiagnostics(hir.program, metadata.metadata);
   if (!mir.diagnostics.empty() || cancelled())
     return std::nullopt;
   if (mir.valid())

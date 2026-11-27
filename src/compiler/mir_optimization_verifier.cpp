@@ -45,8 +45,10 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
   // one already verified here, such as an unoptimized program or a replay
   // snapshot that no record changed, is not verified again.
   if (!optimizedVerified && optimized != source) {
+    // Replay is about to construct its own full candidate. Verify the output
+    // here without retaining another whole-program copy alongside it.
     const MirVerificationResult optimizedVerification =
-        verifyMirProgram(optimized);
+        mir_detail::verifyMirProgramWithVerifiedBodies(optimized, nullptr);
     if (!optimizedVerification.valid()) {
       return optimizedVerification;
     }

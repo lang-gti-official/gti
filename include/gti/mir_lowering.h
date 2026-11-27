@@ -65,6 +65,11 @@ public:
   [[nodiscard]] MirLoweringResult
   lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
 
+  // Check a short-lived program without retaining a whole-program proof copy.
+  [[nodiscard]] MirLoweringResult
+  lowerForDiagnostics(const HirProgram &source,
+                      const FailureMetadata &failureMetadata) const;
+
   // Function and lambda bodies share identical normal-exit cleanup suffixes
   // unless this is cleared, which lowers every exit's own cleanup chain. The
   // setting is thread-local; tests and measurements use it to compare both
@@ -83,9 +88,15 @@ private:
   static thread_local bool shareExitCleanup_;
   static thread_local MirCleanupSharingStatistics cleanupSharingStatistics_;
 
+  enum class ProofRetention { Remember, Discard };
+  [[nodiscard]] MirLoweringResult lower(const HirProgram &source,
+                                        const FailureMetadata &failureMetadata,
+                                        ProofRetention retention) const;
+
   [[nodiscard]] MirLoweringResult
   lowerVerified(const HirProgram &source,
-                const FailureMetadata &failureMetadata) const;
+                const FailureMetadata &failureMetadata,
+                ProofRetention retention) const;
 
   [[nodiscard]] MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
