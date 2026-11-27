@@ -246,7 +246,10 @@ analysis memory currently grows quadratically with the number of initialized
 globals, so a test that needs a slow analysis bounds its generated document:
 `lsp_smoke_test.py` uses 4000 globals (`SLOW_DOCUMENT_GLOBALS`, near 3 GiB
 in one `gti_lsp`), after 8000 peaked above 9 GiB and took down runners from
-2026-11-22.
+2026-11-22. The Linux slow set budgets 7 GiB per test worker, so
+`gti_test_slow` runs two cases at a time: with four, three `gti_lsp`
+processes of 2.5 to 4 GiB exhausted memory and swap and the shard lost its
+runner on every daily run.
 
 Runtime harnesses take their modes from `tests/backend_modes.py`
 (`native_modes()`: LLVM at the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by

@@ -107,7 +107,9 @@ jobs:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
           GTI_MEMORY_PER_JOB_MIB: 3072
-          GTI_MEMORY_PER_TEST_MIB: 3072
+          # The Linux slow set runs gti_test_slow, whose LSP cases each hold
+          # up to 4 GiB in one gti_lsp: two workers on a 16 GiB runner.
+          GTI_MEMORY_PER_TEST_MIB: ${{ matrix.set == 'slow' && 7168 || 3072 }}
         run: bash scripts/configure_ci_resources.sh
       - name: Install the reviewed compiler, Ninja and LLVM
         run: bash scripts/configure_ci_toolchain.sh
