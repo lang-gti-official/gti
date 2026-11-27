@@ -28,6 +28,10 @@ identifier = "dev.gti.example"
 resources = ["assets/example.txt"]
 """)
         command = [driver, "build", "example", "--bundle", "macos"]
+        if sys.platform != "darwin":
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+            assert result.returncode and "requires a macOS host" in result.stderr, result
+            return
         subprocess.run(command, cwd=root, check=True)
         app, = root.glob("build/gti/**/Example & Friends.app")
         info = plistlib.loads((app / "Contents/Info.plist").read_bytes())

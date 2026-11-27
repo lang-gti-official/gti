@@ -11,3 +11,4 @@ stderr: requires a single executable build
 $ gti build --bundle macos --all
 ? 64
 stderr: requires a single executable build
+$ python3 publication.py "$GTI"

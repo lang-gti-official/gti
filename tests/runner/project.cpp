@@ -447,6 +447,7 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
     return inherited == nullptr ? "" : inherited;
   };
   const auto expand = [&](std::string text) {
+    replaceAll(text, "$GTI", tools.gti.string());
     replaceAll(text, "$DIR", canonical.string());
     replaceAll(text, "$HOME", canonicalHome.string());
     return text;

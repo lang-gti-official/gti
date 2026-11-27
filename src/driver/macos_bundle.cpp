@@ -55,8 +55,11 @@ std::string infoPlist(const ProjectBuildPlan &plan) {
   field("CFBundleIdentifier", bundle.identifier);
   field("CFBundleName", bundle.name);
   field("CFBundleDisplayName", bundle.name);
-  field("CFBundleShortVersionString", plan.packageVersion());
-  field("CFBundleVersion", plan.packageVersion());
+  // Apple version keys use the numeric components of the package version.
+  const auto version = plan.packageVersion().substr(
+      0, plan.packageVersion().find_first_of("-+"));
+  field("CFBundleShortVersionString", version);
+  field("CFBundleVersion", version);
   if (!bundle.icon.empty())
     field("CFBundleIconFile", fs::path(bundle.icon).filename().string());
   return xml + "</dict></plist>\n";
