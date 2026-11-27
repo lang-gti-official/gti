@@ -1,14 +1,17 @@
 #include "mir_carrier_flow.h"
 #include "gti/mir_effects.h"
 #include "gti/optimization/dataflow.h"
+#include "mir_flow_map.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
 #include <deque>
+#include <iterator>
 #include <set>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 namespace lang {
 bool mirTypeMayHoldDependencies(const SemanticType &type,
@@ -199,142 +202,9 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
 MirRetainingStoreEffects
 deriveConstructorEffects(const MirConstructorInstance &constructor,
                          AnalysisContext &context);
-// A sorted-vector map. Flow states are copied for every block visit and most
-// facts are empty sets, so a contiguous copy avoids one heap node per entry.
-template <class K, class V> class FlatMap {
-public:
-  using key_type = K;
-  using mapped_type = V;
-  using value_type = std::pair<K, V>;
-  using Items = std::vector<value_type>;
-  using iterator = typename Items::iterator;
-  using const_iterator = typename Items::const_iterator;
-
-  // Copies share their entries until one of them is modified: most blocks
-  // leave most of the carried state unchanged.
-  [[nodiscard]] iterator begin() { return own().begin(); }
-  [[nodiscard]] iterator end() { return own().end(); }
-  [[nodiscard]] const_iterator begin() const { return view().begin(); }
-  [[nodiscard]] const_iterator end() const { return view().end(); }
-  [[nodiscard]] std::size_t size() const { return view().size(); }
-  [[nodiscard]] bool empty() const { return view().empty(); }
-  [[nodiscard]] iterator find(const K &key) {
-    auto &items = own();
-    const auto found = lower(items, key);
-    return found != items.end() && !(key < found->first) ? found : items.end();
-  }
-  [[nodiscard]] const_iterator find(const K &key) const {
-    const auto &items = view();
-    const auto found = lower(items, key);
-    return found != items.end() && !(key < found->first) ? found : items.end();
-  }
-  [[nodiscard]] bool contains(const K &key) const {
-    return find(key) != view().end();
-  }
-  template <class... Arguments>
-  std::pair<iterator, bool> emplace(const K &key, Arguments &&...arguments) {
-    auto &items = own();
-    auto found = lower(items, key);
-    if (found != items.end() && !(key < found->first))
-      return {found, false};
-    found = items.emplace(found, key, V(std::forward<Arguments>(arguments)...));
-    return {found, true};
-  }
-  V &operator[](const K &key) { return emplace(key).first->second; }
-  iterator erase(iterator position) { return own().erase(position); }
-  template <class Predicate> void eraseIf(Predicate predicate) {
-    if (std::none_of(view().begin(), view().end(), predicate))
-      return;
-    std::erase_if(own(), predicate);
-  }
-  // Union in one ordered pass: keys only in `incoming` are added with their
-  // value, and keys on both sides join. Returns whether this map changed.
-  template <class Join>
-  bool unionWith(const FlatMap &incoming, Join &&joinValues) {
-    if (shared == incoming.shared)
-      return false;
-    bool changed = false;
-    Items merged;
-    const auto &mine = view();
-    const auto &theirs = incoming.view();
-    merged.reserve(mine.size() + theirs.size());
-    auto left = mine.begin();
-    auto right = theirs.begin();
-    while (left != mine.end() || right != theirs.end()) {
-      if (right == theirs.end() ||
-          (left != mine.end() && left->first < right->first)) {
-        merged.push_back(*left++);
-      } else if (left == mine.end() || right->first < left->first) {
-        merged.push_back(*right++);
-        changed = true;
-      } else {
-        merged.push_back(*left++);
-        changed = joinValues(merged.back().second, right->second) || changed;
-        ++right;
-      }
-    }
-    if (changed)
-      shared = std::make_shared<Items>(std::move(merged));
-    return changed;
-  }
-  // Path join in one ordered pass: a key absent from either side becomes
-  // unknown (a default value, which every join keeps unknown), and keys on
-  // both sides join their values. Returns whether this map changed.
-  template <class Join>
-  bool joinPaths(const FlatMap &incoming, Join &&joinValues) {
-    if (shared == incoming.shared)
-      return false;
-    bool changed = false;
-    Items merged;
-    const auto &mine = view();
-    const auto &theirs = incoming.view();
-    merged.reserve(std::max(mine.size(), theirs.size()));
-    auto left = mine.begin();
-    auto right = theirs.begin();
-    while (left != mine.end() || right != theirs.end()) {
-      if (right == theirs.end() ||
-          (left != mine.end() && left->first < right->first)) {
-        merged.push_back(*left++);
-        if (merged.back().second) {
-          merged.back().second.reset();
-          changed = true;
-        }
-      } else if (left == mine.end() || right->first < left->first) {
-        merged.emplace_back(right->first, V{});
-        ++right;
-        changed = true;
-      } else {
-        merged.push_back(*left++);
-        changed = joinValues(merged.back().second, right->second) || changed;
-        ++right;
-      }
-    }
-    if (changed)
-      shared = std::make_shared<Items>(std::move(merged));
-    return changed;
-  }
-
-private:
-  [[nodiscard]] const Items &view() const {
-    static const Items none;
-    return shared ? *shared : none;
-  }
-  [[nodiscard]] Items &own() {
-    if (!shared)
-      shared = std::make_shared<Items>();
-    else if (shared.use_count() > 1)
-      shared = std::make_shared<Items>(*shared);
-    return *shared;
-  }
-  template <class Container>
-  [[nodiscard]] static auto lower(Container &items, const K &key) {
-    return std::lower_bound(items.begin(), items.end(), key,
-                            [](const value_type &item, const K &probe) {
-                              return item.first < probe;
-                            });
-  }
-  std::shared_ptr<Items> shared;
-};
+using mir_flow::FlatMap;
+using mir_flow::join;
+using mir_flow::joinChanges;
 
 // A sorted-vector set whose copies share storage until one is modified.
 template <class T> class FlatSet {
@@ -461,36 +331,13 @@ soleSharedReferencePath(const MirProgram &program, const SemanticType &type) {
                                           : std::nullopt;
 }
 
-template <class T>
-bool join(std::optional<std::vector<T>> &into,
-          const std::optional<std::vector<T>> &from) {
-  if (!into)
-    return false;
-  if (!from) {
-    into.reset();
-    return true;
-  }
-  if (from->empty())
-    return false;
-  // Facts are kept as sorted unique sets; adding elements is a change
-  // exactly when the normalized set grows.
-  bool changed = false;
-  if (!std::is_sorted(into->begin(), into->end()) ||
-      std::adjacent_find(into->begin(), into->end()) != into->end()) {
-    std::sort(into->begin(), into->end());
-    into->erase(std::unique(into->begin(), into->end()), into->end());
-    changed = true;
-  }
-  const auto before = into->size();
-  into->insert(into->end(), from->begin(), from->end());
-  std::sort(into->begin(), into->end());
-  into->erase(std::unique(into->begin(), into->end()), into->end());
-  return changed || into->size() != before;
-}
 template <class Map> bool mergeMap(Map &into, const Map &from) {
-  return into.unionWith(from, [](auto &target, const auto &source) {
-    return join(target, source);
-  });
+  return into.unionWith(
+      from,
+      [](auto &target, const auto &source) { return join(target, source); },
+      [](const auto &target, const auto &source) {
+        return joinChanges(target, source);
+      });
 }
 bool join(State &into, const State &from) {
   // Absence on an executable predecessor is unknown, not an empty set.
@@ -498,9 +345,11 @@ bool join(State &into, const State &from) {
   // provenance at the join. SSA definitions are overwritten by their own
   // instructions; block arguments have already been bound on the edge.
   const auto mergePaths = [](auto &target, const auto &incoming) {
-    return target.joinPaths(incoming, [](auto &into, const auto &from) {
-      return join(into, from);
-    });
+    return target.joinPaths(
+        incoming, [](auto &into, const auto &from) { return join(into, from); },
+        [](const auto &into, const auto &from) {
+          return joinChanges(into, from);
+        });
   };
   const bool roots = mergePaths(into.roots, from.roots);
   const bool values = mergePaths(into.values, from.values);
@@ -1011,6 +860,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
   // live everywhere, and an incomplete use index disables the pruning.
   std::vector<std::vector<MirValueId>> liveIn;
   std::vector<bool> alwaysLive;
+  // The values a block can leave facts for: those live into it and those it
+  // defines. Only these need checking on its outgoing edges.
+  std::vector<std::vector<MirValueId>> carried;
   // Small bodies carry little state; pruning only pays off on long ones.
   if (body.valueUses.size() == body.values.size() && body.blocks.size() >= 32) {
     const std::size_t blockCount = body.blocks.size();
@@ -1081,13 +933,19 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         }
       }
       liveIn.resize(blockCount + 1);
-      for (std::size_t index = 1; index <= blockCount; ++index)
+      carried.resize(blockCount + 1);
+      for (std::size_t index = 1; index <= blockCount; ++index) {
         liveIn[index].assign(live[index].begin(), live[index].end());
+        std::set_union(live[index].begin(), live[index].end(),
+                       defs[index].begin(), defs[index].end(),
+                       std::back_inserter(carried[index]));
+      }
     } else {
       alwaysLive.clear();
     }
   }
-  const auto pruneDeadValues = [&](State &incoming, MirBlockId target) {
+  const auto pruneDeadValues = [&](State &incoming, MirBlockId source,
+                                   MirBlockId target) {
     if (liveIn.empty() || target == 0 || target >= liveIn.size())
       return;
     const auto &liveValues = liveIn[target];
@@ -1095,6 +953,18 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       return value < alwaysLive.size() && !alwaysLive[value] &&
              !std::binary_search(liveValues.begin(), liveValues.end(), value);
     };
+    // Every edge prunes, so past the entry block a state holds facts only
+    // for values that stay live everywhere and for those its source block
+    // carries. The entry state has not been pruned and is searched whole.
+    if (source != body.entry && source != 0 && source < carried.size()) {
+      for (const auto value : carried[source])
+        if (dead(value)) {
+          incoming.values.erase(value);
+          incoming.expiredValues.erase(value);
+          incoming.aliases.erase(value);
+        }
+      return;
+    }
     incoming.values.eraseIf(
         [&](const auto &entry) { return dead(entry.first); });
     incoming.expiredValues.eraseIf(
@@ -1525,8 +1395,9 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                       source && source->root == MirPlaceRootKind::Binding &&
                               source->projections.empty() &&
                               source->type.kind != SemanticType::Reference
-                          ? state.roots.find({source->root, source->binding})
-                          : state.roots.end();
+                          ? std::as_const(state.roots)
+                                .find({source->root, source->binding})
+                          : std::as_const(state.roots).end();
                   if (loan->kind != MirLoanKind::CallResult ||
                       owner == state.roots.end() || !owner->second) {
                     contents.reset();
@@ -2240,19 +2111,19 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                   published->additionalDependencies &&
               !state.unavailable.contains(previous->id)) {
             const auto rename = [&](MirValueId id) {
-              auto held = state.values.find(id);
+              const auto held = state.values.find(id);
               const auto expired = state.expiredValues.find(id);
               if (held != state.values.end() && held->second &&
                   expired != state.expiredValues.end() && expired->second &&
                   std::find(expired->second->begin(), expired->second->end(),
-                            previous->id) == expired->second->end()) {
-                const auto old = std::find(held->second->begin(),
-                                           held->second->end(), previous->id);
-                if (old != held->second->end()) {
-                  held->second->erase(old);
-                  join(held->second,
-                       Fact{std::vector<MirLoanId>{published->id}});
-                }
+                            previous->id) == expired->second->end() &&
+                  std::find(held->second->begin(), held->second->end(),
+                            previous->id) != held->second->end()) {
+                // Only a value that names the old group is rewritten.
+                Fact &renamed = state.values.edit(id)->second;
+                renamed->erase(
+                    std::find(renamed->begin(), renamed->end(), previous->id));
+                join(renamed, Fact{std::vector<MirLoanId>{published->id}});
               }
             };
             bool renamed = false;
@@ -2426,14 +2297,65 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
         const auto ended = *instruction.loan;
         state.unavailable.insert(ended);
         const auto expire = [&](const auto &held, auto &invalid) {
-          for (const auto &[key, fact] : held) {
-            if (!fact) {
-              invalid[key].reset();
-            } else if (std::find(fact->begin(), fact->end(), ended) !=
-                       fact->end()) {
-              auto [entry, _] = invalid.emplace(key, empty());
-              join(entry->second, Fact{std::vector<MirLoanId>{ended}});
-            }
+          // Most entries already record what this end implies. Both maps
+          // are ordered by the same key, so one pass finds the entries that
+          // change, and only those are written: a write copies the part of
+          // the map it touches.
+          using Key = std::decay_t<decltype(held.begin()->first)>;
+          std::vector<Key> unknown;
+          std::vector<Key> ending;
+          // A chunk can matter only if it holds an unknown fact or one that
+          // may name this group; its digest says so without reading it.
+          constexpr std::uint64_t unknownFact = std::uint64_t{1} << 63;
+          const std::uint64_t endedGroup = std::uint64_t{1} << (ended % 63);
+          auto known = std::as_const(invalid).begin();
+          const auto last = std::as_const(invalid).end();
+          held.scan(
+              [&](const auto &entries) {
+                std::uint64_t digest = 0;
+                for (const auto &[key, fact] : entries) {
+                  (void)key;
+                  if (!fact)
+                    digest |= unknownFact;
+                  else
+                    for (const auto group : *fact)
+                      digest |= std::uint64_t{1} << (group % 63);
+                }
+                return digest;
+              },
+              [&](std::uint64_t digest) {
+                return (digest & (unknownFact | endedGroup)) != 0;
+              },
+              [&](const auto &entry) {
+                const auto &[key, fact] = entry;
+                // Skipped chunks leave a gap; step over a short one and
+                // search past a long one.
+                for (int steps = 0; known != last && known->first < key;
+                     ++steps) {
+                  if (steps == 8) {
+                    known = std::as_const(invalid).lowerBound(key);
+                    break;
+                  }
+                  ++known;
+                }
+                const bool present = known != last && !(key < known->first);
+                if (!fact) {
+                  if (!present || known->second)
+                    unknown.push_back(key);
+                } else if (std::find(fact->begin(), fact->end(), ended) !=
+                           fact->end()) {
+                  if (!present ||
+                      (known->second &&
+                       std::find(known->second->begin(), known->second->end(),
+                                 ended) == known->second->end()))
+                    ending.push_back(key);
+                }
+              });
+          for (const auto &key : unknown)
+            invalid[key].reset();
+          for (const auto &key : ending) {
+            auto [entry, _] = invalid.emplace(key, empty());
+            join(entry->second, Fact{std::vector<MirLoanId>{ended}});
           }
         };
         expire(state.roots, state.expiredRoots);
@@ -2518,7 +2440,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
              operandRead(body, incoming, argument, true));
       }
       result.complete = result.complete && result.exits[id].has_value();
-      pruneDeadValues(incoming, target);
+      pruneDeadValues(incoming, id, target);
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         incoming.values[next->parameters[index].value] =
             std::move(argumentFacts[index]);
