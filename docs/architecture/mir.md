@@ -59,7 +59,11 @@ the parent of each additional input separately. Its second input is not a child
 of the first input's unrelated storage. Field-mapped return verification also
 preserves an owned receiver's explicit input borrow permission, without deriving
 writable access merely from a mutable place. These are compile-time provenance
-facts; they introduce no runtime loan state or allocation.
+facts; they introduce no runtime loan state or allocation. A field mapping
+that names the whole borrowed input selects its staged physical address, even
+when that object stores several external references. A mapping naming a stored
+field instead selects that field's referent. The input stage and complete-set
+flow independently retain and verify the external dependencies in both cases.
 
 A temporary view of a carrier's physical storage retains the carrier's
 external authority as one stored dependency. If selecting the receiver also

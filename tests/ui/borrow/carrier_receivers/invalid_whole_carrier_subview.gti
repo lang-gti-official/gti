@@ -1,0 +1,16 @@
+// A whole-receiver subview keeps its second external owner borrowed through its last use.
+struct Pair {
+  int& left;
+  int& right;
+  Pair(int& left, int& right) : left(left), right(right) {}
+  Pair subview() { return Pair(this.left, this.right); }
+  int sum() { return this.left + this.right; }
+};
+int main() {
+  mut int left = 3;
+  mut int right = 5;
+  auto view = Pair(left, right);
+  auto tail = view.subview();
+  right = 11; //~ ERROR GTI-S2017
+  return tail.sum();
+}
