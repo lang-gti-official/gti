@@ -4,8 +4,10 @@
 #include "gti/hir.h"
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -674,6 +676,46 @@ enum class MirLiteralProvenanceKind {
   Count,
 };
 
+// Store large, infrequent instruction payloads out of line. MIR snapshots
+// can be edited independently and compare payloads by value.
+template <typename T> class MirOptionalPayload {
+public:
+  MirOptionalPayload() = default;
+  template <typename U>
+    requires std::constructible_from<T, U &&>
+  MirOptionalPayload(U &&value)
+      : payload(std::make_unique<T>(std::forward<U>(value))) {}
+  MirOptionalPayload(std::optional<T> value)
+      : payload(value ? std::make_unique<T>(std::move(*value)) : nullptr) {}
+  MirOptionalPayload(const MirOptionalPayload &other)
+      : payload(other ? std::make_unique<T>(*other) : nullptr) {}
+  MirOptionalPayload(MirOptionalPayload &&) noexcept = default;
+  MirOptionalPayload &operator=(MirOptionalPayload other) noexcept {
+    payload = std::move(other.payload);
+    return *this;
+  }
+
+  [[nodiscard]] bool has_value() const { return bool(payload); }
+  explicit operator bool() const { return has_value(); }
+  T &operator*() { return *payload; }
+  const T &operator*() const { return *payload; }
+  T *operator->() { return payload.get(); }
+  const T *operator->() const { return payload.get(); }
+  void reset() { payload.reset(); }
+
+  friend bool operator==(const MirOptionalPayload &lhs,
+                         const MirOptionalPayload &rhs) {
+    return lhs && rhs ? *lhs == *rhs : bool(lhs) == bool(rhs);
+  }
+  friend bool operator==(const MirOptionalPayload &lhs,
+                         const std::optional<T> &rhs) {
+    return lhs && rhs ? *lhs == *rhs : bool(lhs) == rhs.has_value();
+  }
+
+private:
+  std::unique_ptr<T> payload;
+};
+
 // Every MIR Compute/Literal instruction says whether it came directly from
 // lowering or from a verified optimizer rewrite. A rewrite retains its
 // original MIR input rather than asking a backend to recover transformation
@@ -775,7 +817,7 @@ struct MirInstruction {
   std::optional<FunctionControlContract> intrinsicCallContract;
   // Concrete queried representation; only ObjectSize/ObjectAlignment may
   // carry this field. It is not a runtime argument or a borrow origin.
-  std::optional<SemanticType> objectLayoutType;
+  MirOptionalPayload<SemanticType> objectLayoutType;
   bool neverReturns = false;
   bool noNormalBorrowResult = false;
   bool tracksCaller = false;
@@ -789,8 +831,8 @@ struct MirInstruction {
   // explicit optional-slot destruction. The operation retires the slot before
   // executing this recipe; a destructor failure propagates its original record
   // through Invoke.
-  std::optional<MirDropType> elementCleanup;
-  std::optional<MirDropType> replacementCleanup;
+  MirOptionalPayload<MirDropType> elementCleanup;
+  MirOptionalPayload<MirDropType> replacementCleanup;
   // Symmetric exact instruction pair: CleanupBeforeAssign <-> Assign.
   MirInstructionId replacementPair = 0;
   std::vector<FailureSiteId> localFailureSites;
@@ -800,7 +842,7 @@ struct MirInstruction {
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> functionPointerFunctionTarget;
   std::optional<HirLambdaId> functionPointerLambdaTarget;
-  std::optional<SemanticType> nativeCalleeType;
+  MirOptionalPayload<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::vector<MirScopedThreadTask> scopedThreadTasks;

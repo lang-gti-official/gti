@@ -1505,6 +1505,12 @@ assignment after cleanup are verifier-owned. The v67 extension adds the
 built-in checked array-element destination to that protocol; unrepresented
 cleanup and destination families still fail closed.
 
+MIR instructions store their optional cleanup recipes, object-layout query
+types, and native callee signatures out of line. Each instruction allocates
+only the payloads it carries. Copied
+instructions own independent values, including nested types and cleanup
+recipes. Verifier comparisons include their full contents.
+
 Program v65/body v57 make recursive ownership recipes finite. On re-entering
 an enclosing class instance, lowering records an exact `recursiveCleanup`
 back-edge instead of expanding that class again. The back-edge has the same
