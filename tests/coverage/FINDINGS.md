@@ -705,8 +705,11 @@ Corpus program: `c55_iterator_utilities`.
 
 **Resolved in focused optimized checks.** Unnamed formal source anchors use
 the written type, and lifetime diagnostics identify the one-based parameter
-index. The original remains correctly rejected with GTI-S2045 and a real
-related source span.
+index. Since #425 MIR, not semantics, proves the returned stored-reference
+value of a by-value borrowed record, so the original is rejected with
+GTI-S2017 at the local that supplies its storage, with real source spans.
+`tests/ui/diagnostics/rendering/unnamed_parameter_return_source.gti` keeps
+the unnamed-parameter rendering covered.
 
 `reproducers/f17-unnamed-parameter-bad-span.gti`
 
