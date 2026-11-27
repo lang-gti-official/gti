@@ -1,3 +1,4 @@
+// A relay preserves the selected text after a literal-backed local acquires a shared owner.
 //@ run-pass
 import std.string;
 

@@ -1,3 +1,4 @@
+// A conditional text assignment keeps its owner borrowed through a later read.
 import std.string;
 
 int main() {
