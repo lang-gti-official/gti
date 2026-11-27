@@ -1,6 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
 #include <array>
+#include <type_traits>
+#include <utility>
 
 namespace lang {
 namespace {
@@ -10879,17 +10881,27 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
     return nullptr;
   const std::string_view generatedName =
       record->generated ? std::string_view{record->name} : std::string_view{};
+  const auto names = [&](const Symbol &symbol) {
+    const Token &name = symbol.declaration;
+    if (name.position != record->nameSpan.start)
+      return false;
+    const std::string_view tokenGeneratedName =
+        name.generated ? std::string_view{name.lexeme} : std::string_view{};
+    return tokenSpan(name).end == record->nameSpan.end &&
+           tokenGeneratedName == generatedName &&
+           sourceUnitFor(name) == record->sourceUnit;
+  };
   const auto find = [&](auto &bindings) -> Symbol * {
-    for (auto &[_, symbol] : bindings) {
-      const Token &name = symbol.declaration;
-      if (name.position != record->nameSpan.start)
-        continue;
-      const std::string_view tokenGeneratedName =
-          name.generated ? std::string_view{name.lexeme} : std::string_view{};
-      if (tokenSpan(name).end == record->nameSpan.end &&
-          tokenGeneratedName == generatedName &&
-          sourceUnitFor(name) == record->sourceUnit)
-        return &symbol;
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(bindings)>,
+                                 DeclarationIndex<Symbol>>) {
+      // Search read-only so that a miss leaves a shared index shared.
+      for (const auto &[name, symbol] : std::as_const(bindings))
+        if (names(symbol))
+          return &bindings.find(name)->second;
+    } else {
+      for (auto &[_, symbol] : bindings)
+        if (names(symbol))
+          return &symbol;
     }
     return nullptr;
   };
@@ -10930,11 +10942,26 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
 }
 
 auto SemanticVisitor::Impl::seedRawStorageInput(Symbol &symbol) -> void {
-  const auto place = placeKey(placeForSymbol(symbol));
+  if (auto facts =
+          rawStorageInputFacts(placeKey(placeForSymbol(symbol)), symbol)) {
+    symbol.rawPointerOrigins = std::move(facts->origins);
+    symbol.rawPointerFields = std::move(facts->fields);
+  }
+}
+
+auto SemanticVisitor::Impl::rawStorageInputFacts(const Symbol &symbol)
+    -> std::optional<RawStorageInputFacts> {
+  // placeForSymbol's program-storage place, without a mutable root.
+  return rawStorageInputFacts(
+      placeKey({.rootIdentity = toolingSymbolFor(symbol)}), symbol);
+}
+
+auto SemanticVisitor::Impl::rawStorageInputFacts(const PlaceKey &place,
+                                                 const Symbol &symbol)
+    -> std::optional<RawStorageInputFacts> {
   if (!place.valid())
-    return;
-  symbol.rawPointerOrigins.clear();
-  symbol.rawPointerFields.clear();
+    return std::nullopt;
+  RawStorageInputFacts facts;
   for (auto path : rawPointerFieldPaths(symbol.type)) {
     auto input = place;
     input.projections.insert(input.projections.end(), path.begin(), path.end());
@@ -10942,10 +10969,11 @@ auto SemanticVisitor::Impl::seedRawStorageInput(Symbol &symbol) -> void {
                             .addressSite = tokenSpan(symbol.declaration),
                             .parameterPointee = true};
     if (path.empty() && symbol.type.kind == SemanticType::RawPointer)
-      symbol.rawPointerOrigins.push_back(std::move(origin));
+      facts.origins.push_back(std::move(origin));
     else
-      symbol.rawPointerFields.push_back({std::move(path), {std::move(origin)}});
+      facts.fields.push_back({std::move(path), {std::move(origin)}});
   }
+  return facts;
 }
 
 auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
@@ -11232,7 +11260,6 @@ auto SemanticVisitor::Impl::runRawResultQuery(
       std::exchange(state->runningSince, entry->chargedAt);
   entry->rawGlobals = state->hasRawGlobals.value_or(false);
   entry->storageInputs = rawStorageInputKeys();
-  entry->declarationView = rawDeclarationView();
   const auto availabilityBefore = constexprAvailabilityObservations();
   state->reaching.emplace_back();
   ++state->depth;
@@ -11262,27 +11289,86 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->macroLookup = macroLookup;
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
-  if (!state->idleValueFlows.empty()) {
-    worker->valueFlow = std::move(state->idleValueFlows.back());
-    state->idleValueFlows.pop_back();
-  }
-  worker->valueFlow = valueFlow;
-  worker->valueFlow.rebindCallables(worker->catalog);
+  // This analyzer is suspended until the worker is released below, so the
+  // worker may read its namespace indexes in place and copy each one only
+  // when it first edits it. Each index holds the whole visible program, and
+  // most workers edit few of them.
+  worker->valueFlow.assignSharingNamespaces(valueFlow);
+  // The worker shares this family's facts about shared storage from here on.
+  worker->requestSession.rawResultQueries = state;
+  // The same bindings as this analyzer's, read where they are shared.
+  entry->declarationView = worker->rawDeclarationView();
+  // Rebinding is settled for a shared index another worker already checked
+  // against the same sealed registry.
+  std::shared_ptr<const void> registry;
+  if (worker->catalog.sealed)
+    registry = worker->catalog.callableRegistryIdentity();
+  worker->valueFlow.rebindCallables(
+      worker->catalog, [&](const DeclarationIndex<Symbol> &bindings) {
+        const auto *facts = worker->sharedBindingFacts(bindings);
+        return registry && facts && facts->rebound == registry;
+      });
+  const auto markRebound = [&](const DeclarationIndex<Symbol> &bindings) {
+    if (auto *facts = worker->sharedBindingFacts(bindings); registry && facts)
+      facts->rebound = registry;
+  };
+  markRebound(worker->valueFlow.namespaceSymbols);
+  for (const auto &[_, bindings] : worker->valueFlow.internalNamespaceSymbols)
+    markRebound(bindings);
+  for (const auto &[_, bindings] : worker->valueFlow.visibleNamespaceSymbols)
+    markRebound(bindings);
   // Cached summaries must describe global pointer inputs, not freeze the
   // first caller's current value. Direct addresses of globals stay ordinary
   // absolute places; only raw values loaded from their storage are symbolic.
+  const auto programStorage = [](const Symbol &symbol) {
+    return symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+           symbol.bindingKind == SemanticBindingKind::StaticField;
+  };
   const auto seedGlobals = [&](auto &bindings) {
     for (auto &[_, symbol] : bindings)
-      if (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
-          symbol.bindingKind == SemanticBindingKind::StaticField)
+      if (programStorage(symbol))
         worker->seedRawStorageInput(symbol);
   };
-  seedGlobals(worker->valueFlow.namespaceSymbols);
+  // A namespace index is edited only where seeding changes a global, so an
+  // index whose globals already hold their inputs stays shared.
+  using StoredBinding = std::pair<const OwnedDeclarationName, Symbol>;
+  const auto seedIndexGlobals = [&](DeclarationIndex<Symbol> &bindings) {
+    if (!bindings.sharesStorage()) {
+      seedGlobals(bindings);
+      return;
+    }
+    std::vector<const StoredBinding *> globals;
+    if (auto *facts = worker->sharedBindingFacts(bindings)) {
+      for (const void *stored : worker->sharedProgramStorage(bindings, *facts))
+        globals.push_back(static_cast<const StoredBinding *>(stored));
+    } else {
+      for (const auto &entry : std::as_const(bindings))
+        if (programStorage(entry.second))
+          globals.push_back(&entry);
+    }
+    std::vector<std::pair<const OwnedDeclarationName *, RawStorageInputFacts>>
+        changed;
+    for (const auto *global : globals) {
+      const Symbol &symbol = global->second;
+      auto facts = worker->rawStorageInputFacts(symbol);
+      if (facts && (facts->origins != symbol.rawPointerOrigins ||
+                    facts->fields != symbol.rawPointerFields))
+        changed.emplace_back(&global->first, std::move(*facts));
+    }
+    // Copy the shared storage before the first edit. Names stay valid: the
+    // copy leaves the shared storage to its other holders.
+    for (auto &[name, facts] : changed) {
+      Symbol &symbol = bindings.find(*name)->second;
+      symbol.rawPointerOrigins = std::move(facts.origins);
+      symbol.rawPointerFields = std::move(facts.fields);
+    }
+  };
+  seedIndexGlobals(worker->valueFlow.namespaceSymbols);
   seedGlobals(worker->valueFlow.staticFieldSymbols);
   for (auto &[_, bindings] : worker->valueFlow.internalNamespaceSymbols)
-    seedGlobals(bindings);
+    seedIndexGlobals(bindings);
   for (auto &[_, bindings] : worker->valueFlow.visibleNamespaceSymbols)
-    seedGlobals(bindings);
+    seedIndexGlobals(bindings);
   for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
     if (declaredBeforeCurrent(definition))
       worker->constexprDefinitionsAnalyzed.insert(definition);
@@ -11300,7 +11386,6 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.bodyContext = requestSession.bodyContext;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
-  worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;
   const auto analysis =
       entry->defaultOwner
@@ -11316,10 +11401,11 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   state->idleCatalogs.push_back(std::move(worker->catalog));
   // Keep a few released copies for the next sibling query; deeper nesting
   // would otherwise retain one whole-program copy per level.
-  if (state->idleValueFlows.size() < 4)
-    state->idleValueFlows.push_back(std::move(worker->valueFlow));
   if (state->idleModels.size() < 4)
     state->idleModels.push_back(std::move(worker->semanticModel));
+  // Release the namespace indexes the worker still shares before this
+  // analyzer continues.
+  worker.reset();
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)
@@ -11329,6 +11415,9 @@ auto SemanticVisitor::Impl::runRawResultQuery(
       }
   entry->complete = true;
   --state->depth;
+  // Every namespace index now has its only holder again.
+  if (state->depth == 0)
+    state->sharedBindingFacts.clear();
   entry->cost = state->charged - entry->chargedAt;
   entry->height = state->deepest - level + 1;
   state->deepest = std::max(outerDeepest, state->deepest);
@@ -11425,6 +11514,35 @@ auto SemanticVisitor::Impl::rawStorageInputKeys()
   return keys;
 }
 
+auto SemanticVisitor::Impl::sharedBindingFacts(
+    const DeclarationIndex<Symbol> &bindings) const
+    -> RawResultQueryState::SharedBindingFacts * {
+  const auto &state = requestSession.rawResultQueries;
+  const auto version = bindings.sharedVersion();
+  if (!state || !version)
+    return nullptr;
+  return &state->sharedBindingFacts[*version];
+}
+
+auto SemanticVisitor::Impl::sharedProgramStorage(
+    const DeclarationIndex<Symbol> &bindings,
+    RawResultQueryState::SharedBindingFacts &facts)
+    -> const std::vector<const void *> & {
+  if (!facts.programStorage) {
+    auto &entries = facts.programStorage.emplace();
+    for (const auto &entry : bindings) {
+      const Symbol &symbol = entry.second;
+      if (symbol.bindingKind != SemanticBindingKind::GlobalVariable &&
+          symbol.bindingKind != SemanticBindingKind::StaticField)
+        continue;
+      entries.push_back(&entry);
+      facts.rawPointerStorage =
+          facts.rawPointerStorage || !rawPointerFieldPaths(symbol.type).empty();
+    }
+  }
+  return *facts.programStorage;
+}
+
 auto SemanticVisitor::Impl::rawDeclarationView() const
     -> std::vector<std::size_t> {
   // Body analysis publishes program-level bindings and completes their types
@@ -11435,8 +11553,19 @@ auto SemanticVisitor::Impl::rawDeclarationView() const
   std::size_t unknown = 0;
   const auto add = [&](const DeclarationIndex<Symbol> &bindings) {
     view.push_back(bindings.size());
-    for (const auto &[_, symbol] : bindings)
-      unknown += symbol.type.kind == SemanticType::Unknown ? 1 : 0;
+    const auto count = [&] {
+      std::size_t result = 0;
+      for (const auto &[_, symbol] : bindings)
+        result += symbol.type.kind == SemanticType::Unknown ? 1 : 0;
+      return result;
+    };
+    if (auto *facts = sharedBindingFacts(bindings)) {
+      if (!facts->unknownTypes)
+        facts->unknownTypes = count();
+      unknown += *facts->unknownTypes;
+    } else {
+      unknown += count();
+    }
   };
   const auto addUnits = [&](const auto &units) {
     std::vector<SourceUnitId> ids;
@@ -11893,12 +12022,33 @@ auto SemanticVisitor::Impl::saveRawProgramStorage()
   namespaceIndexGenerations(generations, nullptr);
   if (generations != rawStorageBindingGenerations) {
     rawStorageBindings.clear();
-    const auto collect = [&](auto &bindings,
+    const auto programStorage = [](const Symbol &symbol) {
+      return symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+             symbol.bindingKind == SemanticBindingKind::StaticField;
+    };
+    const auto collect = [&](DeclarationIndex<Symbol> &bindings,
                              RawProgramStorageState::Namespace space,
                              SourceUnitId unit = 0) {
+      // Storage the result below can return is written through its symbol,
+      // so it must be this analyzer's own. An index still shared with a
+      // suspended analyzer is left shared when none of its globals has raw
+      // pointer storage: their bindings then never reach the result, as
+      // their types change only through an edit, which first detaches the
+      // index and so changes its generation.
+      if (auto *facts = sharedBindingFacts(bindings)) {
+        const auto &entries = sharedProgramStorage(bindings, *facts);
+        if (!facts->rawPointerStorage) {
+          for (const void *stored : entries) {
+            const auto &entry = *static_cast<
+                const std::pair<const OwnedDeclarationName, Symbol> *>(stored);
+            rawStorageBindings.push_back({const_cast<Symbol *>(&entry.second),
+                                          space, unit, entry.first});
+          }
+          return;
+        }
+      }
       for (auto &[name, symbol] : bindings)
-        if (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
-            symbol.bindingKind == SemanticBindingKind::StaticField)
+        if (programStorage(symbol))
           rawStorageBindings.push_back({&symbol, space, unit, name});
     };
     collect(valueFlow.namespaceSymbols,
@@ -11910,11 +12060,21 @@ auto SemanticVisitor::Impl::saveRawProgramStorage()
     rawStorageBindingGenerations = generations;
   }
   std::vector<RawProgramStorageState> result;
+  // A global is bound once per index that sees it; decide each type once.
+  std::vector<std::pair<SemanticType, bool>> rawStorageTypes;
+  const auto hasRawStorage = [&](const SemanticType &type) {
+    for (const auto &[known, raw] : rawStorageTypes)
+      if (known == type)
+        return raw;
+    const bool raw = !rawPointerFieldPaths(type).empty();
+    rawStorageTypes.emplace_back(type, raw);
+    return raw;
+  };
   for (const auto &binding : rawStorageBindings) {
     Symbol &symbol = *binding.symbol;
     if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
          symbol.bindingKind == SemanticBindingKind::StaticField) &&
-        !rawPointerFieldPaths(symbol.type).empty())
+        hasRawStorage(symbol.type))
       result.push_back({&symbol, binding.space, binding.unit, binding.name,
                         symbol.rawPointerOrigins, symbol.rawPointerFields});
   }

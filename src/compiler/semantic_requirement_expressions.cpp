@@ -280,10 +280,12 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker(
         found->second = std::make_shared<RawResultQuery>(*entry);
       return found->second;
     };
-    for (const auto &entry : queries->entries)
-      copy->entries.push_back(clone(entry));
-    for (const auto &entry : queries->cachedRoots)
-      copy->cachedRoots.push_back(clone(entry));
+    // Only the running family's entries (and the collecting one among them)
+    // are still written. Interned evidence and cached roots are complete, and
+    // a root is reused only at the top level, which never charges it; share
+    // them, as the independent results below.
+    copy->entries = queries->entries;
+    copy->cachedRoots = queries->cachedRoots;
     for (const auto &entry : queries->familyEntries)
       copy->familyEntries.push_back(clone(entry));
     // Completed independent results are immutable; share them.

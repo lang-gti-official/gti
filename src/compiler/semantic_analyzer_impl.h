@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -1496,12 +1497,25 @@ private:
     // analysis, so each snapshot has the same content; a later worker takes a
     // released one instead of re-registering every callable declaration.
     std::vector<SemanticCatalog> idleCatalogs;
-    // Value-flow and model storage released by completed query workers. A
-    // worker copy-assigns the caller's current state into one, so its content
-    // is exactly a fresh copy; reusing the storage avoids rebuilding and
-    // freeing every namespace index, symbol and overload list per query.
-    std::vector<ValueFlowState> idleValueFlows;
+    // Model storage released by completed query workers. A worker
+    // copy-assigns the caller's current model into one, so its content is
+    // exactly a fresh copy; reusing the storage avoids rebuilding and freeing
+    // it per query. Value-flow namespace indexes are shared instead.
     std::vector<SemanticModel> idleModels;
+    // Facts derived from a namespace index's storage while query workers
+    // share it unchanged (DeclarationIndex::sharedVersion), so that each
+    // worker need not rescan every index of the visible program. A top-level
+    // query's end returns all storage to its only holder; the facts are then
+    // discarded.
+    struct SharedBindingFacts {
+      std::optional<std::size_t> unknownTypes;
+      // Globals and static fields, in index order.
+      std::optional<std::vector<const void *>> programStorage;
+      bool rawPointerStorage = false;
+      // The sealed callable registry no symbol needs rebinding against.
+      std::shared_ptr<const void> rebound;
+    };
+    std::unordered_map<std::uint64_t, SharedBindingFacts> sharedBindingFacts;
   };
 
   struct CompleteReturnQuery {
@@ -5265,6 +5279,14 @@ private:
   reuseRawResult(const RawResultQuery &demand, bool topLevel);
   [[nodiscard]] std::vector<RawStorageInputKey> rawStorageInputKeys();
   [[nodiscard]] std::vector<std::size_t> rawDeclarationView() const;
+  // The cached facts for an index while query workers share its storage, or
+  // null.
+  [[nodiscard]] RawResultQueryState::SharedBindingFacts *
+  sharedBindingFacts(const DeclarationIndex<Symbol> &bindings) const;
+  // The globals and static fields of a shared index, in index order.
+  [[nodiscard]] const std::vector<const void *> &
+  sharedProgramStorage(const DeclarationIndex<Symbol> &bindings,
+                       RawResultQueryState::SharedBindingFacts &facts);
   void noteRawDemand(const RawResultQuery &demand, bool withReach);
   // Counts, on this thread, every decision that read which constexpr and
   // procedural definitions are available. That set grows as the request
@@ -7037,6 +7059,17 @@ private:
   // source-result summary describes the storage rather than one caller's
   // current value.
   void seedRawStorageInput(Symbol &symbol);
+  // The symbolic raw-pointer facts seedRawStorageInput gives a binding at
+  // this place, or nothing when the place has no identity.
+  struct RawStorageInputFacts {
+    std::vector<RawPointerOrigin> origins;
+    std::vector<ProjectedRawPointerOrigins> fields;
+  };
+  [[nodiscard]] std::optional<RawStorageInputFacts>
+  rawStorageInputFacts(const PlaceKey &place, const Symbol &symbol);
+  // The facts for a global or static field binding.
+  [[nodiscard]] std::optional<RawStorageInputFacts>
+  rawStorageInputFacts(const Symbol &symbol);
   void preserveRawCallWrites(const Call &call);
   void invalidateRawCallOrigins(const Call *call,
                                 const RawInvocation *invocation = nullptr);
@@ -7335,6 +7368,8 @@ private:
     SemanticCatalog(const SemanticCatalog &other);
     SemanticCatalog &operator=(const SemanticCatalog &other);
     void rebindCallables(Symbol &symbol) const;
+    // Whether rebindCallables(symbol) would change it.
+    [[nodiscard]] bool rebindsCallables(const Symbol &symbol) const;
     template <typename Visit> void forEachSymbol(Visit visit);
     void rebindCallables();
 
@@ -7371,6 +7406,12 @@ private:
     callable(const FunctionDecl &syntax) const {
       const auto found = callables().bySyntax.find(&syntax);
       return found == callables().bySyntax.end() ? nullptr : found->second;
+    }
+
+    // Identifies the registry for as long as the handle is held; sealed
+    // snapshots share their source's.
+    [[nodiscard]] std::shared_ptr<const void> callableRegistryIdentity() const {
+      return callableRegistry;
     }
 
   private:
@@ -7452,7 +7493,33 @@ private:
     // summaries and call writes see them.
     std::unordered_map<const VariableDecl *, Symbol> staticFieldSymbols;
 
-    void rebindCallables(const SemanticCatalog &catalog);
+    // `settled` names indexes known to need no edit for this catalog.
+    void
+    rebindCallables(const SemanticCatalog &catalog,
+                    const std::function<bool(const DeclarationIndex<Symbol> &)>
+                        &settled = {});
+
+    // Copy every fact, but let the namespace indexes read the source's
+    // storage until this state first edits each one (see
+    // DeclarationIndex::shareFrom). The source must stay untouched until this
+    // state is released, cleared or reassigned. Keep in step with the
+    // members above.
+    void assignSharingNamespaces(const ValueFlowState &source) {
+      scopes = source.scopes;
+      rawOperatorResults = source.rawOperatorResults;
+      controlFlow = source.controlFlow;
+      rawPointerLoops = source.rawPointerLoops;
+      nextRawPointerLoop = source.nextRawPointerLoop;
+      namespaceSymbols.shareFrom(source.namespaceSymbols);
+      const auto shareUnits = [](auto &units, const auto &sourceUnits) {
+        units.clear();
+        for (const auto &[unit, bindings] : sourceUnits)
+          units[unit].shareFrom(bindings);
+      };
+      shareUnits(internalNamespaceSymbols, source.internalNamespaceSymbols);
+      shareUnits(visibleNamespaceSymbols, source.visibleNamespaceSymbols);
+      staticFieldSymbols = source.staticFieldSymbols;
+    }
 
     void clear() {
       scopes.clear();

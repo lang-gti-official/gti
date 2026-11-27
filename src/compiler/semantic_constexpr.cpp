@@ -404,27 +404,42 @@ SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
   *this = other;
 }
 
+namespace {
+template <class Catalog, class Candidate>
+auto ownedCallableRecord(const Catalog &catalog, const Candidate &candidate)
+    -> decltype(candidate.declarationRecord) {
+  if (candidate.declarationRecord == nullptr)
+    return candidate.declarationRecord;
+  const auto &index = catalog.callables().bySyntax;
+  const auto owned = index.find(candidate.declarationRecord->syntax);
+  if (owned == index.end())
+    throw std::logic_error(
+        "copied callable candidate lacks an owned declaration");
+  return owned->second;
+}
+} // namespace
+
+auto SemanticVisitor::Impl::SemanticCatalog::rebindsCallables(
+    const Symbol &symbol) const -> bool {
+  return std::any_of(symbol.overloads.begin(), symbol.overloads.end(),
+                     [&](const auto &candidate) {
+                       return ownedCallableRecord(*this, candidate) !=
+                              candidate.declarationRecord;
+                     }) ||
+         (sealed && symbol.overloads.freezable());
+}
+
 auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables(
     Symbol &symbol) const -> void {
-  const auto resolve =
-      [&](const CallableCandidate &candidate) -> const CallableDeclaration * {
-    if (candidate.declarationRecord == nullptr)
-      return candidate.declarationRecord;
-    const auto &index = callables().bySyntax;
-    const auto owned = index.find(candidate.declarationRecord->syntax);
-    if (owned == index.end())
-      throw std::logic_error(
-          "copied callable candidate lacks an owned declaration");
-    return owned->second;
-  };
   // A sealed worker usually has the source's very same records. Editing
   // even one already-bound frozen overload set would copy every signature.
   if (std::any_of(symbol.overloads.begin(), symbol.overloads.end(),
                   [&](const auto &candidate) {
-                    return resolve(candidate) != candidate.declarationRecord;
+                    return ownedCallableRecord(*this, candidate) !=
+                           candidate.declarationRecord;
                   })) {
     for (auto &candidate : symbol.overloads.edit())
-      candidate.declarationRecord = resolve(candidate);
+      candidate.declarationRecord = ownedCallableRecord(*this, candidate);
   }
   if (sealed)
     symbol.overloads.freeze();
@@ -460,7 +475,9 @@ auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables() -> void {
 }
 
 auto SemanticVisitor::Impl::ValueFlowState::rebindCallables(
-    const SemanticCatalog &catalog) -> void {
+    const SemanticCatalog &catalog,
+    const std::function<bool(const DeclarationIndex<Symbol> &)> &settled)
+    -> void {
   const auto rebind = [&](Symbol &symbol) { catalog.rebindCallables(symbol); };
   const auto rebindScopes = [&](ScopeStack &stack) {
     for (auto &scope : stack)
@@ -474,11 +491,20 @@ auto SemanticVisitor::Impl::ValueFlowState::rebindCallables(
     for (auto &state : context.continueStates)
       rebindScopes(state);
   }
-  namespaceSymbols.forEachValue(rebind);
+  // Edit only the symbols that change, so namespace indexes still shared
+  // with a suspended analyzer stay shared.
+  const auto changes = [&](const Symbol &symbol) {
+    return catalog.rebindsCallables(symbol);
+  };
+  const auto rebindIndex = [&](DeclarationIndex<Symbol> &symbols) {
+    if (!settled || !settled(symbols))
+      symbols.editValuesIf(changes, rebind);
+  };
+  rebindIndex(namespaceSymbols);
   for (auto &[_, symbols] : internalNamespaceSymbols)
-    symbols.forEachValue(rebind);
+    rebindIndex(symbols);
   for (auto &[_, symbols] : visibleNamespaceSymbols)
-    symbols.forEachValue(rebind);
+    rebindIndex(symbols);
   for (auto &[_, symbol] : staticFieldSymbols)
     rebind(symbol);
 }

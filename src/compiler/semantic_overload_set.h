@@ -37,6 +37,9 @@ public:
     return owned;
   }
 
+  // Whether freeze() would change this set.
+  bool freezable() const { return !owned.empty(); }
+
   // All writers have finished with this set at the sealing boundary.
   void freeze() {
     if (!owned.empty())
