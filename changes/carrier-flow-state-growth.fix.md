@@ -1,0 +1,1 @@
+Stop borrow checking of a long function body from copying its whole flow state at every block, which had made compile time and memory grow with the square of the body's length: a 3,240-statement body that no longer finished in five minutes compiles in about 20 seconds.
