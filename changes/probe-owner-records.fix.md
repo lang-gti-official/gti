@@ -1,0 +1,1 @@
+A constraint check or typed-macro probe inside a long function body no longer copies every effect and C-thread call use the body has recorded so far, which made each check cost the length of the body.

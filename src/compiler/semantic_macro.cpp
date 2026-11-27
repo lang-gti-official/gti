@@ -767,10 +767,18 @@ auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
   // the caller's pending cleanup. Avoid copying those growing caches, but
   // keep ordinary matched session/model copies unchanged. No semantic work
   // runs while this guard temporarily removes the caller's expression state.
+  // The effects the enclosing body has recorded so far and the request's
+  // C-thread call uses grow with every call analysed, and a probe reads them
+  // only through ranges it opens itself: its expression cache starts empty,
+  // and its results are never published. It starts with none of either, so a
+  // constraint check does not cost the length of the body around it.
   struct RestoreCallerExpressionState {
     RequestSessionContext &caller;
     ProgramExpressionCache expressionCache;
     std::vector<ProgramFullExpressionState> frames;
+    ProgramEffectSummary *ownerEffects = nullptr;
+    ProgramEffectSummary heldEffects;
+    std::vector<CThreadCallUse> heldCThreadCallUses;
 
     explicit RestoreCallerExpressionState(RequestSessionContext &caller)
         : caller(caller) {
@@ -778,6 +786,14 @@ auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
       static_assert(noexcept(frames.swap(caller.fullExpressionStates)));
       std::swap(expressionCache, caller.programExpressionCache);
       frames.swap(caller.fullExpressionStates);
+      const auto found =
+          caller.programEffects.find(caller.currentProgramEffectOwner);
+      if (found != caller.programEffects.end()) {
+        ownerEffects = &found->second;
+        std::swap(heldEffects, *ownerEffects);
+        ownerEffects->invalidBody = heldEffects.invalidBody;
+      }
+      heldCThreadCallUses.swap(caller.cThreadCallUses);
     }
     RestoreCallerExpressionState(const RestoreCallerExpressionState &) = delete;
     RestoreCallerExpressionState &
@@ -785,6 +801,9 @@ auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
     ~RestoreCallerExpressionState() noexcept {
       std::swap(expressionCache, caller.programExpressionCache);
       frames.swap(caller.fullExpressionStates);
+      if (ownerEffects != nullptr)
+        std::swap(heldEffects, *ownerEffects);
+      heldCThreadCallUses.swap(caller.cThreadCallUses);
     }
   } restore(requestSession);
   // Copying context is value/container cloning, not semantic analysis. Its
