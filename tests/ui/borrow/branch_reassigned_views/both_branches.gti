@@ -1,0 +1,19 @@
+// One branch keeps the formal and the other takes a sub-view of it; the join holds both owners.
+//@ run-pass
+import std.string_view;
+
+bool select(std::string_view entry, bool whole, std::string_view expected) {
+  mut std::string_view value = entry.substr(2u64);
+  if (whole) {
+    value = entry;
+  } else {
+    value = entry.substr(1u64);
+  }
+  return value == expected;
+}
+
+int main() {
+  if (!select("xtrue", true, "xtrue")) return 1;
+  if (!select("xtrue", false, "true")) return 2;
+  return 0;
+}

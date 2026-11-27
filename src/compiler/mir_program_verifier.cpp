@@ -25786,9 +25786,10 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       return entry.result;
   auto result =
       mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr);
-  recent.push_front({program, result});
-  if (recent.size() > 2)
+  // Release the evicted snapshot before allocating its whole-program successor.
+  if (recent.size() == 2)
     recent.pop_back();
+  recent.push_front({program, result});
   return result;
 }
 

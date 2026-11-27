@@ -1,6 +1,7 @@
 #include "cthread_internal.h"
 #include "gti/cthread.h"
 #include "gti/runtime_thread.hpp"
+#include "native_thread.h"
 #include "thread_mutex.h"
 
 #include <atomic>
@@ -9,7 +10,6 @@
 #include <mutex>
 #include <new>
 #include <system_error>
-#include <thread>
 #include <unordered_map>
 
 namespace gti::runtime::detail {
@@ -19,7 +19,8 @@ enum class RuntimePhase { Uninitialized, Running, Stopping, Stopped };
 enum class EntryPhase { Registered, Entered, Left };
 
 struct Worker {
-  std::thread thread;
+  NativeThread thread;
+  void *context = nullptr;
   CThreadHandle handle = 0;
   CThreadEntry entry = nullptr;
   std::int32_t result = 0;
@@ -29,7 +30,6 @@ struct Worker {
 struct Runtime {
   StaticThreadMutex mutex;
   std::atomic<RuntimePhase> phase{RuntimePhase::Uninitialized};
-  std::thread::id owner;
   std::unordered_map<CThreadHandle, std::unique_ptr<Worker>> workers;
 };
 
@@ -80,14 +80,15 @@ bool consumeFault(CThreadTestFault expected) noexcept {
                                            std::memory_order_acquire);
 }
 
-void runWorker(Worker &worker, void *context) noexcept {
+void *runWorker(void *opaque) noexcept {
+  auto &worker = *static_cast<Worker *>(opaque);
   if (attachment.worker != nullptr || currentHandle != 0) {
     std::terminate();
   }
   currentHandle = worker.handle;
   attachment = {.worker = &worker};
   try {
-    worker.result = worker.entry(context);
+    worker.result = worker.entry(worker.context);
   } catch (...) {
     // This is an integrity firewall, not GTI failure transport. The generated
     // adapter must contain defined failures after its MIR cleanup completes.
@@ -99,6 +100,7 @@ void runWorker(Worker &worker, void *context) noexcept {
     std::terminate();
   }
   attachment = {};
+  return nullptr;
 }
 
 } // namespace
@@ -159,7 +161,7 @@ bool enterCOnceInitializer(COnceInitializer initializer) noexcept {
   const std::lock_guard lock(state.mutex);
   if ((state.phase != RuntimePhase::Running &&
        state.phase != RuntimePhase::Stopping) ||
-      (state.owner != std::this_thread::get_id() && managedDepth == 0 &&
+      (!initialRuntimeThread && managedDepth == 0 &&
        (attachment.worker == nullptr ||
         attachment.phase != EntryPhase::Entered))) {
     return false;
@@ -197,7 +199,6 @@ CThreadStatus beginCThreadRuntime() noexcept {
     return CThreadStatus::Error;
   }
   state.phase = RuntimePhase::Running;
-  state.owner = std::this_thread::get_id();
   initialRuntimeThread = true;
   return CThreadStatus::Success;
 }
@@ -206,8 +207,7 @@ CThreadStatus shutdownCThreadRuntime() noexcept {
   Runtime &state = runtime();
   const std::lock_guard lock(state.mutex);
   if (state.phase == RuntimePhase::Uninitialized ||
-      state.phase == RuntimePhase::Stopped ||
-      state.owner != std::this_thread::get_id()) {
+      state.phase == RuntimePhase::Stopped || !initialRuntimeThread) {
     return CThreadStatus::Error;
   }
   state.phase = RuntimePhase::Stopping;
@@ -240,6 +240,7 @@ CThreadStatus createCThread(CThreadHandle *output, CThreadEntry entry,
     auto worker = std::make_unique<Worker>();
     worker->handle = handle;
     worker->entry = entry;
+    worker->context = context;
     Worker *published = worker.get();
     state.workers.emplace(handle, std::move(worker));
     if (consumeFault(CThreadTestFault::CreateResourceUnavailable)) {
@@ -248,8 +249,7 @@ CThreadStatus createCThread(CThreadHandle *output, CThreadEntry entry,
     }
     // Publish in the registry before starting the native thread. No operation
     // that can throw may follow successful native creation.
-    published->thread =
-        std::thread([published, context] { runWorker(*published, context); });
+    published->thread.start(runWorker, published);
   } catch (const std::bad_alloc &) {
     state.workers.erase(handle);
     return CThreadStatus::NoMemory;
@@ -274,7 +274,7 @@ CThreadStatus joinCThread(CThreadHandle handle, std::int32_t *result) noexcept {
     if (worker->joining) {
       return CThreadStatus::Busy;
     }
-    if (worker->thread.get_id() == std::this_thread::get_id()) {
+    if (currentHandle == handle) {
       return CThreadStatus::Error;
     }
     worker->joining = true;

@@ -104,6 +104,24 @@ FrontendResult analyze(const CompilationRequest &request,
   return finish(std::move(result));
 }
 
+LoweredProgramBuild sealBackendInput(const CompilationRequest &request,
+                                     FrontendResult frontend,
+                                     OptimizedProgram optimizedProgram) {
+  const PhaseTimeScope timeScope("gti-lowered-program");
+  // The pipeline verified its input and the coherence of its output on
+  // exactly these programs and records; the builder need not repeat them.
+  const OptimizationReport &report = optimizedProgram.report;
+  const LoweredProgramVerifiedInputs verified{
+      .sourceMirVerified =
+          report.verificationEnabled && report.inputVerification.valid(),
+      .optimizationCoherenceVerified =
+          report.verificationEnabled && report.outputVerification.valid()};
+  return LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir,
+      optimizedProgram.sourceMir, std::move(optimizedProgram.mir),
+      optimizedProgram.report.transformations, request.target(), verified);
+}
+
 } // namespace
 
 FrontendResult detail::analyzeForArtifact(const CompilationRequest &request,
@@ -169,14 +187,15 @@ CompilationResult detail::generateArtifact(const CompilationRequest &request,
     // A backend name is presentation metadata, not permission to let a
     // backend exception escape the reusable compilation boundary.
   }
+  const SourceUnit *entry = std::as_const(frontend.sourceGraph)
+                                .findUnit(frontend.sourceGraph.entryUnit());
+  const SourceSpan entrySpan{
+      entry ? entry->path.string() : request.entry().string(), 0, 0, 1};
+  result.sources = std::move(frontend.sources);
+  result.diagnostics = std::move(frontend.diagnostics);
   const auto backendFailure = [&](std::string detail) {
-    const SourceUnit *entry = std::as_const(frontend.sourceGraph)
-                                  .findUnit(frontend.sourceGraph.entryUnit());
     Diagnostic diagnostic = makeDiagnostic(
-        "GTI-B0001", DiagnosticPhase::Backend,
-        SourceSpan{entry == nullptr ? request.entry().string()
-                                    : entry->path.string(),
-                   0, 0, 1},
+        "GTI-B0001", DiagnosticPhase::Backend, entrySpan,
         "Internal compiler error: backend failed while generating a "
         "representation.");
     diagnostic.hints.emplace_back(
@@ -188,46 +207,25 @@ CompilationResult detail::generateArtifact(const CompilationRequest &request,
     result.backendFailureDetails = "Backend: " + backendName +
                                    "\nStage: representation generation\n" +
                                    "Detail: " + detail + "\n";
-    result.sources = std::move(frontend.sources);
-    result.diagnostics = std::move(frontend.diagnostics);
     result.diagnostics.emplace_back(std::move(diagnostic));
     return result;
   };
   const auto backendLimitation = [&](const BackendUnsupportedError &error) {
-    const SourceUnit *entry = std::as_const(frontend.sourceGraph)
-                                  .findUnit(frontend.sourceGraph.entryUnit());
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-B0003", DiagnosticPhase::Backend,
-        error.location().value_or(SourceSpan{
-            entry == nullptr ? request.entry().string() : entry->path.string(),
-            0, 0, 1}),
-        "The selected backend does not yet support this valid "
-        "GTI program: " +
-            std::string(error.what()));
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-B0003", DiagnosticPhase::Backend,
+                       error.location().value_or(entrySpan),
+                       "The selected backend does not yet support this valid "
+                       "GTI program: " +
+                           std::string(error.what()));
     result.status = CompilationStatus::BackendFailure;
-    result.sources = std::move(frontend.sources);
-    result.diagnostics = std::move(frontend.diagnostics);
     result.diagnostics.emplace_back(std::move(diagnostic));
     return result;
   };
 
   const ProgressScope emissionProgress(progress, ProgressPhase::Emitting,
                                        backendName);
-  LoweredProgramBuild loweredBuild = [&] {
-    const PhaseTimeScope timeScope("gti-lowered-program");
-    // The pipeline verified its input and the coherence of its output on
-    // exactly these programs and records; the builder need not repeat them.
-    const OptimizationReport &report = optimizedProgram.report;
-    const LoweredProgramVerifiedInputs verified{
-        .sourceMirVerified =
-            report.verificationEnabled && report.inputVerification.valid(),
-        .optimizationCoherenceVerified =
-            report.verificationEnabled && report.outputVerification.valid()};
-    return LoweredProgramBuilder().build(
-        frontend.program, frontend.semantics, frontend.hir,
-        optimizedProgram.sourceMir, optimizedProgram.mir,
-        optimizedProgram.report.transformations, request.target(), verified);
-  }();
+  LoweredProgramBuild loweredBuild = sealBackendInput(
+      request, std::move(frontend), std::move(optimizedProgram));
   if (!loweredBuild.valid()) {
     const std::string detail =
         loweredBuild.issues.empty()
@@ -247,8 +245,6 @@ CompilationResult detail::generateArtifact(const CompilationRequest &request,
   } catch (...) {
     return backendFailure("a non-standard exception was thrown");
   }
-  result.sources = std::move(frontend.sources);
-  result.diagnostics = std::move(frontend.diagnostics);
   result.status = CompilationStatus::Success;
   return result;
 }
