@@ -3269,6 +3269,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                        });
   };
   std::unordered_set<MirLoanId> replacedDependencies;
+  std::unordered_set<MirLoanId> directSubviewStores;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
       if (instruction.tombstone ||
@@ -3276,8 +3277,28 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
            instruction.kind != MirInstructionKind::Call))
         continue;
       const auto inputs = carried.storeInputs.find(instruction.id);
-      if (inputs == carried.storeInputs.end() || !inputs->second)
+      if (inputs == carried.storeInputs.end() || !inputs->second) {
+        // Even when a called owner has unknown contents, the value stored
+        // here carries the exact shared loan published by its SSA producer.
+        // Only its join and cleanup may be conditional. This does not supply
+        // the missing contents for a read, escape or subsequent reborrow.
+        if (instruction.kind == MirInstructionKind::Assign &&
+            instruction.destination && instruction.operands.size() == 1) {
+          const auto &input = instruction.operands.front();
+          const auto *target = body.findPlace(*instruction.destination);
+          if (target && target->root == MirPlaceRootKind::Binding &&
+              target->projections.empty() &&
+              target->type.kind == SemanticType::StringView &&
+              input.kind == MirOperandKind::Value &&
+              input.type == target->type) {
+            const auto *producer = mir_detail::definitionFor(body, input.value);
+            if (producer && producer->kind == MirInstructionKind::Call &&
+                producer->loan && plainStoredDependency(*producer->loan))
+              directSubviewStores.insert(*producer->loan);
+          }
+        }
         continue;
+      }
       for (const auto id : *inputs->second) {
         if (plainStoredDependency(id))
           replacedDependencies.insert(id);
@@ -5225,6 +5246,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
         const MirLoanFlowState before = active[loan - 1];
         const bool conditional = replacedDependencies.contains(loan) ||
+                                 directSubviewStores.contains(loan) ||
                                  (conditionalDependencies.contains(loan) &&
                                   !body.loans[loan - 1].entry &&
                                   body.loans[loan - 1].carriers.empty());
@@ -7178,13 +7200,14 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     const auto outgoing = snapshot(std::move(outgoingLoans));
     const auto validJoin = [&](MirLoanId loan, MirLoanFlowState before,
                                MirLoanFlowState incoming) {
+      const bool sharedStore = replacedDependencies.contains(loan) ||
+                               directSubviewStores.contains(loan);
       return before == incoming ||
-             ((conditionalDependencies.contains(loan) ||
-               replacedDependencies.contains(loan)) &&
+             ((conditionalDependencies.contains(loan) || sharedStore) &&
               !isParkedLoan(before) && !isParkedLoan(incoming) &&
               !loanFlowContains(before, MirLoanFlowState::Reserved) &&
               !loanFlowContains(incoming, MirLoanFlowState::Reserved) &&
-              (!replacedDependencies.contains(loan) ||
+              (!sharedStore ||
                (!loanFlowContains(before, MirLoanFlowState::Suspended) &&
                 !loanFlowContains(incoming, MirLoanFlowState::Suspended))));
     };

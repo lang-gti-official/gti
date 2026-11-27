@@ -3622,7 +3622,12 @@ remaining candidates. At a completed loop exit, lowering can request the
 existing carrier-flow solver's converged block-entry facts rather than restore
 only the pre-loop mapping. The query seals unfinished frontiers in an analysis
 copy of the lowered prefix; it creates no borrow and changes no executable
-edge. Unknown roots cannot preserve an old exact-group claim. Final whole-body
+edge. When the nested contents of a factory result are unknown, a direct
+assignment of a shared text result still identifies the physical loan from
+its SSA producer for conditional cleanup. Lowering can preserve the incoming
+groups of a local text descriptor across a loop that never touches it if its
+writable storage identity has stayed private. A possibly changed descriptor
+with unknown contents loses its previous exact-group claim. Final whole-body
 verification still establishes origin, activity and carried-value availability,
 including later enclosing-loop backedges. Block-entry maps are collected only
 when requested, avoiding their storage in ordinary verification queries.
