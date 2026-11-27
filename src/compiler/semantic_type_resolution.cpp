@@ -8751,6 +8751,15 @@ auto SemanticVisitor::Impl::substituteSymbol(
     const Symbol &symbol, const SemanticType &objectType) const -> Symbol {
   Symbol result = symbol;
   const GenericSubstitution substitution = classSubstitution(objectType);
+  // Registration precedes evaluation of named constexpr array extents. Use
+  // the checked declaration binding once its concrete field type is known.
+  if (result.type == SemanticType::Unknown && symbol.variableDeclaration &&
+      symbol.ownerClass &&
+      !symbol.variableDeclaration->type().arrayExtents.empty()) {
+    if (const BindingInfo *binding =
+            semanticModel.findBinding(*symbol.variableDeclaration))
+      result.type = binding->type;
+  }
   result.type = substituteType(result.type, substitution);
   for (CallableCandidate &overload : result.overloads.edit()) {
     overload.returnType = substituteType(overload.returnType, substitution);

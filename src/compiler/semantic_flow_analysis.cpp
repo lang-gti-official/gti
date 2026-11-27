@@ -9231,6 +9231,44 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
     }
     return nullptr;
   }
+  // Bodies may project a field before visiting its declaring class. Its
+  // constant extent belongs to that class's lexical scope, not the caller's
+  // locals. Retain the open field binding so other instantiations can
+  // substitute their own type/value arguments.
+  const Symbol &field = member->symbol;
+  if (field.type == SemanticType::Unknown &&
+      field.bindingKind == SemanticBindingKind::Field &&
+      field.variableDeclaration &&
+      !field.variableDeclaration->type().arrayExtents.empty() &&
+      !semanticModel.findBinding(*field.variableDeclaration)) {
+    const auto open = openClassType(field.ownerClass);
+    auto &worker =
+        stagedWorkerFor(constexprStagingModel(), requestSession.constexprWork);
+    InstanceAnalysisScope scope(
+        worker, {.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                 .declaration = field.ownerClass,
+                 .classTypes = open.arguments,
+                 .classValues = open.valueArguments});
+    worker.prepareInstanceAnalysis();
+    const auto previousOrder =
+        std::exchange(worker.currentDeclarationOrder, currentDeclarationOrder);
+    if (worker.prepareClassInstanceContext(field.ownerClass, open.arguments,
+                                           open.valueArguments)) {
+      const auto &declaration = *field.variableDeclaration;
+      const auto type =
+          worker.typeOf(declaration.type(), declaration.mutability());
+      worker.finishClassInstanceContext();
+      if (type != SemanticType::Unknown) {
+        auto binding =
+            bindingInfo(type, field.assignable ? AccessMode::Mutable
+                                               : AccessMode::ReadOnly);
+        binding.symbol = toolingSymbolFor(field);
+        semanticModel.record(declaration, std::move(binding));
+      }
+    }
+    worker.currentDeclarationOrder = previousOrder;
+    (void)scope.finish();
+  }
   if (!isCompilerTrustedRequester(name) && member->symbol.compilerPrivate) {
     reportCompilerPrivateAccess(name, owner->name.lexeme + "." + name.lexeme);
     return nullptr;
