@@ -8037,6 +8037,14 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     assignRawPointerFields(targetPlace, expr.value().get());
     if (!qualified) {
       if (Symbol *target = resolveMutable(expr.name())) {
+        // A local text slot adopts the provenance of its new value. MIR
+        // tracks the exact loan; expression classification also needs to
+        // know whether a later call can relay owner-dependent text.
+        if (trackedTextSlot) {
+          const auto *source = semanticModel.findExpression(*expr.value());
+          target->retainsDependency =
+              source && source->traits.containsBorrowedState;
+        }
         if (tracksValueState(*target)) {
           const ValueState reinitializeStateBefore =
               targetPlace.projections.empty()

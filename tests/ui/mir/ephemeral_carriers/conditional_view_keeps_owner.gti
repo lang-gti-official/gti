@@ -1,0 +1,10 @@
+// A conditional text assignment keeps its owner borrowed through a later read.
+import std.string;
+
+int main() {
+  mut std::string source{"Copper"};
+  mut std::string_view text = "Default";
+  if (!source.empty()) text = source.view();
+  source.clear();  //~ ERROR GTI-S2017
+  return int(text.size());
+}

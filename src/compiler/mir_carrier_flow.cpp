@@ -2059,6 +2059,33 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
               // physical access capability would tie the result to the callee.
               if (contents && !mirTypeMayHoldDependencies(*contents, {}))
                 return;
+              // A byte view into a shared reference formal is protected by
+              // its result loan. If the formal has no local carrier state,
+              // its referent and the values it retains belong to the caller.
+              // There are no additional local groups to propagate from it.
+              // Preserve tracked input contents and all interior projections.
+              if (instruction.kind == MirInstructionKind::Call &&
+                  instruction.info.type.kind == SemanticType::StringView &&
+                  mirPlainSharedDependency(carrier, false) &&
+                  carrier->additionalDependencies.empty() && origin &&
+                  origin->root == MirPlaceRootKind::Binding &&
+                  origin->projections.size() == 1 &&
+                  origin->projections.front().kind ==
+                      MirProjectionKind::Dereference &&
+                  state.roots.find({origin->root, origin->binding}) ==
+                      state.roots.end() &&
+                  std::any_of(body.places.begin(), body.places.end(),
+                              [&](const MirPlace &formal) {
+                                return formal.root == origin->root &&
+                                       formal.binding == origin->binding &&
+                                       formal.initiallyAvailable &&
+                                       formal.projections.empty() &&
+                                       formal.type.kind ==
+                                           SemanticType::Reference &&
+                                       formal.type.referenceAccess ==
+                                           AccessMode::ReadOnly;
+                              }))
+                return;
               const auto source = storage(body, state, place);
               if (!source) {
                 produced.reset();
