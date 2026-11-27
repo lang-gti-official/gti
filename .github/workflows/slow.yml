@@ -141,14 +141,21 @@ jobs:
           GTI_SHARD_INDEX: ${{ matrix.index }}
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
           GTI_SHARD_TEST_SET: ${{ matrix.set }}
-        run: >-
-          mkdir -p "${RUNNER_TEMP}/shard/gti-test" &&
-          python3 scripts/validation_checks.py shard --build build
-          --test-set "${GTI_SHARD_TEST_SET}"
-          --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
-          --jobs "${GTI_TEST_JOBS}"
-          --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.json"
-          --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.log"
+        # A hosted runner that runs out of memory or disk is lost without an
+        # error. As in the integration shards, the monitor copies free
+        # memory, free disk, the largest processes and the shard log's last
+        # test line into the step log every minute, which survives the loss.
+        run: |
+          mkdir -p "${RUNNER_TEMP}/shard/gti-test"
+          bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.log" &
+          monitor=$!
+          trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT
+          python3 scripts/validation_checks.py shard --build build \
+            --test-set "${GTI_SHARD_TEST_SET}" \
+            --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}" \
+            --jobs "${GTI_TEST_JOBS}" \
+            --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.json" \
+            --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.log"
       - name: Show the shard log on failure
         if: failure()
         env:
