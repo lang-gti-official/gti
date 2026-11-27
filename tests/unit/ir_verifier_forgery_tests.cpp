@@ -5,6 +5,7 @@
 // HIR/MIR copied and corrupted) have no source-level observable. (Moved
 // unchanged from the former compiler_e2e_tests.cpp; its GTI sources also
 // became tests/ui/mir cases.)
+#include "../../src/compiler/mir_verification_session.h"
 #include "gti/ast_printer.h"
 #include "gti/backend.h"
 #include "gti/binary_float.h"
@@ -15,6 +16,7 @@
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
@@ -2604,6 +2606,17 @@ int main(mut int argc, mut arguments_type argv) {
              lang::verifyMirProgram(valid.mir).valid(),
          "HIR and MIR should retain the concrete checked owned-argument "
          "append target and entry adapter contract");
+
+  // Moving reusable bodies out of a seed must publish the same final hosted
+  // entry and append target as lowering from scratch.
+  {
+    lang::MirVerificationCache cache;
+    lang::mir_detail::VerificationSession session(&cache, nullptr);
+    const auto incremental =
+        lang::MirLowerer(&session).lower(valid.hir, valid.failureMetadata);
+    expect(incremental.valid() && incremental.program == valid.mir,
+           "reused lowering rounds must preserve the complete hosted program");
+  }
 
   lang::HirProgram corruptedHosted = valid.hir;
   auto &corruptedHostedPlan =

@@ -3263,6 +3263,14 @@ rebuilds its initialization plan on each round. Reuse ends with the current HIR
 and cleanup-sharing attempt. The assembled program goes through ordinary
 interprocedural verification.
 
+Seed and provisional MIR describe application bodies before the hosted entry
+adapter exists. The final rounds publish the entry declaration and its adapter
+together. Lowering verifies the provisional program in place. It retains the
+seed only while the next round can move bodies out of it, and releases
+provisional MIR after failure effects converge. The whole-program verifier
+caches final snapshots for later consumers. Its two-entry cache evicts the
+oldest snapshot before making a replacement copy.
+
 Across revisions the editor's bounded MIR cache retains two structural facts.
 Dominance depends on the entry and successor lists of a validated CFG.
 Mutual exclusion of full-expression cleanup markers also depends on the
