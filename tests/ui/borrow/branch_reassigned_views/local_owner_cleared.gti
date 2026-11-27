@@ -1,0 +1,14 @@
+// The join keeps every owner: clearing a local string that one path still views is rejected.
+import std.string;
+
+bool viewed(std::string_view entry, bool own) {
+  mut std::string owner = std::string("xyz");
+  mut std::string_view value = entry;
+  if (own) {
+    value = owner.view();
+  }
+  owner.clear();  //~ ERROR GTI-S2017
+  return value == "xyz";
+}
+
+int main() { return viewed("e", true) ? 0 : 1; }

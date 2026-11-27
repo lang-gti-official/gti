@@ -1687,6 +1687,30 @@ private:
     return mirPlainSharedDependency(output.findLoan(id), allowLifecycleBound);
   }
 
+  // A group a control-flow join may merge into a local's set: a plain
+  // shared dependency, or the read-only content group a formal received
+  // from its caller. That entry group is held for the whole body and never
+  // ends inside it, so carrying it beside a branch-local shared group (a
+  // view relayed from the same formal on one path, the formal itself on the
+  // other) adds no borrow; the flow verifier still checks every group.
+  [[nodiscard]] bool joinableSharedDependency(MirLoanId id) const {
+    const MirLoan *loan = output.findLoan(id);
+    if (loan == nullptr)
+      return false;
+    if (!loan->entry)
+      return mirPlainSharedDependency(loan);
+    return loan->kind == MirLoanKind::Stored &&
+           loan->access == AccessMode::ReadOnly && !loan->escapes &&
+           !loan->parent && !loan->storedDependency && !loan->lifecycleBound &&
+           !loan->twoPhase &&
+           std::all_of(loan->additionalDependencies.begin(),
+                       loan->additionalDependencies.end(),
+                       [](const auto &dependency) {
+                         return dependency.parent == 0 &&
+                                dependency.access == AccessMode::ReadOnly;
+                       });
+  }
+
   // Joining local value dependencies does not create a new borrow. Keep
   // the original producer groups so the MIR flow verifier can match each
   // actual incoming value and reject expired or unavailable owners.
@@ -1694,14 +1718,42 @@ private:
                                             const BindingLoanState &right,
                                             BindingLoanState &joined) const {
     joined = left;
+    const auto joinable = [this](auto id) {
+      return joinableSharedDependency(id);
+    };
+    // The groups a set stands for: its own, plus, through each stored
+    // dependency on a whole local, the groups that local holds on either
+    // path. Carrier flow reports a relayed view with both its own stored
+    // group and the source's contents; the lowering map names only the
+    // former, so these implied groups are not extra owners.
+    const auto implied = [&](const BindingLoanSet &loans) {
+      std::set<MirLoanId> closure = loans.groups;
+      std::vector<MirLoanId> pending(loans.groups.begin(), loans.groups.end());
+      while (!pending.empty()) {
+        const MirLoan *loan = output.findLoan(pending.back());
+        pending.pop_back();
+        if (loan == nullptr || loan->kind != MirLoanKind::Stored)
+          continue;
+        const MirPlace *source = output.findPlace(loan->source);
+        if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+            !source->projections.empty())
+          continue;
+        for (const BindingLoanState *state : {&left, &right})
+          if (const auto held = state->find(source->binding);
+              held != state->end())
+            for (const MirLoanId group : held->second.groups)
+              if (closure.insert(group).second)
+                pending.push_back(group);
+      }
+      return closure;
+    };
     // A local can acquire its first dependency on just one branch. An absent
     // lowering-map entry alone cannot prove the other branch ownerless: ask
     // the actual converged CFG flow for the complete set at this join.
     std::optional<MirCarrierFlow> joinFlow;
     const auto provenJoin = [&](HirBindingId binding,
                                 const BindingLoanSet &loans) {
-      if (!std::all_of(loans.groups.begin(), loans.groups.end(),
-                       [this](auto id) { return plainSharedDependency(id); }))
+      if (!std::all_of(loans.groups.begin(), loans.groups.end(), joinable))
         return false;
       if (!joinFlow) {
         MirBody prefix = output;
@@ -1719,9 +1771,19 @@ private:
           entry->second.find({MirPlaceRootKind::Binding, binding});
       if (actual == entry->second.end() || !actual->second)
         return false;
-      return actual->second->size() == loans.groups.size() &&
+      // The other path proves ownerless only if the converged set holds
+      // this path's groups and nothing those groups do not stand for.
+      const std::set<MirLoanId> expected = implied(loans);
+      return std::all_of(loans.groups.begin(), loans.groups.end(),
+                         [&](auto id) {
+                           return std::find(actual->second->begin(),
+                                            actual->second->end(),
+                                            id) != actual->second->end();
+                         }) &&
              std::all_of(actual->second->begin(), actual->second->end(),
-                         [&](auto id) { return loans.groups.contains(id); });
+                         [&](auto id) {
+                           return expected.contains(id) && joinable(id);
+                         });
     };
     for (const auto &[binding, loans] : left)
       if (!right.contains(binding) && !provenJoin(binding, loans))
@@ -1736,12 +1798,9 @@ private:
       }
       if (previous->second == loans)
         continue;
-      const auto plainShared = [this](auto id) {
-        return plainSharedDependency(id);
-      };
-      if (!std::all_of(loans.groups.begin(), loans.groups.end(), plainShared) ||
+      if (!std::all_of(loans.groups.begin(), loans.groups.end(), joinable) ||
           !std::all_of(previous->second.groups.begin(),
-                       previous->second.groups.end(), plainShared))
+                       previous->second.groups.end(), joinable))
         return false;
       previous->second.groups.insert(loans.groups.begin(), loans.groups.end());
     }

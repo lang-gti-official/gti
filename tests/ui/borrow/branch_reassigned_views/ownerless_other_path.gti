@@ -1,0 +1,17 @@
+// A local that holds a literal on one path and a sub-view of a formal on the other is owned only by that formal after the join.
+//@ run-pass
+import std.string_view;
+
+bool pick(std::string_view entry, bool sub, std::string_view expected) {
+  mut std::string_view value = "lit";
+  if (sub) {
+    value = entry.substr(1u64);
+  }
+  return value == expected;
+}
+
+int main() {
+  if (!pick("xtrue", true, "true")) return 1;
+  if (!pick("xtrue", false, "lit")) return 2;
+  return 0;
+}

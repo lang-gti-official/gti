@@ -1,0 +1,20 @@
+// A view formal's local copy reassigned in a nested `if` joins its owners at both merges.
+//@ run-pass
+import std.string_view;
+
+bool nested(std::string_view entry, bool outer, bool inner, std::string_view expected) {
+  mut std::string_view value = entry;
+  if (outer) {
+    if (inner) {
+      value = entry.substr(1u64);
+    }
+  }
+  return value == expected;
+}
+
+int main() {
+  if (!nested("xtrue", true, true, "true")) return 1;
+  if (!nested("xtrue", true, false, "xtrue")) return 2;
+  if (!nested("xtrue", false, true, "xtrue")) return 3;
+  return 0;
+}

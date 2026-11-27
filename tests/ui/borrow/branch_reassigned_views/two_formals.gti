@@ -1,0 +1,18 @@
+// A local copied from one view formal and reassigned in an `if` to a sub-view of another holds both after the join.
+//@ run-pass
+import std.string_view;
+
+bool either(std::string_view first, std::string_view second, bool use_second,
+            std::string_view expected) {
+  mut std::string_view value = first;
+  if (use_second) {
+    value = second.substr(1u64);
+  }
+  return value == expected;
+}
+
+int main() {
+  if (!either("zz", "xtrue", true, "true")) return 1;
+  if (!either("zz", "xtrue", false, "zz")) return 2;
+  return 0;
+}
