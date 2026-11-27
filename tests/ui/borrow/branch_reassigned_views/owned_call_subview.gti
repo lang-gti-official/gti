@@ -1,5 +1,5 @@
+// A conditional substring of a factory-built string keeps the owner borrowed.
 //@ run-pass
-// A substring assigned on only one path keeps the called string owner alive.
 import std.string;
 
 std::string make_text(std::string_view input) {
