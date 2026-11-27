@@ -775,6 +775,8 @@ def slow_tier_contract(root):
     # same errexit-safe cleanup as the integration shards.
     assert 'bash scripts/runner_monitor.sh 60 "${RUNNER_TEMP}/shard/' in shards
     assert """trap 'pkill -P "${monitor}" 2>/dev/null || true; kill "${monitor}" 2>/dev/null || true' EXIT""" in shards
+    # Four workers of gti_test_slow's LSP cases exhausted a 16 GiB runner.
+    assert "GTI_MEMORY_PER_TEST_MIB: ${{ matrix.set == 'slow' && 7168 || 3072 }}" in shards
     rows = re.findall(r"platform: (linux|darwin), set: ([a-z0-9-]+), shards: (\d+), index: (\d+)", shards)
     sets = {}
     for platform, test_set, count, index in rows:
