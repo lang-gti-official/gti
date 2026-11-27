@@ -25762,6 +25762,34 @@ mir_detail::verifyMirProgramWithVerifiedBodies(const MirProgram &program,
   return result;
 }
 
+namespace {
+struct CachedMirVerification {
+  MirProgram program;
+  MirVerificationResult result;
+};
+
+std::deque<CachedMirVerification> &recentMirVerifications() {
+  thread_local std::deque<CachedMirVerification> recent;
+  return recent;
+}
+} // namespace
+
+MirVerificationResult
+mir_detail::verifyMirOptimizationInput(const MirProgram &program) {
+  auto &recent = recentMirVerifications();
+  std::optional<MirVerificationResult> proof;
+  for (auto &entry : recent) {
+    if (entry.program == program) {
+      proof = std::move(entry.result);
+      break;
+    }
+  }
+  recent.clear();
+  if (proof)
+    return std::move(*proof);
+  return verifyMirProgramWithVerifiedBodies(program, nullptr);
+}
+
 MirVerificationResult verifyMirProgram(const MirProgram &program,
                                        MirVerificationComponents components,
                                        mir_detail::VerificationSession *reuse) {
@@ -25776,11 +25804,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     return mir_detail::verifyMirProgramWithVerifiedBodies(program, nullptr,
                                                           reuse);
   // Reuse only an exactly equal program, including all callee contracts.
-  struct Verified {
-    MirProgram program;
-    MirVerificationResult result;
-  };
-  thread_local std::deque<Verified> recent;
+  auto &recent = recentMirVerifications();
   for (const auto &entry : recent)
     if (entry.program == program)
       return entry.result;

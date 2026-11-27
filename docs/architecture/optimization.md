@@ -171,6 +171,10 @@ returns an `OptimizedProgram` containing both the unchanged canonical
 the verifier can reuse a body-local success from that immutable input when the
 complete body at the same kind and owner compares equal, including source debug
 tables. Other bodies and all cross-body contracts are verified on the candidate.
+At optimizing levels, input verification consumes the result for an exactly
+equal cached program or checks the submitted input in full. It releases the
+old verifier snapshots before allocating the mutable pass input. The
+submitted MIR remains the immutable source for independent replay.
 Standalone verification and final independent replay keep their full checks.
 
 `-O0` schedules no transform and keeps pre/post MIR structurally identical.

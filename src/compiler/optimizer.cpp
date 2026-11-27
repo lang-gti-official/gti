@@ -1327,34 +1327,38 @@ struct SafetyCensus {
 } // namespace
 
 OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
-  OptimizedProgram result{.sourceMir = request.mir,
-                          .mir = std::move(request.mir)};
+  OptimizedProgram result{.sourceMir = std::move(request.mir)};
   result.report.verificationEnabled = request.options.verifyMir;
 
   // Vocabulary admission is unconditional. Disabling expensive verification
   // must never let an unknown terminator masquerade as a CFG exit.
-  for (const MirBodyAddress address : enumerateMirBodyAddresses(result.mir)) {
-    const MirBody *body = findMirBody(result.mir, address);
+  for (const MirBodyAddress address :
+       enumerateMirBodyAddresses(result.sourceMir)) {
+    const MirBody *body = findMirBody(result.sourceMir, address);
     if (body == nullptr) {
       result.report.inputVerification.errors.push_back(
           {.bodyKind = address.kind,
            .owner = address.owner,
            .message = "unresolved MIR optimizer body"});
-      return result;
+      break;
     }
     result.report.inputVerification =
         verifyMirOptimizationVocabulary(*body, address.owner);
     if (!result.report.inputVerification.valid())
-      return result;
+      break;
   }
 
-  if (request.options.verifyMir) {
+  if (request.options.verifyMir && result.report.inputVerification.valid()) {
     const PhaseTimeScope timeScope("mir-verify-input");
-    result.report.inputVerification = verifyMirProgram(result.sourceMir);
-    if (!result.report.inputVerification.valid()) {
-      return result;
-    }
+    result.report.inputVerification =
+        request.level == OptimizationLevel::O0
+            ? verifyMirProgram(result.sourceMir)
+            : mir_detail::verifyMirOptimizationInput(result.sourceMir);
   }
+
+  result.mir = result.sourceMir;
+  if (!result.report.inputVerification.valid())
+    return result;
 
   if (request.level != OptimizationLevel::O0) {
     OptimizationResult localCompatibility;
