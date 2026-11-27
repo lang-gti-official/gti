@@ -196,7 +196,9 @@ measure is what ships. `GTI_PINNED_LLVM_VERSION` in `CMakeLists.txt` (LLVM
 - CI installs that major through `scripts/configure_ci_toolchain.sh`, which
   reads it from `CMakeLists.txt`. On macOS that's Homebrew `llvm@23`. Ubuntu
   does not package LLVM 23, so on Linux it comes from apt.llvm.org, whose
-  signing key is trusted only with its pinned fingerprint.
+  signing key is trusted only with its pinned fingerprint. Ubuntu CI scopes APT
+  to the runner's Ubuntu archive and security sources and the LLVM release lines
+  required for the job, including the reviewed Clang line for coverage.
 - Local tooling (`scripts/install_neovim_local.py`, `scripts/remote_runner.py`)
   discovers LLVM through `scripts/llvm_pin.py`, which reads the same pin.
   `python3 scripts/llvm_pin.py --cmake-dir` prints an installed match for
