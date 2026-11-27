@@ -1,0 +1,7 @@
+main.gti:9:10: error[GTI-S2127]: No input supplies this borrowed result, so it is implicitly 'static', but a return borrows storage that does not live for 'static'.
+ 9 |   return result;  //~ ERROR GTI-S2127
+   |          ^~~~~~
+main.gti:8:35: note: The result borrows this object's storage.
+ 8 |   std::function_ref<int()> result{callback};
+   |                                   ^~~~~~~~
+help: Return an owned value, or borrow storage supplied by the caller. A lifetime annotation cannot extend local storage past the return.
