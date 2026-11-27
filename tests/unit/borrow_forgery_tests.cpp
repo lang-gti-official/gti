@@ -6788,8 +6788,9 @@ int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }
 }
 
 void testWholeInputFieldContract() {
-  std::ifstream input(repositoryRoot() /
-                      "tests/ui/borrow/carrier_receivers/whole_carrier_subview.gti");
+  std::ifstream input(
+      repositoryRoot() /
+      "tests/ui/borrow/carrier_receivers/whole_carrier_subview.gti");
   const std::string source{std::istreambuf_iterator<char>(input), {}};
   expect(!source.empty(), "whole-input carrier fixture is available");
   const auto result = analyze(source);
@@ -6805,7 +6806,8 @@ void testWholeInputFieldContract() {
           !instruction.loan || instruction.borrowFields.size() != 2 ||
           !std::all_of(instruction.borrowFields.begin(),
                        instruction.borrowFields.end(), [](const auto &field) {
-                         return field.origin == lang::BorrowOriginKind::Receiver &&
+                         return field.origin ==
+                                    lang::BorrowOriginKind::Receiver &&
                                 field.sourceFields.empty();
                        }))
         continue;
@@ -6834,7 +6836,8 @@ void testWholeInputFieldContract() {
       }
     }
   expect(checked, "whole-input result forgery exercised a carrier subview");
-  expect(checkedOwner, "whole-input forgery exercised external owner retention");
+  expect(checkedOwner,
+         "whole-input forgery exercised external owner retention");
 }
 
 void testDependencySourceIdentity() {
