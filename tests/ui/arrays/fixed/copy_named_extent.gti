@@ -1,3 +1,4 @@
+// A named array extent preserves the copy and assignment traits of its elements.
 //@ run-pass
 import std.meta;
 
