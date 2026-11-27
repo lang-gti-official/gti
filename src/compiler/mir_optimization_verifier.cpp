@@ -103,9 +103,12 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
   MirProgram candidate = source;
   const auto verifyCandidate = [&] {
     const PhaseTimeScope timeScope("coherence-verify-candidate");
+    // Intermediate replay programs are local to this proof. Retaining them in
+    // the shared cache can evict the verified output before it is emitted.
     return candidate == source || candidate == optimized
                ? MirVerificationResult{}
-               : verifyMirProgram(candidate);
+               : mir_detail::verifyMirProgramWithVerifiedBodies(candidate,
+                                                                nullptr);
   };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(source)) {
     const MirBody *sourceBody = findMirBody(source, address);
@@ -729,9 +732,11 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
     consumed[index] = true;
   }
 
-  const MirVerificationResult safetyVerification = verifyCandidate();
-  if (!safetyVerification.valid()) {
-    return safetyVerification;
+  // With no safety records the folded candidate is still exactly as verified.
+  if (replaySafety) {
+    const MirVerificationResult safetyVerification = verifyCandidate();
+    if (!safetyVerification.valid())
+      return safetyVerification;
   }
   // Whether the candidate is known to pass verifyMirProgram; unknown after an
   // unreachable-block rewrite, which verifies only its own body.
