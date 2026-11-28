@@ -8,7 +8,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <system_error>
 #include <unordered_map>
 
 namespace gti::runtime::detail {
@@ -242,13 +241,13 @@ CThreadStatus createCThread(CThreadHandle *output, CThreadEntry entry,
     worker->context = context;
     Worker *published = worker.get();
     state.workers.emplace(handle, std::move(worker));
-    if (consumeFault(CThreadTestFault::CreateResourceUnavailable)) {
-      throw std::system_error(
-          std::make_error_code(std::errc::resource_unavailable_try_again));
-    }
     // Publish in the registry before starting the native thread. No operation
     // that can throw may follow successful native creation.
-    published->thread.start(runWorker, published);
+    if (consumeFault(CThreadTestFault::CreateResourceUnavailable) ||
+        published->thread.start(runWorker, published) != 0) {
+      state.workers.erase(handle);
+      return CThreadStatus::Error;
+    }
   } catch (const std::bad_alloc &) {
     state.workers.erase(handle);
     return CThreadStatus::NoMemory;
@@ -279,13 +278,8 @@ CThreadStatus joinCThread(CThreadHandle handle, std::int32_t *result) noexcept {
     worker->joining = true;
   }
 
-  try {
-    if (consumeFault(CThreadTestFault::JoinFailed)) {
-      throw std::system_error(
-          std::make_error_code(std::errc::resource_deadlock_would_occur));
-    }
-    worker->thread.join();
-  } catch (...) {
+  if (consumeFault(CThreadTestFault::JoinFailed) ||
+      worker->thread.join() != 0) {
     const std::lock_guard lock(state.mutex);
     if (!worker->thread.joinable()) {
       // Native failure destroyed the only coherent join obligation.
