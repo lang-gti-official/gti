@@ -2,6 +2,7 @@
 #include "gti/cthread.h"
 #include "gti/runtime_thread.hpp"
 #include "native_thread.h"
+#include "thread_mutex.h"
 
 #include <atomic>
 #include <limits>
@@ -27,7 +28,7 @@ struct Worker {
 };
 
 struct Runtime {
-  std::mutex mutex;
+  StaticThreadMutex mutex;
   std::atomic<RuntimePhase> phase{RuntimePhase::Uninitialized};
   std::unordered_map<CThreadHandle, std::unique_ptr<Worker>> workers;
 };
